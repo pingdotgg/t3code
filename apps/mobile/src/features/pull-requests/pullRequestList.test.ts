@@ -11,6 +11,7 @@ import {
   DEFAULT_PR_LIST_CONTROLS,
   EMPTY_PULL_REQUEST_STATS_CACHE,
   filterPullRequestList,
+  formatPullRequestMatchedCount,
   mergePullRequestListEntries,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
@@ -20,6 +21,7 @@ import {
   pullRequestLabelColors,
   pullRequestListHead,
   pullRequestListInput,
+  pullRequestMatchedCountAccessibilityLabel,
   scopedPullRequestListKey,
   shownPullRequestListPages,
   pullRequestListRowsAreEqual,
@@ -495,6 +497,16 @@ describe("cached PR diff stats", () => {
     number,
     additions,
     deletions: 0,
+  });
+
+  it("formats the matched pull request total, marking incomplete pages", () => {
+    expect(formatPullRequestMatchedCount(0, false)).toBe("0");
+    expect(formatPullRequestMatchedCount(1, false)).toBe("1");
+    expect(formatPullRequestMatchedCount(12, true)).toBe("12+");
+    expect(pullRequestMatchedCountAccessibilityLabel(1, false)).toBe("1 matching pull request");
+    expect(pullRequestMatchedCountAccessibilityLabel(12, true)).toBe(
+      "At least 12 matching pull requests",
+    );
   });
 
   it("drops a row's stat and refreshes its stats query when its updatedAt moves", () => {

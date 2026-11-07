@@ -500,3 +500,13 @@ export function pullRequestLabelColor(color: string | null) {
   const hex = color?.replace(/^#/, "");
   return hex && /^[\da-f]{6}$/i.test(hex) ? `#${hex}` : null;
 }
+
+/** Visible matched total; `+` when more matching pages may still load. */
+export function formatPullRequestMatchedCount(count: number, incomplete: boolean) {
+  return incomplete ? `${count}+` : String(count);
+}
+
+export function pullRequestMatchedCountAccessibilityLabel(count: number, incomplete: boolean) {
+  const noun = count === 1 ? "pull request" : "pull requests";
+  return incomplete ? `At least ${count} matching ${noun}` : `${count} matching ${noun}`;
+}
