@@ -3307,6 +3307,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         let passed = false;
         let genericFailure = false;
         let accessChanged = false;
+        let remarksIncomplete = false;
         const activityFailures = yield* Queue.unbounded<void>();
         const readFailure = (
           operation: string,
@@ -3367,7 +3368,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                     : Effect.succeed({
                         comments: [],
                         commentCount: 0,
-                        commentsTruncated: false,
+                        commentsTruncated: remarksIncomplete,
+                        reviewThreadsTruncated: remarksIncomplete,
                         reviewThreads: [],
                         commits: [],
                       }),
@@ -3439,10 +3441,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             yield* worker.drain();
           }
           assert.deepEqual(yield* summaries, expected);
+          const blocker = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch
+            ?.readBlocker;
+          disconnected = false;
+          passed = true;
+          remarksIncomplete = true;
+          yield* TestClock.adjust("2 minutes");
+          yield* sweep;
+          assert.equal(
+            (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.readBlocker,
+            blocker,
+          );
+          assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+          disconnected = true;
+          for (let pass = 0; pass < 10; pass += 1) {
+            yield* TestClock.adjust("2 minutes");
+            yield* sweep;
+          }
+          assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
         }
         disconnected = false;
         genericFailure = false;
         passed = true;
+        remarksIncomplete = false;
         yield* sweep;
         assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
         assert.isUndefined(

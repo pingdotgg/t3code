@@ -591,7 +591,11 @@ export const make = Effect.gen(function* () {
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const evaluated = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const report =
+        remarks === null && target.watch.readBlocker !== undefined
+          ? { ...evaluated, next: { ...evaluated.next, readBlocker: target.watch.readBlocker } }
+          : evaluated;
       if (report.changes.length > 0) {
         const wake = pullRequestWatchMessage({
           number: target.link.number,
