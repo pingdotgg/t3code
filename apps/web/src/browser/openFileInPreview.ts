@@ -62,7 +62,7 @@ export async function openUrlInPreview<E>(input: {
   readonly openPreview: OpenPreviewMutation<E>;
   readonly profileId?: PreviewOpenInput["profileId"];
   readonly background?: boolean;
-}): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
+}): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
   // Read before any await: a side chat pane that unmounts meanwhile drops its host mapping.
   const threadRef = rightPanelHostRef(input.threadRef);
   const defaults = await resolveBrowserDefaults().catch(
@@ -100,10 +100,11 @@ export async function openUrlInPreview<E>(input: {
       ) {
         setActivePreviewTab(threadRef, previousActiveTabId);
       }
-      return;
+      return snapshot;
     }
     applyPreviewServerSnapshot(threadRef, snapshot);
     useRightPanelStore.getState().openBrowser(threadRef, snapshot.tabId);
+    return snapshot;
   });
 }
 
@@ -119,7 +120,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
   readonly openPreview: OpenPreviewMutation<PreviewError>;
 }): Promise<
   AtomCommandResult<
-    void,
+    PreviewSessionSnapshot,
     AssetError | PreviewError | BrowserPreviewUnavailableError | BrowserSettingsReadError
   >
 > {

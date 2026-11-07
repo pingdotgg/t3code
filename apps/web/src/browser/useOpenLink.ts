@@ -42,7 +42,7 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
       const result = await openUrlInPreview({ threadRef: targetThreadRef, url, openPreview });
       if (isAtomCommandInterrupted(result)) return;
       if (result._tag === "Success") {
-        recordVisitForThread(targetThreadRef, url);
+        recordVisitForThread(targetThreadRef, url, result.value.profileId);
         return;
       }
       const failure = squashAtomCommandFailure(result);
