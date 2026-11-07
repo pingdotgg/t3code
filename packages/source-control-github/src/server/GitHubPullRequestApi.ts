@@ -320,6 +320,11 @@ const isGraphQlClientError = (error: unknown): error is GraphQLClientError.Graph
 
 const { isNotFoundOnly } = GitHubGraphQlClient;
 
+const isGitHubApiResponseError = Schema.is(GitHubRequestPolicy.GitHubApiResponseError);
+
+const isGitHubServerError = (error: unknown): boolean =>
+  isGitHubApiResponseError(error) && error.status >= 500;
+
 const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
   isGraphQlClientError(error) &&
   error.reason._tag === "ResponseError" &&
@@ -1889,13 +1894,16 @@ export const make = Effect.gen(function* () {
             });
           }),
         );
-      // Unindexed repositories silently return no search rows; fall back to the repository listing.
-      const hasQuery = (input.query?.trim().length ?? 0) > 0;
+      // Unindexed repositories silently return no search rows, and search can fail while the
+      // listing answers. The listing cannot apply a text query or an `updated:<=` cursor.
+      const listingServes = input.cursor === undefined && (input.query?.trim().length ?? 0) === 0;
       const listed = read(true).pipe(
-        Effect.filterOrElse(
-          (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
-          () => read(false),
-        ),
+        Effect.matchEffect({
+          onSuccess: (batch) =>
+            batch.items.length > 0 || !listingServes ? Effect.succeed(batch) : read(false),
+          onFailure: (error) =>
+            listingServes && isGitHubServerError(error) ? read(false) : Effect.fail(error),
+        }),
         Effect.filterOrElse(
           (batch) => !stacks || batch.items.length === 0,
           (batch) =>
