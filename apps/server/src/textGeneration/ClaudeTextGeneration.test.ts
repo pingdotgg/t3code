@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
-import { processProbeSource } from "../testUtils/processProbe.ts";
+import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
@@ -59,6 +59,7 @@ function withFakeClaudeEnv<A, E, R>(
     output: string;
     rejectsNoSessionPersistence?: boolean;
     lifecyclePort?: number;
+    holdPort?: number;
     exitCode?: number;
     stderr?: string;
     argsMustContain?: string;
@@ -82,6 +83,7 @@ function withFakeClaudeEnv<A, E, R>(
         ? "1"
         : undefined,
       T3_FAKE_CLAUDE_EXIT_CODE: input.exitCode === undefined ? undefined : String(input.exitCode),
+      T3_FAKE_CLAUDE_HOLD_PORT: input.holdPort === undefined ? undefined : String(input.holdPort),
       T3_FAKE_CLAUDE_STDERR: input.stderr,
       T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
       T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN: input.argsMustNotContain,
@@ -229,6 +231,40 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             });
 
             expect(generated.title).toBe(sanitizeThreadTitle("Use Claude home"));
+          }),
+      );
+    }),
+  );
+
+  it.effect("returns the result while the Claude CLI is still exiting", () =>
+    Effect.gen(function* () {
+      const probe = yield* makeProcessProbe;
+      yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            structured_output: { title: "Reconnect failures" },
+          }),
+          holdPort: probe.port,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Investigate reconnect failures",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            });
+
+            expect(generated.title).toBe("Reconnect failures");
+            yield* probe.started;
+            expect(yield* probe.hasExited).toBe(false);
+            yield* probe.release;
+            yield* probe.exited;
           }),
       );
     }),

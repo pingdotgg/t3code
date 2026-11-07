@@ -56,6 +56,10 @@ interface FakeCodexInput {
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
   requiredCwd?: string;
   requireInstructions?: string;
+  /** JSONL events `exec --json` prints to stdout. */
+  events?: ReadonlyArray<unknown>;
+  /** Probe port; after its events the fake stays alive until the probe releases it. */
+  holdPort?: number;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -74,6 +78,8 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
+    events: input.events ?? [],
+    holdPort: input.holdPort ?? null,
   });
   return Effect.gen(function* () {
     const path = yield* Path.Path;
@@ -159,7 +165,13 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "}",
         'if (check.stderr !== null) process.stderr.write(check.stderr + "\\n");',
         'if (outputPath !== null) NodeFS.writeFileSync(outputPath, check.output + "\\n");',
+        'for (const event of check.events) process.stdout.write(JSON.stringify(event) + "\\n");',
         "process.exitCode = check.exitCode;",
+        "if (check.holdPort !== null) {",
+        '  const { createConnection } = await import("node:net");',
+        '  const probe = createConnection(check.holdPort, "127.0.0.1", () => probe.write(process.pid + "\\n"));',
+        '  probe.on("data", () => process.exit());',
+        "}",
         "",
       ].join("\n"),
     });
@@ -284,6 +296,67 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             expect(result.title).toBe("Live title");
           }),
       ),
+  );
+
+  it.effect("returns the final message while the Codex CLI is still exiting", () =>
+    Effect.gen(function* () {
+      const probe = yield* makeProcessProbe;
+      const title = JSON.stringify({ title: "Live title" });
+      yield* withFakeCodexEnv(
+        {
+          output: title,
+          requireArg: "--json",
+          events: [
+            { type: "thread.started", thread_id: "thread-1" },
+            { type: "turn.started" },
+            { type: "item.completed", item: { id: "item_0", type: "error", message: "warning" } },
+            { type: "item.completed", item: { id: "item_1", type: "agent_message", text: title } },
+            { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+          ],
+          holdPort: probe.port,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Describe this change",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            });
+
+            expect(result.title).toBe("Live title");
+            yield* probe.started;
+            expect(yield* probe.hasExited).toBe(false);
+            yield* probe.release;
+            yield* probe.exited;
+          }),
+      );
+    }),
+  );
+
+  it.effect("reports the failed turn's message when the Codex CLI fails", () =>
+    withFakeCodexEnv(
+      {
+        output: "",
+        exitCode: 1,
+        events: [
+          { type: "thread.started", thread_id: "thread-1" },
+          { type: "turn.started" },
+          { type: "error", message: "stream disconnected" },
+          { type: "turn.failed", error: { message: "The model is not supported." } },
+        ],
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Describe this change",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            }),
+          );
+          expect(error.detail).toBe("Codex CLI command failed: The model is not supported.");
+        }),
+    ),
   );
 
   it.effect("drops the requested model's options when falling back to another model", () =>
