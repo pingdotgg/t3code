@@ -25,13 +25,9 @@ databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVIT
 server to read a different data directory; comma-separated paths read multiple directories.
 
 Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
-`CURSOR_API_KEY`, or otherwise the CLI login saved on the server.
-This includes headless T3 sessions and desktop usage across machines; the same account counts
-once across connected environments. Without any of these, T3 shows a
-notice instead of incomplete local totals. T3 does not estimate missing tokens from conversation text.
-On macOS without a T3 sign-in, choose **Enable Cursor usage** on Usage to allow T3 to read your
-existing CLI login from Keychain. You can turn it off in **Settings → Providers → Usage providers**. macOS may ask
-you to allow access on the server Mac.
+`CURSOR_API_KEY`. This includes headless T3 sessions and desktop usage across machines; the same
+account counts once across connected environments. T3 does not estimate missing tokens from
+conversation text.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
 the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
@@ -162,10 +158,9 @@ in OpenCode with an API key. A Console browser sign-in alone does not report the
 your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
 refresh provider status. Cursor reports
 its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
-otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`, otherwise for the CLI
-login. On macOS, this includes the default Keychain login after you enable Cursor usage. Sign-in, API key,
-and Keychain login report limits only with Cursor's default API endpoint. If you configure a custom
-Cursor endpoint, use an explicit token or file-based CLI login for limits.
+otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`.
+Sign-in and API keys report limits only with Cursor's default API endpoint. If you configure a custom
+Cursor endpoint, use an explicit `CURSOR_AUTH_TOKEN` for limits.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
