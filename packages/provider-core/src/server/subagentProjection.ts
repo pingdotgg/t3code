@@ -184,40 +184,53 @@ export function subagentResultForRun(
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
   readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
 } {
-  const turnItem =
-    projection.turnItems
-      .filter(
-        (
-          candidate,
-        ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "assistant_message" }> =>
-          candidate.runId === run.id &&
-          candidate.type === "assistant_message" &&
-          candidate.text.trim().length > 0,
-      )
-      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
-  const messages = projection.messages.filter(
-    (candidate) =>
-      candidate.runId === run.id &&
-      candidate.role === "assistant" &&
-      candidate.text.trim().length > 0,
-  );
-  // Prefer turn item order; providers can finalize messages with identical timestamps.
-  const message =
-    messages.find((candidate) => candidate.id === turnItem?.messageId) ??
-    messages.toSorted(
-      (left, right) =>
-        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
-        DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
-    )[0] ??
+  let turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "assistant_message" }> | null =
     null;
-  const failure =
-    run.status === "failed"
-      ? projection.turnItems
-          .filter((item) => item.runId === run.id && item.type === "error")
-          .toSorted((left, right) => right.ordinal - left.ordinal)[0]
-      : undefined;
+  let failure: Extract<OrchestrationV2TurnItem, { readonly type: "error" }> | undefined;
+  for (const candidate of projection.turnItems) {
+    if (candidate.runId !== run.id) continue;
+    if (
+      candidate.type === "assistant_message" &&
+      candidate.text.trim().length > 0 &&
+      (turnItem === null || candidate.ordinal > turnItem.ordinal)
+    ) {
+      turnItem = candidate;
+    }
+    if (
+      run.status === "failed" &&
+      candidate.type === "error" &&
+      (failure === undefined || candidate.ordinal > failure.ordinal)
+    ) {
+      failure = candidate;
+    }
+  }
+  let latestMessage: OrchestrationV2ConversationMessage | null = null;
+  let linkedMessage: OrchestrationV2ConversationMessage | null = null;
+  for (const candidate of projection.messages) {
+    if (
+      candidate.runId !== run.id ||
+      candidate.role !== "assistant" ||
+      candidate.text.trim().length === 0
+    ) {
+      continue;
+    }
+    if (candidate.id === turnItem?.messageId) {
+      linkedMessage = candidate;
+      break;
+    }
+    const order =
+      latestMessage === null
+        ? 1
+        : DateTime.toEpochMillis(candidate.updatedAt) -
+            DateTime.toEpochMillis(latestMessage.updatedAt) ||
+          DateTime.toEpochMillis(candidate.createdAt) -
+            DateTime.toEpochMillis(latestMessage.createdAt);
+    if (order > 0) latestMessage = candidate;
+  }
+  // Prefer turn item order; providers can finalize messages with identical timestamps.
+  const message = linkedMessage ?? latestMessage;
   const text =
-    (failure?.type === "error" ? failure.failure.message : undefined) ??
+    failure?.failure.message ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"

@@ -378,42 +378,70 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.isNull(result.messageId);
 });
 
-it("orders a task's assistant messages by turn item, not by timestamps", () => {
-  const { projection, run } = taskFixture();
-  const at = DateTime.makeUnsafe("2026-07-24T10:05:00.000Z");
-  const message = (id: string, text: string, ordinal: number) => {
-    const artifacts = makeSubagentConversationArtifacts({
-      messageId: MessageId.make(id),
-      turnItemId: TurnItemId.make(id),
-      threadId: parentThreadId,
-      rootNodeId: NodeId.make("root"),
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      role: "assistant",
-      text,
-      ordinal,
-      now: at,
-    });
-    return {
-      message: { ...artifacts.message, runId: run.id },
-      turnItem: { ...artifacts.turnItem, runId: run.id },
+it.each(["turn-item order", "timestamp fallback", "timestamp tie"] as const)(
+  "selects a task result using %s",
+  (ordering) => {
+    const { projection, run } = taskFixture();
+    const at = DateTime.makeUnsafe("2026-07-24T10:05:00.000Z");
+    const message = (id: string, text: string, ordinal: number) => {
+      const artifacts = makeSubagentConversationArtifacts({
+        messageId: MessageId.make(id),
+        turnItemId: TurnItemId.make(id),
+        threadId: parentThreadId,
+        rootNodeId: NodeId.make("root"),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        role: "assistant",
+        text,
+        ordinal,
+        now: at,
+      });
+      return {
+        message: { ...artifacts.message, runId: run.id },
+        turnItem: { ...artifacts.turnItem, runId: run.id },
+      };
     };
-  };
-  const progress = message("progress", "Starting step 0.", 1);
-  const report = message("report", "All steps passed.", 2);
-  const result = subagentResultForRun(
-    {
-      ...projection,
-      messages: [progress.message, report.message],
-      turnItems: [report.turnItem, progress.turnItem],
-    },
-    run,
-  );
-  assert.equal(result.text, "All steps passed.");
-  assert.equal(result.messageId, report.message.id);
-  assert.equal(result.turnItemId, report.turnItem.id);
-});
+    const progress = message("progress", "Starting step 0.", 1);
+    const report = message("report", "All steps passed.", 2);
+    const result = subagentResultForRun(
+      {
+        ...projection,
+        messages: [
+          progress.message,
+          {
+            ...report.message,
+            updatedAt: ordering === "timestamp fallback" ? DateTime.add(at, { seconds: 1 }) : at,
+          },
+          {
+            ...report.message,
+            id: MessageId.make("blank"),
+            text: " \n",
+            updatedAt: DateTime.add(at, { seconds: 2 }),
+          },
+          {
+            ...report.message,
+            id: MessageId.make("other-run"),
+            runId: RunId.make("other"),
+            text: "Unrelated result.",
+            updatedAt: DateTime.add(at, { seconds: 3 }),
+          },
+        ],
+        turnItems: ordering === "turn-item order" ? [report.turnItem, progress.turnItem] : [],
+      },
+      run,
+    );
+    assert.equal(
+      result.text,
+      ordering === "timestamp tie" ? "Starting step 0." : "All steps passed.",
+    );
+    assert.equal(
+      result.messageId,
+      ordering === "timestamp tie" ? progress.message.id : report.message.id,
+    );
+    assert.equal(result.turnItemId, ordering === "turn-item order" ? report.turnItem.id : null);
+  },
+);
 
 it.effect("ends an orphaned native subagent's node when only its record already ended", () =>
   Effect.gen(function* () {
