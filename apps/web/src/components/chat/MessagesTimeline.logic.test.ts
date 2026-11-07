@@ -1115,6 +1115,8 @@ describe("deriveMessagesTimelineRows", () => {
     expect(foldRow?.runId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
     expect(foldRow?.label).toBe("Worked for 22s");
+    // The interim assistant message folds too but is not a step.
+    expect(foldRow?.stepCount).toBe(1);
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",

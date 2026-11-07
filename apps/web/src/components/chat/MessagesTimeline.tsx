@@ -1711,6 +1711,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         >
           <span>
             {row.label}
+            {row.stepCount ? ` · ${row.stepCount} ${row.stepCount === 1 ? "step" : "steps"}` : ""}
             {error ? ` · ${error}` : ""}
           </span>
           {row.expanded ? (
