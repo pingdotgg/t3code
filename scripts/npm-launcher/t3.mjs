@@ -11,6 +11,8 @@ const { version } = JSON.parse(
 );
 
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
+// Well inside launchd's 20 s ExitTimeOut, which SIGKILLs only the launcher and orphans the runtime.
+const TERMINATE_GRACE_MS = 5_000;
 
 function t3Home() {
   const raw = (process.env.T3CODE_HOME || "").trim();
@@ -187,8 +189,13 @@ async function main() {
     child.on("message", (message) => process.connected && process.send(message));
     process.on("disconnect", () => child.connected && child.disconnect());
   }
+  let force;
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-    process.on(signal, () => (ipc || signal !== "SIGINT") && child.kill(signal));
+    process.on(signal, () => {
+      if (!ipc && signal === "SIGINT") return;
+      child.kill(signal);
+      force ??= setTimeout(() => child.kill("SIGKILL"), TERMINATE_GRACE_MS).unref();
+    });
   }
   child.on("error", (error) => fail(executableError(key, error.message)));
   child.on("exit", (code, signal) =>

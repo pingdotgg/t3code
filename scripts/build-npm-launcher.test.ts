@@ -342,6 +342,7 @@ fs.readFileSync = (file, ...rest) => {
         );
       }),
   );
+
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "does not publish an unusable release",
     () =>
@@ -401,6 +402,78 @@ syncBuiltinESMExports();
             assert.include(failed.stderr, "musl");
           }
         }
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "kills a runtime that ignores the forwarded SIGTERM so the launcher exits",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-launcher-test-" });
+        const output = yield* buildNpmLauncher({
+          version: VERSION,
+          outputDir: path.join(root, "out"),
+        });
+        const installed = path.join(root, "installed");
+        yield* fs.makeDirectory(installed);
+        const unpack = yield* run("tar", ["-xzf", output.tarball, "-C", installed], {
+          cwd: root,
+          env: { PATH: process.env.PATH },
+        });
+        assert.equal(unpack.exitCode, 0, unpack.stderr);
+
+        const home = path.join(root, "home");
+        const versionDir = path.join(home, "runtime/versions", VERSION);
+        yield* fs.makeDirectory(versionDir, { recursive: true });
+        yield* fs.writeFileString(path.join(versionDir, ".install-complete"), `${VERSION}\n`);
+        // Stands in for a runtime whose exit is stuck behind blocked filesystem calls. It gives up
+        // on its own well inside the project timeout so an unescalated stop fails descriptively.
+        const stuck = "runtime ignored SIGTERM and was still running 30s later";
+        yield* fs.writeFileString(
+          path.join(versionDir, "t3"),
+          `#!${process.execPath}\nprocess.on("SIGTERM", () => setTimeout(() => { console.log(${JSON.stringify(stuck)}); process.exit(0); }, 30_000));\nsetInterval(() => {}, 1 << 30);\nconsole.log(process.pid);\n`,
+        );
+        yield* fs.chmod(path.join(versionDir, "t3"), 0o755);
+
+        const launcher = NodeChildProcess.spawn(
+          process.execPath,
+          [path.join(installed, "package/bin/t3.mjs"), "serve"],
+          { cwd: root, env: { PATH: process.env.PATH, T3CODE_HOME: home }, stdio: "pipe" },
+        );
+        let runtimePid: number | undefined;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            for (const pid of [runtimePid, launcher.pid]) {
+              try {
+                if (pid !== undefined) process.kill(pid, "SIGKILL");
+              } catch {}
+            }
+          }),
+        );
+        let stdout = "";
+        const started = Promise.withResolvers<void>();
+        launcher.stdout.setEncoding("utf8");
+        launcher.stdout.on("data", (chunk: string) => {
+          stdout += chunk;
+          if (stdout.includes("\n")) started.resolve();
+        });
+        const exit = NodeEvents.EventEmitter.once(launcher, "exit");
+        yield* Effect.promise(() => started.promise);
+        const pid = Number(stdout.trim());
+        assert.isTrue(Number.isInteger(pid), stdout);
+        runtimePid = pid;
+
+        launcher.kill("SIGTERM");
+        yield* Effect.promise(() => exit);
+        assert.notInclude(stdout, stuck, "the launcher waited on a runtime that ignored SIGTERM");
+        assert.throws(
+          () => process.kill(pid, 0),
+          /ESRCH/,
+          undefined,
+          `runtime ${pid} outlived the launcher`,
+        );
       }),
   );
 });
