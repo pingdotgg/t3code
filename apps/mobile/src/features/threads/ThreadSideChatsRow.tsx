@@ -19,47 +19,59 @@ export function ThreadSideChatsRow(props: {
   const openLinkedThread = useOpenLinkedThread();
   if (sideChats.length === 0) return null;
   return (
-    <View className="flex-row items-center gap-2 pb-2 pl-4">
-      <SymbolView
-        name="bubble.left.and.bubble.right"
-        size={12}
-        tintColorClassName="accent-foreground-muted"
-      />
-      <Text className="text-xs text-foreground-muted">Side chats</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1">
-        <View className="flex-row gap-1 pr-4">
-          {sideChats.map((sideChat) => {
-            const needs =
-              sideChat.hasPendingApprovals || sideChat.pendingSubagentRequest === "approval"
-                ? "approval"
-                : sideChat.hasPendingUserInput || sideChat.pendingSubagentRequest
-                  ? "input"
-                  : null;
-            return (
-              <Pressable
-                key={sideChat.id}
-                accessibilityRole="button"
-                accessibilityLabel={`Open side chat ${sideChat.title}${needs === null ? "" : `, needs ${needs}`}`}
-                className="max-w-48 flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5 py-1"
-                onPress={() =>
-                  openLinkedThread({ environmentId: props.environmentId, threadId: sideChat.id })
-                }
-              >
-                {needs === null ? null : (
-                  <View
-                    className={cn(
-                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                      needs === "approval" ? "bg-warning-foreground" : "bg-adaptive-indigo-600-300",
-                    )}
-                  />
-                )}
-                <Text className="shrink text-xs text-foreground" numberOfLines={1}>
-                  {sideChat.title}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+    <View className="bg-thread-canvas px-3 pb-2">
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ flexGrow: 1, gap: 8 }}
+      >
+        {sideChats.map((sideChat) => {
+          const needs =
+            sideChat.hasPendingApprovals || sideChat.pendingSubagentRequest === "approval"
+              ? "approval"
+              : sideChat.hasPendingUserInput || sideChat.pendingSubagentRequest
+                ? "input"
+                : null;
+          return (
+            <Pressable
+              key={sideChat.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Open side chat ${sideChat.title}${needs === null ? "" : `, needs ${needs}`}`}
+              className={cn(
+                "min-h-[44px] min-w-64 flex-1 flex-row items-center gap-2 rounded-xl bg-subtle px-3 active:opacity-60",
+                sideChats.length > 1 && "max-w-80",
+              )}
+              onPress={() =>
+                openLinkedThread({ environmentId: props.environmentId, threadId: sideChat.id })
+              }
+            >
+              <SymbolView
+                name="bubble.left.and.bubble.right"
+                size={14}
+                tintColorClassName="accent-foreground-muted"
+              />
+              <Text className="text-xs text-foreground-muted">Side chat</Text>
+              <View className="h-4 w-px bg-border" />
+              {needs === null ? null : (
+                <View
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    needs === "approval" ? "bg-warning-foreground" : "bg-adaptive-indigo-600-300",
+                  )}
+                />
+              )}
+              <Text className="flex-1 text-xs text-foreground" numberOfLines={1}>
+                {sideChat.title}
+              </Text>
+              <SymbolView
+                name="chevron.right"
+                size={12}
+                tintColorClassName="accent-foreground-muted"
+              />
+            </Pressable>
+          );
+        })}
       </ScrollView>
     </View>
   );
