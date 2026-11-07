@@ -1,5 +1,6 @@
 import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -33,6 +34,63 @@ describe("HtmlRenderDocument", () => {
     window.postMessage(sizeChanged(999), "*");
     await delivered;
     expect(onContentHeight).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels clicks on non-web links so the report is not navigated away", async () => {
+    const html = injectHtmlRenderBootstrap(`<!doctype html><html><head><style>
+      a { position: fixed; left: 0; right: 0; height: 20vh; display: block; }
+      #thread { top: 0; } #mail { top: 20vh; } #download { top: 40vh; } #script { top: 60vh; }
+      #thread-download { top: 80vh; }
+    </style></head><body>
+      <a id="thread" href="t3-thread://v2/environment-1/thread-1">Open owner</a>
+      <a id="mail" href="mailto:someone@example.com">Mail owner</a>
+      <a id="download" href="data:text/plain,report" download="report.txt">Download</a>
+      <a id="script" href="javascript:void(0)">Run</a>
+      <a id="thread-download" href="t3-thread://v2/environment-1/thread-2" download>Open other</a>
+    <script>
+      document.addEventListener("click", function(event) {
+        var link = event.target.closest("a");
+        parent.postMessage({ type: "link-click", id: link && link.id, defaultPrevented: event.defaultPrevented }, "*");
+      });
+      parent.postMessage({ type: "ready" }, "*");
+    </script></body></html>`);
+    const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    const clicks: Array<{ id: string; defaultPrevented: boolean }> = [];
+    const messages = new AbortController();
+    using _messages = { [Symbol.dispose]: () => messages.abort() };
+    const ready = new Promise<void>((resolve) =>
+      window.addEventListener(
+        "message",
+        (event) => {
+          if (event.data?.type === "ready") resolve();
+          if (event.data?.type === "link-click") clicks.push(event.data);
+        },
+        { signal: messages.signal },
+      ),
+    );
+    await using screen = await render(
+      <>
+        <style>{`iframe[title="Links"] { display: block; width: 400px; height: 200px; border: 0; }`}</style>
+        <HtmlRenderDocument src={src} title="Links" onContentHeight={() => {}} />
+      </>,
+    );
+    await ready;
+
+    const frame = screen.getByTitle("Links");
+    for (const y of [20, 60, 100, 140, 180]) {
+      await userEvent.click(frame, { position: { x: 200, y } });
+    }
+
+    await vi.waitFor(() =>
+      expect(clicks).toEqual([
+        { type: "link-click", id: "thread", defaultPrevented: true },
+        { type: "link-click", id: "mail", defaultPrevented: true },
+        { type: "link-click", id: "download", defaultPrevented: false },
+        { type: "link-click", id: "script", defaultPrevented: false },
+        { type: "link-click", id: "thread-download", defaultPrevented: true },
+      ]),
+    );
   });
 });
 
