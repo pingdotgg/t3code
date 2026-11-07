@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Bind the test listener to the same address family as its client.
+import * as NodeHttp from "node:http";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -20,6 +22,9 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpServer from "effect/http/HttpServer";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
@@ -51,6 +56,16 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
+
+// A wildcard listener can share an IPv4-only app's port on macOS.
+const layerHttpTest = HttpServer.layerTestClient.pipe(
+  Layer.provide(
+    Layer.fresh(FetchHttpClient.layer).pipe(
+      Layer.provide(Layer.succeed(FetchHttpClient.RequestInit)({ keepalive: false })),
+    ),
+  ),
+  Layer.provideMerge(NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: 0 })),
+);
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -864,7 +879,7 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       });
       expect(reusedSessionResponse.status).toBe(404);
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ).pipe(Effect.provide(layerHttpTest)),
 );
 
 it.effect("admits provider and OAuth client credentials and points only clients at OAuth", () =>
@@ -1017,7 +1032,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         ),
       ).toEqual([]);
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ).pipe(Effect.provide(layerHttpTest)),
 );
 
 it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected credentials", () => {
@@ -1113,7 +1128,7 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
   ).pipe(
     Effect.provide(
       layerAuth.pipe(
-        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(layerHttpTest),
         Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false })),
       ),
     ),
@@ -1231,6 +1246,14 @@ it.effect("hides tools for links and refuses another environment while the beta 
       });
       expect((yield* ranIn(environmentId)).structuredContent).toEqual({ ranIn: "here" });
 
+      yield* settings.updateSettings({ nativeToolEnabled: { where: false, links: true } });
+      expect(yield* listed()).toEqual([]);
+      const denied = yield* rpc("tools/call", { name: "where", arguments: { environmentId } });
+      expect(denied).toMatchObject({ error: { code: -32602 } });
+      yield* settings.updateSettings({ nativeToolEnabled: { where: true } });
+      expect(yield* listed()).toEqual(["where"]);
+      expect((yield* ranIn(environmentId)).structuredContent).toEqual({ ranIn: "here" });
+
       yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
       expect(yield* listed()).toEqual(["links", "where"]);
       // On, the call goes on to the forwarding, which this server lacks.
@@ -1239,7 +1262,131 @@ it.effect("hides tools for links and refuses another environment while the beta 
         content: [{ text: expect.stringContaining("cannot reach linked environments") }],
       });
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ).pipe(Effect.provide(layerHttpTest)),
+);
+
+it.effect.each(["stored", "managed", "malformed"] as const)(
+  "enforces native tool policy without resolving provider secrets (%s)",
+  (mode) => {
+    const layerSettings = ServerSettings.layer.pipe(
+      Layer.provide(
+        Layer.mock(ServerSecretStore.ServerSecretStore)({
+          get: (resource) =>
+            Effect.fail(
+              new ServerSecretStore.SecretStoreReadError({
+                resource,
+                cause: new Error("Secret store unavailable."),
+              }),
+            ),
+        }),
+      ),
+      Layer.provide(
+        ManagedPolicy.layerTest(
+          mode === "managed"
+            ? {
+                schemaVersion: 1,
+                organization: "Example Corp",
+                settings: { "nativeToolEnabled.disabled": { value: false, locked: true } },
+              }
+            : undefined,
+        ),
+      ),
+      Layer.provideMerge(Sqlite.layerMemory),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-tool-policy-test-" }),
+      ),
+    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          config.settingsPath,
+          mode === "malformed"
+            ? '{"nativeToolEnabled":'
+            : JSON.stringify({
+                nativeToolEnabled: { disabled: mode === "managed" },
+                providerInstances: {
+                  codex: {
+                    driver: "codex",
+                    config: {},
+                    environment: [
+                      { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+                    ],
+                  },
+                },
+              }),
+        );
+        if (mode !== "malformed") {
+          const settings = yield* ServerSettings.ServerSettingsService;
+          expect((yield* settings.getSettings.pipe(Effect.flip)).operation).toBe("read-secret");
+        }
+        const Tools = Toolkit.make(
+          Tool.make("enabled", { success: Schema.String }),
+          Tool.make("disabled", { success: Schema.String }),
+        );
+        const serverLayer = McpHttpServer.layerMcpTransport(
+          McpHttpServer.toolkitRegistration(
+            Tools,
+            McpToolAccess.toLayer(Tools, {
+              enabled: McpToolAccess.reads(() => Effect.succeed("available")),
+              disabled: McpToolAccess.reads(() => Effect.die("Disabled tool ran.")),
+            }),
+          ),
+        ).pipe(
+          Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+          Layer.provide(
+            Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+              resolve: () => Effect.succeed(invocation),
+            }),
+          ),
+        );
+        yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+          Layer.build,
+        );
+        const httpClient = yield* HttpClient.HttpClient;
+        const request = (method: string, params: object, sessionId?: string) =>
+          httpClient.post("/mcp", {
+            headers: {
+              accept: "application/json, text/event-stream",
+              authorization: "Bearer policy-test",
+              ...(sessionId === undefined ? {} : { "mcp-session-id": sessionId }),
+            },
+            body: HttpBody.text(
+              JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+              "application/json",
+            ),
+          });
+        const initialized = yield* request("initialize", {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "policy-test", version: "1.0.0" },
+        });
+        expect(initialized.status).toBe(mode === "malformed" ? 500 : 200);
+        if (mode === "malformed") return;
+        const rpc = (method: string, params: object) =>
+          request(method, params, initialized.headers["mcp-session-id"]!).pipe(
+            Effect.flatMap((response) => response.json),
+          );
+        expect(yield* rpc("tools/list", {})).toMatchObject({
+          result: { tools: [{ name: "enabled" }] },
+        });
+        expect(yield* rpc("tools/call", { name: "enabled", arguments: {} })).toMatchObject({
+          result: { content: [{ type: "text", text: "available" }] },
+        });
+        expect(yield* rpc("tools/call", { name: "disabled", arguments: {} })).toMatchObject({
+          error: { code: -32602 },
+        });
+      }),
+    ).pipe(
+      Effect.provide(
+        layerSettings.pipe(
+          Layer.provideMerge(layerHttpTest),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+  },
 );
 
 it.effect("lists pull request watch tools only to threads that are not delegated children", () =>
@@ -1329,7 +1476,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
       expect(childTools).not.toContain("watch_pull_request");
       expect(childTools).not.toContain("unwatch_pull_request");
     }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  ).pipe(Effect.provide(layerHttpTest)),
 );
 
 it.effect(
@@ -1474,5 +1621,5 @@ it.effect(
         expect(yield* start("auto/default/extra")).toBe(400);
         expect(yield* start("root/default")).toBe(400);
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ).pipe(Effect.provide(layerHttpTest)),
 );

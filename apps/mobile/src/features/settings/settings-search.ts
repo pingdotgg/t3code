@@ -71,6 +71,7 @@ const SETTINGS_SEARCH_TERMS = {
   ],
   SettingsFollowUp: ["follow-ups", "queue", "steer", "while the agent is running"],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
+  SettingsNativeTools: ["native tools", "MCP", "enable", "disable", "t3_thread_send"],
   SettingsProviderAccounts: [
     "provider accounts",
     "codex",

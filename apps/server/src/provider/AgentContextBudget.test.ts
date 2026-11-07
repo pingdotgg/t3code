@@ -14,6 +14,7 @@ import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { nativeToolCatalog } from "../mcp/nativeToolCatalog.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
   CLAUDE_PROVIDER,
@@ -129,6 +130,9 @@ it.effect("only request_secret asks Claude Code to load it up front", () =>
 it.effect("agent context matches the committed budget", () =>
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
+    expect(nativeToolCatalog.map((tool) => tool.name).toSorted()).toEqual(
+      mcp.tools.map(({ tool }) => tool.name).toSorted(),
+    );
     const measured = {
       claudeSystemAppendBytes: utf8Bytes(claudeSystemAppend()),
       codexAdditionalContextBytes: utf8Bytes(codexAdditionalContext()),

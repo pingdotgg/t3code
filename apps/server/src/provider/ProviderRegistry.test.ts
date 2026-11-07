@@ -285,6 +285,7 @@ function makeMutableServerSettingsService(
     return {
       start: Effect.void,
       ready: Effect.void,
+      getMcpToolSettings: Ref.get(settingsRef),
       getSettings: Ref.get(settingsRef),
       updateSettings: (patch) =>
         Effect.gen(function* () {

@@ -131,6 +131,7 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  readonly nativeToolEnabled?: Readonly<Record<string, boolean>>;
 }
 
 /**
@@ -166,6 +167,13 @@ export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
+};
+
+/** MCP visibility predicates run synchronously in the authenticated request fiber. */
+export const isToolEnabled = (name: string): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.nativeToolEnabled?.[name] !== false;
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
