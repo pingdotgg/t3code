@@ -74,6 +74,7 @@ import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-en
 import {
   changeDraftProject,
   editDraft,
+  leavesSandboxWorkspace,
   parseIntervalMinutes,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
@@ -777,11 +778,13 @@ function TaskForm({
           ? { type: "root" }
           : draft.workspace === "existing_worktree"
             ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
-            : {
-                type: "worktree",
-                baseRef: draft.baseRef.trim() || "main",
-                startFromOrigin: draft.startFromOrigin,
-              },
+            : draft.workspace === "sandbox"
+              ? { type: "sandbox" }
+              : {
+                  type: "worktree",
+                  baseRef: draft.baseRef.trim() || "main",
+                  startFromOrigin: draft.startFromOrigin,
+                },
       // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
       runtimeMode:
         clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
@@ -964,9 +967,20 @@ function TaskForm({
                 ? "New worktree"
                 : draft.workspace === "root"
                   ? "Project checkout"
-                  : "Specific checkout"
+                  : draft.workspace === "sandbox"
+                    ? "Fleet worker sandbox"
+                    : "Specific checkout"
             }
             actions={[
+              ...(draft.storedSandbox
+                ? [
+                    {
+                      id: "sandbox",
+                      title: "Fleet worker sandbox",
+                      state: draft.workspace === "sandbox" ? ("on" as const) : undefined,
+                    },
+                  ]
+                : []),
               {
                 id: "worktree",
                 title: "New worktree",
@@ -984,10 +998,20 @@ function TaskForm({
               },
             ]}
             onSelect={(id) => {
-              if (id === "worktree" || id === "root" || id === "existing_worktree")
+              if (
+                id === "worktree" ||
+                id === "root" ||
+                id === "existing_worktree" ||
+                id === "sandbox"
+              )
                 setDraft({ ...draft, workspace: id });
             }}
           />
+          {leavesSandboxWorkspace(draft) ? (
+            <Text className="px-4 pb-3 text-sm text-warning-foreground">
+              Future runs will no longer use the fleet worker sandbox this task is paired with.
+            </Text>
+          ) : null}
           {draft.workspace === "worktree" ? (
             <PickerRow
               label="Base branch"

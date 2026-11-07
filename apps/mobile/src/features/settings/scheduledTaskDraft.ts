@@ -197,7 +197,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
   };
 }
 
-type Workspace = "worktree" | "root" | "existing_worktree";
+type Workspace = "worktree" | "root" | "existing_worktree" | "sandbox";
 export type ScheduledTaskDraft = {
   readonly task: ScheduledTask | null;
   readonly title: string;
@@ -209,6 +209,8 @@ export type ScheduledTaskDraft = {
   readonly schedule: ScheduleDraft;
   readonly threadMode: ScheduledTaskThreadMode;
   readonly workspace: Workspace;
+  /** The stored task runs in a fleet worker sandbox; leaving it is surfaced. */
+  readonly storedSandbox: boolean;
   readonly baseRef: string;
   readonly checkoutPath: string;
   readonly enabled: boolean;
@@ -301,12 +303,18 @@ export function createDraft(
     schedule: DEFAULT_SCHEDULE,
     threadMode: "new_thread",
     workspace: "worktree",
+    storedSandbox: false,
     baseRef: "main",
     checkoutPath: "",
     enabled: true,
     startFromOrigin: true,
     runtimeMode: "full-access",
   };
+}
+
+/** An edit that moves a stored sandbox task off its fleet worker; the editor surfaces it. */
+export function leavesSandboxWorkspace(draft: ScheduledTaskDraft): boolean {
+  return draft.storedSandbox && draft.workspace !== "sandbox";
 }
 
 export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
@@ -320,8 +328,10 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),
     threadMode: scheduledTaskThreadMode(task),
-    // ThreadLaunchService refuses sandbox launches, so editing one falls back to a worktree.
-    workspace: task.workspaceStrategy.type === "sandbox" ? "worktree" : task.workspaceStrategy.type,
+    // A sandbox workspace stays: editing an unrelated field must not silently
+    // move the task off its fleet worker.
+    workspace: task.workspaceStrategy.type,
+    storedSandbox: task.workspaceStrategy.type === "sandbox",
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     checkoutPath:
       task.workspaceStrategy.type === "existing_worktree"
