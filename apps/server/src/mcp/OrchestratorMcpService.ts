@@ -878,6 +878,7 @@ function threadDetail(
 function threadRun(run: OrchestrationV2Run): OrchestratorMcpThreadRun {
   return {
     runId: run.id,
+    ...(run.status === "queued" ? { queueHeld: run.queueHeld === true } : {}),
     ordinal: run.ordinal,
     status: run.status,
     providerInstanceId: run.modelSelection.instanceId,
@@ -3188,6 +3189,7 @@ const make = Effect.gen(function* () {
         runId: result.run.id,
         ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
         status: result.run.status,
+        ...(result.run.status === "queued" ? { queueHeld: result.run.queueHeld === true } : {}),
         delivery: result.delivery,
       } satisfies OrchestratorMcpThreadSendResult;
     }),
