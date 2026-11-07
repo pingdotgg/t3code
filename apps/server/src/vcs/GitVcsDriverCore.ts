@@ -44,6 +44,7 @@ import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
+import { worktreeFastEnv } from "./worktreeFast.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
@@ -945,7 +946,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const { worktreesDir } = yield* ServerConfig.ServerConfig;
+  const { worktreesDir, worktreeFastPath } = yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
   const hostPlatform = yield* HostProcess.Platform;
@@ -4258,7 +4259,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "git worktree add failed",
       );
     }
-    const args = ["worktree", "add", "--", worktreePath, newRefName ?? input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
@@ -4273,40 +4273,91 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: "unbounded" },
     );
     const checkoutWorkers = configuredCheckoutWorkers ?? "0";
-    yield* executeGitWithStableDiagnostics(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        // Large checkouts and post-checkout hooks can legitimately run for many
-        // minutes; a fixed deadline kills them and leaves an orphaned worktree.
-        timeoutMs: null,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
+    const addWorktree = (subcommand: "worktree" | "worktree-fast", env: NodeJS.ProcessEnv = {}) =>
+      executeGitWithStableDiagnostics(
+        "GitVcsDriver.createWorktree",
+        input.cwd,
+        [
+          "-c",
+          `checkout.workers=${checkoutWorkers}`,
+          subcommand,
+          "add",
+          "--",
+          worktreePath,
+          input.newRefName ?? input.refName,
+        ],
+        {
+          fallbackErrorDetail: "git worktree add failed",
+          // Large checkouts and post-checkout hooks can legitimately run for many
+          // minutes; a fixed deadline kills them and leaves an orphaned worktree.
+          timeoutMs: null,
+          env: {
+            ...env,
+            // Git only prints checkout progress when stderr is a tty or the
+            // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+            ...(onCheckoutProgress ? { GIT_PROGRESS_DELAY: "0" } : {}),
+          },
+          ...(onCheckoutProgress
+            ? {
+                progress: {
+                  onStderrLine: (line) => {
+                    const parsed = parseGitCheckoutProgressLine(line);
+                    return parsed ? onCheckoutProgress(parsed) : Effect.void;
+                  },
                 },
-              },
+              }
+            : {}),
+        },
+      );
+    const removeNewBranchOnFailure = <A, E, R>(checkout: Effect.Effect<A, E, R>) =>
+      checkout.pipe(
+        Effect.onError(() =>
+          newRefName
+            ? deleteLocalBranch({ cwd: input.cwd, refName: newRefName, force: true }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("could not remove the branch of a failed worktree", { cause }),
+                ),
+              )
+            : Effect.void,
+        ),
+      );
+    if (options?.worktreeFast === true && hostPlatform === "darwin") {
+      // Concatenated rather than resolved so `..` keeps following symlinks, as Git does.
+      const resolvedWorktreePath = path.isAbsolute(worktreePath)
+        ? worktreePath
+        : `${input.cwd}${path.sep}${worktreePath}`;
+      // A git-worktree-fast before 0.2.0 on the user's PATH hands a missing parent folder to Git's slow checkout.
+      yield* fileSystem
+        .makeDirectory(path.dirname(resolvedWorktreePath), { recursive: true })
+        .pipe(Effect.ignore);
+      yield* addWorktree(
+        "worktree-fast",
+        worktreeFastEnv({
+          bundledPath: worktreeFastPath,
+          pathEnv: (yield* HostProcess.Environment).PATH,
+          dirname: path.dirname,
+        }),
+      ).pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            // A worktree left behind by the failed add would make Git's retry fail for the wrong reason.
+            if (
+              yield* fileSystem.exists(resolvedWorktreePath).pipe(Effect.orElseSucceed(() => true))
+            ) {
+              return yield* error;
             }
-          : {}),
-      },
-    ).pipe(
-      Effect.onError(() =>
-        newRefName
-          ? deleteLocalBranch({ cwd: input.cwd, refName: newRefName, force: true }).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("could not remove the branch of a failed worktree", { cause }),
-              ),
-            )
-          : Effect.void,
-      ),
-    );
+            yield* Effect.logWarning(
+              "git worktree-fast add failed; creating the worktree with git worktree add",
+              { worktreePath, cause: error },
+            );
+            yield* addWorktree("worktree");
+          }),
+        ),
+        removeNewBranchOnFailure,
+      );
+    } else {
+      yield* removeNewBranchOnFailure(addWorktree("worktree"));
+    }
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);

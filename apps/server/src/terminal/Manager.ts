@@ -1406,6 +1406,7 @@ interface TerminalManagerOptions {
   env?: NodeJS.ProcessEnv;
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  worktreeFastPath?: string;
   subprocessInspector?: TerminalSubprocessInspector;
   processTable?: Effect.Effect<
     ReadonlyArray<ResourceMonitorProcessTableEntry>,
@@ -1475,7 +1476,8 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 
 /** @public */
 export const make = Effect.fn("TerminalManager.make")(function* () {
-  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir, baseDir, worktreeFastPath } =
+    yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -1501,6 +1503,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
     ),
     managedBinaryCacheDir: providerStatusCacheDir,
     managedBinaryToolsDir: path.join(baseDir, "tools"),
+    ...(worktreeFastPath !== undefined ? { worktreeFastPath } : {}),
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
     resolveProviderInstanceEnvironment,
@@ -2476,6 +2479,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 if (merged !== undefined) {
                   terminalEnv[pathKey] = merged;
                 }
+              }
+            }
+            // Lets `git worktree-fast prepare` resolve the desktop app's bundled copy after any user install.
+            if (platform === "darwin" && options.worktreeFastPath !== undefined) {
+              const merged = mergePathEntries(
+                terminalEnv.PATH,
+                path.dirname(options.worktreeFastPath),
+                platform,
+              );
+              if (merged !== undefined) {
+                terminalEnv.PATH = merged;
               }
             }
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
