@@ -81,7 +81,12 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
   const rightNumeric = SEMVER_NUMBER_SEGMENT.test(right);
 
   if (leftNumeric && rightNumeric) {
-    return Number.parseInt(left, 10) - Number.parseInt(right, 10);
+    const leftDigits = left.replace(/^0+/u, "");
+    const rightDigits = right.replace(/^0+/u, "");
+    return (
+      leftDigits.length - rightDigits.length ||
+      (leftDigits < rightDigits ? -1 : leftDigits > rightDigits ? 1 : 0)
+    );
   }
   if (leftNumeric) {
     return -1;

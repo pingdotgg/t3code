@@ -35,6 +35,19 @@ describe("semver helpers", () => {
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
   });
 
+  it("compares numeric prerelease identifiers without rounding or overflowing", () => {
+    for (const [lower, higher] of [
+      ["9007199254740992", "9007199254740993"],
+      ["9".repeat(310), `1${"0".repeat(310)}`],
+    ]) {
+      const before = `1.2.3-rc.${lower}`;
+      const after = `1.2.3-rc.${higher}`;
+      expect(compareSemverVersions(before, after)).toBeLessThan(0);
+      expect(compareSemverVersions(after, before)).toBeGreaterThan(0);
+      expect(compareSemverVersions(before, before)).toBe(0);
+    }
+  });
+
   it("preserves hyphens within prerelease identifiers", () => {
     expect(normalizeSemverVersion("20-alpha-1")).toBe("20.0.0-alpha-1");
     expect(parseSemver("1.2.3-alpha-1.2")).toEqual({
