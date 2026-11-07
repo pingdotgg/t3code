@@ -5,9 +5,11 @@ import { DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -17,6 +19,9 @@ import { vi } from "vite-plus/test";
 
 vi.mock("electron", async (importOriginal) => ({
   ...(await importOriginal<typeof import("electron")>()),
+  app: {
+    getPath: vi.fn((name: string) => `/Users/alice/${name === "downloads" ? "Downloads" : name}`),
+  },
   session: {
     fromPartition: vi.fn(() => ({
       getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/1.2.3"),
@@ -66,8 +71,14 @@ const environmentInput = {
 function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
+  const sessionListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
   const webContents = {
+    session: {
+      on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
+        sessionListeners.set(eventName, listener);
+      }),
+    },
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -144,6 +155,7 @@ function makeFakeBrowserWindow() {
     toggleDevTools: webContents.toggleDevTools,
     navigationHistory: webContents.navigationHistory,
     send: webContents.send,
+    sessionListeners,
     setZoomLevel: webContents.setZoomLevel,
     setWindowButtonPosition: window.setWindowButtonPosition,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
@@ -1151,6 +1163,118 @@ describe("DesktopWindow", () => {
         assert.deepEqual(openedExternalUrls, ["https://accounts.microsoft.com/oauth"]);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  // Temp Downloads folder, so names never depend on the machine running the test.
+  const mainWindowDownloads = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const downloads = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-desktop-downloads-test-",
+    });
+    const getPath = vi.spyOn(Electron.app, "getPath").mockReturnValue(downloads);
+    yield* Effect.addFinalizer(() => Effect.sync(() => getPath.mockRestore()));
+    const fakeWindow = makeFakeBrowserWindow();
+    const createCount = yield* Ref.make(0);
+    const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+    yield* Effect.gen(function* () {
+      const desktopWindow = yield* DesktopWindow.DesktopWindow;
+      yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+    }).pipe(Effect.provide(layerTest({ window: fakeWindow.window, createCount, mainWindow })));
+
+    const willDownload = fakeWindow.sessionListeners.get("will-download");
+    assert.isDefined(
+      willDownload,
+      "main window session has no will-download handler, so Electron opens its own Save dialog",
+    );
+    const download = (fileName: string) => {
+      const savePaths: string[] = [];
+      const finishers: Array<(event: unknown, state: string) => void> = [];
+      // Electron shows its Save dialog unless the path is set before the handler returns.
+      willDownload?.(
+        { preventDefault: vi.fn() },
+        {
+          getFilename: () => fileName,
+          setSavePath: (savePath: string) => void savePaths.push(savePath),
+          once: (_event: string, listener: (event: unknown, state: string) => void) =>
+            void finishers.push(listener),
+        },
+        fakeWindow.window.webContents,
+      );
+      return {
+        savePaths,
+        finish: (state: string) => finishers.forEach((finisher) => finisher({}, state)),
+      };
+    };
+    return { downloads, fileSystem, path, download };
+  });
+
+  it.effect("saves main window downloads to Downloads without Electron's Save dialog", () =>
+    Effect.gen(function* () {
+      const { downloads, path, download } = yield* mainWindowDownloads;
+
+      assert.deepEqual(download("clip.mp4").savePaths, [path.join(downloads, "clip.mp4")]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "gives a concurrent download of the same name, in any letter case, its own name until the first finishes",
+    () =>
+      Effect.gen(function* () {
+        const { downloads, path, download } = yield* mainWindowDownloads;
+
+        const first = download("clip.mp4");
+        const second = download("CLIP.mp4");
+        first.finish("cancelled");
+        const third = download("clip.mp4");
+        const composed = download("caf\u00e9.mp4");
+        const decomposed = download("cafe\u0301.mp4");
+
+        assert.deepEqual(
+          [
+            ...first.savePaths,
+            ...second.savePaths,
+            ...third.savePaths,
+            ...composed.savePaths,
+            ...decomposed.savePaths,
+          ],
+          [
+            path.join(downloads, "clip.mp4"),
+            path.join(downloads, "CLIP (1).mp4"),
+            path.join(downloads, "clip.mp4"),
+            path.join(downloads, "caf\u00e9.mp4"),
+            path.join(downloads, "cafe\u0301 (1).mp4"),
+          ],
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("never replaces a file already in Downloads", () =>
+    Effect.gen(function* () {
+      const { downloads, fileSystem, path, download } = yield* mainWindowDownloads;
+      yield* fileSystem.writeFileString(path.join(downloads, "clip.mp4"), "existing");
+
+      assert.deepEqual(download("clip.mp4").savePaths, [path.join(downloads, "clip (1).mp4")]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a renamed duplicate of a 255-byte name within the filesystem limit", () =>
+    Effect.gen(function* () {
+      const { downloads, fileSystem, path, download } = yield* mainWindowDownloads;
+      const longName = `${"a".repeat(251)}.mp4`;
+      yield* fileSystem.writeFileString(path.join(downloads, longName), "existing");
+
+      const [savePath] = download(longName).savePaths;
+      assert.strictEqual(path.basename(savePath ?? ""), `${"a".repeat(247)} (1).mp4`);
+      yield* fileSystem.writeFileString(savePath ?? "", "duplicate");
+
+      const longExtension = `a.${"b".repeat(253)}`;
+      yield* fileSystem.writeFileString(path.join(downloads, longExtension), "existing");
+      const [extensionSavePath = ""] = download(longExtension).savePaths;
+      assert.strictEqual(path.basename(extensionSavePath), `a (1).${"b".repeat(249)}`);
+      assert.isAtMost(Buffer.byteLength(path.basename(extensionSavePath)), 255);
+      yield* fileSystem.writeFileString(extensionSavePath, "duplicate");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
