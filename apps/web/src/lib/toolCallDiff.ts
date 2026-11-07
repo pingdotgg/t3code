@@ -51,19 +51,59 @@ function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "changes"
 }
 
 const HEADER_LINE = /^(?:diff --git |--- |\+\+\+ |rename from |rename to )/;
+const HUNK_HEADER = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
+// A separator in a recorded path: / or \, which a quoted header escapes as \\.
+const SEPARATOR = /^(?:\/|\\\\|\\)/;
 
 // Absolute paths under the workspace read relative to it, like the relative paths agents record.
 function relativeHeaderPaths(patch: string | undefined, workspaceRoot: string | null | undefined) {
-  const root = workspaceRoot?.replaceAll("\\", "/").replace(/\/+$/, "");
-  if (!patch || !root) return patch;
-  const prefixes = [`${root}/`, `${root.replace(/^\/+/, "")}/`];
+  const root = workspaceRoot?.split(/[\\/]+/).filter(Boolean);
+  if (!patch || !root?.length) return patch;
+  const sameSegment = /^[A-Za-z]:$/.test(root[0]!)
+    ? (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+    : (a: string, b: string) => a === b;
+  // Removes the root only where a path starts: after an optional quote and git's a/ or b/.
+  const stripAt = (line: string, start: number) => {
+    const kept = start + /^"?(?:[ab]\/)?/.exec(line.slice(start))![0].length;
+    const separator = (at: number) => SEPARATOR.exec(line.slice(at))?.[0].length ?? 0;
+    let at = kept + separator(kept);
+    for (const segment of root) {
+      if (!sameSegment(line.slice(at, at + segment.length), segment)) return line;
+      at += segment.length;
+      const width = separator(at);
+      if (width === 0) return line;
+      at += width;
+    }
+    return line.slice(0, kept) + line.slice(at);
+  };
+  let oldLines = 0;
+  let newLines = 0;
   return patch
     .split("\n")
-    .map((line) =>
-      HEADER_LINE.test(line)
-        ? prefixes.reduce((header, prefix) => header.replaceAll(prefix, ""), line)
-        : line,
-    )
+    .map((line) => {
+      // Hunk lines can start like headers ("--- " is a removed "-- "); count them out.
+      if (oldLines > 0 || newLines > 0) {
+        if (line.startsWith("-")) oldLines -= 1;
+        else if (line.startsWith("+")) newLines -= 1;
+        else if (!line.startsWith("\\")) {
+          oldLines -= 1;
+          newLines -= 1;
+        }
+        return line;
+      }
+      const hunk = HUNK_HEADER.exec(line);
+      if (hunk) {
+        oldLines = Number(hunk[1] ?? 1);
+        newLines = Number(hunk[2] ?? 1);
+        return line;
+      }
+      const keyword = HEADER_LINE.exec(line)?.[0];
+      if (keyword === undefined) return line;
+      if (keyword !== "diff --git ") return stripAt(line, keyword.length);
+      const second = Math.max(line.lastIndexOf(' "b/'), line.lastIndexOf(" b/"));
+      const both = second > keyword.length ? stripAt(line, second + 1) : line;
+      return stripAt(both, keyword.length);
+    })
     .join("\n");
 }
 

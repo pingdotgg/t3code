@@ -126,6 +126,32 @@ describe("toolCallDiff", () => {
         toolCallDiff({ fileName: "/elsewhere/b.ts", diffStr: "@@ -1 +1 @@\n-x\n+y\n" }, root).patch,
       ),
     ).toEqual(["/elsewhere/b.ts"]);
+
+    // Only where a header's path starts: hunk lines that look like headers, and a path that
+    // merely contains the root, keep it, in this file and the next.
+    const twoFiles = [
+      `--- ${root}/a.ts`,
+      `+++ ${root}/a.ts`,
+      "@@ -1 +1 @@",
+      `--- ${root}/x`,
+      `+++ ${root}/x`,
+      `--- /backup${root}/b.ts`,
+      `+++ /backup${root}/b.ts`,
+      "@@ -1 +1 @@",
+      "-b",
+      "+c",
+      "",
+    ].join("\n");
+    const multiple = toolCallDiff({ fileName: `${root}/a.ts`, diffStr: twoFiles }, root).patch;
+    expect(paths(multiple)).toEqual(["a.ts", `/backup${root}/b.ts`]);
+    expect(multiple).toContain(`\n--- ${root}/x\n+++ ${root}/x\n`);
+
+    // Windows paths, which a quoted header escapes.
+    const windows = toolCallDiff(
+      { fileName: "C:\\repo\\src\\a.ts", diffStr: "@@ -1 +1 @@\n-x\n+y\n" },
+      "c:\\repo",
+    ).patch;
+    expect(paths(windows)).toEqual(["src\\a.ts"]);
   });
 
   it("preserves complete patches and unsupported provider output", () => {
