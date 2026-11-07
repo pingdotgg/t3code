@@ -844,7 +844,7 @@ function DeviceIntegrationControls({
 }) {
   const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const { state, loaded } = useDeviceState(environmentId);
-  const { scope, environments, connectedEnvironments } = useSettingsScope();
+  const { scope, connectedEnvironments } = useSettingsScope();
   const updateSettings = useUpdateScopedSettings();
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const anyHubEnabled = connectedEnvironments.some(
@@ -864,10 +864,7 @@ function DeviceIntegrationControls({
     if (!environmentId || !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setPending(kind);
     const results = await Promise.allSettled(
-      environments.map(async (environment) => {
-        if (environment.connection.phase !== "connected" || !environment.serverConfig) {
-          throw new Error("Environment disconnected");
-        }
+      connectedEnvironments.map(async (environment) => {
         if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
           throw new Error("This connection cannot change device settings.");
         }
@@ -878,7 +875,7 @@ function DeviceIntegrationControls({
       }),
     );
     setPending(null);
-    const failed = environments.filter((_, index) => {
+    const failed = connectedEnvironments.filter((_, index) => {
       const result = results[index];
       return result?.status !== "fulfilled" || result.value._tag === "Failure";
     });
