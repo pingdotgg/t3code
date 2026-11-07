@@ -6,6 +6,7 @@ import {
   type ChatAttachment,
   EventId,
   MessageId,
+  NodeId,
   type ModelSelection,
   type OrchestrationV2Command,
   type OrchestrationV2ProviderCapabilities,
@@ -120,6 +121,7 @@ function makeTestAdapter(input: {
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
   readonly backgroundWork?: Ref.Ref<boolean>;
+  readonly bufferedWake?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
@@ -175,7 +177,12 @@ function makeTestAdapter(input: {
             : {
                 // Like Claude: native subagents are visible only to the session-wide
                 // probe, never to the per-thread roster probe.
-                hasPendingBackgroundWork: Ref.get(input.backgroundWork),
+                hasPendingBackgroundWork: Effect.all([
+                  Ref.get(input.backgroundWork),
+                  input.bufferedWake === undefined
+                    ? Effect.succeed(false)
+                    : Ref.get(input.bufferedWake),
+                ]).pipe(Effect.map(([background, buffered]) => background || buffered)),
                 hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
               }),
           ensureThread: (threadInput) =>
@@ -245,6 +252,12 @@ function makeTestAdapter(input: {
           compactThread: (turnInput) => runtime.startTurn(turnInput),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
+              if (
+                input.bufferedWake !== undefined &&
+                turnInput.message.creationSource === "provider"
+              ) {
+                yield* Ref.set(input.bufferedWake, false);
+              }
               if (
                 input.failStartOnce !== undefined &&
                 (yield* Ref.getAndSet(input.failStartOnce, false))
@@ -2531,26 +2544,43 @@ describe("orchestration v2 provider switching", () => {
   it.live.each([
     [
       "detaches the previous instance's session when a send hands off to another instance",
-      { background: false, queued: false, sharedHistory: false },
+      { background: false, queued: false, sharedHistory: false, buffered: false, held: false },
     ],
     [
-      "refuses the hand-off while the previous instance still runs background work",
-      { background: true, queued: false, sharedHistory: false },
+      "keeps a busy previous session running when a direct send hands off",
+      { background: true, queued: false, sharedHistory: false, buffered: false, held: false },
+    ],
+    [
+      "waits for background work before resuming a direct account switch",
+      { background: true, queued: false, sharedHistory: true, buffered: false, held: false },
     ],
     [
       "keeps a busy previous session running when a queued hand-off starts",
-      { background: true, queued: true, sharedHistory: false },
+      { background: true, queued: true, sharedHistory: false, buffered: false, held: false },
     ],
     [
-      "holds a queued account switch while the replaced session still runs background work",
-      { background: true, queued: true, sharedHistory: true },
+      "waits for background work before resuming a queued account switch",
+      { background: true, queued: true, sharedHistory: true, buffered: false, held: false },
     ],
-  ] as const)("%s", ([, { background, queued, sharedHistory }]) =>
+    [
+      "drains buffered provider output before resuming a waiting account switch",
+      { background: true, queued: false, sharedHistory: true, buffered: true, held: false },
+    ],
+    [
+      "drains buffered output queued before the predecessor settles",
+      { background: true, queued: true, sharedHistory: true, buffered: true, held: false },
+    ],
+    [
+      "keeps buffered provider wakes held when Stop holds the waiting account switch",
+      { background: true, queued: false, sharedHistory: true, buffered: true, held: true },
+    ],
+  ] as const)("%s", ([, { background, queued, sharedHistory, buffered, held }]) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("handoff-releases-session");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const backgroundWork = yield* Ref.make(background);
+        const bufferedWake = yield* Ref.make(false);
         const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
         const firstStarted = yield* Deferred.make<void>();
         const releaseFirst = yield* Deferred.make<void>();
@@ -2567,6 +2597,7 @@ describe("orchestration v2 provider switching", () => {
             responseByRunOrdinal: { 1: "First account complete" },
             capturedTurns,
             backgroundWork,
+            bufferedWake,
             closedSessions,
             ...(queued ? { holdFirstTurn: firstStarted, releaseFirstTurn: releaseFirst } : {}),
           }),
@@ -2609,18 +2640,35 @@ describe("orchestration v2 provider switching", () => {
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const send = (ordinal: number, modelSelection: ModelSelection, attempt = "") =>
+          const send = (ordinal: number, modelSelection: ModelSelection) =>
             orchestrator.dispatch({
               type: "message.dispatch",
               createdBy: "user",
               creationSource: "web",
-              commandId: CommandId.make(`command:handoff-releases-session:${ordinal}${attempt}`),
+              commandId: CommandId.make(`command:handoff-releases-session:${ordinal}`),
               threadId: handoffThreadId,
-              messageId: MessageId.make(`message:handoff-releases-session:${ordinal}${attempt}`),
+              messageId: MessageId.make(`message:handoff-releases-session:${ordinal}`),
               text: `Prompt ${ordinal}`,
               attachments: [],
               modelSelection,
               dispatchMode: { type: queued ? "queue_after_active" : "start_immediately" },
+            });
+          const dispatchBufferedWake = () =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("command:handoff-buffered-wake"),
+              threadId: handoffThreadId,
+              messageId: MessageId.make("message:handoff-buffered-wake"),
+              text: "Buffered output",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "agent",
+              creationSource: "provider",
+              notification: {
+                source: { kind: "background_task" },
+                outcome: "updated",
+                summary: "Background work completed",
+              },
             });
           yield* orchestrator.dispatch({
             type: "thread.create",
@@ -2640,91 +2688,177 @@ describe("orchestration v2 provider switching", () => {
 
           if (queued) {
             yield* Deferred.await(firstStarted);
-            yield* send(2, secondSelection);
-            const queuedRunId = (yield* orchestrator.getThreadProjection(handoffThreadId)).runs[1]
-              ?.id;
-            assert.isDefined(queuedRunId);
+          } else {
+            yield* worker.drain();
+            yield* waitForIdle(handoffThreadId);
+          }
+          const afterFirst = yield* orchestrator.getThreadProjection(handoffThreadId);
+          const firstSession = afterFirst.providerSessions.find(
+            (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+          )!;
+          yield* send(2, secondSelection);
+          if (queued && buffered) {
+            yield* send(3, secondSelection);
+            yield* Ref.set(backgroundWork, false);
+            yield* Ref.set(bufferedWake, true);
+            yield* dispatchBufferedWake();
+            assert.lengthOf(yield* Ref.get(capturedTurns), 1);
             yield* Deferred.succeed(releaseFirst, undefined);
             yield* orchestrator.streamStoredEvents.pipe(
               Stream.filter(
                 ({ event }) =>
                   event.type === "run.updated" &&
-                  event.runId === queuedRunId &&
-                  (event.payload.queueHeld === true || event.payload.status === "completed"),
+                  event.payload.userMessageId === "message:handoff-releases-session:3" &&
+                  event.payload.status === "completed",
               ),
               Stream.runHead,
             );
             yield* worker.drain();
-            const afterQueue = yield* orchestrator.getThreadProjection(handoffThreadId);
-            const firstSession = afterQueue.providerSessions.find(
-              (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+            const turns = yield* Ref.get(capturedTurns);
+            assert.deepEqual(
+              turns.map((turn) => turn.text),
+              ["Prompt 1", "Buffered output", "Prompt 2", "Prompt 3"],
             );
-            // Detaching would end the background agents, so the busy session must stay up.
+            assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+            assert.equal(turns[2]?.nativeThreadId, turns[0]?.nativeThreadId);
+            assert.deepEqual(yield* Ref.get(closedSessions), [firstSession.id]);
+            return;
+          }
+          if (queued) {
+            yield* Deferred.succeed(releaseFirst, undefined);
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === 1 &&
+                  event.payload.status === "completed",
+              ),
+              Stream.runHead,
+            );
+          }
+          yield* worker.drain();
+          const waiting = yield* orchestrator.getThreadProjection(handoffThreadId);
+          if (background) {
             assert.deepEqual(yield* Ref.get(closedSessions), []);
             assert.equal(firstSession?.status, "ready");
-            if (!sharedHistory) {
-              assert.deepEqual(
-                afterQueue.runs.map((run) => [run.providerInstanceId, run.status]),
-                [
-                  [CLAUDE_MODEL_SELECTION.instanceId, "completed"],
-                  [secondSelection.instanceId, "completed"],
-                ],
-              );
-              return;
-            }
-            // Resuming the native thread beside the busy session would fork its history.
+          }
+          if (sharedHistory) {
+            // Native history cannot resume beside its busy owner, but needs no manual queue hold.
             assert.deepEqual(
-              afterQueue.runs.map((run) => [run.status, run.queueHeld === true]),
+              waiting.runs.map((run) => [run.status, run.queueHeld === true]),
               [
                 ["completed", false],
-                ["queued", true],
+                ["queued", false],
               ],
             );
             assert.lengthOf(yield* Ref.get(capturedTurns), 1);
-            yield* Ref.set(backgroundWork, false);
-            yield* orchestrator.dispatch({
-              type: "queue.resume",
-              commandId: CommandId.make("command:handoff-releases-session:resume"),
-              threadId: handoffThreadId,
-            });
-            yield* worker.drain();
-            const resumed = yield* waitForIdle(handoffThreadId);
+            yield* send(3, secondSelection);
+            const behind = yield* orchestrator.getThreadProjection(handoffThreadId);
             assert.deepEqual(
-              resumed.runs.map((run) => [run.providerInstanceId, run.status]),
+              behind.runs.map((run) => run.status),
+              ["completed", "queued", "queued"],
+            );
+            yield* Ref.set(bufferedWake, buffered);
+            yield* Ref.set(backgroundWork, false);
+            if (buffered) {
+              if (held) {
+                yield* orchestrator.dispatch({
+                  type: "thread.stop",
+                  commandId: CommandId.make("command:handoff-buffered-stop"),
+                  threadId: handoffThreadId,
+                });
+                yield* worker.drain();
+              }
+              yield* dispatchBufferedWake();
+              yield* worker.drain();
+              if (held) {
+                const stopped = yield* orchestrator.getThreadProjection(handoffThreadId);
+                assert.deepEqual(
+                  stopped.runs.filter((run) => run.status === "queued").map((run) => run.queueHeld),
+                  [true, true, true],
+                );
+                assert.lengthOf(yield* Ref.get(capturedTurns), 1);
+                return;
+              }
+              assert.isFalse(
+                yield* Ref.get(bufferedWake),
+                "The owning session must drain buffered output before the account switch",
+              );
+            }
+            const eventSink = yield* EventSink.EventSinkV2;
+            const now = yield* DateTime.now;
+            const settledEvent = {
+              id: EventId.make("event:handoff-releases-session:background-ended"),
+              threadId: handoffThreadId,
+              providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              occurredAt: now,
+            };
+            yield* eventSink.write({
+              events: [
+                queued
+                  ? {
+                      ...settledEvent,
+                      type: "provider-thread.updated",
+                      payload: { ...afterFirst.providerThreads[0]!, pendingBackgroundTasks: [] },
+                    }
+                  : {
+                      ...settledEvent,
+                      type: "subagent.updated",
+                      payload: {
+                        id: NodeId.make("subagent:handoff-background"),
+                        threadId: handoffThreadId,
+                        runId: afterFirst.runs[0]!.id,
+                        parentNodeId: afterFirst.runs[0]!.rootNodeId!,
+                        origin: "provider_native",
+                        createdBy: "agent",
+                        driver: CLAUDE_DRIVER,
+                        providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                        providerThreadId: afterFirst.providerThreads[0]!.id,
+                        childThreadId: null,
+                        nativeTaskRef: null,
+                        prompt: "Background work",
+                        title: null,
+                        model: null,
+                        status: "completed",
+                        result: "Done",
+                        startedAt: now,
+                        completedAt: now,
+                        updatedAt: now,
+                      },
+                    },
+              ],
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.userMessageId === "message:handoff-releases-session:3" &&
+                  event.payload.status === "completed",
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            const resumed = yield* orchestrator.getThreadProjection(handoffThreadId);
+            assert.deepEqual(
+              resumed.runs
+                .filter((run) => run.userMessageId !== "message:handoff-buffered-wake")
+                .map((run) => [run.providerInstanceId, run.status]),
               [
                 [CLAUDE_MODEL_SELECTION.instanceId, "completed"],
                 [secondSelection.instanceId, "completed"],
+                [secondSelection.instanceId, "completed"],
               ],
             );
+            const turns = yield* Ref.get(capturedTurns);
+            const sentTurns = turns.filter((turn) => turn.text !== "Buffered output");
+            assert.equal(sentTurns[1]?.nativeThreadId, sentTurns[0]?.nativeThreadId);
+            assert.equal(sentTurns[1]?.text, "Prompt 2");
+            assert.equal(sentTurns[2]?.text, "Prompt 3");
+            if (buffered) assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
             assert.deepEqual(yield* Ref.get(closedSessions), [firstSession!.id]);
             return;
           }
 
-          yield* worker.drain();
-          const afterFirst = yield* waitForIdle(handoffThreadId);
-          const firstSession = afterFirst.providerSessions.find(
-            (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
-          );
-          assert.equal(firstSession?.status, "ready");
-
-          if (background) {
-            // Native subagents live only in the adapter's roster, so the projection's
-            // pendingBackgroundTasks stays empty while the probe still reports work.
-            assert.deepEqual(afterFirst.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
-            const refused = yield* send(2, secondSelection, ":refused").pipe(Effect.flip);
-            assert.include(String(refused.cause), "still running background agents or commands");
-            const unchanged = yield* orchestrator.getThreadProjection(handoffThreadId);
-            assert.lengthOf(unchanged.runs, 1);
-            assert.deepEqual(yield* Ref.get(closedSessions), []);
-            assert.equal(unchanged.thread.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
-            assert.deepEqual(
-              unchanged.providerSessions.map((session) => [session.id, session.status]),
-              [[firstSession!.id, "ready"]],
-            );
-            yield* Ref.set(backgroundWork, false);
-          }
-
-          yield* send(2, secondSelection);
           yield* worker.drain();
           const afterSecond = yield* waitForIdle(handoffThreadId);
           yield* worker.drain();
@@ -2740,10 +2874,11 @@ describe("orchestration v2 provider switching", () => {
           assert.lengthOf(afterSecond.contextHandoffs, 1);
           assert.deepEqual(
             projection.providerSessions.map((session) => session.providerInstanceId),
-            [secondSelection.instanceId],
+            background
+              ? [CLAUDE_MODEL_SELECTION.instanceId, secondSelection.instanceId]
+              : [secondSelection.instanceId],
           );
-          // The detached event alone hides the session; the runtime must also close.
-          assert.deepEqual(yield* Ref.get(closedSessions), [firstSession!.id]);
+          assert.deepEqual(yield* Ref.get(closedSessions), background ? [] : [firstSession!.id]);
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(
@@ -2777,8 +2912,7 @@ describe("orchestration v2 provider switching", () => {
           const cwd = yield* checkpointWorkspace(`fresh-context-${key}`);
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
-          // A queued start has nobody to refuse, so a busy session must stay up.
-          const backgroundWork = yield* Ref.make(queued);
+          const backgroundWork = yield* Ref.make(true);
           const started = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
@@ -2855,11 +2989,7 @@ describe("orchestration v2 provider switching", () => {
               yield* worker.drain();
               yield* waitForIdle(freshThreadId);
             }
-            const firstSession = (yield* orchestrator.getThreadProjection(
-              freshThreadId,
-            )).providerSessions.find(
-              (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
-            )!;
+            const beforeFresh = yield* orchestrator.getThreadProjection(freshThreadId);
             yield* send("beta", CLAUDE_MODEL_SELECTION, { freshContext: true });
             if (queued) {
               // Queued before the fresh run started, so it is bound to the old conversation.
@@ -2886,8 +3016,25 @@ describe("orchestration v2 provider switching", () => {
             yield* worker.drain();
             yield* waitForIdle(freshThreadId);
             // Claude hosts one native thread per session, so an idle old one is closed.
-            assert.deepEqual(yield* Ref.get(closedSessions), queued ? [] : [firstSession.id]);
+            assert.deepEqual(yield* Ref.get(closedSessions), []);
             yield* Ref.set(backgroundWork, false);
+            const eventSink = yield* EventSink.EventSinkV2;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make(`event:fresh-context:${key}:old-background-ended`),
+                  type: "provider-thread.updated",
+                  threadId: freshThreadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: beforeFresh.providerThreads.find(
+                    (thread) => thread.id === beforeFresh.thread.activeProviderThreadId,
+                  )!,
+                },
+              ],
+            });
+            yield* send("after-background", CLAUDE_MODEL_SELECTION);
+            yield* worker.drain();
+            yield* waitForIdle(freshThreadId);
             yield* send("delta", CODEX_MODEL_SELECTION);
             yield* worker.drain();
             yield* waitForIdle(freshThreadId);
@@ -2913,6 +3060,10 @@ describe("orchestration v2 provider switching", () => {
             assert.notEqual(turnFor("beta").providerThreadId, turnFor("alpha").providerThreadId);
             assert.notEqual(turnFor("beta").nativeThreadId, turnFor("alpha").nativeThreadId);
             assert.equal(turnFor("beta").text, "Prompt beta");
+            assert.equal(
+              turnFor("after-background").nativeThreadId,
+              turnFor("beta").nativeThreadId,
+            );
             if (queued) {
               assert.equal(turnFor("gamma").providerThreadId, turnFor("beta").providerThreadId);
             }
