@@ -1020,17 +1020,13 @@ it.effect.each(["no active parent run", "a newer run owned by another provider"]
           status: "completed",
           summary: "Remote result remains available.",
         });
-        const unobserved = yield* a.projections.getThreadRecords(
-          parentThreadId,
-          ["runs", "subagents"],
-          { subagentIds: [delegated.taskId] },
-        );
-        expect(unobserved.subagents[0]?.completionDelivery).toEqual(
-          parent.subagents[0]?.completionDelivery,
-        );
-        expect(unobserved.runs.find((run) => run.id === parentRunId)?.delegatedCompletion).toEqual(
-          parentRun.delegatedCompletion,
-        );
+        const acknowledged = yield* a.projections.getThreadRecords(parentThreadId, ["subagents"], {
+          subagentIds: [delegated.taskId],
+        });
+        expect(acknowledged.subagents[0]?.completionDelivery).toEqual({
+          state: "acknowledged",
+          observedByRunId: parentRunId,
+        });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

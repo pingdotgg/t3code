@@ -2646,16 +2646,76 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "disposed";
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
-    // A late tool response without an observing run must leave the result available for a parent wake.
-    const unobserved =
+    // A late wait can arrive after finalization held the result for its still-live spawning run.
+    if (
       command.type === "delegated_task.completion-delivery.acknowledge" &&
-      command.observedByRunId === null;
+      command.observedByRunId === null
+    ) {
+      if (
+        !isTerminalDelegatedTaskStatus(task.status) ||
+        task.completionDelivery?.state !== "pending"
+      )
+        return;
+      const parentRun = projection.runs.find((run) => run.id === task.runId);
+      if (parentRun !== undefined && hasLiveRun({ runs: [parentRun] })) return;
+      const records = yield* projectionStore
+        .getThreadRecords(command.parentThreadId, ["messages", "providerTurns"], {
+          messageRoles: ["user"],
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorProjectionError({
+                threadId: command.parentThreadId,
+                cause,
+              }),
+          ),
+        );
+      const plan = yield* planDelegatedCompletionDelivery({
+        parentProjection: { ...projection, ...records },
+        parentRun,
+        task,
+        updatedTask: task,
+        now,
+      }).pipe(mapDispatchError(command));
+      if (plan.task.completionDelivery?.state === "pending") return;
+      yield* emitEvent({
+        type: "subagent.updated",
+        threadId: command.parentThreadId,
+        ...(task.runId === null ? {} : { runId: task.runId }),
+        nodeId: task.id,
+        driver: task.driver,
+        providerInstanceId: task.providerInstanceId,
+        occurredAt: now,
+        payload: plan.task,
+      });
+      if (plan.parentRun !== undefined) {
+        yield* emitEvent({
+          type: "run.updated",
+          threadId: command.parentThreadId,
+          runId: plan.parentRun.id,
+          providerInstanceId: plan.parentRun.providerInstanceId,
+          occurredAt: now,
+          payload: plan.parentRun,
+        });
+      }
+      if (plan.message !== undefined) {
+        yield* emitEvent({
+          type: "message.updated",
+          threadId: command.parentThreadId,
+          providerInstanceId:
+            plan.parentRun?.providerInstanceId ?? projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: plan.message,
+        });
+      }
+      return plan.parentRun?.id;
+    }
     // task_status and t3_thread_read use distinct command IDs, so two
     // valid observations can race after their read preflight. Re-emit the
     // existing task row so the second dispatch is a successful idempotent
     // no-op rather than "already acknowledged/disposed" or empty-events.
     if (
-      unobserved ||
       task.completionDelivery?.state === state ||
       (command.type === "delegated_task.completion-delivery.acknowledge" &&
         task.completionDelivery?.state === "disposed")
@@ -13859,6 +13919,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.filterOrFail(
         (planned) =>
           planned.events.length > 0 ||
+          (command.type === "delegated_task.completion-delivery.acknowledge" &&
+            command.observedByRunId === null) ||
           command.type === "thread.background-work.settle" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
@@ -14034,7 +14096,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       command.type === "delegated_task.wake-policy" ||
-      command.type === "delegated_task.remote.complete"
+      command.type === "delegated_task.remote.complete" ||
+      (command.type === "delegated_task.completion-delivery.acknowledge" &&
+        command.observedByRunId === null)
     ) {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.parentThreadId));
     }
