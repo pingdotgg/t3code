@@ -15,8 +15,8 @@ export function StandalonePage({
   children,
 }: {
   readonly tone?: keyof typeof backdropClassNames;
-  /** "card" is the compact auth card: 420px wide, 24px inset, 16px between blocks. */
-  readonly size?: "page" | "card";
+  /** "card" is the compact auth card: 420px wide, 24px inset, 16px between blocks. "bare" draws no card. */
+  readonly size?: "page" | "card" | "bare";
   readonly children: ReactNode;
 }) {
   return (
@@ -36,13 +36,17 @@ export function StandalonePage({
           </div>
         )}
 
-        <section
-          className={`relative w-full shrink-0 rounded-[16px] surface-popover ${size === "card" ? "max-w-[420px]" : "max-w-xl"}`}
-        >
-          <div className={size === "card" ? "flex flex-col gap-4 p-6" : "p-6 sm:p-8"}>
-            {children}
-          </div>
-        </section>
+        {size === "bare" ? (
+          children
+        ) : (
+          <section
+            className={`relative w-full shrink-0 rounded-[16px] surface-popover ${size === "card" ? "max-w-[420px]" : "max-w-xl"}`}
+          >
+            <div className={size === "card" ? "flex flex-col gap-4 p-6" : "p-6 sm:p-8"}>
+              {children}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );
