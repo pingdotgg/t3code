@@ -69,7 +69,7 @@ interface AttachedTab {
    */
   agentUsed: boolean;
   focusReleasing: boolean;
-  /** The sessions streaming the guest; one stopping leaves the others' screencasts running. */
+  /** The sessions sharing the guest's one Chromium screencast; it stops with the last of them. */
   readonly screencasts: Set<string | undefined>;
   readonly onMessage: (
     event: Electron.Event,
@@ -276,9 +276,15 @@ export const make = Effect.gen(function* () {
     dropFocusHolds(tab);
   };
 
+  /** An owner that leaves without stopping would otherwise keep the screencast running unseen. */
+  const leaveScreencast = (tab: AttachedTab, owner: string | undefined) => {
+    if (!tab.screencasts.delete(owner) || tab.screencasts.size > 0) return;
+    void tab.debuggee.debugger.sendCommand("Page.stopScreencast").catch(() => {});
+  };
+
   /** A detached session, such as a closed viewer, waits on nothing it sent. */
   const dropSessionHolds = (tab: AttachedTab, owner: string) => {
-    tab.screencasts.delete(owner);
+    leaveScreencast(tab, owner);
     for (const [pending, hold] of tab.focusPending) {
       if (hold.owner === owner) tab.focusPending.delete(pending);
     }
@@ -319,6 +325,7 @@ export const make = Effect.gen(function* () {
             if (owner !== undefined) streamingOwners.add(owner);
           } else if (sessionId === undefined && method === "Page.stopScreencast") {
             tab.screencasts.delete(owner);
+            if (tab.screencasts.size > 0) return Promise.resolve({});
           }
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
           if (
@@ -347,7 +354,7 @@ export const make = Effect.gen(function* () {
             : method === "Page.startScreencast"
               ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
                   // A viewer can outlive a refused stream; nothing is streaming for it.
-                  if (sessionId === undefined && tab.relay === relay) tab.screencasts.delete(owner);
+                  if (sessionId === undefined && tab.relay === relay) leaveScreencast(tab, owner);
                   releaseFocusWhenIdle(tab);
                   syncPainting(tab);
                   throw cause;
@@ -358,6 +365,9 @@ export const make = Effect.gen(function* () {
           detachedOwners.add(owner);
           dropSessionHolds(tab, owner);
         },
+        // Frames stop only for a session that stopped its own stream, not one that never streamed.
+        receivesScreencast: (owner) =>
+          tab.screencasts.has(owner) || owner === undefined || !streamingOwners.has(owner),
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")
