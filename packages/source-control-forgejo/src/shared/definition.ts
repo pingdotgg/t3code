@@ -10,6 +10,7 @@ import {
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
   parseCommitPath,
+  repositoryUrlFromPagePath,
   projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
@@ -22,6 +23,7 @@ const CHANGE_REQUEST_REFERENCE =
 // Forgejo and Gitea run on any hostname, possibly mounted below a path.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/commit\/([0-9a-f]+)\/?$/iu;
+const REPOSITORY_PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/src\/(?:branch|tag|commit)\/[^/]/u;
 
 const KIND = SourceControlProviderKind.make("forgejo");
 
@@ -87,6 +89,7 @@ export const definition = defineSourceControl({
   changeRequestUrlFromReferenceAutolink: () => null,
   commitUrl: (input) => buildCommitUrl(input, "commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
+  repositoryUrlFromPage: (url) => repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH),
   changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
   // Neither `fj` nor `tea` checks out by number.
   checkoutCommand: ({ number, repositoryUrl }) =>

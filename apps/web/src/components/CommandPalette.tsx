@@ -2021,7 +2021,7 @@ function OpenCommandPaletteDialog(props: {
         const destinationPath = getDefaultCloneDestination(
           addProjectCloneFlow.environmentId,
           remoteUrl,
-          rawRepository,
+          remoteUrl,
         );
         setAddProjectCloneFlow({
           step: "confirm",

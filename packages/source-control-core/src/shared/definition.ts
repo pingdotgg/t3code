@@ -258,6 +258,8 @@ export interface SourceControlDefinition {
   readonly parseCommitUrl?: (url: URL, known: boolean) => CommitLink | null;
   /** Null when the URL is not one of this host's change requests. */
   readonly parseChangeRequestUrl: (url: URL) => ParsedChangeRequestUrl | null;
+  /** The repository URL when `url` is a page inside one of this host's repositories. */
+  readonly repositoryUrlFromPage?: (url: URL) => string | null;
   /**
    * The change request URL a `reference` autolink might name, such as a GitHub `#123` written
    * through the issue route. Only a candidate: the caller must read it as a change request
@@ -408,6 +410,12 @@ export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeReq
         repositoryUrl: `${url.origin}/${repository}`,
       }
     : null;
+}
+
+/** Reads a repository page from `url` with `route`, whose first group is the repository path. */
+export function repositoryUrlFromPagePath(url: URL, route: RegExp): string | null {
+  const repository = route.exec(url.pathname)?.[1];
+  return repository ? `${url.origin}/${repository}` : null;
 }
 
 export function changeRequestUrlBelow(webUrl: string, route: string): string {
@@ -615,6 +623,8 @@ export interface SourceControlDefinitionRegistry {
   readonly hostLabelForChangeRequestUrl: (url: string) => string;
   readonly isSameChangeRequest: (left: string, right: string) => boolean;
   readonly changeRequestUrlFromReferenceAutolink: (url: string) => string | null;
+  /** The repository a page URL copied from a browser is in, such as a branch or file view. */
+  readonly repositoryUrlFromPage: (url: string) => string | null;
   /**
    * The host a remote is on, from the first definition in recognition order that claims it, or an
    * unknown host. Null when the remote names no host.
@@ -741,6 +751,15 @@ export function makeSourceControlDefinitionRegistry(
       for (const definition of claimOrder) {
         const candidate = definition.changeRequestUrlFromReferenceAutolink(url);
         if (candidate !== null) return candidate;
+      }
+      return null;
+    },
+    repositoryUrlFromPage: (value) => {
+      const url = httpUrl(value);
+      if (url === null) return null;
+      for (const definition of claimOrder) {
+        const repositoryUrl = definition.repositoryUrlFromPage?.(url);
+        if (repositoryUrl != null) return repositoryUrl;
       }
       return null;
     },

@@ -104,6 +104,22 @@ describe("Forgejo change request URLs", () => {
   });
 });
 
+describe("Forgejo repository pages", () => {
+  it("reads the repository from branch, tag and commit views", () => {
+    const repositoryUrl = (url: string) => definition.repositoryUrlFromPage?.(new URL(url));
+    expect(repositoryUrl("https://codeberg.org/forgejo/forgejo/src/branch/forgejo/README.md")).toBe(
+      "https://codeberg.org/forgejo/forgejo",
+    );
+    expect(repositoryUrl("http://git.example.test:3000/git/team/repo/src/tag/v1.0")).toBe(
+      "http://git.example.test:3000/git/team/repo",
+    );
+    expect(repositoryUrl("https://codeberg.org/forgejo/forgejo/src/commit/abc123")).toBe(
+      "https://codeberg.org/forgejo/forgejo",
+    );
+    expect(repositoryUrl("https://codeberg.org/forgejo/forgejo")).toBeNull();
+  });
+});
+
 describe("Forgejo remotes", () => {
   it("recognises Codeberg and Forgejo or Gitea hosts, keeping an HTTP remote's origin", () => {
     for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
