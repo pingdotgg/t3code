@@ -468,11 +468,13 @@ describe("AcpRegistryAdapterV2", () => {
     });
 
     const openWithStoredPicks = Effect.fn("openWithStoredPicks")(function* (input: {
+      readonly agentId?: string;
       readonly setup: unknown;
       readonly pickFrames: ReadonlyArray<Frame>;
       readonly customModels?: ReadonlyArray<string>;
       readonly storedModel?: string;
       readonly storedModePick?: string;
+      readonly storedOptions?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
       readonly turnModels?: ReadonlyArray<string>;
       readonly rejectedModel?: string;
     }) {
@@ -521,7 +523,7 @@ describe("AcpRegistryAdapterV2", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings: yield* decodeAcpRegistryAdapterSettings({
-          agentId: "fixture-agent",
+          agentId: input.agentId ?? "fixture-agent",
           authMethodId: "test",
           customModels: input.customModels ?? [],
         }),
@@ -562,6 +564,7 @@ describe("AcpRegistryAdapterV2", () => {
         ...(input.storedModePick === undefined
           ? {}
           : { options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }] }),
+        ...(input.storedOptions === undefined ? {} : { options: input.storedOptions }),
       };
       const configurations: Array<AcpRegistryLiveConfiguration | undefined> = [];
       yield* Effect.gen(function* () {
@@ -852,6 +855,38 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped);
       },
     );
+
+    it.effect.each([
+      { agentId: "fixture-agent", setsModel: false },
+      { agentId: "github-copilot-cli", setsModel: true },
+    ])("opens $agentId on a model it reports as current", ({ agentId, setsModel }) => {
+      const model = {
+        ...modelOption("model", "claude-sonnet-5.5"),
+        options: [{ value: "claude-sonnet-5.5", name: "Claude Sonnet 5.5" }],
+      };
+      const effort = (currentValue: string) => ({
+        id: "reasoning_effort",
+        name: "Reasoning effort",
+        category: "thought_level",
+        type: "select",
+        currentValue,
+        options: ["low", "medium"].map((value) => ({ value, name: value })),
+      });
+      const set = (configId: string, value: string, configOptions: ReadonlyArray<unknown>) => [
+        outbound("session/set_config_option", { sessionId: "agent-session", configId, value }),
+        answer("session/set_config_option", { configOptions }),
+      ];
+      return openWithStoredPicks({
+        agentId,
+        setup: { configOptions: [model, effort("medium")] },
+        storedModel: "claude-sonnet-5.5",
+        storedOptions: [{ id: "reasoning_effort", value: "low" }],
+        pickFrames: [
+          ...(setsModel ? set("model", "claude-sonnet-5.5", [model, effort("medium")]) : []),
+          ...set("reasoning_effort", "low", [model, effort("low")]),
+        ],
+      }).pipe(Effect.provide(layerTest), Effect.scoped);
+    });
 
     // regression: #19519 models come from session model state, not a hardcoded list
     it.effect("keeps unadvertised default and auto selections agent-controlled", () =>
