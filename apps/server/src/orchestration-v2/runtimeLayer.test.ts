@@ -7596,6 +7596,50 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
     }),
   );
 
+  it.effect("keeps a retry's failed-run marker on its message and turn item", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-retry-marker");
+      const retryOfRunId = RunId.make(`${threadId}:failed-run`);
+      const messageId = MessageId.make(`${threadId}:retry`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Retried thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: `/tmp/t3-${threadId}`,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:message`),
+        threadId,
+        messageId,
+        text: "Build it",
+        attachments: [],
+        retryOfRunId,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        projection.messages.find((message) => message.id === messageId)?.retryOfRunId,
+        retryOfRunId,
+      );
+      const item = projection.turnItems.find(
+        (candidate) => candidate.type === "user_message" && candidate.messageId === messageId,
+      );
+      assert.equal(item?.type === "user_message" ? item.retryOfRunId : undefined, retryOfRunId);
+    }),
+  );
+
   it.effect("marks unread before the user's last turn when an automatic compaction followed", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -4410,6 +4410,90 @@ describe("failed turn transcript", () => {
       });
     },
   );
+
+  it("shows a retried prompt once, with the retry's answer under it", () => {
+    const threadId = ThreadId.make("retried-thread");
+    const failedRunId = RunId.make("failed-run");
+    const retryRunId = RunId.make("retry-run");
+    const at = DateTime.makeUnsafe("2026-09-20T12:00:00Z");
+    const row = (
+      position: number,
+      runId: RunId,
+      item: Record<string, unknown> & { id: string },
+    ): OrchestrationV2ProjectedTurnItem => ({
+      position,
+      visibility: "local",
+      sourceThreadId: threadId,
+      sourceItemId: TurnItemId.make(item.id),
+      item: {
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: position,
+        title: null,
+        startedAt: at,
+        completedAt: at,
+        updatedAt: at,
+        status: "completed",
+        ...item,
+        id: TurnItemId.make(item.id),
+      } as OrchestrationV2TurnItem,
+    });
+    const prompt = {
+      type: "user_message",
+      createdBy: "user",
+      creationSource: "web",
+      inputIntent: "turn_start",
+      text: "Build it",
+      attachments: [],
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [
+          row(0, failedRunId, { ...prompt, id: "user", messageId: MessageId.make("user") }),
+          row(1, failedRunId, {
+            id: "failure",
+            type: "error",
+            status: "failed",
+            failure: { class: "provider_error", message: "Failed.", code: null, retryable: true },
+          }),
+          row(2, retryRunId, {
+            ...prompt,
+            id: "retry",
+            messageId: MessageId.make("retry"),
+            retryOfRunId: failedRunId,
+          }),
+          row(3, retryRunId, {
+            id: "answer",
+            type: "assistant_message",
+            messageId: MessageId.make("answer"),
+            text: "Built it",
+            streaming: false,
+          }),
+        ],
+        optimisticMessages: [],
+      }),
+      latestRun: {
+        runId: retryRunId,
+        status: "completed",
+        startedAt: DateTime.formatIso(at),
+        completedAt: DateTime.formatIso(at),
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(
+      rows.flatMap((row) => (row.kind === "message" ? [[row.message.role, row.message.text]] : [])),
+    ).toEqual([
+      ["user", "Build it"],
+      ["assistant", "Built it"],
+    ]);
+  });
 });
 
 describe("working window", () => {

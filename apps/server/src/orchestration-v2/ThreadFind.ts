@@ -32,6 +32,7 @@ interface FindPayload extends FindRow {
   readonly payload: string;
   readonly entryId: string;
   readonly type: OrchestrationV2TurnItem["type"];
+  readonly retried: boolean;
 }
 interface FindDocument extends FindRow {
   readonly entryId: string;
@@ -205,10 +206,12 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       payload_json: string;
       entry_id: string;
       item_type: OrchestrationV2TurnItem["type"];
+      retried: number;
     }>`
       SELECT item.thread_id, item.turn_item_id, item.payload_json,
         COALESCE(json_extract(item.payload_json, '$.messageId'), item.turn_item_id) AS entry_id,
-        json_extract(item.payload_json, '$.type') AS item_type
+        json_extract(item.payload_json, '$.type') AS item_type,
+        json_extract(item.payload_json, '$.retryOfRunId') IS NOT NULL AS retried
       FROM orchestration_v2_projection_turn_items AS item
       JOIN json_each(${sources}) AS wanted
         ON item.thread_id = json_extract(wanted.value, '$.threadId')
@@ -229,6 +232,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             payload: payload.payload_json,
             entryId: payload.entry_id,
             type: payload.item_type,
+            retried: payload.retried === 1,
           });
     });
   });
@@ -348,7 +352,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         const rows = payloads.filter(
           (row) =>
             row.type !== "user_input_request" &&
-            !(row.type === "user_message" && foldedAnswers.has(row.entryId)),
+            !(row.type === "user_message" && (row.retried || foldedAnswers.has(row.entryId))),
         );
         const documents = new Map<number, FindDocument>();
         const count = Effect.fnUntraced(function* (row: FindPayload) {
