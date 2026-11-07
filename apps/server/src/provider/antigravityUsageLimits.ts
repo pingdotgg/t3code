@@ -17,7 +17,8 @@ import {
 
 const DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 const PROD_ENDPOINT = "https://cloudcode-pa.googleapis.com";
-// The ACP runtime meters consumer sign-ins on the daily host and workspace sign-ins on prod.
+// The ACP runtime meters consumer tiers on the daily host and GCP-terms tiers on prod.
+// The sign-in method stands in for the tier.
 const ENDPOINTS = {
   "oauth-personal": [DAILY_ENDPOINT, PROD_ENDPOINT],
   "oauth-business": [PROD_ENDPOINT, DAILY_ENDPOINT],
