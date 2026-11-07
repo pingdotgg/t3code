@@ -9,6 +9,7 @@ import {
   MARKETING_STATS,
 } from "../lib/site";
 import { tweets } from "../lib/tweets";
+import { softwareJsonLd } from "../lib/seo";
 
 const screenshot = await getImage({
   src: desktopScreenshot,
@@ -29,7 +30,10 @@ const mobileEndorsementRows = [
 ];
 ---
 
-<Layout>
+<Layout
+  title="T3 Code | The open-source control plane for coding agents"
+  jsonLd={[softwareJsonLd()]}
+>
   <section class="hero">
     <div class="hero-grid" aria-hidden="true"></div>
 
