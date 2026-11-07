@@ -2170,6 +2170,16 @@ const make = Effect.gen(function* () {
           "Asking for a secret requires an active run owned by this MCP provider session.",
         );
       }
+      if (
+        input.fields !== undefined &&
+        (input.value !== undefined || input.delivery === "secretRef")
+      ) {
+        return yield* failure(
+          "invalid_request",
+          '`fields` values are saved as files. Leave out `value` and `delivery: "secretRef"`.',
+        );
+      }
+      const delivery = input.fields === undefined ? input.delivery : "file";
       // A secret the user already pasted needs no card: it goes straight to a file.
       if (input.value !== undefined) {
         if (input.delivery === "secretRef") {
@@ -2212,7 +2222,8 @@ const make = Effect.gen(function* () {
             label: input.label,
             reason: input.reason,
             ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
-            ...(input.delivery === "file" ? { delivery: "file" as const } : {}),
+            ...(delivery === "file" ? { delivery: "file" as const } : {}),
+            ...(input.fields === undefined ? {} : { fields: input.fields }),
             secretStatus,
           })
           .pipe(
@@ -2291,11 +2302,11 @@ const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
       yield* Metrics.increment(Metrics.secretRequestsTotal, { status });
       if (status !== "saved") return { status, note: SECRET_REQUEST_UNSAVED_NOTE[status] };
-      if (input.delivery === "file") {
-        const file = yield* secretRequests
+      if (delivery === "file") {
+        const saved = yield* secretRequests
           .saveToFile({ threadId, turnItemId })
           .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
-        return { status, file };
+        return { status, ...saved };
       }
       const secretRef = yield* secretRequests.savedRef({ threadId: threadId, turnItemId });
       if (Option.isNone(secretRef)) {

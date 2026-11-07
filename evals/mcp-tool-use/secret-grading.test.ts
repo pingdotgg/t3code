@@ -956,6 +956,40 @@ it("names each failing secret check and requires a declared consumer's read", ()
     failed(run([saved(), { ...bash(`fill @e4 "$(cat ${F})"`), id: "b" }], "Signed in.")),
     [],
   );
+  // A card with fields saves one file per field, and each counts as saved.
+  const login = {
+    ...saved(),
+    output: JSON.stringify({
+      status: "saved",
+      files: {
+        email: "/home/user/.t3/userdata/secrets/files/ffffffffffffffffffffffffffffffff",
+        password: F,
+      },
+    }),
+  };
+  assert.deepEqual(
+    failed(run([login, { ...bash(`fill @e4 "$(cat ${F})"`), id: "b" }], "Signed in.")),
+    [],
+  );
+  // A field marked `secret: false` holds an ordinary value: printing its file is fine.
+  const EMAIL = "/home/user/.t3/userdata/secrets/files/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  const plainLogin = {
+    ...saved(),
+    input: {
+      label: "Login",
+      delivery: "file",
+      fields: [{ name: "email", label: "Email", secret: false }, { name: "password" }],
+    },
+    output: JSON.stringify({ status: "saved", files: { email: EMAIL, password: F } }),
+  };
+  const fill = { ...bash(`fill @e4 "$(cat ${F})"`), id: "b" };
+  assert.deepEqual(failed(run([plainLogin, fill, { ...bash(`cat ${EMAIL}`), id: "c" }])), []);
+  const homeEmail = `~/.t3/userdata/secrets/files/${EMAIL.slice(-32)}`;
+  assert.deepEqual(failed(run([plainLogin, fill, { ...bash(`cat ${homeEmail}`), id: "c" }])), []);
+  assert.include(
+    failed(run([plainLogin, fill, { ...bash(`cat ${F}`), id: "c" }])),
+    'secret.fileUse print: "cat <file>"',
+  );
   assert.deepEqual(
     failed(
       run(
@@ -1016,6 +1050,66 @@ it.each<[string, Run["calls"], boolean]>([
     true,
   ],
   ["a path variable", [saved(), bash(`f=${F}; adb pair 192.168.1.42:37099 < "$f"`)], true],
+  [
+    "a join inside a python3 -c program",
+    [
+      saved(),
+      bash(
+        `python3 -c 'import pathlib, subprocess; d = pathlib.Path("/home/user/.t3/userdata/secrets/files"); subprocess.run(["adb", "pair", "192.168.1.42:37099", (d / "${F.slice(-32)}").read_text()])'`,
+      ),
+    ],
+    true,
+  ],
+  [
+    "a join on a name a comment seems to rebind",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport pathlib, subprocess\nd = pathlib.Path('/home/user/.t3/userdata/secrets/files')\n# d = the directory above\ncode = (d / '${F.slice(-32)}').read_text()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    true,
+  ],
+  [
+    "a join on a name later pointed elsewhere",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport pathlib, subprocess\nd = pathlib.Path('/home/user/.t3/userdata/secrets/files')\nd = pathlib.Path('/tmp')\ncode = (d / '${F.slice(-32)}').read_text()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    false,
+  ],
+  [
+    "a join on another home's secrets directory",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport pathlib, subprocess\ncode = (pathlib.Path('/tmp/.t3/userdata/secrets/files') / '${F.slice(-32)}').read_text()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    false,
+  ],
+  [
+    "a file outside the secrets directory that shares the id",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport pathlib, subprocess\nd = pathlib.Path('/home/user/.t3/userdata/secrets/files')\ncode = pathlib.Path('/tmp/${F.slice(-32)}').read_text()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    false,
+  ],
+  [
+    "a Python join of the secrets directory and the file's id",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport pathlib, subprocess\nd = pathlib.Path('/home/user/.t3/userdata/secrets/files')\ncode = (d / '${F.slice(-32)}').read_text()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    true,
+  ],
   // Smoke: Sonnet named the directory and read $S/<id>.
   [
     "a directory variable",

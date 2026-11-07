@@ -747,6 +747,25 @@ const PastedSecretValue = Schema.String.check(
   Schema.makeFilter((value: string) => value.length > 0, { expected: "a non-empty string" }),
 );
 
+const RequestSecretFields = Schema.Array(
+  Schema.Struct({
+    name: TrimmedNonEmptyString.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,31}$/)),
+    label: TrimmedNonEmptyString,
+    placeholder: Schema.optional(TrimmedNonEmptyString),
+    secret: Schema.optional(Schema.Boolean).annotate({
+      description: "false shows the typed value, e.g. an email.",
+    }),
+  }),
+)
+  .check(Schema.isMinLength(1), Schema.isMaxLength(8))
+  .check(
+    Schema.makeFilter((fields) =>
+      new Set(fields.map((field) => field.name)).size === fields.length
+        ? true
+        : "Field names must be unique.",
+    ),
+  );
+
 export const OrchestratorMcpRequestSecretInput = Schema.Struct({
   label: TrimmedNonEmptyString.annotate({
     description: "Card title, such as 'GitHub webhook secret'.",
@@ -757,6 +776,10 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
   placeholder: Schema.optional(TrimmedNonEmptyString),
   delivery: Schema.optional(Schema.Literals(["secretRef", "file"])).annotate({
     description: "secretRef (default) for a T3 tool; file for a command.",
+  }),
+  fields: Schema.optional(RequestSecretFields).annotate({
+    description:
+      'Values only the user has, in one card, e.g. email + password, with delivery "file". Returns `files` by name.',
   }),
   value: Schema.optional(PastedSecretValue).annotate({
     description: "Pasted in this thread; no card.",
@@ -783,6 +806,12 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
     file: Schema.String.annotate({
       description:
         "Owner-only file with the value. Read it inside commands and never print it. Deleted after 24 hours.",
+    }),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("saved"),
+    files: Schema.Record(Schema.String, Schema.String).annotate({
+      description: "One file per field name, used like `file`.",
     }),
   }),
   Schema.Struct({

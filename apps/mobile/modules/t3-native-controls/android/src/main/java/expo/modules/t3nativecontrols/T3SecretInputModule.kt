@@ -13,6 +13,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.modules.Module
@@ -42,7 +43,14 @@ class T3SecretInputModule : Module() {
         view.input.setTextSize(TypedValue.COMPLEX_UNIT_DIP, value)
       }
       Prop("editable") { view: T3SecretInputView, value: Boolean -> view.input.isEnabled = value }
+      Prop("masked") { view: T3SecretInputView, value: Boolean -> view.setMasked(value) }
+      Prop("returnKey") { view: T3SecretInputView, value: String ->
+        view.input.imeOptions =
+          if (value == "next") EditorInfo.IME_ACTION_NEXT else EditorInfo.IME_ACTION_DONE
+      }
       Events("onChangeText", "onSubmit")
+
+      AsyncFunction("focus") { view: T3SecretInputView -> view.focusInput() }
     }
   }
 }
@@ -78,14 +86,7 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
       input.importantForAutofill = IMPORTANT_FOR_AUTOFILL_NO
     }
     input.imeOptions = EditorInfo.IME_ACTION_DONE
-    // Not setSingleLine(): that swaps out the password transformation. The password variation is
-    // already single line, and the keyboard keeps typed text out of suggestions.
-    input.inputType =
-      InputType.TYPE_CLASS_TEXT or
-      InputType.TYPE_TEXT_VARIATION_PASSWORD or
-      InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-    // The password variation switches the typeface to monospace.
-    input.typeface = Typeface.DEFAULT
+    setMasked(true)
     input.setTextColor(Color.BLACK)
     input.setHintTextColor(Color.GRAY)
     input.addTextChangedListener(
@@ -101,7 +102,12 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
       }
     )
     input.setOnEditorActionListener { _, actionId, event ->
-      if (actionId == EditorInfo.IME_ACTION_DONE || event?.keyCode == KeyEvent.KEYCODE_ENTER) {
+      // Next is submitted too: JS moves focus to the following field.
+      if (
+        actionId == EditorInfo.IME_ACTION_DONE ||
+          actionId == EditorInfo.IME_ACTION_NEXT ||
+          event?.keyCode == KeyEvent.KEYCODE_ENTER
+      ) {
         // Hardware Enter reports IME_NULL on Android 13 and earlier, and both key down and key up.
         if (event == null || event.action == KeyEvent.ACTION_DOWN) {
           onSubmit(mapOf("value" to input.text.toString()))
@@ -131,6 +137,28 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
     input.setText(value)
     input.setSelection(input.text.length)
     applyingValue = false
+  }
+
+  /** Both variations are single line and keep typed text out of suggestions. */
+  fun setMasked(masked: Boolean) {
+    val variation =
+      if (masked) InputType.TYPE_TEXT_VARIATION_PASSWORD
+      else InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+    val inputType =
+      InputType.TYPE_CLASS_TEXT or variation or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+    if (input.inputType == inputType) return
+    val selection = input.selectionEnd
+    // Not setSingleLine(): that swaps out the password transformation.
+    input.inputType = inputType
+    // The password variations switch the typeface to monospace.
+    input.typeface = Typeface.DEFAULT
+    if (selection >= 0) input.setSelection(minOf(selection, input.text.length))
+  }
+
+  fun focusInput() {
+    input.requestFocus()
+    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
   }
 
   fun setCursorColor(color: Int) {

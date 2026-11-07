@@ -16,11 +16,43 @@ export type SecretRequestItem = Extract<
 >;
 
 /** A `file` request lets the agent's commands read the value, so its card must not promise more. */
-export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery">) =>
-  item.delivery === "file"
-    ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
-    : "Stored securely, never shown to the agent";
-export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
+export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery" | "fields">) =>
+  item.delivery !== "file"
+    ? "Stored securely, never shown to the agent"
+    : item.fields === undefined
+      ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
+      : "Kept out of chat, in private files this agent's commands can read for 24 hours";
+const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
+
+export interface SecretRequestInput {
+  /** Key in the card's values: the field name, or "" for a request without fields. */
+  readonly key: string;
+  readonly label: string;
+  readonly placeholder: string;
+  /** Masked, with a toggle to show it. */
+  readonly secret: boolean;
+}
+
+export function secretRequestInputs(
+  item: Pick<SecretRequestItem, "label" | "placeholder" | "fields">,
+): ReadonlyArray<SecretRequestInput> {
+  if (item.fields === undefined) {
+    return [
+      {
+        key: "",
+        label: item.label,
+        placeholder: item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER,
+        secret: true,
+      },
+    ];
+  }
+  return item.fields.map((field) => ({
+    key: field.name,
+    label: field.label,
+    placeholder: field.placeholder ?? "",
+    secret: field.secret !== false,
+  }));
+}
 
 export type SecretRequestDisplay =
   | { readonly kind: "pending" }
@@ -137,27 +169,40 @@ export function secretRequestReference(
     : undefined;
 }
 
+/** A card value by input key. Own keys only: a field may be named `constructor`. */
+export const secretRequestValue = (values: Readonly<Record<string, string>>, key: string) =>
+  Object.hasOwn(values, key) ? (values[key] ?? "") : "";
+
 export type SecretRequestReply =
-  | { readonly type: "save"; readonly secret: string }
+  /** Keyed by `SecretRequestInput.key`. */
+  | { readonly type: "save"; readonly values: Readonly<Record<string, string>> }
+  /** Single-value cards only: the server reads it through `source`. */
   | { readonly type: "reference"; readonly source: SecretRequestSource; readonly reference: string }
   | { readonly type: "decline" };
 
+/** Null until every input has a value, or while a reference is not `source`'s syntax. */
 export function secretRequestAnswerInput(
-  item: Pick<SecretRequestItem, "id" | "threadId">,
+  item: Pick<SecretRequestItem, "id" | "threadId" | "label" | "placeholder" | "fields">,
   answer: SecretRequestReply,
 ): SecretRequestAnswerInput | null {
-  if (answer.type === "decline") {
-    return { threadId: item.threadId, turnItemId: item.id, answer: { type: "decline" } };
-  }
+  const base = { threadId: item.threadId, turnItemId: item.id };
+  if (answer.type === "decline") return { ...base, answer: { type: "decline" } };
   if (answer.type === "reference") {
-    const reference = secretRequestReference(answer.source, answer.reference);
-    return reference === undefined
-      ? null
-      : { threadId: item.threadId, turnItemId: item.id, answer: { type: "reference", reference } };
+    const reference =
+      item.fields === undefined
+        ? secretRequestReference(answer.source, answer.reference)
+        : undefined;
+    return reference === undefined ? null : { ...base, answer: { type: "reference", reference } };
   }
-  const secret = answer.secret.trim();
-  if (secret.length === 0) return null;
-  return { threadId: item.threadId, turnItemId: item.id, answer: { type: "save", secret } };
+  const entries = secretRequestInputs(item).map(
+    (input) => [input.key, secretRequestValue(answer.values, input.key).trim()] as const,
+  );
+  if (entries.some(([, value]) => value.length === 0)) return null;
+  if (item.fields === undefined) {
+    return { ...base, answer: { type: "save", secret: entries[0]?.[1] ?? "" } };
+  }
+
+  return { ...base, answer: { type: "save", values: Object.fromEntries(entries) } };
 }
 
 const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuthorizationError"]);

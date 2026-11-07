@@ -178,18 +178,24 @@ const McpToolUseCall = Schema.Struct({
 type McpToolUseCall = typeof McpToolUseCall.Type;
 
 /** Grading rules. Tool names are bare: `delegate_task`, `Bash`, `Agent`. */
-const McpToolUseExpect = Schema.Struct({
+const McpToolUseCallsExpect = Schema.Struct({
   /** Each entry needs one matching call. */
   calls: Schema.optional(Schema.Array(McpToolUseCall)),
   /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
   distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
+  minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+  maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+});
+
+const McpToolUseExpect = Schema.Struct({
+  ...McpToolUseCallsExpect.fields,
+  /** Passes when one alternative passes every one of its checks. */
+  anyOf: Schema.optional(Schema.Array(McpToolUseCallsExpect)),
   /** No call may match any entry. */
   callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
   /** First calls of these tools happen in this order. */
   order: Schema.optional(Schema.Array(Schema.String)),
-  minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
-  maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   /**
    * One `args`-style value per new top-level thread the agent asks for, by `t3_thread_launch` or a
    * `create_threads` entry. Each matches a different thread's request; no other thread is asked for.
@@ -825,6 +831,8 @@ type Sample = {
   readonly threads: Map<string, { readonly title: string; readonly brief: string }>;
   /** Files T3's request_secret saved in this sample, in call order. */
   readonly secretFiles: Array<string>;
+  /** Files request_secret saved for `secret: false` fields, with their labels. */
+  readonly plainFiles: Array<{ readonly file: string; readonly label: string }>;
   secretRequests: number;
   /** T3's device tools, once `withDevices` builds them for a world with devices. */
   devices?: DeviceTools;
@@ -872,6 +880,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     nextTask: Math.max(0, ...taskNumbers) + 1,
     threads: new Map(),
     secretFiles: [],
+    plainFiles: [],
     secretRequests: 0,
     priorResults: new Map(),
   };
@@ -1193,8 +1202,21 @@ export const t3Default = (
         .slice(0, 32);
       const home =
         /^\/(?:home|Users)\/[^/]+/.exec(sample.base.environment.cwd)?.[0] ?? "/home/user";
+      const fileFor = (key: string) => `${home}/.t3/userdata/secrets/files/${key}`;
+      // A card with `fields` saves one file per field name.
+      if (Array.isArray(input.fields) && !pastedSecret(name, input)) {
+        const names = input.fields.flatMap((field) =>
+          isRecord(field) && typeof field.name === "string" ? [field.name] : [],
+        );
+        const fileId = (field: string) =>
+          NodeCrypto.createHash("sha256").update(`${id}:${field}`).digest("hex").slice(0, 32);
+        return {
+          status: "saved",
+          files: Object.fromEntries(names.map((field) => [field, fileFor(fileId(field))])),
+        };
+      }
       return input.delivery === "file" || pastedSecret(name, input)
-        ? { status: "saved", file: `${home}/.t3/userdata/secrets/files/${id}` }
+        ? { status: "saved", file: fileFor(id) }
         : { status: "saved", secretRef: `secret-ref:${id}` };
     }
     case "unlink_pull_request":
@@ -1417,15 +1439,16 @@ export const namedPathsLine = ({ setup }: McpToolUseCase) => {
 /** The simulator's request: the machine, this sample's earlier calls, then the new call. */
 export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, model: string) => {
   const { testCase, base, repo, shell, devices } = sample;
-  const { world, context, shellMocks = [] } = testCase.setup;
+  const { world, context } = testCase.setup;
   const { cwd, platform, date } = base.environment;
   const command = call.tool === "Bash" && isRecord(call.input) ? call.input.command : undefined;
+  const mocks = shellMocksFor(sample, typeof command === "string" ? command : undefined);
   const machine = [
     `Working directory: ${cwd} on ${platform}, a git checkout of github.com/${repo}.${date ? ` Today is ${date}.` : ""}`,
     gitStatus(testCase),
     `World: ${valueText(world ?? {})}`,
-    ...(shellMocks.length > 0
-      ? [`Commands that match these regexes print exactly this output: ${valueText(shellMocks)}`]
+    ...(mocks.length > 0
+      ? [`Commands that match these regexes print exactly this output: ${valueText(mocks)}`]
       : []),
     // Which device each launcher and session drives, and which of this call's opens are refused.
     ...(devices?.describe(shell, typeof command === "string" ? command : undefined) ?? []),
@@ -1437,6 +1460,11 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
     ...(sample.secretFiles.length > 0
       ? [
           `T3's request_secret saved these files in this sample: ${sample.secretFiles.join(", ")}. Each exists, is readable only by the user, and holds exactly the value the user gave, typed into T3's private card or pasted in chat and saved by the agent, the right one for the task, with no trailing newline. A program that reads it, as in "$(cat <file>)", < <file> or a --*-file flag, gets that value. What appears in the output is whatever that program prints: one that prints or logs its input shows the value. No other file in that directory exists.`,
+        ]
+      : []),
+    ...(sample.plainFiles.length > 0
+      ? [
+          `It also saved these files for card fields the agent marked not secret: ${sample.plainFiles.map(({ file, label }) => `${file} (${label})`).join(", ")}. Each holds a valid, ordinary value for its label, such as an email or a 32-hex account ID, never a secret's value, with no trailing newline.`,
         ]
       : []),
     ...(context ? [`The agent was told: ${context}`] : []),
@@ -1487,12 +1515,23 @@ export const shellOutput = (content: ReadonlyArray<Block>) => {
   });
 };
 
+/**
+ * The case's shell mocks for a command. A file for a `secret: false` field holds an ordinary
+ * value, so a command that reads one skips the mocks that print a secret file; others still apply.
+ */
+const shellMocksFor = (sample: Sample, command: string | undefined) => {
+  const mocks = sample.testCase.setup.shellMocks ?? [];
+  const plain =
+    command !== undefined &&
+    sample.plainFiles.some(({ file }) => command.includes(file.slice(-32)));
+  return plain ? mocks.filter((mock) => !mock.match.includes("secrets/files")) : mocks;
+};
+
 /** A shell mock's output, when the command is one simple command that the mock matches. */
 export const mockOutput = (sample: Sample, command: string) =>
   /&&|\|\||[;|\n]/.test(command.trim())
     ? undefined
-    : sample.testCase.setup.shellMocks?.find((mock) => new RegExp(mock.match).test(command))
-        ?.output;
+    : shellMocksFor(sample, command).find((mock) => new RegExp(mock.match).test(command))?.output;
 
 type Config = {
   readonly apiKey: string;
@@ -1536,8 +1575,21 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
 });
 
 /** Tells the shell simulator about a file request_secret saved, so it exists for later commands. */
-const savedSecretFile = (sample: Sample, result: unknown) => {
-  if (isRecord(result) && typeof result.file === "string") sample.secretFiles.push(result.file);
+const savedSecretFile = (
+  sample: Sample,
+  input: Readonly<Record<string, unknown>>,
+  result: unknown,
+) => {
+  if (!isRecord(result)) return;
+  if (typeof result.file === "string") sample.secretFiles.push(result.file);
+  if (!isRecord(result.files)) return;
+  const fields = Array.isArray(input.fields) ? input.fields.filter(isRecord) : [];
+  for (const [name, file] of Object.entries(result.files)) {
+    if (typeof file !== "string") continue;
+    const field = fields.find((candidate) => candidate.name === name);
+    if (field?.secret === false) sample.plainFiles.push({ file, label: valueText(field.label) });
+    else sample.secretFiles.push(file);
+  }
 };
 
 /** The result for one tool call. */
@@ -1580,7 +1632,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   }
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
-    if (name === "request_secret") savedSecretFile(sample, mock);
+    if (name === "request_secret") savedSecretFile(sample, input, mock);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
@@ -1594,7 +1646,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       return failed(SUBAGENT_WATCH_ERROR);
     }
     const value = t3Default(sample, name, input);
-    if (name === "request_secret") savedSecretFile(sample, value);
+    if (name === "request_secret") savedSecretFile(sample, input, value);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
@@ -1713,6 +1765,11 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
           calls.map((request) => ({ request, brief: "" })),
         ),
     );
+  }
+  if (expect.anyOf !== undefined) {
+    const passes = (alternative: (typeof expect.anyOf)[number]) =>
+      gradeSample(alternative, run, pasted).every((check) => check.pass);
+    add("anyOf", expect.anyOf.some(passes));
   }
   for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
   for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
