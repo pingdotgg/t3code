@@ -188,45 +188,10 @@ function AboutVersionSection() {
     ).length;
 
   const handleButtonClick = async () => {
-    const bridge = window.desktopBridge;
-    if (!bridge) return;
-
-    const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-
-    if (action === "download" || action === "install") {
-      if (isUpdateActionPending) return;
-      setIsUpdateActionPending(true);
-      await requestCoordinatedDesktopUpdate();
-      setIsUpdateActionPending(false);
-      return;
-    }
-
-    if (typeof bridge.checkForUpdate !== "function") return;
-    void bridge
-      .checkForUpdate()
-      .then((result) => {
-        if (!result.checked) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not check for updates",
-              description:
-                updatesDenial ??
-                result.state.message ??
-                "Automatic updates are not available in this build.",
-            }),
-          );
-        }
-      })
-      .catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
-          }),
-        );
-      });
+    if (!window.desktopBridge || isUpdateActionPending) return;
+    setIsUpdateActionPending(true);
+    await requestCoordinatedDesktopUpdate();
+    setIsUpdateActionPending(false);
   };
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
@@ -240,8 +205,6 @@ function AboutVersionSection() {
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
     downloading: "Downloading…",
-    // Off its track, "up to date" only means no switch is pending; Review moves it.
-    ...(appOffTrack ? {} : { "up-to-date": "Up to Date" }),
   };
   const buttonLabel =
     actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";

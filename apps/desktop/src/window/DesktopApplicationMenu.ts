@@ -2,7 +2,6 @@ import * as DesktopUpdateCommand from "../updates/DesktopUpdateCommand.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as Electron from "electron";
@@ -11,7 +10,6 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
 export class DesktopApplicationMenuActionError extends Schema.TaggedError<DesktopApplicationMenuActionError>()(
@@ -35,11 +33,8 @@ export class DesktopApplicationMenu extends Context.Service<
 
 type DesktopApplicationMenuRuntimeServices =
   | DesktopUpdateCommand.DesktopUpdateCommand
-  | DesktopUpdates.DesktopUpdates
   | DesktopWindow.DesktopWindow
   | ElectronDialog.ElectronDialog;
-
-const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
 const { logError: logMenuError } = makeComponentLogger("desktop-menu");
 
@@ -67,65 +62,31 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
 });
 
 const checkForUpdatesFromMenu = Effect.gen(function* () {
-  const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
-  const result = yield* updates.check("menu");
-  const updateState = result.state;
-  if (updateState.status === "available" || updateState.status === "downloaded") {
-    const response = yield* (yield* DesktopUpdateCommand.DesktopUpdateCommand).request({
-      version: 1,
-      requestId: "menu-update",
-      type: "update",
-    });
-    if (!response.ok) {
-      yield* electronDialog.showMessageBox({
-        type: "warning",
-        title: "Could not update T3 Code",
-        message: "The coordinated updater is unavailable.",
-        detail: response.message,
-        buttons: ["OK"],
-      });
-    }
-    return;
-  }
-
-  if (updateState.status === "up-to-date") {
-    yield* electronDialog.showMessageBox({
-      type: "info",
-      title: "You're up to date!",
-      message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
-      buttons: ["OK"],
-    });
-  } else if (updateState.status === "error") {
+  const response = yield* (yield* DesktopUpdateCommand.DesktopUpdateCommand).request({
+    version: 1,
+    requestId: "menu-update",
+    type: "update",
+  });
+  if (!response.ok) {
     yield* electronDialog.showMessageBox({
       type: "warning",
-      title: "Update check failed",
-      message: "Could not check for updates.",
-      detail: updateState.message ?? "An unknown error occurred. Please try again later.",
+      title: "Could not update T3 Code",
+      message: "The coordinated updater could not complete the request.",
+      detail: response.message,
+      buttons: ["OK"],
+    });
+  } else if ("status" in response && response.status === "up-to-date") {
+    yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "No updates available",
+      message: "No updates are currently offered.",
       buttons: ["OK"],
     });
   }
 }).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
 
 const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
-  const updates = yield* DesktopUpdates.DesktopUpdates;
-  const electronDialog = yield* ElectronDialog.ElectronDialog;
-  const disabledReason = yield* updates.disabledReason;
-  if (Option.isSome(disabledReason)) {
-    yield* logUpdaterInfo("manual update check requested, but updates are disabled", {
-      disabledReason: disabledReason.value,
-    });
-    yield* electronDialog.showMessageBox({
-      type: "info",
-      title: "Updates unavailable",
-      message: "Automatic updates are not available right now.",
-      detail: disabledReason.value,
-      buttons: ["OK"],
-    });
-    return;
-  }
-
-  // Opening a window before backend confirmation can strand it on failed auth bootstrap.
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* desktopWindow.activate;
   yield* checkForUpdatesFromMenu;

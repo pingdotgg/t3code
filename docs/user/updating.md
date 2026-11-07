@@ -36,6 +36,9 @@ The confirmation counts the running threads that the restarts will interrupt,
 and how many can resume afterwards. See **Continue threads after restarts**
 below.
 
+Manual checks from the sidebar, **Settings → About**, and the desktop menu review the same
+connected servers and providers even when this app is current.
+
 ## Update from a terminal
 
 The `t3` command installed by the desktop app uses the same coordinated updater as the sidebar and

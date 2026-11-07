@@ -10,9 +10,11 @@ import {
 } from "../desktopUpdate.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
+// The document owns the runner; component remounts must not transfer its reservation.
+const rendererId = SecureRandom.uuidV4Unsafe();
+
 export function DesktopUpdateCoordinator() {
   const command = window.desktopBridge?.updateCommand;
-  const [rendererId] = useState(() => SecureRandom.uuidV4Unsafe());
   const latestRequestId = useRef<string | null>(null);
   const [request, setRequest] = useState<DesktopUpdateCommandRequest | null>(null);
   const [prepared, setPrepared] = useState<DesktopUpdateState | null>(null);
@@ -90,7 +92,7 @@ export function DesktopUpdateCoordinator() {
       unsubscribe();
       void command.setReady(false, rendererId);
     };
-  }, [command, rendererId]);
+  }, [command]);
 
   const cancel = async () => {
     if (!request || !command) return;

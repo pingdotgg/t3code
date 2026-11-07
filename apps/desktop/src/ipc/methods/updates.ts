@@ -102,7 +102,7 @@ export const updateCommandReserve = DesktopIpc.makeIpcMethod({
   payload: Schema.Void,
   result: Schema.NullOr(Schema.String),
   handler: Effect.fn("desktop.ipc.updateCommand.reserve")(function* () {
-    return yield* (yield* DesktopUpdateCommand.DesktopUpdateCommand).reserve;
+    return yield* (yield* DesktopUpdateCommand.DesktopUpdateCommand).reserveForRenderer;
   }),
 });
 export const updateCommandFinish = DesktopIpc.makeIpcMethod({

@@ -216,6 +216,67 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
+  it.effect("plans remote and provider updates even when this app is current", () =>
+    Effect.gen(function* () {
+      const template = yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const outcome = yield* Deferred.make<string>();
+      yield* configureMenu(
+        yield* Deferred.make<string>(),
+        template,
+        { platform: "darwin" },
+        {
+          updates: {
+            check: () =>
+              Effect.succeed({
+                checked: true,
+                state: {
+                  enabled: true,
+                  status: "up-to-date",
+                  channel: "latest",
+                  currentVersion: "1.2.3",
+                  availableVersion: null,
+                  downloadedVersion: null,
+                  hostArch: "arm64",
+                  appArch: "arm64",
+                  runningUnderArm64Translation: false,
+                  releaseNotes: [],
+                  omittedReleaseCount: 0,
+                  downloadPercent: null,
+                  checkedAt: null,
+                  message: null,
+                  errorContext: null,
+                  canRetry: false,
+                },
+              }),
+          },
+          command: {
+            request: (request) =>
+              Deferred.succeed(outcome, "remote/provider plan").pipe(
+                Effect.as({
+                  version: 1,
+                  requestId: request.requestId,
+                  ok: true,
+                  status: "started",
+                }),
+              ),
+          },
+          dialog: {
+            showMessageBox: () =>
+              Deferred.succeed(outcome, "local-only status").pipe(
+                Effect.as({ response: 0, checkboxChecked: false }),
+              ),
+          },
+        },
+      );
+      const application = (yield* Deferred.await(template))[0];
+      if (!Array.isArray(application?.submenu)) throw new Error("Expected app menu.");
+      const item = application.submenu.find((item) => item.label === "Check for Updates...");
+      if (typeof item?.click !== "function") throw new Error("Expected update menu action.");
+      item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      assert.equal(yield* Deferred.await(outcome), "remote/provider plan");
+    }),
+  );
+
   it.effect("leaves the accelerator to Chromium instead of injecting a paste", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();

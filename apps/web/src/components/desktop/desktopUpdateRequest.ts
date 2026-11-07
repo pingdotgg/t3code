@@ -6,6 +6,14 @@ export async function requestCoordinatedDesktopUpdate(): Promise<void> {
     if (!command) throw new Error("Update T3 Code to use its coordinated updater.");
     const response = await command.request();
     if (!response.ok) throw new Error(response.message);
+    if ("status" in response && response.status === "up-to-date")
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "No updates available",
+          description: "No updates are currently offered.",
+        }),
+      );
   } catch (error) {
     toastManager.add(
       stackedThreadToast({

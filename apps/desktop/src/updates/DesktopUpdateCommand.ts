@@ -25,6 +25,7 @@ export class DesktopUpdateCommand extends Context.Service<
     readonly cancel: (callerId: string) => Effect.Effect<void>;
     readonly complete: (response: DesktopUpdateCommandResponse) => Effect.Effect<boolean>;
     readonly reserve: Effect.Effect<string | null>;
+    readonly reserveForRenderer: Effect.Effect<string | null>;
     readonly finish: (reservation: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/updates/DesktopUpdateCommand") {}
@@ -35,14 +36,19 @@ interface PendingCommand {
   readonly reply: Deferred.Deferred<DesktopUpdateCommandResponse>;
 }
 
+interface UpdateReservation {
+  readonly owner: string | null;
+  readonly rendererId: string | null;
+  readonly next: number;
+}
+
 const make = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const windows = yield* ElectronWindow.ElectronWindow;
   const ready = yield* Ref.make<string | null>(null);
-  const lock = yield* Ref.make<{ readonly owner: string | null; readonly next: number }>({
-    owner: null,
-    next: 0,
-  });
+  const lock = yield* Ref.make<UpdateReservation>({ owner: null, rendererId: null, next: 0 });
+  const isAbandoned = (reservation: UpdateReservation, rendererId: string | null) =>
+    reservation.rendererId !== null && rendererId !== null && reservation.rendererId !== rendererId;
   const pending = yield* Ref.make<Option.Option<PendingCommand>>(Option.none());
   const finish = (reservation: string) =>
     Ref.update(lock, (current) =>
@@ -78,22 +84,33 @@ const make = Effect.gen(function* () {
     });
     return true;
   });
-  const reserve = Effect.gen(function* () {
+  const reserveOwned = Effect.fn("DesktopUpdateCommand.reserve")(function* (
+    rendererId: string | null,
+  ) {
     if (yield* updates.isActionActive) return null;
+    const registeredRenderer = yield* Ref.get(ready);
     return yield* Ref.modify(lock, (current) => {
-      if (current.owner !== null) return [null, current] as const;
+      if (current.owner !== null && !isAbandoned(current, registeredRenderer))
+        return [null, current] as const;
       const owner = `desktop-update-${current.next}`;
-      return [owner, { owner, next: current.next + 1 }] as const;
+      return [owner, { owner, rendererId, next: current.next + 1 }] as const;
     });
+  });
+  const reserve = reserveOwned(null);
+  const reserveForRenderer = Effect.gen(function* () {
+    const rendererId = yield* Ref.get(ready);
+    return rendererId === null ? null : yield* reserveOwned(rendererId);
   });
   const inspect = Effect.gen(function* () {
     const state = yield* updates.getState;
     const main = yield* windows.main;
+    const registeredRenderer = yield* Ref.get(ready);
     const available =
-      (yield* Ref.get(ready)) !== null &&
-      Option.isSome(main) &&
-      !main.value.webContents.isDestroyed();
-    const occupied = (yield* Ref.get(lock)).owner !== null || (yield* updates.isActionActive);
+      registeredRenderer !== null && Option.isSome(main) && !main.value.webContents.isDestroyed();
+    const reservation = yield* Ref.get(lock);
+    const occupied =
+      (reservation.owner !== null && !isAbandoned(reservation, registeredRenderer)) ||
+      (yield* updates.isActionActive);
     const targetVersion = state.downloadedVersion ?? state.availableVersion;
     return {
       schema: "t3.update-check.v1",
@@ -119,6 +136,7 @@ const make = Effect.gen(function* () {
   return DesktopUpdateCommand.of({
     inspect,
     reserve,
+    reserveForRenderer,
     finish,
     complete,
     cancel: Effect.fn("DesktopUpdateCommand.cancel")(function* (callerId) {
@@ -129,7 +147,17 @@ const make = Effect.gen(function* () {
     }),
     setReady: Effect.fn("DesktopUpdateCommand.setReady")(function* (value, rendererId) {
       if (value) {
+        const reservation = yield* Ref.get(lock);
         yield* Ref.set(ready, rendererId);
+        const current = yield* Ref.get(pending);
+        if (
+          isAbandoned(reservation, rendererId) &&
+          Option.isSome(current) &&
+          current.value.requestId === reservation.owner
+        )
+          yield* complete(
+            failure(current.value.requestId, "The desktop update coordinator was replaced."),
+          );
         return;
       }
       if ((yield* Ref.get(ready)) !== rendererId) return;
@@ -146,7 +174,7 @@ const make = Effect.gen(function* () {
           request.requestId,
           "Open or update T3 Code, then run t3 update again. No standalone update was attempted.",
         );
-      const reservation = yield* reserve;
+      const reservation = yield* reserveForRenderer;
       if (reservation === null)
         return failure(
           request.requestId,

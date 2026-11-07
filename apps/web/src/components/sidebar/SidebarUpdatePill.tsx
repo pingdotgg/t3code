@@ -276,8 +276,10 @@ function SidebarUpdateControl() {
     const bridge = window.desktopBridge;
     if (isInteractionDisabled) return;
 
-    if (isElectron && (runsEverything || action === "download" || action === "install")) {
+    if (isElectron) {
+      setIsActionPending(true);
       await requestCoordinatedDesktopUpdate();
+      setIsActionPending(false);
       return;
     }
     if (runsEverything) {

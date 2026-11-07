@@ -146,6 +146,25 @@ describe("SidebarUpdatePill release notes", () => {
 });
 
 describe("SidebarUpdatePill update everything", () => {
+  it("uses the shared check when no local or remote offers are known", async () => {
+    setup({ ...nightlyUpdate([]), status: "up-to-date", availableVersion: null });
+    const request = vi.fn(async () => ({
+      version: 1,
+      requestId: "sidebar",
+      ok: true,
+      status: "up-to-date",
+    }));
+    const localCheck = vi.fn(async () => ({ checked: true, state: mocks.update }));
+    using _bridge = stubGlobal("desktopBridge", {
+      updateCommand: { request },
+      checkForUpdate: localCheck,
+    });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates", exact: true }));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+    expect(localCheck).not.toHaveBeenCalled();
+  });
+
   it("does not refocus the update button after a pointer cancel", async () => {
     setup(null, { hasUpdates: true });
     using _bridge = coordinateUpdates();

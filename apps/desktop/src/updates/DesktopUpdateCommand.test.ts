@@ -7,6 +7,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUpdateCommand from "./DesktopUpdateCommand.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
@@ -29,13 +30,16 @@ const state: DesktopUpdateState = {
   errorContext: null,
   canRetry: false,
 };
-const layer = (send: (request: DesktopUpdateCommandRequest) => void) =>
+const layer = (
+  send: (request: DesktopUpdateCommandRequest) => void,
+  isActionActive = Effect.succeed(false),
+) =>
   DesktopUpdateCommand.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(DesktopUpdates.DesktopUpdates, {
           getState: Effect.succeed(state),
-          isActionActive: Effect.succeed(false),
+          isActionActive,
         }),
         Layer.mock(ElectronWindow.ElectronWindow, {
           main: Effect.succeedSome({
@@ -63,6 +67,8 @@ it.effect("checks cached coordinator availability without activating, checking o
     });
     const first = yield* command.reserve;
     assert.isNotNull(first);
+    yield* command.setReady(true, "replacement");
+    assert.isNull(yield* command.reserve);
     assert.equal((yield* command.inspect).state, "busy");
     yield* command.finish(first!);
     const second = yield* command.reserve;
@@ -70,6 +76,17 @@ it.effect("checks cached coordinator availability without activating, checking o
     yield* command.finish(first!);
     assert.equal((yield* command.inspect).state, "busy");
     yield* command.finish(second!);
+    const rendererReservation = yield* command.reserveForRenderer;
+    assert.isNotNull(rendererReservation);
+    yield* command.setReady(false, "replacement");
+    yield* command.setReady(true, "replacement");
+    assert.isNull(yield* command.reserveForRenderer);
+    yield* command.setReady(true, "new-document");
+    const resumed = yield* command.reserveForRenderer;
+    assert.isNotNull(resumed);
+    yield* command.finish(rendererReservation!);
+    assert.equal((yield* command.inspect).state, "busy");
+    yield* command.finish(resumed!);
   }).pipe(
     Effect.provide(
       layer(() => {
@@ -200,34 +217,60 @@ it.effect("an older request's cleanup cannot clear or release its successor", ()
   }),
 );
 
-it.effect("keeps a started run reserved when its renderer unregisters", () =>
-  Effect.gen(function* () {
-    const sent = yield* Deferred.make<DesktopUpdateCommandRequest>();
-    yield* Effect.gen(function* () {
-      const command = yield* DesktopUpdateCommand.DesktopUpdateCommand;
-      yield* command.setReady(true, "renderer");
-      const response = yield* command
-        .request({ version: 1, requestId: "running", type: "update" })
-        .pipe(Effect.forkScoped);
-      const incoming = yield* Deferred.await(sent);
-      yield* command.complete({
-        version: 1,
-        requestId: incoming.requestId,
-        ok: true,
-        status: "started",
-      });
-      assert.deepInclude(yield* Fiber.join(response), { requestId: "running", status: "started" });
-      yield* command.setReady(false, "renderer");
-      yield* command.setReady(true, "replacement");
-      assert.isNull(yield* command.reserve);
-      yield* command.finish(incoming.requestId);
-      assert.equal((yield* command.inspect).state, "ready");
-    }).pipe(
-      Effect.provide(
-        layer((request) => {
-          Deferred.doneUnsafe(sent, Effect.succeed(request));
-        }),
-      ),
-    );
-  }),
+it.effect(
+  "recovers an abandoned renderer run after native work settles, without its old finally",
+  () =>
+    Effect.gen(function* () {
+      const firstSent = yield* Deferred.make<DesktopUpdateCommandRequest>();
+      const secondSent = yield* Deferred.make<DesktopUpdateCommandRequest>();
+      const nativeActive = yield* Ref.make(false);
+      let sent = 0;
+      yield* Effect.gen(function* () {
+        const command = yield* DesktopUpdateCommand.DesktopUpdateCommand;
+        yield* command.setReady(true, "renderer");
+        const response = yield* command
+          .request({ version: 1, requestId: "running", type: "update" })
+          .pipe(Effect.forkScoped);
+        const incoming = yield* Deferred.await(firstSent);
+        yield* command.complete({
+          version: 1,
+          requestId: incoming.requestId,
+          ok: true,
+          status: "started",
+        });
+        yield* Fiber.join(response);
+        // A component remount in the same document does not abandon its running promise.
+        yield* command.setReady(false, "renderer");
+        yield* command.setReady(true, "renderer");
+        assert.isNull(yield* command.reserve);
+        yield* Ref.set(nativeActive, true);
+        // A real renderer replacement loses that promise, but native work must still finish.
+        yield* command.setReady(false, "renderer");
+        yield* command.setReady(true, "replacement");
+        assert.isNull(yield* command.reserve);
+        assert.equal((yield* command.inspect).state, "busy");
+        yield* Ref.set(nativeActive, false);
+        assert.equal((yield* command.inspect).state, "ready");
+        const retry = yield* command
+          .request({ version: 1, requestId: "retry", type: "update" })
+          .pipe(Effect.forkScoped);
+        const successor = yield* Deferred.await(secondSent);
+        yield* command.finish(incoming.requestId);
+        yield* command.setReady(false, "renderer");
+        assert.equal((yield* command.inspect).state, "busy");
+        yield* command.complete({
+          version: 1,
+          requestId: successor.requestId,
+          ok: true,
+          status: "cancelled",
+        });
+        assert.deepInclude(yield* Fiber.join(retry), { requestId: "retry", status: "cancelled" });
+      }).pipe(
+        Effect.provide(
+          layer((request) => {
+            Deferred.doneUnsafe(sent++ === 0 ? firstSent : secondSent, Effect.succeed(request));
+          }, Ref.get(nativeActive)),
+        ),
+      );
+    }),
 );
