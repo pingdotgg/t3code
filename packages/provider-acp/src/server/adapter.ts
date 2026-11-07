@@ -2986,6 +2986,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (text !== undefined) {
               yield* emitSubagentAssistant(subagent, text, "append", update.messageId);
             }
+          } else if (update.sessionUpdate === "tool_call_content_chunk") {
+            yield* projectSubagentTool(subagent, notification.sessionId, update);
           } else if (update.sessionUpdate === "agent_message") {
             if (update.content === undefined) return;
             const text = (update.content ?? [])
@@ -3001,7 +3003,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const projectSubagentTool = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
           sessionId: string,
-          toolCall: AcpToolCallState,
+          toolCall:
+            | AcpToolCallState
+            | Extract<EffectAcpSchema.SessionUpdate, { sessionUpdate: "tool_call_content_chunk" }>,
           projectedStatus?: ProjectedToolStatus,
         ) {
           const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
@@ -3013,6 +3017,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const rootSessionId = yield* Ref.get(activeSessionId);
           subagent.toolSessionIds.set(key, sessionId);
           const previous = context.tools.get(key);
+          if ("sessionUpdate" in toolCall) {
+            if (toolCall.content.type !== "content") return;
+            const text = acpContentBlockDisplayText(toolCall.content.content);
+            if (text === undefined) return;
+            toolCall = appendToolOutputText(
+              previous ?? {
+                toolCallId: toolCall.toolCallId,
+                status: "inProgress",
+                data: { toolCallId: toolCall.toolCallId },
+              },
+              text,
+            );
+          }
           const merged = mergeToolCallState(previous, toolCall);
           context.tools.set(key, merged);
           if (
@@ -5270,7 +5287,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (update.sessionUpdate === "agent_message_chunk" &&
                 acpContentBlockDisplayText(update.content) !== undefined) ||
               (update.sessionUpdate === "agent_message" && update.content !== undefined);
-            if (!isDisplayableAssistantUpdate) {
+            if (
+              !isDisplayableAssistantUpdate &&
+              update.sessionUpdate !== "tool_call_content_chunk"
+            ) {
               return;
             }
             if (subagent !== undefined) {

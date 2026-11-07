@@ -208,6 +208,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   entries: ReadonlyArray<unknown>,
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
+  agentId = "claude-acp",
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -248,7 +249,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   const adapterOptions = {
     selfInvocation: yield* resolveSelfInvocation(),
     instanceId,
-    settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "claude-acp" }),
+    settings: yield* decodeAcpRegistryAdapterSettings({ agentId }),
     environment: {},
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
@@ -1808,6 +1809,91 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("retains streamed child tool output through the generic Devin route", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open,
+          ...claudeFrames.prompt(1),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "in_progress",
+            _meta: { "cognition.ai/subagent_started": { agentId: "child-1", task: "Review" } },
+          }),
+          ...[CLAUDE_ROOT_SESSION, "child-1"].map((sessionId) =>
+            update(sessionId, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "shared-tool",
+              title: "Read package",
+              kind: "execute",
+              status: "in_progress",
+              rawInput: { command: "cat package.json" },
+            }),
+          ),
+          ...["one", "two"].map((text) =>
+            update("child-1", {
+              sessionUpdate: "tool_call_content_chunk",
+              toolCallId: "shared-tool",
+              content: { type: "content", content: { type: "text", text } },
+            }),
+          ),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            status: "completed",
+          }),
+          claudeMarker("tools complete"),
+          claudeFrames.idle("end_turn"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("tools complete");
+      const child = events.find((event) => event.type === "subagent.updated");
+      if (child?.type !== "subagent.updated") throw new Error("Missing child");
+      const tools = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      const childTools = tools.filter((item) => item.threadId === child.subagent.childThreadId);
+      assert.deepEqual(
+        childTools.map((item) => item.output),
+        [
+          null,
+          { type: "Text", text: "one" },
+          { type: "Text", text: "onetwo" },
+          { type: "Text", text: "onetwo" },
+        ],
+      );
+      assert.equal(new Set(childTools.map((item) => item.id)).size, 1);
+      assert.equal(childTools.at(-1)?.nativeItemRef?.nativeId, "child-1:tool:shared-tool");
+      assert.equal(childTools.at(-1)?.status, "completed");
+      assert.deepEqual(childTools.at(-1)?.input, { command: "cat package.json" });
+      const parentTools = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "command_execution" &&
+        event.turnItem.threadId === session.turnInput(1).threadId &&
+        event.turnItem.nativeItemRef?.nativeId === "shared-tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(parentTools, 1);
+      assert.isUndefined(parentTools[0]?.output);
+      assert.isFalse(
+        events.some(
+          (event) => event.type === "message.updated" && event.message.text.includes("onetwo"),
+        ),
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each(["error", "end_turn"])(
     "hands live Claude child tools to the next run after %s and keeps nested output in the child",
     (stopReason) =>
@@ -1898,6 +1984,18 @@ describe("AcpRegistryAdapterV2", () => {
               kind: "execute",
               status: "in_progress",
               rawInput: { command: "cat nested/package.json" },
+            }),
+            ...["one", "two"].map((text) =>
+              update("grandchild", {
+                sessionUpdate: "tool_call_content_chunk",
+                toolCallId: "nested-tool",
+                content: { type: "content", content: { type: "text", text } },
+              }),
+            ),
+            update("grandchild", {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "nested-tool",
+              status: "completed",
             }),
             update("grandchild", {
               sessionUpdate: "agent_message_chunk",
@@ -1996,7 +2094,7 @@ describe("AcpRegistryAdapterV2", () => {
         if (messages[0]?.type === "message.updated") {
           assert.equal(messages[0].message.threadId, row.subagent.childThreadId);
         }
-        const nestedTool = nested.find(
+        const nestedTool = nested.findLast(
           (event) =>
             event.type === "turn_item.updated" &&
             event.turnItem.type === "dynamic_tool" &&
@@ -2006,9 +2104,37 @@ describe("AcpRegistryAdapterV2", () => {
         assert.isDefined(nestedTool);
         if (nestedTool?.type === "turn_item.updated") {
           assert.equal(nestedTool.turnItem.threadId, row.subagent.childThreadId);
-          if (nestedTool.turnItem.type === "dynamic_tool")
+          if (nestedTool.turnItem.type === "dynamic_tool") {
             assert.deepEqual(nestedTool.turnItem.input, { command: "cat nested/package.json" });
+            assert.deepEqual(nestedTool.turnItem.output, { type: "Text", text: "onetwo" });
+            assert.equal(nestedTool.turnItem.status, "completed");
+          }
+          const toolUpdates = nested.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.id === nestedTool.turnItem.id
+              ? [event.turnItem]
+              : [],
+          );
+          assert.deepEqual(
+            toolUpdates.map((item) => item.output),
+            [
+              null,
+              { type: "Text", text: "one" },
+              { type: "Text", text: "onetwo" },
+              { type: "Text", text: "onetwo" },
+            ],
+          );
         }
+        assert.isFalse(
+          nested.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.threadId === session.turnInput(1).threadId &&
+              event.turnItem.type === "dynamic_tool" &&
+              JSON.stringify(event.turnItem.output).includes("onetwo"),
+          ),
+        );
         assert.isTrue(
           nested.some(
             (event) =>
