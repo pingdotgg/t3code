@@ -52,6 +52,7 @@ const decodeSessionCancelNotification = Schema.decodeEffect(
   Schema.fromJsonString(SessionCancelNotification),
 );
 const decodeExtRequest = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
+const decodeExtResponse = Schema.decodeEffect(Schema.fromJsonString(ExtResponse));
 const decodeRequestPermissionResponse = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionResponse),
 );
@@ -286,10 +287,11 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       const { stdio, input } = yield* makeInMemoryStdio();
       const handled = yield* Queue.unbounded<number>();
       const terminated = yield* Deferred.make<void>();
+      const readerStopped = yield* Deferred.make<void>();
       const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
         stdio: Stdio.make({
           args: stdio.args,
-          stdin: stdio.stdin,
+          stdin: stdio.stdin.pipe(Stream.ensuring(Deferred.succeed(readerStopped, undefined))),
           stdout: () => Sink.forEach(() => Effect.die("stdout failed")),
           stderr: () => Sink.drain,
         }),
@@ -298,21 +300,24 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           Queue.offer(handled, decodeIndex(notification.params).index).pipe(Effect.asVoid),
         onTermination: () => Deferred.succeed(terminated, undefined).pipe(Effect.asVoid),
       });
-      const deliver = (index: number) =>
+      const enqueue = (index: number) =>
         Queue.offer(
           input,
           encoder.encode(
             `${encodeUnknownJsonString({ jsonrpc: "2.0", method: "x/late", params: { index } })}\n`,
           ),
-        ).pipe(Effect.andThen(Queue.take(handled)));
+        );
+      const deliver = (index: number) => enqueue(index).pipe(Effect.andThen(Queue.take(handled)));
 
       for (let index = 0; index < 32; index++) {
         assert.equal(yield* deliver(index), index);
       }
-      // A failed write terminates the connection while the reader keeps running.
+      // A failed write ends raw readers before the input reader sees the next message.
       yield* transport.notify("x/fail", {}).pipe(Effect.exit);
       yield* Deferred.await(terminated);
-      assert.equal(yield* deliver(32), 32);
+      yield* enqueue(32);
+      yield* Deferred.await(readerStopped);
+      assert.equal(yield* Queue.size(handled), 0);
 
       const retained = yield* transport.incoming.pipe(
         Stream.map((notification) => decodeIndex(notification.params).index),
@@ -446,6 +451,69 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       );
       assert.instanceOf(error, AcpError.AcpTransportError);
       assert.equal((error as AcpError.AcpTransportError).operation, "read-input-stream");
+
+      const extension = yield* makeInMemoryStdio();
+      const extensionTermination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio: extension.stdio,
+        serverRequestMethods: new Set(),
+        onIncomingRequest: () => Effect.die(new Error("observer bug")),
+        onExtRequest: () => Effect.succeed({ ok: true }),
+        onTermination: (error) => Deferred.succeed(extensionTermination, error).pipe(Effect.asVoid),
+      });
+      yield* Queue.offer(
+        extension.input,
+        yield* encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: 8,
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        }),
+      );
+      assert.instanceOf(yield* Deferred.await(extensionTermination), AcpError.AcpTransportError);
+
+      const failedInput = yield* Queue.unbounded<Uint8Array>();
+      const readerStopped = yield* Deferred.make<void>();
+      const observed = yield* Queue.unbounded<string>();
+      const writerTermination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio: Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.fromQueue(failedInput).pipe(
+            Stream.ensuring(Deferred.succeed(readerStopped, undefined)),
+          ),
+          stdout: () => Sink.forEach(() => Effect.die("stdout failed")),
+          stderr: () => Sink.drain,
+        }),
+        serverRequestMethods: new Set(),
+        onIncomingRequest: (requestId) => {
+          Queue.offerUnsafe(observed, requestId);
+          return Effect.void;
+        },
+        onExtRequest: () => Effect.succeed({ ok: true }),
+        onTermination: (error) => Deferred.succeed(writerTermination, error).pipe(Effect.asVoid),
+      });
+      const extRequest = (id: number) =>
+        encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id,
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        });
+      yield* Queue.offer(failedInput, yield* extRequest(9));
+      assert.equal(yield* Queue.take(observed), AcpProtocol.acpRequestIdentity(9));
+      yield* Deferred.await(writerTermination);
+      yield* Queue.offer(failedInput, yield* extRequest(10));
+      assert.equal(
+        yield* Effect.raceFirst(
+          Deferred.await(readerStopped).pipe(Effect.as("stopped")),
+          Queue.take(observed),
+        ),
+        "stopped",
+      );
+      assert.equal(yield* Queue.size(observed), 0);
     }),
   );
 
@@ -682,6 +750,53 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       const response = yield* decodeJsonRpcErrorResponse(yield* Queue.take(output));
       assert.equal(response.id, 9);
       assert.equal(response.error.code, -32603);
+    }),
+  );
+
+  // Grok's x.ai/ask_user_question handler waits for the user to answer.
+  it.effect("keeps reading while an extension request handler waits", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const answer = yield* Deferred.make<void>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onExtRequest: () => Deferred.await(answer).pipe(Effect.as({ ok: true })),
+      });
+      const updates = yield* Queue.unbounded<AcpProtocol.AcpIncomingNotification>();
+      yield* transport.incoming.pipe(
+        Stream.runForEach((notification) => Queue.offer(updates, notification)),
+        Effect.forkScoped,
+      );
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: 7,
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        }),
+      );
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "session-1",
+              update: { sessionUpdate: "usage_update", used: 10, size: 100 },
+            },
+          })}\n`,
+        ),
+      );
+
+      assert.equal((yield* Queue.take(updates))._tag, "SessionUpdate");
+      yield* Deferred.succeed(answer, undefined);
+      const response = yield* decodeExtResponse(yield* Queue.take(output));
+      assert.deepEqual([response.id, response.result], [7, { ok: true }]);
     }),
   );
 
