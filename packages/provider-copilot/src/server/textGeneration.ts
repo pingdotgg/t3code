@@ -17,6 +17,8 @@ import { makeCopilotSdkClient } from "./copilotSdkRuntime.ts";
 
 const PROVIDER = "GitHub Copilot";
 const TIMEOUT_MS = 180_000;
+// `TIMEOUT_MS` only covers the reply, so a stalled CLI handshake needs its own limit.
+const STARTUP_TIMEOUT_MS = 30_000;
 
 export function makeGitHubCopilotTextGeneration(input: {
   readonly settings: GitHubCopilotSettings;
@@ -53,7 +55,21 @@ export function makeGitHubCopilotTextGeneration(input: {
           detail: `${PROVIDER} could not generate text.`,
           cause,
         }),
-    });
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: TIMEOUT_MS + STARTUP_TIMEOUT_MS,
+        orElse: () => {
+          const timedOut = new TextGenerationError({
+            operation: request.operation,
+            detail: `${PROVIDER} did not respond in time.`,
+          });
+          return Effect.tryPromise({ try: () => client.forceStop(), catch: () => timedOut }).pipe(
+            Effect.ignore,
+            Effect.andThen(Effect.fail(timedOut)),
+          );
+        },
+      }),
+    );
     return yield* decodeJsonReply(request, PROVIDER, reply);
   });
   return fromRunner("GitHubCopilotTextGeneration", withoutInvestigation(PROVIDER, run));
