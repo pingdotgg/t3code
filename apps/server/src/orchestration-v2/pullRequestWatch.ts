@@ -55,10 +55,11 @@ export function evaluatePullRequestWatch(
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
+  let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
   // "action-required" waits on someone, such as a maintainer approving a fork's workflows, so the
-  // agent is told once and nothing passes meanwhile. A placeholder is a host that could not tell,
-  // so it counts as no check and never confirms a pass, though a failed, pending, or awaited check
-  // beside it ends one.
+  // agent is told once per head and nothing passes meanwhile. A placeholder is a host that could
+  // not tell, so it counts as no check and never confirms a pass, though a failed, pending, or
+  // awaited check beside it ends one.
   const unread = detail.checks.some((check) => check.placeholder === true);
   const checks = detail.checks.filter((check) => check.placeholder !== true);
   const failed = checks.filter(isFailedCheck);
@@ -66,11 +67,9 @@ export function evaluatePullRequestWatch(
   if (checks.length > 0) {
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
-    const newlyAwaiting = awaiting.filter(
-      (check) => !awaitingApproval.includes(approvalKey(check)),
-    );
-    if (newlyAwaiting.length > 0) {
-      changes.push({ kind: "checks-awaiting-approval", checks: newlyAwaiting });
+    if (!approvalAnnounced && awaiting.length > 0) {
+      changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
+      approvalAnnounced = true;
     }
     failedChecks = failed.map((check) => check.name);
 
@@ -191,6 +190,7 @@ export function evaluatePullRequestWatch(
       passedChecks,
       owedChecks,
       awaitingApproval,
+      approvalAnnounced,
       remarksThrough,
       remarkIds,
       conflicting,
