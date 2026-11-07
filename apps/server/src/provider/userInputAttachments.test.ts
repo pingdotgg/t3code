@@ -928,11 +928,11 @@ describe("question answer paths", () => {
             "OEBPS/a.xhtml":
               '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><body><p>Last chapter</p><p>Price <s>10</s> 8</p></body></html>',
             "OEBPS/b.xhtml":
-              "<!DOCTYPE html><html><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table></body></html>",
+              '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table></body></html>',
           },
           expected: [
             "## Chapter 1",
-            "# First chapter",
+            "\n# First chapter",
             "Larkspur",
             "Direct div",
             "Direct section",
@@ -945,6 +945,7 @@ describe("question answer paths", () => {
             "Last chapter",
             "Price 10 8",
           ],
+          absent: ["My Novel", "Hidden Author"],
         },
       ];
       for (const [caseIndex, item] of cases.entries()) {
