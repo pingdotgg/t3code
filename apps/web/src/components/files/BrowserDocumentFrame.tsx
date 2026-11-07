@@ -333,7 +333,7 @@ export function HtmlRenderDocument(props: {
           postShortcuts();
         }}
         // Match the blank document's scheme to avoid dark-mode white flashes, then follow the app after load.
-        className={cn("border-0 scheme-light", props.className)}
+        className={cn("html-render-frame border-0 scheme-light", props.className)}
         style={loaded ? { colorScheme: theme.appearance } : undefined}
       />
       {expandedImage !== null ? (

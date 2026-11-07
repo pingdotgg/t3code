@@ -1865,6 +1865,13 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
+/* Match the document's hidden scrollbars to avoid WebKit resize loops: https://webkit.org/b/324485 */
+iframe.html-render-frame::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Chat markdown rendering */
 
 .chat-markdown > :first-child {
