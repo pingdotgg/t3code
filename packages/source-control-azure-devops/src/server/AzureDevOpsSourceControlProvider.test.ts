@@ -1,5 +1,9 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -27,6 +31,64 @@ it("reads the signed-in Azure account and says when az is signed out", () => {
     "unauthenticated",
   );
   assert.strictEqual(parseAuth(processOutput("\n")).status, "unknown");
+});
+
+it.effect("names the remote's repository when reading the default branch", () => {
+  const run = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>(() =>
+    Effect.succeed(
+      processOutput(
+        JSON.stringify({
+          name: "My Repo",
+          webUrl: "https://dev.azure.com/acme/project/_git/My%20Repo",
+          remoteUrl: "https://dev.azure.com/acme/project/_git/My%20Repo",
+          sshUrl: "git@ssh.dev.azure.com:v3/acme/project/My%20Repo",
+          defaultBranch: "refs/heads/master",
+        }),
+      ),
+    ),
+  );
+  const support = Layer.mergeAll(
+    TestSourceControlHost.layer({ process: { run } }),
+    NodeServices.layer,
+  );
+  return Effect.gen(function* () {
+    const provider = yield* AzureDevOpsSourceControlProvider.make;
+    for (const [remoteUrl, repository] of [
+      ["https://acme@dev.azure.com/acme/project/_git/My%20Repo", "My Repo"],
+      ["https://dev.azure.com/acme/project/_git/My%20Repo?view=x#readme", "My Repo"],
+      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo"],
+      ["git@ssh.dev.azure.com:v3/acme/project/My%20Repo", "My Repo"],
+      ["ssh://git@ssh.dev.azure.com/v3/acme/project/My%20Repo", "My Repo"],
+      ["https://dev.azure.com/acme/project/_git/service.git", "service.git"],
+      ["https://dev.azure.com/acme/project/_git/-repo", "-repo"],
+      ["https://dev.azure.com/acme/project/_git/%40.env", null],
+    ] as const) {
+      run.mockClear();
+      const branch = yield* provider.getDefaultBranch({
+        cwd: "/repo",
+        context: {
+          provider: {
+            kind: SourceControlProviderKind.make("azure-devops"),
+            name: "Azure DevOps",
+            baseUrl: "https://dev.azure.com",
+          },
+          remoteName: "origin",
+          remoteUrl,
+        },
+      });
+      if (repository === null) {
+        assert.strictEqual(branch, null, remoteUrl);
+        assert.strictEqual(run.mock.calls.length, 0, remoteUrl);
+        continue;
+      }
+      assert.strictEqual(branch, "master", remoteUrl);
+      assert.include(
+        [...(run.mock.calls[0]?.[0].args ?? [])],
+        `--repository=${repository}`,
+        remoteUrl,
+      );
+    }
+  }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provide(support))));
 });
 
 it.effect(
