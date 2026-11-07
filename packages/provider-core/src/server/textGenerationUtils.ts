@@ -56,17 +56,24 @@ export function sanitizePrTitle(raw: string): string {
 
 const MAX_THREAD_TITLE_CHARS = 120;
 
+// Only a pair around the whole title is a wrapper; a quote at one end can close a quoted term.
+function unwrapQuotedTitle(title: string): string {
+  let unwrapped = title;
+  while (unwrapped.length >= 2) {
+    const quote = unwrapped.charAt(0);
+    const inner = unwrapped.slice(1, -1);
+    if (!"'\"`".includes(quote) || !unwrapped.endsWith(quote) || inner.includes(quote)) break;
+    unwrapped = inner.trim();
+  }
+  return unwrapped;
+}
+
 export function sanitizeThreadTitle(raw: string): string {
   // Unwrap a JSON-formatted title before truncation can cut off the closing brace.
   const decoded = decodeJsonThreadTitle(raw);
   const title = Option.isSome(decoded) ? decoded.value.title : raw;
-  const normalized = title
-    .trim()
-    .split(/\r?\n/g)[0]
-    ?.trim()
-    .replace(/^['"`]+|['"`]+$/g, "")
-    .trim()
-    .replace(/\s+/g, " ");
+  const firstLine = title.trim().split(/\r?\n/g)[0]?.trim() ?? "";
+  const normalized = unwrapQuotedTitle(firstLine).replace(/\s+/g, " ");
 
   if (!normalized || normalized.trim().length === 0) {
     return "New thread";

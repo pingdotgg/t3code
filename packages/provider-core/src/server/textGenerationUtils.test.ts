@@ -23,6 +23,18 @@ describe("sanitizeCommitSubject", () => {
 
 describe("sanitizeThreadTitle", () => {
   it.each([
+    { raw: '"Fix login redirect"', expected: "Fix login redirect" },
+    { raw: "`Fix login redirect`", expected: "Fix login redirect" },
+    { raw: "Explain `vp check`", expected: "Explain `vp check`" },
+    { raw: '"Open in" menu ignores Finder', expected: '"Open in" menu ignores Finder' },
+    { raw: 'Rename "foo" to "bar"', expected: 'Rename "foo" to "bar"' },
+    { raw: '"Open in" ignores "Finder"', expected: '"Open in" ignores "Finder"' },
+    { raw: "Sync contributors'", expected: "Sync contributors'" },
+  ])("unwraps only a quote pair around the whole title: $raw", ({ raw, expected }) => {
+    expect(sanitizeThreadTitle(raw)).toBe(expected);
+  });
+
+  it.each([
     { name: "a split surrogate pair", prefixLength: 116, character: "🚀", retained: "" },
     { name: "a complete surrogate pair", prefixLength: 115, character: "🚀", retained: "🚀" },
     { name: "a BMP character", prefixLength: 116, character: "界", retained: "界" },
