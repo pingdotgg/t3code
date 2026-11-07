@@ -729,6 +729,30 @@ function AdvancedSpeechSettings({
           </Select>
         }
       />
+      {supported.acceleration !== "auto" && supported.accelerationFallback !== undefined ? (
+        <SettingsRow
+          title={
+            supported.acceleration === "cpu"
+              ? "Use the GPU when the CPU fails"
+              : "Use the CPU when the GPU fails"
+          }
+          description="Retry a recording on the other hardware instead of losing it."
+          control={
+            <Switch
+              aria-label="Use other hardware when transcription fails"
+              checked={supported.accelerationFallback}
+              disabled={controlsDisabled}
+              onCheckedChange={(checked) =>
+                void run("Could not change the hardware fallback", () =>
+                  runEnvironmentSpeech(
+                    updateEnvironmentSpeechAcceleration(prepared, supported.acceleration, checked),
+                  ),
+                )
+              }
+            />
+          }
+        />
+      ) : null}
       <SettingsRow
         title="Unload model"
         description="Release the model’s memory on the environment after it sits idle."

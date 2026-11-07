@@ -11,6 +11,9 @@ const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
+/** The recording is kept, so retrying transcribes it again without recording. */
+export const RETAINED_RECORDING_ERROR = "Could not transcribe this recording.";
+
 export const MICROPHONE_PERMISSION_ERROR =
   "Microphone access is required for voice input. Allow access in your browser or system settings and try again.";
 
@@ -503,31 +506,39 @@ export class VoiceInputController {
       const signal = this.transcriptionAbortController.signal;
       const capturedDraft = this.capturedDraft;
       let transcript: string;
+      const transcribeRecording = () =>
+        runTranscriptionOperation(() => transcription.transcribe(recordingUri!, { signal }));
       try {
         const live = this.liveTranscription ? await this.liveTranscription : null;
         if (live && "error" in live) throw live.error;
+        const streaming = transcription.streaming;
         transcript =
           live?.text ??
-          (await runTranscriptionOperation(() =>
-            transcription.streaming
-              ? transcription.streaming.finish({ signal })
-              : transcription.transcribe(recordingUri!, { signal }),
-          ));
+          (streaming
+            ? await runTranscriptionOperation(() => streaming.finish({ signal })).catch(
+                (error: unknown) => {
+                  // A failed live stream gets one pass over the retained recording.
+                  if (!recordingUri || signal.aborted || !this.isCurrent(operationToken))
+                    throw error;
+                  return transcribeRecording();
+                },
+              )
+            : await transcribeRecording());
       } catch (error) {
         if (this.isCurrent(operationToken)) {
-          if (
-            this.dependencies.retryFailedRecording &&
-            !this.liveTranscription &&
-            !transcription.streaming &&
-            recordingUri
-          ) {
+          const retained =
+            this.dependencies.retryFailedRecording && !this.liveTranscription && recordingUri;
+          if (retained) {
             this.retryRecording = {
               uri: recordingUri,
               ownerKey: capturedDraft.ownerKey,
-              transcription,
+              transcription: { locale: transcription.locale, transcribe: transcription.transcribe },
             };
           }
-          this.setError(transcriptionErrorMessage(error), "retry");
+          this.setError(
+            retained ? RETAINED_RECORDING_ERROR : transcriptionErrorMessage(error),
+            "retry",
+          );
         }
         return;
       }

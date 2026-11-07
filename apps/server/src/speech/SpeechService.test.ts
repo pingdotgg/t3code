@@ -742,24 +742,34 @@ it.effect(
     }),
 );
 
-it.effect("reports a failure on a GPU the person chose instead of switching to CPU", () =>
-  Effect.gen(function* () {
-    const failure = new Error("GPU failed");
-    native.transcribe.mockRejectedValueOnce(failure);
-    const speech = yield* SpeechService.SpeechService;
-    const acceleration = 'gpu:["vulkan","gpu-1"]';
-    yield* speech.updateAcceleration(acceleration);
-    const result = yield* Effect.result(
-      speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
-    );
-    expect(Result.isFailure(result) && result.failure).toMatchObject({
-      _tag: "SpeechOperationError",
-      operation: "inference",
-      cause: failure,
-    });
-    expect(loadNative).toHaveBeenCalledTimes(1);
-    expect(loadNative.mock.calls[0]?.[3]).toBe(acceleration);
-  }).pipe(Effect.provide(layer)),
+it.effect.each([
+  ['gpu:["vulkan","gpu-1"]', "cpu"],
+  ["cpu", "auto"],
+] as const)(
+  "retries a recording from a chosen %s on %s only when fallback is on",
+  ([acceleration, other]) =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      for (const fallback of [false, true]) {
+        loadNative.mockClear();
+        const failure = new Error("device failed");
+        native.transcribe.mockRejectedValueOnce(failure);
+        yield* speech.updateAcceleration(acceleration, fallback);
+        const result = yield* Effect.result(
+          speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
+        );
+        if (fallback) expect(Result.isSuccess(result) && result.success).toBe("hello");
+        else
+          expect(Result.isFailure(result) && result.failure).toMatchObject({
+            _tag: "SpeechOperationError",
+            operation: "inference",
+            cause: failure,
+          });
+        expect(loadNative.mock.calls.map((call) => call[3])).toEqual(
+          fallback ? [acceleration, other] : [acceleration],
+        );
+      }
+    }).pipe(Effect.provide(layer)),
 );
 
 it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once", () =>
@@ -874,9 +884,15 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(layer)),
 );
 
-it.effect.each(["auto", 'gpu:["vulkan","gpu-1"]', "cpu"] as const)(
-  "reports finalization failure without repeated or explicit-backend fallback: %s",
-  (acceleration) =>
+it.effect.each([
+  ["auto", false],
+  ['gpu:["vulkan","gpu-1"]', false],
+  ["cpu", false],
+  ['gpu:["vulkan","gpu-1"]', true],
+  ["cpu", true],
+] as const)(
+  "reports finalization failure after at most one fallback: %s, fallback %s",
+  ([acceleration, fallback]) =>
     Effect.gen(function* () {
       const failure = new Error("finish failed");
       const worker = {
@@ -886,15 +902,24 @@ it.effect.each(["auto", 'gpu:["vulkan","gpu-1"]', "cpu"] as const)(
           throw failure;
         }),
       };
-      const cpu = { ...worker, backend: "CPU", dispose: vi.fn() };
+      const other = {
+        ...worker,
+        backend: acceleration === "cpu" ? "Vulkan0" : "CPU",
+        dispose: vi.fn(),
+      };
+      const retries = acceleration === "auto" || fallback;
       loadNative.mockResolvedValueOnce(worker);
-      if (acceleration === "auto") loadNative.mockResolvedValueOnce(cpu);
+      if (retries) loadNative.mockResolvedValueOnce(other);
       const speech = yield* SpeechService.SpeechService;
-      yield* speech.updateAcceleration(acceleration);
+      yield* speech.updateAcceleration(acceleration, fallback);
       const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       expect(Result.isFailure(yield* Effect.result(stream.finish))).toBe(true);
-      expect(worker.finish).toHaveBeenCalledTimes(acceleration === "auto" ? 2 : 1);
-      expect(loadNative).toHaveBeenCalledTimes(acceleration === "auto" ? 2 : 1);
+      // The failed stream frees the model before its socket closes, so a retry is not busy.
+      expect(yield* speech.status).toMatchObject({ state: "ready" });
+      expect(worker.finish).toHaveBeenCalledTimes(retries ? 2 : 1);
+      expect(loadNative.mock.calls.map((call) => call[3])).toEqual(
+        retries ? [acceleration, acceleration === "cpu" ? "auto" : "cpu"] : [acceleration],
+      );
     }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

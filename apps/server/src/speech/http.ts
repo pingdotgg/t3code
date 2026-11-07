@@ -168,7 +168,9 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "updateAcceleration",
         Effect.fn("environment.voice.updateAcceleration")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* speech.updateAcceleration(args.payload.acceleration).pipe(mapSpeechError);
+          return yield* speech
+            .updateAcceleration(args.payload.acceleration, args.payload.fallback)
+            .pipe(mapSpeechError);
         }),
       )
       .handle(

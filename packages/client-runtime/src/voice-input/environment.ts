@@ -270,13 +270,18 @@ export const postProcessEnvironmentTranscript = (
 export const updateEnvironmentSpeechAcceleration = (
   prepared: PreparedConnection,
   acceleration: SpeechAcceleration,
+  fallback?: boolean,
 ) =>
   request({
     group: "voice",
     prepared,
     method: "POST",
     path: (urls) => urls.updateAcceleration(),
-    run: ({ client, headers }) => client.updateAcceleration({ headers, payload: { acceleration } }),
+    run: ({ client, headers }) =>
+      client.updateAcceleration({
+        headers,
+        payload: { acceleration, ...(fallback === undefined ? {} : { fallback }) },
+      }),
   });
 
 export const updateEnvironmentSpeechModelUnloadTimeout = (

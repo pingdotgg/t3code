@@ -603,7 +603,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "speech-hardware",
     title: "Transcription hardware and model unloading",
     to: "/settings/voice",
-    searchTerms: ["speech voice stt advanced gpu cpu acceleration memory unload idle"],
+    searchTerms: ["speech voice stt advanced gpu cpu acceleration fallback memory unload idle"],
   },
   {
     id: "microphone-test",

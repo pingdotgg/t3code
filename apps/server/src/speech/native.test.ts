@@ -51,6 +51,30 @@ it("returns transcription from an isolated process and disposes it", async () =>
   }
 });
 
+it("splits a piece the engine could not finish instead of failing the recording", async () => {
+  for (const error of ["OutputRepetition", "InputTooLong", "OutOfMemory", "BackendError"]) {
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      fixture(`async (pcm) => {
+        class OutputTruncated extends Error {}
+        const errors = { OutputRepetition: class OutputRepetition extends OutputTruncated {},
+          InputTooLong: class InputTooLong extends Error {}, OutOfMemory: class OutOfMemory extends Error {},
+          BackendError: class BackendError extends Error {} };
+        if (pcm.length > 5000) throw new errors.${error}("too much");
+        return { text: String(pcm.length) };
+      }`),
+    );
+    try {
+      expect(
+        await model.transcribe(new Float32Array(16000), { timestamps: "none" }, false),
+      ).toEqual({ text: "4000 4000 4000 4000" });
+    } finally {
+      await model.dispose();
+    }
+  }
+});
+
 it("probes generic vocabulary support and delivers ordered terms to offline inference", async () => {
   for (const supported of [false, true]) {
     const model = await loadNativeSpeechModel(

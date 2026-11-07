@@ -113,6 +113,42 @@ describe("environment voice input", () => {
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
   });
 
+  it("falls back to the retained recording when a live stream fails, and keeps it for retry", async () => {
+    const transcribe = vi
+      .fn<PreparedVoiceTranscription["transcribe"]>()
+      .mockResolvedValueOnce("recovered text")
+      .mockRejectedValueOnce(new Error("inference failed"))
+      .mockResolvedValueOnce("retried text");
+    const finish = vi.fn(async () => {
+      throw new Error("stream failed");
+    });
+    const harness = createHarness({
+      retryFailedRecording: true,
+      getTranscriber: () => ({
+        prepare: async () => ({ ...preparedTranscription(transcribe), streaming: { finish } }),
+      }),
+    });
+    await harness.controller.start();
+    await harness.controller.stop();
+    expect(harness.commits.map(({ text }) => text)).toEqual(["hello recovered text"]);
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+
+    harness.deleted.length = 0;
+    await harness.controller.start();
+    await harness.controller.stop();
+    expect(harness.controller.currentState).toMatchObject({ phase: "error", errorAction: "retry" });
+    expect(harness.deleted).toEqual([]);
+    await harness.controller.start();
+    expect(finish).toHaveBeenCalledTimes(2);
+    expect(transcribe).toHaveBeenCalledTimes(3);
+    expect(harness.recorder.record).toHaveBeenCalledTimes(2);
+    expect(harness.commits.map(({ text }) => text)).toEqual([
+      "hello recovered text",
+      "hello retried text",
+    ]);
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
   it("deletes retained failed audio when the user cancels instead of retrying", async () => {
     const harness = createHarness({
       retryFailedRecording: true,

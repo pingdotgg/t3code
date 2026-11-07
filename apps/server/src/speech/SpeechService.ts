@@ -148,6 +148,7 @@ export class SpeechService extends Context.Service<
     ) => Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly updateAcceleration: (
       acceleration: SpeechAcceleration,
+      fallback?: boolean,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly updateModelUnloadTimeout: (
       timeout: SpeechModelUnloadTimeout,
@@ -236,9 +237,16 @@ const make = Effect.gen(function* () {
   };
 
   // Auto placement may land on a GPU the native engine cannot actually run; one retry on
-  // this host's CPU recovers it. A GPU the person chose, and CPU itself, report the error.
-  const canRetryOnCpu = (acceleration: SpeechAcceleration, loaded: LoadedModel) =>
-    acceleration === "auto" && loaded.backend.toLowerCase() !== "cpu";
+  // this host's CPU recovers it. A device the person chose retries on the other only when allowed.
+  const fallbackFor = (
+    settings: { speechAcceleration: SpeechAcceleration; speechAccelerationFallback: boolean },
+    loaded: LoadedModel,
+  ) => {
+    const onCpu = loaded.backend.toLowerCase() === "cpu";
+    if (settings.speechAcceleration === "auto") return onCpu ? undefined : "cpu";
+    if (!settings.speechAccelerationFallback) return undefined;
+    return onCpu ? "auto" : "cpu";
+  };
 
   yield* Effect.addFinalizer(() =>
     Effect.promise(async () => {
@@ -471,6 +479,7 @@ const make = Effect.gen(function* () {
       languages: definition.languages,
       supportsLanguageDetection: definition.supportsLanguageDetection,
       acceleration: settings.speechAcceleration,
+      accelerationFallback: settings.speechAccelerationFallback,
       benchmarkTier:
         settings.speechAcceleration === "cpu" ||
         (settings.speechAcceleration === "auto" && autoUsesCpu)
@@ -649,21 +658,22 @@ const make = Effect.gen(function* () {
             let inference = loaded;
             const result = yield* transcribeWith(loaded).pipe(
               Effect.catch((error) => {
-                if (!canRetryOnCpu(settings.speechAcceleration, loaded)) return Effect.fail(error);
+                const fallback = fallbackFor(settings, loaded);
+                if (!fallback) return Effect.fail(error);
                 return Effect.tryPromise({
                   try: (signal) =>
                     loadModel(
                       modelPath,
                       definition,
                       AbortSignal.any([signal, lifetime.signal]),
-                      "cpu",
+                      fallback,
                     ),
                   catch: (cause) => speechError("model preparation", cause),
                 }).pipe(
-                  Effect.flatMap((cpu) => {
-                    autoCpuModel = definition.id;
-                    inference = cpu;
-                    return transcribeWith(cpu);
+                  Effect.flatMap((other) => {
+                    if (settings.speechAcceleration === "auto") autoCpuModel = definition.id;
+                    inference = other;
+                    return transcribeWith(other);
                   }),
                 );
               }),
@@ -777,19 +787,19 @@ const make = Effect.gen(function* () {
       correct = makeSpeechTextCorrector(vocabulary ? [] : customWords, dictionary);
       started = true;
     };
-    // Audio already fed is kept so a CPU restart can replay it; the limit caps it at one recording.
+    // Audio already fed is kept so a fallback restart can replay it; the limit caps it at one recording.
     const received: Float32Array[] = [];
-    let retriedOnCpu = false;
-    const recoverOnCpu = async (cause: unknown) => {
+    let recovered = false;
+    const recover = async (cause: unknown) => {
       started = false;
-      if (closed || signal.aborted || retriedOnCpu) throw cause;
-      if (!canRetryOnCpu(settings.speechAcceleration, streamModel)) throw cause;
-      retriedOnCpu = true;
+      const fallback = fallbackFor(settings, streamModel);
+      if (closed || signal.aborted || recovered || !fallback) throw cause;
+      recovered = true;
       forgetModel(streamModel);
       await streamModel.dispose();
       if (closed || signal.aborted) throw cause;
-      streamModel = await loadModel(modelPath, definition, signal, "cpu");
-      autoCpuModel = definition.id;
+      streamModel = await loadModel(modelPath, definition, signal, fallback);
+      if (settings.speechAcceleration === "auto") autoCpuModel = definition.id;
       loaded = streamModel;
       await beginStream();
       let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
@@ -803,7 +813,7 @@ const make = Effect.gen(function* () {
       try {
         await beginStream();
       } catch (cause) {
-        await recoverOnCpu(cause);
+        await recover(cause);
       }
     });
     let byteLength = 0;
@@ -840,7 +850,7 @@ const make = Effect.gen(function* () {
           try {
             update = await streamModel.feed(pcm);
           } catch (cause) {
-            update = await recoverOnCpu(cause);
+            update = await recover(cause);
             revisionBase += lastNativeRevision;
             lastNativeRevision = 0;
           }
@@ -859,7 +869,7 @@ const make = Effect.gen(function* () {
         let text: string;
         try {
           text = await streamModel.finish().catch(async (cause: unknown) => {
-            await recoverOnCpu(cause);
+            await recover(cause);
             if (closed || signal.aborted) throw cause;
             return streamModel.finish();
           });
@@ -884,10 +894,14 @@ const make = Effect.gen(function* () {
     transcribe,
     startStream: Effect.fn("SpeechService.startStream")(function* (options) {
       const session = yield* Scope.fork(yield* Effect.scope);
-      return yield* openStream(options).pipe(
-        Scope.provide(session),
-        Effect.onError((cause) => Scope.close(session, Exit.failCause(cause))),
-      );
+      const closeOnError = <A, E>(effect: Effect.Effect<A, E>) =>
+        effect.pipe(Effect.onError((cause) => Scope.close(session, Exit.failCause(cause))));
+      const stream = yield* closeOnError(openStream(options).pipe(Scope.provide(session)));
+      // A failed stream frees the model before the client hears of it, so its retry is not busy.
+      return {
+        feed: (pcm: Uint8Array) => closeOnError(stream.feed(pcm)),
+        finish: closeOnError(stream.finish),
+      };
     }),
     downloadModel: Effect.fn("SpeechService.downloadModel")((modelId) =>
       requireSupported.pipe(
@@ -951,10 +965,11 @@ const make = Effect.gen(function* () {
         ),
       ),
     ),
-    updateAcceleration: Effect.fn("SpeechService.updateAcceleration")((acceleration) =>
-      writeSettings("acceleration update", { speechAcceleration: acceleration }).pipe(
-        Effect.andThen(freshStatus("acceleration update")),
-      ),
+    updateAcceleration: Effect.fn("SpeechService.updateAcceleration")((acceleration, fallback) =>
+      writeSettings("acceleration update", {
+        speechAcceleration: acceleration,
+        ...(fallback === undefined ? {} : { speechAccelerationFallback: fallback }),
+      }).pipe(Effect.andThen(freshStatus("acceleration update"))),
     ),
     updateModelUnloadTimeout: Effect.fn("SpeechService.updateModelUnloadTimeout")((timeout) =>
       writeSettings("model unload timeout update", { speechModelUnloadTimeout: timeout }).pipe(

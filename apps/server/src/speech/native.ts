@@ -31,6 +31,13 @@ const newAudio = (filterSilence) => createSpeechAudio({
   frameSamples: 512, filterSilence, nativeStreaming: model.capabilities.supportsStreaming,
   longForm: model.supports("long_form"), maxAudioMs: model.capabilities.maxAudioMs,
 });
+// Matched by class name: OutputRepetition extends OutputTruncated, and smaller input needs less memory.
+const splittable = new Set(["OutputTruncated", "InputTooLong", "OutOfMemory", "BackendError"]);
+const canSplit = (error) => {
+  for (let proto = error && Object.getPrototypeOf(error); proto; proto = Object.getPrototypeOf(proto))
+    if (splittable.has(proto.constructor?.name)) return true;
+  return false;
+};
 const openAsr = async () => {
   if (nativeStreaming) {
     session = model.createSession();
@@ -71,8 +78,7 @@ const transcribe = async (pcm) => {
     const result = await model.transcribe(pcm, options);
     texts.push(result.text);
   } catch (error) {
-    if ((error?.constructor?.name !== "OutputTruncated" &&
-         error?.constructor?.name !== "InputTooLong") || pcm.length <= 4000) throw error;
+    if (!canSplit(error) || pcm.length <= 4000) throw error;
     const middle = Math.floor(pcm.length / 2);
     await transcribe(pcm.subarray(0, middle));
     await transcribe(pcm.subarray(middle));

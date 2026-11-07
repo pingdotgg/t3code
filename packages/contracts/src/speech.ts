@@ -219,6 +219,7 @@ const SupportedSpeechStatus = Schema.Struct({
   languages: Schema.optionalKey(Schema.Array(Schema.String)),
   supportsLanguageDetection: Schema.optionalKey(Schema.Boolean),
   acceleration: SpeechAcceleration,
+  accelerationFallback: Schema.optionalKey(Schema.Boolean),
   benchmarkTier: SpeechBenchmarkTier,
   modelUnloadTimeout: SpeechModelUnloadTimeout,
   gpuDevices: Schema.Array(SpeechGpuDevice),
@@ -260,6 +261,7 @@ export const EnvironmentSpeechTranscriptionResult = Schema.Struct({ text: Schema
 
 export const EnvironmentSpeechAccelerationRequest = Schema.Struct({
   acceleration: SpeechAcceleration,
+  fallback: Schema.optionalKey(Schema.Boolean),
 });
 export const EnvironmentSpeechModelUnloadTimeoutRequest = Schema.Struct({
   timeout: SpeechModelUnloadTimeout,

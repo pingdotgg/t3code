@@ -120,7 +120,10 @@ export function createBrowserVoiceInputPlatform(input: {
         options: recordingOptions,
         signal: options.signal,
         onText: input.onText,
-        onError: (error) => input.onError(error.message),
+        // Recording continues after a stream failure; finishing retries the retained audio.
+        onError: (error) => {
+          if (!input.hasAudioConsent()) input.onError(error.message);
+        },
       }),
     };
   });

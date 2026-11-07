@@ -1,4 +1,7 @@
-import { MICROPHONE_PERMISSION_ERROR } from "@t3tools/client-runtime/voice-input";
+import {
+  MICROPHONE_PERMISSION_ERROR,
+  RETAINED_RECORDING_ERROR,
+} from "@t3tools/client-runtime/voice-input";
 import { useNavigate } from "@tanstack/react-router";
 import { RotateCcwIcon, SettingsIcon, XIcon } from "lucide-react";
 
@@ -18,7 +21,7 @@ const VOICE_ERROR_LABELS: Record<string, string> = {
   "Could not start voice recording.": "Couldn’t start recording",
   "Voice recording was interrupted.": "Recording interrupted",
   "Could not finish voice recording.": "Couldn’t finish recording",
-  "Could not transcribe this recording.": "Transcription failed",
+  [RETAINED_RECORDING_ERROR]: "Transcription failed",
   "Voice transcription on this environment failed.": "Transcription failed",
   "The draft changed while voice input was running. The transcript was not added.": "Draft changed",
   "No speech was detected.": "No speech detected",
@@ -40,10 +43,12 @@ export function VoiceInputErrorPill(props: {
 }) {
   const navigate = useNavigate();
   const openSettings = props.errorAction === "settings";
+  const retryTranscription =
+    props.error === RETAINED_RECORDING_ERROR ||
+    props.error === "Voice transcription on this environment failed.";
   const actionLabel = openSettings
     ? "Open voice settings"
-    : props.error === "Could not transcribe this recording." ||
-        props.error === "Voice transcription on this environment failed."
+    : retryTranscription
       ? "Retry transcription"
       : "Record again";
   return (
@@ -89,8 +94,8 @@ export function VoiceInputErrorPill(props: {
             render={
               <Button
                 type="button"
-                size="icon-sm-pill"
-                variant="ghost"
+                size={retryTranscription && !openSettings ? "sm-pill" : "icon-sm-pill"}
+                variant={retryTranscription && !openSettings ? "outline" : "ghost"}
                 aria-label={actionLabel}
                 disabled={props.disabled}
                 onPointerDown={(event) => event.preventDefault()}
@@ -104,6 +109,7 @@ export function VoiceInputErrorPill(props: {
                 }}
               >
                 {openSettings ? <SettingsIcon /> : <RotateCcwIcon />}
+                {retryTranscription && !openSettings ? "Retry" : null}
               </Button>
             }
           />
