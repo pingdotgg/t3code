@@ -23,6 +23,7 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  limitsNotice,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -188,41 +189,38 @@ describe("pools", () => {
       auth: { status: "authenticated", email: "Same@example.com" },
       usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 40 }] },
     });
-    const input = new Map([
-      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [native] } }],
-      [
-        EnvironmentId.make("env-b"),
-        {
-          entry: { target: { label: "Desktop" } },
-          serverConfig: {
-            providers: [
-              {
-                ...native,
-                usageLimits: {
-                  checkedAt: "2026-09-03T11:30:00.000Z",
-                  windows: [{ ...window, usedPercent: 55 }],
+    const newer: NonNullable<ServerProvider["usageLimits"]> = {
+      checkedAt: "2026-09-03T11:30:00.000Z",
+      windows: [{ ...window, usedPercent: 55 }],
+    };
+    const inputWith = (newerLimits: NonNullable<ServerProvider["usageLimits"]>) =>
+      new Map([
+        [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [native] } }],
+        [
+          EnvironmentId.make("env-b"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: {
+              providers: [{ ...native, usageLimits: newerLimits }],
+              usageLimitSources: [
+                {
+                  ...source,
+                  accounts: [
+                    {
+                      id: "claude-same@example.com.json",
+                      driver: claude,
+                      email: "same@example.com",
+                      plan: "Claude Subscription",
+                      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 10 }] },
+                    },
+                  ],
                 },
-              },
-            ],
-            usageLimitSources: [
-              {
-                ...source,
-                accounts: [
-                  {
-                    id: "claude-same@example.com.json",
-                    driver: claude,
-                    email: "same@example.com",
-                    plan: "Claude Subscription",
-                    usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 10 }] },
-                  },
-                ],
-              },
-            ],
+              ],
+            },
           },
-        },
-      ],
-    ]);
-    const accounts = collectLimitAccounts(input);
+        ],
+      ]);
+    const accounts = collectLimitAccounts(inputWith(newer));
     expect(accounts).toHaveLength(1);
     expect(accounts[0]).toMatchObject({
       key: "env-a:claude",
@@ -234,6 +232,11 @@ describe("pools", () => {
       ],
     });
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
+    const [clean] = collectLimitAccounts(
+      inputWith({ ...newer, unavailable: { reason: "probeFailed" } }),
+    );
+    expect(clean?.limits).toMatchObject({ windows: [{ usedPercent: 40 }] });
+    expect(clean?.limits.unavailable).toBeUndefined();
   });
 
   it("uses the freshest reported plan even when the newest quota has no plan", () => {
@@ -1346,6 +1349,24 @@ describe("/usage-limits", () => {
       ),
     ).toEqual(["hub:duplicate", "hub:oss"]);
     const failed = provider({ usageLimits: { ...limits, unavailable: { reason: "probeFailed" } } });
+    expect(limitsNotice(failed.usageLimits!)).toBeNull();
+    expect(limitsNotice({ ...failed.usageLimits!, windows: [] })).toBe("Could not read limits.");
+    const newerEmpty = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:59:00.000Z",
+        windows: [],
+        unavailable: { reason: "probeFailed" },
+      },
+    });
+    for (const duplicates of [
+      [failed, newerEmpty],
+      [newerEmpty, failed],
+    ]) {
+      expect(
+        collectProviderUsageLimits(selected.instanceId, duplicates, [], now)?.accounts[0]?.limits
+          .windows,
+      ).toEqual(limits.windows);
+    }
     expect(
       collectProviderUsageLimits(selected.instanceId, [failed], sources, now)?.accounts.map(
         (account) => account.id,

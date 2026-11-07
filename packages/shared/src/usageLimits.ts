@@ -298,7 +298,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           !previous.environments.some((seen) => seen.environmentId === candidate.environmentId),
       ),
     ];
-    const winner = fresher ? next : previous;
+    const byRank = readRank(next.limits) - readRank(previous.limits);
+    const winner = byRank > 0 || (byRank === 0 && fresher) ? next : previous;
     const creditSource = creditSources.get(key);
     // A hub e-mail names the account better than the driver's default instance name.
     const hubEmail = [previous, next].some(
@@ -618,10 +619,15 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "unsupported") {
     return limits.unavailable.message ?? "This account has no subscription limits.";
   }
-  if (limits.unavailable?.reason === "probeFailed") {
+  if (limits.unavailable?.reason === "probeFailed" && limits.windows.length === 0) {
     return limits.unavailable.message ?? "Could not read limits.";
   }
   return limits.windows.length === 0 ? "No limits reported." : null;
+}
+
+function readRank(limits: ServerProviderUsageLimits): number {
+  if (limitsNotice(limits) !== null) return 0;
+  return limits.unavailable ? 1 : 2;
 }
 
 export function remainingPercent(window: ServerProviderUsageWindow): number {
@@ -779,12 +785,11 @@ export function collectProviderUsageLimits(
     const snapshot = { provider, limits: provider.usageLimits };
     const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
-    const previousUsable = previous ? limitsNotice(previous.usage.limits) === null : false;
-    const usable = limitsNotice(snapshot.limits) === null;
+    const rank = readRank(snapshot.limits);
     const providerWins =
       !previous ||
-      (usable && !previousUsable) ||
-      (usable === previousUsable &&
+      rank > readRank(previous.usage.limits) ||
+      (rank === readRank(previous.usage.limits) &&
         Date.parse(snapshot.limits.checkedAt) > Date.parse(previous.usage.limits.checkedAt));
     const previousCredit = previous?.credits;
     const credits =
