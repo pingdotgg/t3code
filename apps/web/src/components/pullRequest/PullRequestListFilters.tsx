@@ -24,6 +24,7 @@ import {
 import { type ElementType, useState } from "react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
+import { mixerRowHandlers } from "~/lib/mixerSelection";
 import { useDebouncedValue } from "~/state/queries";
 import { type EnvironmentQueryTarget, usePullRequestFilterOptions } from "~/state/pullRequests";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
@@ -406,13 +407,15 @@ function PullRequestLabelChoices({
           <MenuCheckboxItem
             key={key}
             checked={selected.has(key)}
-            onCheckedChange={(next) =>
-              onChange(
-                next
-                  ? [...value, option.name]
-                  : value.filter((name) => name.toLowerCase() !== option.name.toLowerCase()),
-              )
-            }
+            {...mixerRowHandlers({
+              toggle: () =>
+                onChange(
+                  selected.has(key)
+                    ? value.filter((name) => name.toLowerCase() !== key)
+                    : [...value, option.name],
+                ),
+              solo: () => onChange(selected.size === 1 && selected.has(key) ? [] : [option.name]),
+            })}
           >
             <span className="flex min-w-0 items-center gap-2">
               <span
