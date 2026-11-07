@@ -39,7 +39,9 @@ interface Props {
   recording?: boolean | undefined;
   onPictureInPicture?: (() => void) | undefined;
   pictureInPicture?: boolean | undefined;
+  pictureInPictureLabel?: string | undefined;
   pictureInPictureDisabled?: boolean | undefined;
+  windowTitleBar?: boolean | undefined;
   onPickElement?: (() => void) | undefined;
   pickActive?: boolean | undefined;
   pickDisabled?: boolean | undefined;
@@ -68,7 +70,9 @@ export function PreviewChromeRow({
   recording,
   onPictureInPicture,
   pictureInPicture,
+  pictureInPictureLabel,
   pictureInPictureDisabled,
+  windowTitleBar,
   onPickElement,
   pickActive,
   pickDisabled,
@@ -76,6 +80,9 @@ export function PreviewChromeRow({
   trailingActions,
   leadingActions,
 }: Props) {
+  const pipLabel =
+    pictureInPictureLabel ??
+    (pictureInPicture ? "Close floating preview" : "Float preview over chat");
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
 
@@ -91,7 +98,11 @@ export function PreviewChromeRow({
     <div className="relative">
       <form
         onSubmit={submit}
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className={cn(
+          "flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent",
+          // Leaves room for the macOS traffic lights the pop-out window draws over this row.
+          windowTitleBar && "drag-region pl-20",
+        )}
         data-surface-subheader
       >
         <div className="flex items-center gap-0.5" role="group" aria-label="Navigation">
@@ -269,9 +280,7 @@ export function PreviewChromeRow({
                   variant={pictureInPicture ? "secondary" : "ghost"}
                   size="icon-xs"
                   onClick={onPictureInPicture}
-                  aria-label={
-                    pictureInPicture ? "Close floating preview" : "Float preview over chat"
-                  }
+                  aria-label={pipLabel}
                   aria-pressed={pictureInPicture ? "true" : "false"}
                   type="button"
                   disabled={pictureInPictureDisabled}
@@ -280,9 +289,7 @@ export function PreviewChromeRow({
             >
               <PictureInPicture2 className={cn(pictureInPicture && "text-primary")} />
             </TooltipTrigger>
-            <TooltipPopup>
-              {pictureInPicture ? "Close floating preview" : "Float preview over chat"}
-            </TooltipPopup>
+            <TooltipPopup>{pipLabel}</TooltipPopup>
           </Tooltip>
         ) : null}
         {trailingActions}

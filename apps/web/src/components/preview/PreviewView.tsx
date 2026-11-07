@@ -32,8 +32,7 @@ import {
   removeUrlForThread,
   useThreadRecentHistory,
 } from "~/browserHistoryStore";
-import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
-import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
+import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { ensureLocalApi } from "~/localApi";
 import { getClientSettings } from "~/hooks/useSettings";
 import {
@@ -42,6 +41,7 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { usePreviewWebviewConfig } from "~/browser/previewWebviewConfigState";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
 import {
   useEnvironment,
@@ -64,6 +64,10 @@ import { randomUUID } from "~/lib/utils";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
 import { previewBridge } from "./previewBridge";
+import {
+  addPreviewAnnotationToDraft,
+  sendPreviewAnnotationToChatWindow,
+} from "./previewAnnotationDelivery";
 import { subscribePreviewAction } from "./previewActionBus";
 import { closePreviewSession } from "./closePreviewSession";
 import { openPreviewSession } from "./openPreviewSession";
@@ -85,7 +89,7 @@ import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
@@ -170,8 +174,6 @@ export function PreviewView({
   const miniPlayerTabId = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayerTabId(state.byThreadKey, threadRef),
   );
-  const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
-  const addImage = useComposerDraftStore((store) => store.addImage);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const open = useAtomCommand(previewEnvironment.open);
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
@@ -230,6 +232,11 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
+  // Same lookup as ElectronBrowserHost so the pop-out joins the webview's partition.
+  const webviewPartition = usePreviewWebviewConfig(
+    threadRef.environmentId,
+    snapshot?.profileId,
+  )?.partition;
   // IPC interprets undefined profile ids as all profiles.
   const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
   const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
@@ -454,7 +461,9 @@ export function PreviewView({
         ...(nativeServerTab && previewBridge
           ? {
               openDevTools: desktopCall(previewBridge.openDevTools),
-              toggleNativePictureInPicture: () => handleNativePictureInPicture(),
+              ...(webviewPartition
+                ? { toggleTabWindow: () => handleTabWindow(webviewPartition) }
+                : {}),
             }
           : {}),
       }
@@ -477,19 +486,20 @@ export function PreviewView({
               ?.clearCache(threadRef.environmentId, activeProfileId)
               .catch(() => undefined),
           openDevTools: desktopCall(previewBridge.openDevTools),
-          toggleNativePictureInPicture: () => handleNativePictureInPicture(),
+          ...(webviewPartition ? { toggleTabWindow: () => handleTabWindow(webviewPartition) } : {}),
         }
       : null;
 
-  const handleNativePictureInPicture = () => {
+  const isPopoutWindow = window.location.hash.startsWith("#/browser-window/");
+  const handleTabWindow = (partition: string) => {
     if (!previewBridge || !runtimeTabId) return;
-    const operation = desktopOverlay?.pictureInPicture
-      ? previewBridge.pictureInPicture.close
-      : previewBridge.pictureInPicture.open;
-    void operation(runtimeTabId).catch((error) => {
+    const request = desktopOverlay?.detached
+      ? previewBridge.tabWindow.close(runtimeTabId)
+      : previewBridge.tabWindow.open(runtimeTabId, partition);
+    void request.catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to update popped-out preview",
+        title: "Unable to update browser window",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     });
@@ -791,37 +801,15 @@ export function PreviewView({
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
-      // Send annotations even if the optional crop fails or stalls; drop failed screenshots so prompts cannot
-      // claim an attachment.
-      const capture = capturePreviewAnnotationScreenshot(picked);
-      const cropDropped = screenshotFailed || capture.status === "failed";
-      const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
-      addPreviewAnnotation(threadRef, annotation);
-      if (cropDropped) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not capture the picked element",
-            description: "The annotation was kept without the screenshot.",
-          }),
-        );
+      if (isPopoutWindow) {
+        sendPreviewAnnotationToChatWindow({ threadRef, picked, screenshotFailed });
+        return;
       }
-      const screenshotFile = capture.status === "captured" ? capture.file : null;
-      const image =
-        screenshotFile && annotation.screenshot
-          ? ({
-              type: "image",
-              id: annotation.id,
-              name: screenshotFile.name,
-              mimeType: screenshotFile.type,
-              sizeBytes: screenshotFile.size,
-              previewUrl: annotation.screenshot.dataUrl,
-              file: screenshotFile,
-            } satisfies ComposerImageAttachment)
-          : null;
-      if (image) {
-        addImage(threadRef, image);
-      }
+      const { annotation, image } = addPreviewAnnotationToDraft(
+        threadRef,
+        picked,
+        screenshotFailed,
+      );
       if (
         submission === "send" &&
         readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
@@ -921,11 +909,23 @@ export function PreviewView({
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
         onPictureInPicture={
-          tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
+          isPopoutWindow
+            ? () => {
+                if (previewBridge && runtimeTabId)
+                  void previewBridge.tabWindow.close(runtimeTabId).catch(() => undefined);
+              }
+            : tabId && (isServerTab || previewBridge)
+              ? handlePictureInPicture
+              : undefined
         }
-        pictureInPicture={miniPlayerTabId === tabId}
+        pictureInPictureLabel={isPopoutWindow ? "Bring back to chat" : undefined}
+        windowTitleBar={isPopoutWindow && isMacPlatform(navigator.platform)}
+        pictureInPicture={!isPopoutWindow && miniPlayerTabId === tabId}
         pictureInPictureDisabled={
-          isUnreachable || (!isServerTab && !desktopOverlay?.hasWebContents)
+          !isPopoutWindow &&
+          (isUnreachable ||
+            Boolean(desktopOverlay?.detached) ||
+            (!isServerTab && !desktopOverlay?.hasWebContents))
         }
         onPickElement={previewBridge && tabId && !isServerTab ? handlePickElement : undefined}
         pickActive={pickActive}
@@ -965,7 +965,7 @@ export function PreviewView({
               }
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
-              nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+              tabWindow={desktopOverlay?.detached ?? false}
             />
           ) : null
         }

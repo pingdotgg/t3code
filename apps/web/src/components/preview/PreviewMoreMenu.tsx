@@ -36,7 +36,7 @@ export interface PreviewMoreMenuActions {
   readonly clearCookies: () => void;
   readonly clearCache: () => void;
   readonly openDevTools?: () => void;
-  readonly toggleNativePictureInPicture?: () => void;
+  readonly toggleTabWindow?: () => void;
 }
 
 interface Props {
@@ -46,7 +46,7 @@ interface Props {
   colorScheme: DesktopPreviewColorScheme;
   deviceToolbarVisible: boolean;
   onToggleDeviceToolbar: () => void;
-  nativePictureInPicture: boolean;
+  tabWindow: boolean;
   profileName: string | undefined;
   move?: { readonly label: string; readonly onMove: () => void };
 }
@@ -73,7 +73,7 @@ export function PreviewMoreMenu({
   colorScheme,
   deviceToolbarVisible,
   onToggleDeviceToolbar,
-  nativePictureInPicture,
+  tabWindow,
   profileName,
   move,
 }: Props) {
@@ -91,11 +91,9 @@ export function PreviewMoreMenu({
             Open DevTools
           </MenuItem>
         ) : null}
-        {actions.toggleNativePictureInPicture ? (
-          <MenuItem onClick={actions.toggleNativePictureInPicture} disabled={disabled}>
-            {nativePictureInPicture
-              ? "Close separate preview window"
-              : "Open separate preview window"}
+        {actions.toggleTabWindow ? (
+          <MenuItem onClick={actions.toggleTabWindow} disabled={disabled}>
+            {tabWindow ? "Bring back to panel" : "Open in separate window"}
           </MenuItem>
         ) : null}
         {move ? <MenuItem onClick={move.onMove}>{move.label}</MenuItem> : null}
