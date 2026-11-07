@@ -21,6 +21,7 @@ import {
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { definition } from "../shared/definition.ts";
+import { absoluteGitLabUploadLinks } from "../shared/gitLabMedia.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -109,6 +110,11 @@ function gitLabProviderFailure(
   if (error._tag === "GitLabMergeRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
+
+/** Resolves the relative upload links GitLab writes into a body against the project. */
+const projectUploadLinks =
+  (input: { readonly host: string; readonly repository: string }) => (body: string) =>
+    absoluteGitLabUploadLinks(body, `https://${input.host}/${input.repository}`);
 
 // GitLab keeps a thread on the latest diff while its line survives, so older refs mean the code moved.
 const isOutdated = (
@@ -361,6 +367,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequest")),
         Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
           ...mergeRequest,
+          body: projectUploadLinks(input)(mergeRequest.body),
           mergeCapabilities,
           viewerPermissions: gitLabViewerPermissions(mergeRequest),
           // Missing divergence counts mean unknown, not up to date.
@@ -409,6 +416,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(
           ([notes, commits, discussions, awards, detail]): ProviderChangeRequestActivity => {
+            const uploadLinks = projectUploadLinks(input);
             const noteUrl = (id: string) => (detail === null ? null : `${detail.url}#note_${id}`);
             const findingIds = new Set(discussions.overviewFindingIds);
             const edited = (id: string) => {
@@ -424,6 +432,7 @@ export const make = Effect.gen(function* () {
               reactions: awards.reactions,
               comments: notes.comments.map((comment) => ({
                 ...comment,
+                body: uploadLinks(comment.body),
                 ...(findingIds.has(comment.id) ? { kind: "review-comment" as const } : {}),
                 ...edited(comment.id),
                 author: withBotFlag(comment.author),
@@ -440,6 +449,7 @@ export const make = Effect.gen(function* () {
                 ),
                 comments: thread.comments.map((comment) => ({
                   ...comment,
+                  body: uploadLinks(comment.body),
                   ...edited(comment.id),
                   author: withBotFlag(comment.author),
                   url: noteUrl(comment.id),
