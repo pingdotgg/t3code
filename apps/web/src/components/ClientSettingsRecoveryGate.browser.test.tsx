@@ -28,7 +28,7 @@ describe("ClientSettingsRecoveryGate", () => {
       </ClientSettingsRecoveryGate>,
     );
 
-    await expect.element(screen.getByText("Could not read settings")).toBeVisible();
+    await expect.element(screen.getByText("Couldn't load your settings")).toBeVisible();
     await expect.element(screen.getByText("App")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
