@@ -27,8 +27,20 @@ export function AssistantCitationMarkers({
       buildDocJson(showingDraft ? prompt : "", () => null, { styling: richTextEnabled }),
     ),
   );
-  const citations = JSON.parse(citationJson) as ReturnType<typeof draftCitationMarkers>;
+  return <CitationMarkers viewport={viewport} citationJson={citationJson} onOpen={onOpen} />;
+}
+
+function CitationMarkers({
+  viewport,
+  citationJson,
+  onOpen,
+}: {
+  viewport: HTMLElement | null;
+  citationJson: string;
+  onOpen: (key: string, anchor: AssistantCitationSourceAnchor) => void;
+}) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const citations = JSON.parse(citationJson) as ReturnType<typeof draftCitationMarkers>;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions markers against rendered source ranges as the timeline scrolls and virtualizes rows
   useLayoutEffect(() => {
     const overlay = overlayRef.current;
@@ -38,8 +50,9 @@ export function AssistantCitationMarkers({
     const update = () => {
       frame = null;
       const bounds = viewport.getBoundingClientRect();
-      const positions: { left: number; top: number }[] = [];
-      for (const [index, { citation, key }] of citations.entries()) {
+      const occurrences = new Map<string, number>();
+      for (const [index, marker] of citations.entries()) {
+        const { citation, key } = marker;
         const button = overlay.children[index] as HTMLButtonElement;
         if (!anchors.has(key)) {
           const anchor = findAssistantCitationSourceAnchor(viewport, citation);
@@ -61,36 +74,17 @@ export function AssistantCitationMarkers({
           );
         button.hidden = !rect;
         if (rect) {
-          let left = Math.min(
+          const rectKey = `${rect.right}:${rect.bottom}`;
+          const occurrence = occurrences.get(rectKey) ?? 0;
+          occurrences.set(rectKey, occurrence + 1);
+          const left = Math.min(
             Math.max(0, bounds.width - 20),
             Math.max(0, rect.right - bounds.left + 3),
           );
-          let top = Math.min(
+          const top = Math.min(
             Math.max(0, bounds.height - 20),
-            Math.max(0, rect.bottom - bounds.top - 18),
+            Math.max(0, rect.bottom - bounds.top - 18 - occurrence * 22),
           );
-          const overlaps = (x: number, y: number) =>
-            positions.some(
-              (position) => Math.abs(position.left - x) < 22 && Math.abs(position.top - y) < 22,
-            );
-          if (overlaps(left, top)) {
-            let distance = Infinity;
-            let position: { left: number; top: number } | undefined;
-            for (let y = Math.max(0, bounds.height - 20); y >= 0; y -= 22) {
-              for (let x = Math.max(0, bounds.width - 20); x >= 0; x -= 22) {
-                const candidateDistance = Math.abs(x - left) + Math.abs(y - top);
-                if (!overlaps(x, y) && candidateDistance < distance) {
-                  distance = candidateDistance;
-                  position = { left: x, top: y };
-                }
-              }
-            }
-            if (position) {
-              left = position.left;
-              top = position.top;
-            }
-          }
-          positions.push({ left, top });
           button.style.left = `${left}px`;
           button.style.top = `${top}px`;
         }
@@ -100,6 +94,12 @@ export function AssistantCitationMarkers({
       if (frame === null) frame = requestAnimationFrame(update);
     };
     const stopResize = observeResize(viewport, schedule);
+    const rebuildSourceObservations = () => {
+      sourceMutations.disconnect();
+      for (const anchor of anchors.values()) {
+        if (anchor) sourceMutations.observe(anchor.source, { subtree: true, characterData: true });
+      }
+    };
     const mutations = new MutationObserver((records) => {
       const relevant = records.filter((record) => !overlay.contains(record.target));
       if (relevant.length === 0) return;
@@ -111,6 +111,7 @@ export function AssistantCitationMarkers({
         )
           anchors.delete(key);
       }
+      rebuildSourceObservations();
       schedule();
     });
     mutations.observe(viewport, { childList: true, subtree: true });
@@ -119,9 +120,11 @@ export function AssistantCitationMarkers({
         if (anchor && records.some((record) => anchor.source.contains(record.target)))
           anchors.delete(key);
       }
+      rebuildSourceObservations();
       schedule();
     });
-    for (const { citation, key } of citations) {
+    for (const marker of citations) {
+      const { citation, key } = marker;
       const anchor = findAssistantCitationSourceAnchor(viewport, citation);
       anchors.set(key, anchor);
       if (anchor) sourceMutations.observe(anchor.source, { subtree: true, characterData: true });
