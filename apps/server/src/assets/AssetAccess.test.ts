@@ -225,6 +225,8 @@ describe("AssetAccess", () => {
         ["recording.mp4", "video/mp4"],
         ["recording.webm", "video/webm"],
         ["report.html", "text/html"],
+        [".report.html", "text/html"],
+        [" report.html", "text/html"],
         ["report.pdf", "application/pdf"],
         ["notes.odt", "application/vnd.oasis.opendocument.text"],
         ["budget.ods", "application/vnd.oasis.opendocument.spreadsheet"],
@@ -259,9 +261,100 @@ describe("AssetAccess", () => {
           mimeType,
         });
         yield* fs.writeFileString(path.join(outside, "sibling.png"), "private sibling");
-        expect(yield* resolveAsset(token, "sibling.png")).toBeNull();
+        // Only an HTML page may load its own folder.
+        if (mimeType !== "text/html") expect(yield* resolveAsset(token, "sibling.png")).toBeNull();
         expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
         expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("lets an HTML page outside the workspace load files from its own folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-root-" });
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-outside-" });
+      const pageDir = path.join(outside, "depth-options");
+      yield* fs.makeDirectory(path.join(pageDir, "media"), { recursive: true });
+      yield* fs.makeDirectory(path.join(pageDir, ".hidden"));
+      const htmlPath = path.join(pageDir, "index.html");
+      yield* fs.writeFileString(htmlPath, '<img src="media/depth-0.png">');
+      yield* fs.writeFileString(path.join(outside, "private.png"), "outside the page folder");
+      yield* fs.writeFileString(path.join(pageDir, ".hidden", "secret.png"), "hidden");
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: htmlPath },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      for (const [name, contentType] of [
+        ["media/depth-0.png", "image/png"],
+        ["road-1.wav", "audio/wav"],
+      ] as const) {
+        const filePath = path.join(pageDir, name);
+        yield* fs.writeFileString(filePath, "page media");
+        const asset = yield* resolveAsset(token, name);
+        expect(asset, name).toMatchObject({ kind: "file", path: yield* fs.realPath(filePath) });
+        if (asset?.kind !== "file") throw new Error(`Expected ${name} to resolve`);
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(response.headers.get("content-type")).toBe(contentType);
+      }
+      yield* fs.writeFileString(path.join(pageDir, ".secret.png"), "hidden");
+      for (const name of [
+        "../private.png",
+        ".secret.png",
+        ".hidden/secret.png",
+        "%20.secret.png",
+        "%20.hidden/secret.png",
+      ]) {
+        expect(yield* resolveAsset(token, name), name).toBeNull();
+      }
+
+      yield* fs.writeFileString(path.join(pageDir, ".env"), "SECRET=1");
+      yield* fs.writeFileString(path.join(pageDir, "accounts.sqlite"), "rows");
+      yield* fs.symlink(path.join(pageDir, ".env"), path.join(pageDir, "environment.css"));
+      yield* fs.symlink(path.join(pageDir, "accounts.sqlite"), path.join(pageDir, "download.png"));
+      yield* fs.symlink(path.join(pageDir, ".hidden"), path.join(pageDir, "public"));
+      for (const name of ["environment.css", "download.png", "public/secret.png"]) {
+        expect(yield* resolveAsset(token, name), name).toBeNull();
+      }
+      yield* fs.symlink(path.join(pageDir, "media"), path.join(pageDir, "shared"));
+      expect(yield* resolveAsset(token, "shared/depth-0.png")).toMatchObject({
+        kind: "file",
+        path: yield* fs.realPath(path.join(pageDir, "media", "depth-0.png")),
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a page in the home directory or a filesystem root to itself", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-root-" });
+      const users = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-users-" });
+      const home = path.join(users, "me");
+      yield* fs.makeDirectory(path.join(home, "Documents"), { recursive: true });
+      yield* fs.writeFileString(path.join(home, "Documents", "statement.pdf"), "private");
+      yield* fs.writeFileString(path.join(home, "photo.png"), "private");
+      for (const page of [path.join(home, "report.html"), path.join(users, "index.html")]) {
+        yield* fs.writeFileString(page, "<p>page</p>");
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: page },
+          workspaceRoot: root,
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        expect(yield* resolveAsset(token, suffix.slice(separator + 1))).toMatchObject({
+          kind: "file",
+          path: yield* fs.realPath(page),
+        });
+        for (const name of ["photo.png", "Documents/statement.pdf", "me/photo.png"]) {
+          expect(yield* resolveAsset(token, name), `${page} → ${name}`).toBeNull();
+        }
       }
     }).pipe(Effect.provide(layerTest)),
   );
@@ -278,11 +371,13 @@ describe("AssetAccess", () => {
         "sheet.xlsx",
         "slides.pptx",
         "archive.zip",
+        "page.html",
         "no-extension",
       ]) {
         for (const directory of [root, outside]) {
           const filePath = path.join(directory, name);
           yield* fs.writeFileString(filePath, "shared file bytes");
+          yield* fs.writeFileString(path.join(directory, "sibling.png"), "private sibling");
           const resource = {
             _tag: "media-file" as const,
             threadId: ThreadId.make("thread-1"),
@@ -306,6 +401,7 @@ describe("AssetAccess", () => {
           expect(response.headers.get("content-type")).toBe("application/octet-stream");
           expect(yield* Effect.promise(() => response.text())).toBe("shared file bytes");
           expect(yield* resolveAsset(token, "sibling.docx")).toBeNull();
+          expect(yield* resolveAsset(token, "sibling.png")).toBeNull();
           expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
           expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
           yield* fs.rename(filePath, `${filePath}.original`);
@@ -766,6 +862,67 @@ describe("AssetAccess", () => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
+    "keeps an outside HTML page bound to the file opened during resolution",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-page-open-file-" });
+        const filePath = path.join(root, "page.html");
+        const secretPath = path.join(root, "secret.txt");
+        yield* fs.writeFileString(filePath, "<p>public</p>");
+        yield* fs.writeFileString(secretPath, "private information");
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+        if (asset?.kind !== "file") throw new Error("Expected a resolved page");
+
+        yield* fs.rename(filePath, path.join(root, "saved.html"));
+        yield* fs.symlink(secretPath, filePath);
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(yield* Effect.promise(() => response.text())).toBe("<p>public</p>");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "refuses an outside HTML page's folder once that folder is replaced",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-page-folder-swap-" });
+        const pageDirectory = path.join(root, "page");
+        const privateDirectory = path.join(root, "private");
+        yield* fs.makeDirectory(pageDirectory);
+        yield* fs.makeDirectory(privateDirectory);
+        yield* fs.writeFileString(path.join(pageDirectory, "index.html"), "<p>public</p>");
+        yield* fs.writeFileString(path.join(pageDirectory, "image.png"), "public image");
+        yield* fs.writeFileString(path.join(privateDirectory, "image.png"), "private image");
+        const result = yield* issueAssetUrl({
+          resource: {
+            _tag: "media-file",
+            threadId: ThreadId.make("thread-1"),
+            path: path.join(pageDirectory, "index.html"),
+          },
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        expect(yield* resolveAsset(token, "image.png")).toMatchObject({ kind: "file" });
+
+        yield* fs.rename(pageDirectory, path.join(root, "saved"));
+        yield* Effect.promise(() => NodeFSP.symlink(privateDirectory, pageDirectory, "junction"));
+        expect(yield* resolveAsset(token, "image.png")).toBeNull();
+        yield* fs.remove(pageDirectory);
+        yield* fs.makeDirectory(pageDirectory);
+        yield* fs.writeFileString(path.join(pageDirectory, "image.png"), "replacement image");
+        expect(yield* resolveAsset(token, "image.png")).toBeNull();
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
     "rejects a symlink swapped in after canonical validation but before open",
     () =>
       Effect.gen(function* () {
@@ -1021,7 +1178,6 @@ describe("AssetAccess", () => {
         "heic",
         "tif",
         "tiff",
-        "weba",
         "mmd",
         "mermaid",
       ]) {
@@ -1035,6 +1191,42 @@ describe("AssetAccess", () => {
           const suffix = url.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
           expect(yield* resolveAsset(suffix.slice(0, suffix.indexOf("/")), siblingName)).toBeNull();
         }
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves audio and video beside a workspace HTML page", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-workspace-" });
+      const pageDir = path.join(root, "tyre-sounds");
+      yield* fileSystem.makeDirectory(path.join(pageDir, "media"), { recursive: true });
+      const htmlPath = path.join(pageDir, "index.html");
+      yield* fileSystem.writeFileString(htmlPath, '<audio src="road-1.wav"></audio>');
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: htmlPath },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      for (const [name, contentType] of [
+        ["road-1.wav", "audio/wav"],
+        ["road-2.mp3", "audio/mpeg"],
+        ["media/clip.mp4", "video/mp4"],
+      ] as const) {
+        const filePath = path.join(pageDir, name);
+        yield* fileSystem.writeFileString(filePath, "page media");
+        const asset = yield* resolveAsset(token, name);
+        expect(asset, name).toMatchObject({
+          kind: "file",
+          path: yield* fileSystem.realPath(filePath),
+        });
+        if (asset?.kind !== "file") throw new Error(`Expected ${name} to resolve`);
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(response.headers.get("content-type")).toBe(contentType);
       }
     }).pipe(Effect.provide(layerTest)),
   );
