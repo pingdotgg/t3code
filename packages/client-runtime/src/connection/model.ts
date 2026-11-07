@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { withGatewayTicket } from "../environment/endpoint.ts";
+import { environmentEndpointUrl, withGatewayTicket } from "../environment/endpoint.ts";
 
 const ConnectionTargetBase = {
   environmentId: EnvironmentId,
@@ -171,6 +171,21 @@ export const ticketedHttpBaseUrl = (
     : prepared.gatewayTicket.pipe(
         Effect.map((ticket) => withGatewayTicket(prepared.httpBaseUrl, ticket)),
       );
+
+/**
+ * Path on a prepared base that keeps a LAN gateway prefix and re-applies the hop ticket.
+ * `environmentEndpointUrl` clears search, so callers that only join a path would drop the ticket.
+ */
+export const ticketedEnvironmentEndpointUrl = (
+  prepared: PreparedConnection,
+  pathname: string,
+): Effect.Effect<string, ConnectionAttemptError> =>
+  ticketedHttpBaseUrl(prepared).pipe(
+    Effect.map((ticketedBase) => {
+      const hop = Option.fromNullishOr(new URL(ticketedBase).searchParams.get("gatewayTicket"));
+      return withGatewayTicket(environmentEndpointUrl(ticketedBase, pathname), hop);
+    }),
+  );
 
 /**
  * `<img>` and uploads cannot set headers, so a server-issued URL carries a gateway route's ticket.

@@ -1,5 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -22,6 +24,13 @@ import {
 } from "./model.ts";
 
 const TICKET_TIMEOUT_MS = 8_000;
+/** Reuse a media hop ticket until this close to expiry; assets and frames mint many URLs at once. */
+const TICKET_REUSE_SKEW_MS = 30_000;
+
+interface CachedHopTicket {
+  readonly ticket: string;
+  readonly expiresAtEpochMs: number;
+}
 
 export class GatewayHopAuthorization extends Context.Service<
   GatewayHopAuthorization,
@@ -45,6 +54,7 @@ const make = Effect.gen(function* () {
   const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
   const httpClient = yield* HttpClient.HttpClient;
   const preparedByEnvironment = yield* Ref.make(new Map<EnvironmentId, PreparedConnection>());
+  const ticketsByGateway = yield* Ref.make(new Map<EnvironmentId, CachedHopTicket>());
 
   const remember = Effect.fn("clientRuntime.connection.gatewayHop.remember")(function* (
     environmentId: EnvironmentId,
@@ -56,6 +66,13 @@ const make = Effect.gen(function* () {
       else next.set(environmentId, prepared.value);
       return next;
     });
+    if (Option.isNone(prepared)) {
+      yield* Ref.update(ticketsByGateway, (current) => {
+        const next = new Map(current);
+        next.delete(environmentId);
+        return next;
+      });
+    }
   });
 
   const issueDpopTicket = Effect.fnUntraced(function* (prepared: PreparedConnection) {
@@ -101,6 +118,11 @@ const make = Effect.gen(function* () {
       }
       const authorization = prepared.httpAuthorization;
       if (authorization === null) return Option.none<string>();
+      const now = yield* Clock.currentTimeMillis;
+      const cached = (yield* Ref.get(ticketsByGateway)).get(gatewayEnvironmentId);
+      if (cached !== undefined && cached.expiresAtEpochMs - TICKET_REUSE_SKEW_MS > now) {
+        return Option.some(cached.ticket);
+      }
       const issued = yield* (
         authorization._tag === "Bearer"
           ? issueRemoteWebSocketTicket({
@@ -117,7 +139,16 @@ const make = Effect.gen(function* () {
             : ticketFailed(`Could not mint a LAN gateway ticket: ${error.message}`),
         ),
       );
-      return Option.some(Redacted.value(issued.ticket));
+      const ticket = Redacted.value(issued.ticket);
+      yield* Ref.update(ticketsByGateway, (current) => {
+        const next = new Map(current);
+        next.set(gatewayEnvironmentId, {
+          ticket,
+          expiresAtEpochMs: DateTime.toEpochMillis(issued.expiresAt),
+        });
+        return next;
+      });
+      return Option.some(ticket);
     },
     Effect.provideService(HttpClient.HttpClient, httpClient),
   );

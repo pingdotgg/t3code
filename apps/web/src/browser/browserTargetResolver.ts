@@ -3,6 +3,7 @@ import type {
   EnvironmentId,
   PreviewUrlResolution,
 } from "@t3tools/contracts";
+import { gatewayPathPrefix } from "@t3tools/shared/advertisedEndpoint";
 import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
 import { isLocalLoopbackHost, isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
 
@@ -70,6 +71,9 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
     if (!isLoopbackHost(parsed.hostname)) return normalizedUrl;
     const target = readPreparedConnection(environmentId)?.target;
     if (target && reachesEnvironmentLoopback(target)) return normalizedUrl;
+    const environmentUrl = readEnvironmentUrl(environmentId);
+    // A gateway hop reaches the peer's API, not loopback preview servers on that machine.
+    if (gatewayPathPrefix(environmentUrl) !== "") return normalizedUrl;
     return resolveEnvironmentPortTarget(
       environmentId,
       {
@@ -78,7 +82,7 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
         protocol: parsed.protocol === "https:" ? "https" : "http",
         path: `${parsed.pathname}${parsed.search}${parsed.hash}`,
       },
-      readEnvironmentUrl(environmentId),
+      environmentUrl,
       rawUrl,
       parsed,
     ).resolvedUrl;

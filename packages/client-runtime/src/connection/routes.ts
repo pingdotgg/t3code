@@ -451,7 +451,12 @@ export function mergeGatewayRoutes(input: {
   if (!URL.canParse(input.gatewayHttpBaseUrl)) return null;
   const gatewayHttpBase = input.gatewayHttpBaseUrl;
   const peerEnvironmentId = entry.target.environmentId;
-  const advertised = input.advertised.some((peer) => peer.environmentId === peerEnvironmentId);
+  // Mixed-content pages cannot fetch an http gateway; drop those routes the same as a missing ad.
+  const allowInsecure =
+    typeof globalThis.location === "undefined" || globalThis.location.protocol !== "https:";
+  const gatewayReachable = allowInsecure || !gatewayHttpBase.startsWith("http:");
+  const advertised =
+    gatewayReachable && input.advertised.some((peer) => peer.environmentId === peerEnvironmentId);
   const saved = connectionRoutes(entry);
 
   const routeSignature = (routes: ReadonlyArray<ConnectionRoute>) =>

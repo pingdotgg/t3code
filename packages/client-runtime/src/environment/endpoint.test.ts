@@ -1,8 +1,14 @@
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { describe, expect, it } from "vite-plus/test";
 
 import { EnvironmentId } from "@t3tools/contracts";
 
+import {
+  BearerConnectionTarget,
+  ticketedEnvironmentEndpointUrl,
+  type PreparedConnection,
+} from "../connection/model.ts";
 import {
   deriveWsBaseUrl,
   environmentEndpointUrl,
@@ -54,4 +60,26 @@ describe("advertised endpoint helpers", () => {
       "/api/assets/token/a.png",
     );
   });
+
+  it.effect("keeps a LAN gateway prefix and hop ticket when joining a path", () =>
+    Effect.gen(function* () {
+      const peer = EnvironmentId.make("env_peer");
+      const prepared: PreparedConnection = {
+        environmentId: peer,
+        label: "Peer",
+        httpBaseUrl: `https://gateway.example/__t3_gateway/${peer}/`,
+        socketUrl: `wss://gateway.example/__t3_gateway/${peer}/`,
+        httpAuthorization: null,
+        target: new BearerConnectionTarget({
+          environmentId: peer,
+          label: "Peer",
+          connectionId: "bearer:peer",
+        }),
+        gatewayTicket: Effect.succeedSome("hop-ticket"),
+      };
+      expect(yield* ticketedEnvironmentEndpointUrl(prepared, "/api/webhooks/x")).toBe(
+        `https://gateway.example/__t3_gateway/${peer}/api/webhooks/x?gatewayTicket=hop-ticket`,
+      );
+    }),
+  );
 });
