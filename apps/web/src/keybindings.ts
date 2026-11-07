@@ -86,7 +86,7 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
   }
 }
 
-function matchesWhenClause(
+export function matchesWhenClause(
   whenAst: KeybindingWhenNode | undefined,
   context: ShortcutMatchContext,
 ): boolean {
@@ -272,14 +272,6 @@ export function threadJumpIndexFromCommand(command: string): number | null {
   return index === -1 ? null : index;
 }
 
-export function threadTraversalDirectionFromCommand(
-  command: string | null,
-): "previous" | "next" | null {
-  if (command === "thread.previous") return "previous";
-  if (command === "thread.next") return "next";
-  return null;
-}
-
 export function shouldShowThreadJumpHintsForModifiers(
   modifiers: ShortcutModifierStateLike,
   keybindings: ResolvedKeybindingsConfig,
@@ -307,13 +299,6 @@ export function modelPickerJumpCommandForIndex(
   index: number,
 ): ModelPickerJumpKeybindingCommand | null {
   return MODEL_PICKER_JUMP_KEYBINDING_COMMANDS[index] ?? null;
-}
-
-export function modelPickerJumpIndexFromCommand(command: string): number | null {
-  const index = MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.indexOf(
-    command as ModelPickerJumpKeybindingCommand,
-  );
-  return index === -1 ? null : index;
 }
 
 export function isTerminalToggleShortcut(
@@ -362,17 +347,6 @@ export function isDiffToggleShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
-}
-
-export function isOpenFavoriteEditorShortcut(
-  event: ShortcutEventLike,
-  keybindings: ResolvedKeybindingsConfig,
-  options?: ShortcutMatchOptions,
-): boolean {
-  return (
-    event.repeat !== true &&
-    matchesCommandShortcut(event, keybindings, "editor.openFavorite", options)
-  );
 }
 
 /**

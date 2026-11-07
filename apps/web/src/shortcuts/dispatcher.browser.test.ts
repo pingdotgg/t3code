@@ -144,4 +144,22 @@ describe("command dispatcher", () => {
     expect(newer).toHaveBeenCalledOnce();
     expect(older).toHaveBeenCalledOnce();
   });
+
+  it("keeps menu-only handlers out of the keybinding registry stack", () => {
+    const fromKey = vi.fn((event: KeyboardEvent) => {
+      event.preventDefault();
+    });
+    const fromMenu = vi.fn();
+    using stack = new DisposableStack();
+    stack.defer(registerCommands({ "chat.new": fromKey }, { keybindings }));
+    stack.defer(registerMenuAction("chat.new", fromMenu));
+
+    press("k");
+    expect(fromKey).toHaveBeenCalledOnce();
+    expect(fromMenu).not.toHaveBeenCalled();
+
+    dispatchMenuAction("chat.new");
+    expect(fromMenu).toHaveBeenCalledOnce();
+    expect(fromKey).toHaveBeenCalledOnce();
+  });
 });

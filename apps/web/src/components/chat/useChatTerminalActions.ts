@@ -2,7 +2,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import type { Dispatch } from "react";
+import { useEffect, type Dispatch, type SetStateAction } from "react";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { selectThreadTerminalUiState } from "../../terminalUiStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -17,7 +17,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
-import { type SetStateAction } from "react";
+import { registerMenuAction } from "../../shortcuts/dispatcher";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -75,6 +75,8 @@ interface ChatTerminalActionsInput {
   readonly panelTerminalIds: ReadonlySet<string>;
   readonly canReuseTerminal: boolean;
   readonly gitCwd: string | null;
+  /** Side chats keep their own terminal shortcuts but do not own the palette/menu toggle. */
+  readonly registerTerminalToggleMenuAction?: boolean;
   readonly setTerminalUiLaunchContext: Dispatch<SetStateAction<TerminalLaunchContext | null>>;
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
 }
@@ -99,6 +101,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     panelTerminalIds,
     canReuseTerminal,
     gitCwd,
+    registerTerminalToggleMenuAction = true,
     setTerminalUiLaunchContext,
     setThreadError,
   } = input;
@@ -402,17 +405,25 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const openTerminalIfClosed = () => {
     if (!terminalUiState.terminalOpen) setTerminalOpen(true);
   };
+  const runTerminalToggle = () => {
+    if (
+      !terminalUiState.terminalOpen &&
+      !readEnvironmentScope(environmentId, AuthTerminalReadScope) &&
+      !hasTerminalWriteAccess()
+    )
+      return false;
+    toggleTerminalVisibility();
+  };
+  const runTerminalToggleStable = useStableCallback(runTerminalToggle);
+  // Command palette and desktop menus call the same toggle as the keybinding.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the terminal.toggle menu action for the active chat
+  useEffect(() => {
+    if (!registerTerminalToggleMenuAction) return;
+    return registerMenuAction("terminal.toggle", () => void runTerminalToggleStable());
+  }, [registerTerminalToggleMenuAction, runTerminalToggleStable]);
   // A focused right-panel terminal takes the split/new/close chords; otherwise they act on the drawer.
   const shortcuts = {
-    "terminal.toggle": () => {
-      if (
-        !terminalUiState.terminalOpen &&
-        !readEnvironmentScope(environmentId, AuthTerminalReadScope) &&
-        !hasTerminalWriteAccess()
-      )
-        return false;
-      toggleTerminalVisibility();
-    },
+    "terminal.toggle": () => runTerminalToggle(),
     "terminal.split": ({ terminalFocusOwner }) => {
       if (!hasTerminalWriteAccess()) return false;
       if (terminalFocusOwner === "right-panel") return void splitPanelTerminal();

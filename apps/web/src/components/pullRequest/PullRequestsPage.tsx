@@ -81,7 +81,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { RightPanelTabs } from "../RightPanelTabs";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
+import { shortcutLabelForCommand } from "~/keybindings";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
@@ -1400,7 +1400,7 @@ export function PullRequestsPage() {
   };
 
   const copyPullRequestFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!openPanelPullRequestUrl) return;
+    if (!openPanelPullRequestUrl) return false;
     event.preventDefault();
     event.stopPropagation();
     if (event.repeat) return;
@@ -1427,37 +1427,38 @@ export function PullRequestsPage() {
     );
   });
   const closeActiveSurfaceFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (activePullRequestSurface === null) return;
+    if (activePullRequestSurface === null) return false;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) closeSurface(activePullRequestSurface);
   });
   const toggleRightPanelFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!rightPanelAvailable) return;
+    if (!rightPanelAvailable) return false;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) toggleRightPanel();
   });
   const toggleRightPanelMaximizedFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!rightPanelState.isOpen) return;
+    if (!rightPanelState.isOpen) return false;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) toggleRightPanelMaximized();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document keydown listener for the right panel and copy-reference shortcuts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers right-panel and copy-reference commands for the pull-requests page
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isCommandPaletteOpen()) return;
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: getShortcutContext(),
-      });
-      if (command === "rightPanel.close") closeActiveSurfaceFromShortcut(event);
-      if (command === "rightPanel.toggle") toggleRightPanelFromShortcut(event);
-      if (command === "rightPanel.toggleMaximized") toggleRightPanelMaximizedFromShortcut(event);
-      if (command === "thread.copyReference") copyPullRequestFromShortcut(event);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    return registerCommands(
+      {
+        "rightPanel.close": (event) => closeActiveSurfaceFromShortcut(event),
+        "rightPanel.toggle": (event) => toggleRightPanelFromShortcut(event),
+        "rightPanel.toggleMaximized": (event) => toggleRightPanelMaximizedFromShortcut(event),
+        "thread.copyReference": (event) => copyPullRequestFromShortcut(event),
+      },
+      {
+        when: (event) => !event.defaultPrevented && !isCommandPaletteOpen(),
+        context: () => getShortcutContext(),
+        keybindings: () => keybindings,
+      },
+    );
   }, [keybindings]);
 
   return (

@@ -61,6 +61,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 
 import { effectiveShortcutsForCommand } from "~/keybindings";
 import { randomUUID } from "~/lib/utils";
+import { registerCommands } from "~/shortcuts/dispatcher";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
 import { previewBridge } from "./previewBridge";
@@ -877,16 +878,19 @@ export function PreviewView({
       }
     },
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview actions while the view is visible
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview actions and claims preview.focusUrl while visible
   useEffect(() => {
     if (!visible) return;
     const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
-    const unsubscribeMenu = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "preview.focusUrl") onPreviewAction("focus-url");
+    // Newest while visible so desktop-forwarded menu actions share executeCommand with keys.
+    const disposeCommands = registerCommands({
+      "preview.focusUrl": () => {
+        onPreviewAction("focus-url");
+      },
     });
     return () => {
       unsubscribeAction();
-      unsubscribeMenu?.();
+      disposeCommands();
     };
   }, [visible]);
 

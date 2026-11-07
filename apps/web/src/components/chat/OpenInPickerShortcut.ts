@@ -1,14 +1,8 @@
-import {
-  buildRemoteOpenUrl,
-  type EditorId,
-  type EnvironmentId,
-  type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
+import { buildRemoteOpenUrl, type EditorId, type EnvironmentId } from "@t3tools/contracts";
 import { useEffect } from "react";
 
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
-import { isOpenFavoriteEditorShortcut } from "../../keybindings";
 import { announce } from "../../lib/announce";
 import { openRemoteEditorUrl, useRemoteCapableEditors, useRemoteOpenState } from "../../remoteOpen";
 import { registerCommands } from "../../shortcuts/dispatcher";
@@ -19,9 +13,16 @@ import { useAtomCommand } from "../../state/use-atom-command";
 export const OPEN_FAVORITE_EDITOR_ATTRIBUTE = "data-open-favorite-editor";
 
 /**
+ * Fallback used when the marked primary button is missing or disabled. Published by
+ * `useOpenFavoriteEditorShortcut` so the capture-phase command can try the button first
+ * without a newer registry entry outranking it.
+ */
+let openFavoriteEditorFallback: (() => boolean) | null = null;
+
+/**
  * `editor.openFavorite` presses the marked OpenInPicker primary button, so the shortcut opens
- * exactly what the button on screen would. A missing or disabled button leaves the chord to the
- * bubble-phase fallback below. Capture phase, so a focused terminal does not swallow the chord.
+ * exactly what the button on screen would. A missing or disabled button runs the published
+ * fallback (cwd + preferred editor). Capture phase, so a focused terminal does not swallow the chord.
  */
 export function registerOpenFavoriteEditorCommand(): () => void {
   return registerCommands(
@@ -31,9 +32,13 @@ export function registerOpenFavoriteEditorCommand(): () => void {
         const button = [
           ...document.querySelectorAll<HTMLButtonElement>(`[${OPEN_FAVORITE_EDITOR_ATTRIBUTE}]`),
         ].at(-1);
-        if (button === undefined || button.disabled) return false;
+        if (button !== undefined && !button.disabled) {
+          event.preventDefault();
+          button.click();
+          return;
+        }
+        if (openFavoriteEditorFallback?.() !== true) return false;
         event.preventDefault();
-        button.click();
       },
     },
     { capture: true },
@@ -43,13 +48,11 @@ export function registerOpenFavoriteEditorCommand(): () => void {
 export function useOpenFavoriteEditorShortcut({
   enabled,
   environmentId,
-  keybindings,
   availableEditors,
   openInCwd,
 }: {
   enabled: boolean;
   environmentId: EnvironmentId;
-  keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
 }) {
@@ -61,19 +64,14 @@ export function useOpenFavoriteEditorShortcut({
     remote.mode === "local-exec" ? availableEditors : remoteCapableEditors,
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the open-favorite fallback into the shared command while enabled
   useEffect(() => {
-    if (!enabled || remote.mode === "remote-unavailable") return;
-    const handler = (event: globalThis.KeyboardEvent) => {
-      if (
-        event.repeat ||
-        event.defaultPrevented ||
-        !isOpenFavoriteEditorShortcut(event, keybindings)
-      )
-        return;
-      if (!openInCwd || !preferredEditor) return;
-
-      event.preventDefault();
+    if (!enabled || remote.mode === "remote-unavailable") {
+      openFavoriteEditorFallback = null;
+      return;
+    }
+    openFavoriteEditorFallback = () => {
+      if (!openInCwd || !preferredEditor) return false;
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
       if (remote.mode === "remote-links") {
         const url = buildRemoteOpenUrl({
@@ -81,11 +79,11 @@ export function useOpenFavoriteEditorShortcut({
           ...remote.host,
           absolutePath: openInCwd,
         });
-        if (url === undefined) return;
+        if (url === undefined) return false;
         void openRemoteEditorUrl(url).then((opened) => {
           if (opened) announce(`Opened in ${label}`);
         });
-        return;
+        return true;
       }
       void openInEditorMutation({
         environmentId,
@@ -96,16 +94,10 @@ export function useOpenFavoriteEditorShortcut({
       }).then((result) => {
         if (result._tag === "Success") announce(`Opened in ${label}`);
       });
+      return true;
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [
-    enabled,
-    environmentId,
-    keybindings,
-    openInCwd,
-    openInEditorMutation,
-    preferredEditor,
-    remote,
-  ]);
+    return () => {
+      openFavoriteEditorFallback = null;
+    };
+  }, [enabled, environmentId, openInCwd, openInEditorMutation, preferredEditor, remote]);
 }

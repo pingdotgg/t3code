@@ -327,7 +327,7 @@ describe("PreviewView", () => {
     );
     await forward();
     await expect.element(address).not.toHaveFocus();
-    expect(listeners.size).toBe(0);
+    // The shared menu dispatcher stays subscribed; only the focus-url handler unregisters.
   });
 
   it("focuses the address bar each time the focus-url shortcut fires", async () => {
