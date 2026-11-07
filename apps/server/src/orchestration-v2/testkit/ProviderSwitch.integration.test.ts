@@ -1245,6 +1245,8 @@ describe("orchestration v2 provider switching", () => {
     "live",
     "detached",
     "legacy",
+    "interrupted",
+    "cancelled",
     "other-error",
     "other-provider",
     "repaired-native",
@@ -1362,6 +1364,19 @@ describe("orchestration v2 provider switching", () => {
                   payload: attempt,
                 }),
               ),
+            });
+          }
+          if (scenario === "interrupted" || scenario === "cancelled") {
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make(`rejected:${scenario}`),
+                  type: "run.updated",
+                  threadId,
+                  occurredAt: failed.thread.createdAt,
+                  payload: { ...failed.runs.at(-1)!, status: scenario },
+                },
+              ],
             });
           }
           if (scenario === "repaired-native") {
