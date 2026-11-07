@@ -53,6 +53,22 @@ Then choose what the agent may do:
   threads in every project. A thread it starts or steers cannot run with more
   permissions than the mode you chose.
 
+## What outside agents can call
+
+Some tools only work for an agent running inside a T3 thread, because they act
+as that thread: subagents, secret requests, rendered HTML, the browser preview,
+devices, worktree handoff, and linking another environment. They still appear
+in an outside agent's tool list, but calling one fails with
+`thread_credential_required`.
+
+- To hand off work, start a thread with `t3_thread_launch`, then follow it with
+  `t3_thread_wait` or `t3_thread_read`, instead of `create_threads` or
+  `delegate_task`.
+- Tools that default to the caller's own project or thread need an explicit
+  `projectId` or `threadId`.
+- To list threads across projects, call `t3_thread_list` with
+  `allProjects: true`, or use `t3_thread_search`.
+
 ## Claude Code
 
 ```sh
