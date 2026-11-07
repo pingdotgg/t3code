@@ -122,7 +122,10 @@ export function useVoiceTranscriptionDestination() {
   const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const cloud = grant?.destination.kind === "cloud" ? grant.destination : undefined;
   const provider = cloud?.provider;
-  const model = cloud?.provider === "openrouter" ? cloud.model : undefined;
+  const model =
+    cloud && (cloud.provider === "openrouter" || cloud.provider === "custom")
+      ? cloud.model
+      : undefined;
   const supported =
     environment?.serverConfig?.environment.capabilities[
       provider ? "cloudVoiceTranscription" : "voiceTranscription"

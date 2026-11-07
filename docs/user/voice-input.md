@@ -47,6 +47,15 @@ Vocabulary hints are not sent to OpenRouter; dictionary spellings are applied
 after transcription. If OpenRouter stops listing your model, dictation stops
 until you choose another.
 
+**Custom endpoint** points the environment at your own OpenAI-compatible
+transcription server instead of a hosted provider. Enter the server's base URL
+(including the version path, for example `https://stt.example.com/v1`), a model
+name, and an API key; audio is sent to the URL's `/audio/transcriptions` route.
+Plain `http` is only accepted for localhost servers. The model, like the
+OpenRouter model, is per device; the URL and key are shared by the environment.
+T3 cannot verify what a custom endpoint retains, so only point it at servers you
+trust.
+
 ## Set up a model
 
 In **Settings → Voice → Transcription**, download a model and choose **Use model** if it
