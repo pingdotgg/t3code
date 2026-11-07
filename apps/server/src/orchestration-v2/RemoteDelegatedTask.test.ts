@@ -334,11 +334,34 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       assert.equal(stopped.result, "Done there.");
       assert.equal(stopped.remoteChild?.stoppedThere, false);
       assert.equal(stopped.remoteChild?.stopCount, 1);
+      assert.equal(stopped.remoteChild?.stopLimits, undefined);
       const open = yield* projections.getOpenRemoteDelegatedTasks;
       assert.deepEqual(
         open.filter((entry) => entry.parentThreadId === parent.threadId),
         [{ parentThreadId: parent.threadId, taskId: task.id }],
       );
+
+      // A cancel that loses the race owes its own stop, within its modes; a later Stop, within none.
+      const stopLimits = { runtimeMode: "approval-required", interactionMode: "plan" } as const;
+      yield* orchestrator.dispatch({
+        ...complete,
+        commandId: CommandId.make("command:cancel:stop-after-result"),
+        status: "cancelled",
+        result: "Cancelled.",
+        stopLimits,
+      });
+      const cancelOwed = (yield* orchestrator.getThreadProjection(parent.threadId)).subagents[0]!;
+      assert.equal(cancelOwed.remoteChild?.stopCount, 2);
+      assert.deepEqual(cancelOwed.remoteChild?.stopLimits, stopLimits);
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.stop",
+        parentThreadId: parent.threadId,
+        taskId: task.id,
+        commandId: CommandId.make("command:stop:stop-after-result"),
+      });
+      const stopOwed = (yield* orchestrator.getThreadProjection(parent.threadId)).subagents[0]!;
+      assert.equal(stopOwed.remoteChild?.stopCount, 3);
+      assert.equal(stopOwed.remoteChild?.stopLimits, undefined);
     }),
   );
 

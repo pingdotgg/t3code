@@ -3,6 +3,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   isOrchestrationV2WorkActive,
+  subagentExecutionThreadId,
   latestProviderTurnForAttempt,
   MessageId,
   type OrchestrationV2Run,
@@ -280,7 +281,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
           : null;
       if (
         parentRunId !== null &&
-        (yield* threads.getThreadRecords(lineage.parentThreadId, ["turnItems"], {
+        task !== undefined &&
+        // A native subagent's thread lists the task; Stop lands on the run's own thread.
+        (yield* threads.getThreadRecords(subagentExecutionThreadId(task), ["turnItems"], {
           turnItemTypes: ["run_interrupt_request"],
           turnItemRunIds: [parentRunId],
         })).turnItems.length > 0

@@ -1026,6 +1026,54 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
+/** The provider's per-call agent id. Claude names the tool call; Codex names its thread. */
+const nativeCallIdFromMetadata = (metadata: unknown): string | undefined => {
+  if (typeof metadata !== "object" || metadata === null) return undefined;
+  const fields = metadata as Readonly<Record<string, unknown>>;
+  const toolUseId = fields["claudecode/toolUseId"];
+  if (typeof toolUseId === "string" && toolUseId.length > 0) return `claude-tool:${toolUseId}`;
+  const threadId = fields.threadId;
+  if (typeof threadId === "string" && threadId.length > 0) return `codex-thread:${threadId}`;
+  return undefined;
+};
+
+/**
+ * Stateful MCP sessions give `McpRequestContext` the initialize `_meta`; each call's own `_meta`
+ * is on `McpServerClient`. The call id rides on the thread caller for delegation to verify.
+ */
+const withNativeCallIds = Effect.fn("McpHttpServer.withNativeCallIds")(function* <A, E, R>(
+  registration: Effect.Effect<A, E, R>,
+) {
+  const server = yield* McpServer.McpServer;
+  const identifyingServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      return server.addTool({
+        ...options,
+        handle: (payload) =>
+          Effect.withFiber((fiber) => {
+            const invocation = Context.getOrUndefined(
+              fiber.context,
+              McpInvocationContext.McpInvocationContext,
+            );
+            const nativeCallId = nativeCallIdFromMetadata(
+              Context.getOrUndefined(fiber.context, McpSchema.McpServerClient)?.requestMetadata,
+            );
+            return nativeCallId === undefined || invocation?.thread === undefined
+              ? options.handle(payload)
+              : options.handle(payload).pipe(
+                  Effect.provideService(McpInvocationContext.McpInvocationContext, {
+                    ...invocation,
+                    thread: { ...invocation.thread, nativeCallId },
+                  }),
+                );
+          }),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, identifyingServer));
+});
+
 /** Each tool call gets a span named for its tool; arguments stay out, as they carry prompts and IDs. */
 const withToolSpans = Effect.fn("McpHttpServer.withToolSpans")(function* <A, E, R>(
   registration: Effect.Effect<A, E, R>,
@@ -1109,7 +1157,9 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   Layer.effectDiscard(
     withToolAnalytics(
       withToolSpans(
-        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        withNativeCallIds(
+          withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        ),
       ),
     ),
   ).pipe(

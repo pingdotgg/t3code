@@ -3153,6 +3153,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly subagentLaunchToolUseId?: string;
+    readonly subagentLaunchOwner?: string;
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
     readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
@@ -3320,6 +3321,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),
           subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
+          subagentLaunchOwner: () => Effect.succeed(options?.subagentLaunchOwner ?? null),
           assertComplete: Effect.void,
         },
       });
@@ -13621,7 +13623,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const nested = finalSubagents.get(NESTED_TASK_ID);
         assert.equal(outer?.status, "completed");
         assert.equal(nested?.status, "completed");
-        assert.equal(nested?.parentNodeId, outer?.id);
+        assert.equal(nested?.threadId, outer?.childThreadId);
         assert.deepEqual(
           subagentRouting(harness.events, []).assistantTexts(outer?.childThreadId ?? undefined),
           ["OUTER_WORKING", "OUTER_DONE"],
@@ -15390,6 +15392,240 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("parents each nested subagent to the subagent that launched it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const LEVEL_TOOL_USE_IDS = ["toolu-chain-1", "toolu-chain-2", "toolu-chain-3"] as const;
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const credential = (providerSessionId: string) => ({
+          environmentId: EnvironmentId.make("environment-subagent-chain"),
+          threadId: harness.threadId,
+          providerSessionId,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          endpoint: "http://127.0.0.1/mcp",
+          authorizationHeader: "Bearer token",
+          browserToolsAvailable: false,
+        });
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set(credential("credential-subagent-chain"));
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-subagent-chain"),
+            text: "Launch a three-level subagent chain.",
+            attachments: [],
+          }),
+        );
+        const launch = (toolUseId: string, parentToolUseId: string | null, uuid: string) =>
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: parentToolUseId,
+            message: {
+              model: "claude-sonnet-4-6",
+              id: `msg_${toolUseId}`,
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: toolUseId,
+                  name: "Agent",
+                  input: { description: toolUseId, prompt: "Go one level deeper." },
+                },
+              ],
+            },
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const started = (toolUseId: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: `task-${toolUseId}`,
+            tool_use_id: toolUseId,
+            description: toolUseId,
+            task_type: "local_agent",
+            prompt: "Go one level deeper.",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const [first, second, third] = LEVEL_TOOL_USE_IDS;
+        for (const frame of [
+          launch(first, null, "00000000-0000-4000-8000-000000000b01"),
+          started(first, "00000000-0000-4000-8000-000000000b02"),
+          launch(second, first, "00000000-0000-4000-8000-000000000b03"),
+          started(second, "00000000-0000-4000-8000-000000000b04"),
+        ]) {
+          yield* harness.offerAndWait(frame);
+        }
+        // Claude Code streams no frames from a depth-2 agent, so only its PreToolUse hook shows the launch.
+        const preToolUse = (harness.getOpenedOptions()?.hooks?.PreToolUse ?? []).filter(
+          (candidate) => candidate.matcher === ClaudeAdapterV2.CLAUDE_PRE_TOOL_USE_MATCHER,
+        );
+        const runPreToolUse = (input: {
+          readonly agentId: string | undefined;
+          readonly toolName: string;
+          readonly toolUseId: string;
+        }) =>
+          Effect.forEach(
+            preToolUse.flatMap((matcher) => matcher.hooks),
+            (hook) =>
+              Effect.promise(() =>
+                hook(
+                  {
+                    hook_event_name: "PreToolUse",
+                    session_id: WAKE_NATIVE_SESSION,
+                    transcript_path: "/tmp/transcript.jsonl",
+                    cwd: "/tmp",
+                    ...(input.agentId === undefined
+                      ? {}
+                      : { agent_id: input.agentId, agent_type: "general-purpose" }),
+                    tool_name: input.toolName,
+                    tool_input: { description: input.toolUseId, prompt: "Go one level deeper." },
+                    tool_use_id: input.toolUseId,
+                  },
+                  input.toolUseId,
+                  { signal: new AbortController().signal },
+                ),
+              ),
+            { discard: true },
+          );
+        yield* runPreToolUse({ agentId: `task-${second}`, toolName: "Agent", toolUseId: third });
+        for (const frame of [
+          started(third, "00000000-0000-4000-8000-000000000b06"),
+          ...[third, second, first].flatMap((toolUseId, index) => [
+            makeSubagentNotificationFrame({
+              taskId: `task-${toolUseId}`,
+              toolUseId,
+              summary: "hi",
+              uuid: `00000000-0000-4000-8000-000000000b1${index}`,
+            }),
+          ]),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b20", result: "hi" }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const tasks = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "subagent.updated"
+              ? [[event.subagent.nativeTaskRef?.nativeId, event.subagent] as const]
+              : [],
+          ),
+        );
+        const level = (toolUseId: string) => tasks.get(`task-${toolUseId}`)!;
+        const childThreads = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "app_thread.created"
+              ? [[event.appThread.id, event.appThread] as const]
+              : [],
+          ),
+        );
+        const nodes = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "node.updated" ? [[event.node.id, event.node] as const] : [],
+          ),
+        );
+        const subagentTurnItems = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+              ? [[event.turnItem.subagentId, event.turnItem] as const]
+              : [],
+          ),
+        );
+        let ownerThreadId = harness.threadId;
+        for (const toolUseId of LEVEL_TOOL_USE_IDS) {
+          const task = level(toolUseId);
+          assert.equal(task.status, "completed");
+          assert.equal(task.threadId, ownerThreadId, toolUseId);
+          assert.equal(
+            childThreads.get(task.childThreadId!)?.lineage.parentThreadId,
+            ownerThreadId,
+          );
+          assert.equal(nodes.get(task.id)?.threadId, ownerThreadId);
+          assert.equal(subagentTurnItems.get(task.id)?.threadId, ownerThreadId);
+          // Every level is executed by the root run; nested ones are listed in their owner's thread.
+          assert.equal(task.runId, level(first).runId);
+          if (ownerThreadId !== harness.threadId) {
+            assert.equal(task.executionThreadId, harness.threadId);
+            assert.equal(nodes.get(task.id)?.runId, null);
+            assert.equal(subagentTurnItems.get(task.id)?.runId, null);
+            assert.equal(nodes.get(task.parentNodeId!)?.threadId, ownerThreadId);
+          } else {
+            assert.equal(task.executionThreadId, undefined);
+          }
+          ownerThreadId = task.childThreadId!;
+        }
+
+        // Each T3 tool call is bound to the agent that made it, root calls included.
+        const calls = [
+          { agentId: `task-${third}`, toolUseId: "toolu-t3-deepest" },
+          { agentId: `task-${second}`, toolUseId: "toolu-t3-middle" },
+          { agentId: undefined, toolUseId: "toolu-t3-root" },
+        ] as const;
+        for (const call of calls) {
+          yield* runPreToolUse({ ...call, toolName: "mcp__t3-code__delegate_task" });
+        }
+        const callerOf = (toolUseId: string, providerSessionId = "credential-subagent-chain") =>
+          mcpSessions.resolveNativeCaller({
+            threadId: harness.threadId,
+            providerSessionId,
+            callId: `claude-tool:${toolUseId}`,
+          });
+        assert.equal(yield* callerOf("toolu-t3-deepest"), level(third).childThreadId);
+        assert.equal(yield* callerOf("toolu-t3-middle"), level(second).childThreadId);
+        assert.equal(yield* callerOf("toolu-t3-root"), harness.threadId);
+        // Another credential never reads this session's bindings.
+        assert.equal(
+          yield* mcpSessions.resolveNativeCaller({
+            threadId: harness.threadId,
+            providerSessionId: "credential-elsewhere",
+            callId: "claude-tool:toolu-t3-deepest",
+          }),
+          undefined,
+        );
+        // This query's hook keeps its credential, so its late calls bind nothing for the next one.
+        for (const late of ["after-clear", "after-replacement"] as const) {
+          const toolUseId = `toolu-t3-${late}`;
+          if (late === "after-clear") {
+            yield* mcpSessions.clear(harness.threadId);
+            yield* runPreToolUse({
+              agentId: undefined,
+              toolName: "mcp__t3-code__delegate_task",
+              toolUseId,
+            });
+            yield* mcpSessions.set(credential(`credential-${late}`));
+          } else {
+            yield* mcpSessions.set(credential(`credential-${late}`));
+            yield* runPreToolUse({
+              agentId: undefined,
+              toolName: "mcp__t3-code__delegate_task",
+              toolUseId,
+            });
+          }
+          const unbound = yield* Effect.forkChild(callerOf(toolUseId, `credential-${late}`), {
+            startImmediately: true,
+          });
+          yield* TestClock.adjust("5 seconds");
+          assert.isUndefined(yield* Fiber.join(unbound), late);
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("extracts text from direct content-block subagent results", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -17121,117 +17357,155 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("stops only a live workflow task and waits for its stopped notification", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const stoppedTasks: Array<string> = [];
-        let interrupted = false;
-        let closed = false;
-        const harness = yield* makeWorkflowHarnessWithOptions({
-          stopTask: (taskId) =>
-            Effect.sync(() => {
-              stoppedTasks.push(taskId);
+  it.effect.each([false, true])(
+    "stops only a live workflow task and waits for its stopped notification (nested %s)",
+    (nested) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const stoppedTasks: Array<string> = [];
+          let interrupted = false;
+          let closed = false;
+          const harness = yield* makeWorkflowHarnessWithOptions({
+            stopTask: (taskId) =>
+              Effect.sync(() => {
+                stoppedTasks.push(taskId);
+              }),
+            interrupt: Effect.sync(() => {
+              interrupted = true;
             }),
-          interrupt: Effect.sync(() => {
-            interrupted = true;
-          }),
-          close: () =>
-            Effect.sync(() => {
-              closed = true;
+            close: () =>
+              Effect.sync(() => {
+                closed = true;
+              }),
+          });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-workflow-stop"),
+              text: "Run the workflow.",
+              attachments: [],
             }),
-        });
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-workflow-stop"),
-            text: "Run the workflow.",
-            attachments: [],
-          }),
-        );
-        yield* harness.offerAndWait(workflowToolUse);
-        yield* harness.offerAndWait(workflowTaskStarted);
-        yield* harness.offerAndWait(workflowLaunchAck(harness.transcriptDir));
-        yield* harness.offerAndWait(
-          workflowSnapshot({
-            uuid: "00000000-0000-4000-8000-000000001100",
-            state: "start",
-          }),
-        );
-        let member = yield* Queue.take(harness.subagentReceipts);
-        while (!member.subagent.nativeTaskRef?.nativeId?.endsWith(":agent:2")) {
-          member = yield* Queue.take(harness.subagentReceipts);
-        }
-        const stopTask = harness.runtime.stopTask!;
-        for (const taskId of ["missing-task", `${WORKFLOW_TASK_ID}:agent:1`]) {
-          const exit = yield* stopTask({ providerThread: harness.providerThread, taskId }).pipe(
-            Effect.exit,
           );
-          assert.isTrue(Exit.isFailure(exit));
-        }
-        const wrongThread = {
-          ...harness.providerThread,
-          nativeThreadRef: {
-            driver: harness.providerThread.driver,
-            nativeId: "wrong-session",
-            strength: "strong" as const,
-          },
-        };
-        assert.isTrue(
-          Exit.isFailure(
-            yield* stopTask({
-              providerThread: wrongThread,
-              taskId: WORKFLOW_TASK_ID,
-            }).pipe(Effect.exit),
-          ),
-        );
-        assert.deepEqual(stoppedTasks, []);
-        yield* stopTask({ providerThread: harness.providerThread, taskId: WORKFLOW_TASK_ID });
-        assert.deepEqual(stoppedTasks, [WORKFLOW_TASK_ID]);
-        assert.isFalse(interrupted);
-        assert.isFalse(closed);
-        assert.equal(workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status, "running");
-        yield* harness.offerAndWait(
-          workflowNotification({
-            uuid: "00000000-0000-4000-8000-000000001101",
-            status: "stopped",
-          }),
-        );
-        member = yield* Queue.take(harness.subagentReceipts);
-        while (!member.subagent.nativeTaskRef?.nativeId?.endsWith(":agent:2")) {
-          member = yield* Queue.take(harness.subagentReceipts);
-        }
-        assert.equal(
-          workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status,
-          "cancelled",
-        );
-        for (const index of [1, 2]) {
+          if (nested) {
+            yield* harness.offerAndWait(
+              makeSubagentTaskStartedFrame({
+                taskId: "workflow-owner",
+                toolUseId: "toolu-workflow-owner",
+                uuid: "00000000-0000-4000-8000-000000001098",
+              }),
+            );
+          }
+          yield* harness.offerAndWait(
+            nested
+              ? claudeSdkFrame({
+                  ...workflowToolUse,
+                  parent_tool_use_id: "toolu-workflow-owner",
+                  message: {
+                    model: "claude-sonnet-4-6",
+                    content: [
+                      { type: "tool_use", id: WORKFLOW_TOOL_USE_ID, name: "Agent", input: {} },
+                    ],
+                  },
+                })
+              : workflowToolUse,
+          );
+          yield* harness.offerAndWait(workflowTaskStarted);
+          yield* harness.offerAndWait(workflowLaunchAck(harness.transcriptDir));
+          yield* harness.offerAndWait(
+            workflowSnapshot({
+              uuid: "00000000-0000-4000-8000-000000001100",
+              state: "start",
+            }),
+          );
+          let member = yield* Queue.take(harness.subagentReceipts);
+          while (!member.subagent.nativeTaskRef?.nativeId?.endsWith(":agent:2")) {
+            member = yield* Queue.take(harness.subagentReceipts);
+          }
+          const stopTask = harness.runtime.stopTask!;
+          const coordinator = workflowCoordinatorEvents(harness.events).at(-1)?.subagent;
+          if (nested) {
+            assert.notEqual(coordinator?.threadId, harness.threadId);
+            assert.equal(coordinator?.executionThreadId, harness.threadId);
+          } else {
+            assert.equal(coordinator?.threadId, harness.threadId);
+          }
+          for (const taskId of ["missing-task", `${WORKFLOW_TASK_ID}:agent:1`]) {
+            const exit = yield* stopTask({ providerThread: harness.providerThread, taskId }).pipe(
+              Effect.exit,
+            );
+            assert.isTrue(Exit.isFailure(exit));
+          }
+          for (const wrongThread of [
+            {
+              ...harness.providerThread,
+              nativeThreadRef: {
+                driver: harness.providerThread.driver,
+                nativeId: "wrong-session",
+                strength: "strong" as const,
+              },
+            },
+            { ...harness.providerThread, appThreadId: ThreadId.make("thread:foreign-workflow") },
+          ]) {
+            assert.isTrue(
+              Exit.isFailure(
+                yield* stopTask({
+                  providerThread: wrongThread,
+                  taskId: WORKFLOW_TASK_ID,
+                }).pipe(Effect.exit),
+              ),
+            );
+          }
+          assert.deepEqual(stoppedTasks, []);
+          yield* stopTask({ providerThread: harness.providerThread, taskId: WORKFLOW_TASK_ID });
+          assert.deepEqual(stoppedTasks, [WORKFLOW_TASK_ID]);
+          assert.isFalse(interrupted);
+          assert.isFalse(closed);
           assert.equal(
-            workflowMemberEvents(harness.events, index).at(-1)?.subagent.status,
+            workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status,
+            "running",
+          );
+          yield* harness.offerAndWait(
+            workflowNotification({
+              uuid: "00000000-0000-4000-8000-000000001101",
+              status: "stopped",
+            }),
+          );
+          member = yield* Queue.take(harness.subagentReceipts);
+          while (!member.subagent.nativeTaskRef?.nativeId?.endsWith(":agent:2")) {
+            member = yield* Queue.take(harness.subagentReceipts);
+          }
+          assert.equal(
+            workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status,
             "cancelled",
           );
-        }
-        assert.isTrue(
-          Exit.isFailure(
-            yield* stopTask({
-              providerThread: harness.providerThread,
-              taskId: WORKFLOW_TASK_ID,
-            }).pipe(Effect.exit),
-          ),
-        );
-        assert.deepEqual(stoppedTasks, [WORKFLOW_TASK_ID]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+          for (const index of [1, 2]) {
+            assert.equal(
+              workflowMemberEvents(harness.events, index).at(-1)?.subagent.status,
+              "cancelled",
+            );
+          }
+          assert.isTrue(
+            Exit.isFailure(
+              yield* stopTask({
+                providerThread: harness.providerThread,
+                taskId: WORKFLOW_TASK_ID,
+              }).pipe(Effect.exit),
+            ),
+          );
+          assert.deepEqual(stoppedTasks, [WORKFLOW_TASK_ID]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect("projects each workflow member as its own subagent thread", () =>
@@ -17247,6 +17521,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               event.turnItem.nativeItemRef?.nativeId === WORKFLOW_TASK_ID,
           );
 
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-workflow-members"),
+          threadId: harness.threadId,
+          providerSessionId: "credential-workflow-members",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          endpoint: "http://127.0.0.1/mcp",
+          authorizationHeader: "Bearer token",
+          browserToolsAvailable: false,
+        });
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -17287,6 +17571,37 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(first?.threadId, coordinator?.childThreadId);
         assert.equal(second?.threadId, coordinator?.childThreadId);
         assert.notEqual(first?.childThreadId, second?.childThreadId);
+
+        // A member's T3 tool calls are its own, so it lists what it delegates in its thread.
+        for (const matcher of harness.getOpenedOptions()?.hooks?.PreToolUse ?? []) {
+          for (const hook of matcher.hooks) {
+            yield* Effect.promise(() =>
+              hook(
+                {
+                  hook_event_name: "PreToolUse",
+                  session_id: WAKE_NATIVE_SESSION,
+                  transcript_path: "/tmp/transcript.jsonl",
+                  cwd: "/tmp",
+                  agent_id: "a1",
+                  agent_type: "workflow",
+                  tool_name: "mcp__t3-code__delegate_task",
+                  tool_input: { task: "Check the docs." },
+                  tool_use_id: "toolu-member-delegate",
+                },
+                "toolu-member-delegate",
+                { signal: new AbortController().signal },
+              ),
+            );
+          }
+        }
+        assert.equal(
+          yield* mcpSessions.resolveNativeCaller({
+            threadId: harness.threadId,
+            providerSessionId: "credential-workflow-members",
+            callId: "claude-tool:toolu-member-delegate",
+          }),
+          first?.childThreadId,
+        );
 
         assert.equal(
           harness.events.find(
@@ -17494,99 +17809,117 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("projects workflow member threads after resuming a restarted session", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWorkflowHarnessWithOptions({
-          subagentLaunchToolUseId: WORKFLOW_TOOL_USE_ID,
-        });
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-claude-workflow-resume"),
-            text: "Continue the workflow.",
-            attachments: [],
-          }),
-        );
-        yield* harness.offerAndWait(
-          claudeSdkFrame({
-            ...workflowToolUse,
-            message: {
-              model: "claude-sonnet-4-6",
-              content: [
-                { type: "tool_use", id: "toolu-resume-workflow", name: "SendMessage", input: {} },
-              ],
-            },
-          }),
-        );
-        yield* harness.offerAndWait(
-          claudeSdkFrame({
-            ...workflowTaskStarted,
-            tool_use_id: "toolu-resume-workflow",
-            prompt: "Continue the workflow.",
-          }),
-        );
-        yield* harness.offerAndWait(workflowLaunchAck(harness.transcriptDir));
-        yield* harness.offerAndWait(
-          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001040", state: "start" }),
-        );
-        yield* harness.offerAndWait(
-          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001041", result: "Resumed." }),
-        );
-        yield* Queue.take(harness.terminalReceipts);
-        const member = workflowMemberEvents(harness.events, 1).at(-1)?.subagent;
-        const coordinator = workflowCoordinatorEvents(harness.events).at(-1)?.subagent;
-        assert.isDefined(member);
-        assert.equal(member?.status, "running");
-        assert.isTrue(
-          harness.events.some(
+  // A nested coordinator's owner, from its transcript, keeps its place in that owner's thread.
+  it.effect.each([undefined, "task-workflow-owner"] as const)(
+    "projects workflow member threads after resuming a restarted session (owner %s)",
+    (owner) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWorkflowHarnessWithOptions({
+            subagentLaunchToolUseId: WORKFLOW_TOOL_USE_ID,
+            ...(owner === undefined ? {} : { subagentLaunchOwner: owner }),
+          });
+          const ids = yield* IdAllocator.IdAllocatorV2;
+          const ownerThreadId =
+            owner === undefined
+              ? harness.threadId
+              : ids.derive.threadFromProviderThread({
+                  driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                  nativeThreadId: `${harness.providerThread.id}:${owner}`,
+                });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-workflow-resume"),
+              text: "Continue the workflow.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...workflowToolUse,
+              message: {
+                model: "claude-sonnet-4-6",
+                content: [
+                  { type: "tool_use", id: "toolu-resume-workflow", name: "SendMessage", input: {} },
+                ],
+              },
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...workflowTaskStarted,
+              tool_use_id: "toolu-resume-workflow",
+              prompt: "Continue the workflow.",
+            }),
+          );
+          yield* harness.offerAndWait(workflowLaunchAck(harness.transcriptDir));
+          yield* harness.offerAndWait(
+            workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001040", state: "start" }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001041", result: "Resumed." }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+          const member = workflowMemberEvents(harness.events, 1).at(-1)?.subagent;
+          const coordinator = workflowCoordinatorEvents(harness.events).at(-1)?.subagent;
+          assert.isDefined(member);
+          assert.equal(member?.status, "running");
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "app_thread.created" && event.appThread.id === member?.childThreadId,
+            ),
+          );
+          assert.deepEqual(
+            threadMessages(harness.events, member?.childThreadId).map(
+              (event) => event.message.text,
+            ),
+            ["Reply with exactly: A1", "A1 from the transcript"],
+          );
+          assert.isDefined(coordinator?.childThreadId);
+          const recoveredThreads = harness.events.filter(
             (event) =>
-              event.type === "app_thread.created" && event.appThread.id === member?.childThreadId,
-          ),
-        );
-        assert.deepEqual(
-          threadMessages(harness.events, member?.childThreadId).map((event) => event.message.text),
-          ["Reply with exactly: A1", "A1 from the transcript"],
-        );
-        assert.isDefined(coordinator?.childThreadId);
-        const recoveredThreads = harness.events.filter(
-          (event) =>
-            event.type === "app_thread.created" &&
-            event.appThread.id === coordinator?.childThreadId,
-        );
-        assert.lengthOf(recoveredThreads, 1);
-        const recovered = recoveredThreads[0];
-        assert.equal(recovered?.type, "app_thread.created");
-        if (recovered?.type !== "app_thread.created") throw new Error("Expected recovered thread");
-        assert.isTrue(recovered.createOnly);
-        assert.deepEqual(recovered.appThread.lineage, {
-          parentThreadId: harness.threadId,
-          relationshipToParent: "subagent",
-          rootThreadId: harness.threadId,
-        });
-        assert.equal(recovered.appThread.createdBy, "agent");
-        assert.equal(recovered.appThread.creationSource, "provider");
-        assert.isBelow(
-          harness.events.indexOf(recovered),
-          harness.events.findIndex(
-            (event) =>
-              event.type === "subagent.updated" &&
-              event.subagent.childThreadId === coordinator?.childThreadId,
-          ),
-        );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+              event.type === "app_thread.created" &&
+              event.appThread.id === coordinator?.childThreadId,
+          );
+          assert.lengthOf(recoveredThreads, 1);
+          const recovered = recoveredThreads[0];
+          assert.equal(recovered?.type, "app_thread.created");
+          if (recovered?.type !== "app_thread.created")
+            throw new Error("Expected recovered thread");
+          assert.isTrue(recovered.createOnly);
+          assert.equal(recovered.appThread.lineage.parentThreadId, ownerThreadId);
+          assert.equal(recovered.appThread.lineage.relationshipToParent, "subagent");
+          assert.equal(recovered.appThread.lineage.rootThreadId, harness.threadId);
+          assert.equal(coordinator?.threadId, ownerThreadId);
+          assert.equal(
+            coordinator?.executionThreadId,
+            owner === undefined ? undefined : harness.threadId,
+          );
+          assert.equal(recovered.appThread.createdBy, "agent");
+          assert.equal(recovered.appThread.creationSource, "provider");
+          assert.isBelow(
+            harness.events.indexOf(recovered),
+            harness.events.findIndex(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.childThreadId === coordinator?.childThreadId,
+            ),
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect.each([

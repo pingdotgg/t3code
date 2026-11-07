@@ -863,6 +863,12 @@ const DedupedBodyMarker = Schema.optionalKey(Schema.Literal(true));
  * of in a child thread here: that environment and the ordinary thread it runs
  * as there. Such a task has no `childThreadId`.
  */
+/** The modes a stop owed to a task there is sent within: those of the cancel that owes it. */
+export const OrchestrationV2RemoteStopLimits = Schema.Struct({
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+});
+
 export const OrchestrationV2RemoteTaskChild = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -881,6 +887,11 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
    * one owed, so each reaches the thread there once however often it is sent.
    */
   stopCount: Schema.optional(NonNegativeInt),
+  /**
+   * The ceiling of the stop owed for `stopCount`, kept across retries and restarts so it never
+   * goes out above the cancel's modes. Absent: the listing and executing threads' current modes.
+   */
+  stopLimits: Schema.optional(OrchestrationV2RemoteStopLimits),
 });
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
@@ -888,6 +899,11 @@ export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
+  /**
+   * The thread `runId` belongs to when it is not `threadId`: a task listed in a provider-native
+   * subagent's thread, which has no runs, is executed by its session's root run.
+   */
+  executionThreadId: Schema.optional(ThreadId),
   parentNodeId: NodeId,
   origin: Schema.Literals(["provider_native", "app_owned"]),
   createdBy: OrchestrationV2Actor,
@@ -924,6 +940,11 @@ export const OrchestrationV2Subagent = Schema.Struct({
   resultOmitted: DedupedBodyMarker,
 });
 export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
+
+/** The thread whose run executes the task. */
+export const subagentExecutionThreadId = (
+  task: Pick<OrchestrationV2Subagent, "threadId" | "executionThreadId">,
+): ThreadId => task.executionThreadId ?? task.threadId;
 
 export function isOrchestrationV2WorkActive(
   status: OrchestrationV2ExecutionNode["status"],
@@ -3339,6 +3360,11 @@ export const OrchestrationV2Command = Schema.Union([
     parentThreadId: ThreadId,
     parentRunId: RunId,
     parentNodeId: NodeId,
+    /**
+     * The provider-native subagent of the parent's session that asked, which lists the task.
+     * The parent thread's run still executes it.
+     */
+    callerThreadId: Schema.optional(ThreadId),
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     modelSelection: ModelSelection,
@@ -3451,6 +3477,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     parentThreadId: ThreadId,
     parentRunId: RunId,
     parentNodeId: NodeId,
+    /** As for `delegated_task.request`: the native subagent that asked lists the task. */
+    callerThreadId: Schema.optional(ThreadId),
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     driver: ProviderDriverKind,
@@ -3480,6 +3508,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     stoppedThere: Schema.optional(Schema.Literals(["ran-out", "stopped"])),
     /** The stop generation this report acknowledges; absent for the original unnumbered stop. */
     stopCount: Schema.optional(NonNegativeInt),
+    /** Without `stoppedThere`: the cancel's modes, which the stop it owes is sent within. */
+    stopLimits: Schema.optional(OrchestrationV2RemoteStopLimits),
   }),
   /**
    * Owes a stop to the thread there of a remote task that already has its result, as Stop on
@@ -3525,6 +3555,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     subagent: Schema.optional(
       Schema.Struct({
         id: NodeId,
+        /** The thread listing the task, when not `threadId`: a nested native task. */
+        threadId: Schema.optional(ThreadId),
         stoppedAt: Schema.DateTimeUtc,
         outcome: Schema.Struct({
           status: Schema.Literals(["completed", "failed", "cancelled"]),

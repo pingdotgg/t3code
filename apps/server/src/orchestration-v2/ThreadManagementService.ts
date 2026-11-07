@@ -37,6 +37,7 @@ import {
   type ProviderSessionId,
   resolveProjectProviderInstanceEnabled,
   RunId,
+  subagentExecutionThreadId,
   type ScheduledTaskId,
   ThreadId,
   type TurnItemId,
@@ -383,6 +384,7 @@ export interface ThreadManagementServiceShape {
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
+  readonly getTasksExecutedElsewhere: Orchestrator.OrchestratorV2["Service"]["getTasksExecutedElsewhere"];
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, Orchestrator.OrchestratorV2Error>;
@@ -1371,13 +1373,30 @@ const make = Effect.gen(function* () {
       if (task.origin !== "provider_native" || task.driver !== "claudeAgent") {
         return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unsupported" });
       }
+      // A nested workflow is listed in its owner's thread; its session belongs to the root run's.
+      const executionThreadId = subagentExecutionThreadId(task);
+      const execution =
+        executionThreadId === input.threadId
+          ? records
+          : yield* orchestrator
+              .getThreadRecords(executionThreadId, ["runs", "providerThreads"])
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2StopWorkflowError({
+                      ...input,
+                      reason: "unavailable",
+                      cause,
+                    }),
+                ),
+              );
       const providerThreadId =
         task.providerThreadId ??
-        records.runs.find((run) => run.id === task.runId)?.providerThreadId;
-      const providerThread = records.providerThreads.find(
+        execution.runs.find((run) => run.id === task.runId)?.providerThreadId;
+      const providerThread = execution.providerThreads.find(
         (candidate) =>
           candidate.id === providerThreadId &&
-          candidate.appThreadId === input.threadId &&
+          candidate.appThreadId === executionThreadId &&
           candidate.providerInstanceId === task.providerInstanceId &&
           candidate.driver === task.driver,
       );
@@ -1467,7 +1486,15 @@ const make = Effect.gen(function* () {
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = Effect.fn(
     "ThreadManagementService.stopDelegatedTasks",
   )(function* (input) {
-    const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
+    const records = yield* orchestrator.getThreadRecords(input.threadId, ["subagents", "runs"]);
+    // Tasks this thread's runs execute include those its native subagents delegated.
+    const subagents = [
+      ...records.subagents,
+      ...(yield* orchestrator.getTasksExecutedElsewhere({
+        threadId: input.threadId,
+        runIds: records.runs.map((run) => run.id),
+      })),
+    ];
     const failures: Array<
       Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
     > = [];
@@ -1484,7 +1511,7 @@ const make = Effect.gen(function* () {
             ? {
                 type: "delegated_task.remote.complete",
                 commandId,
-                parentThreadId: input.threadId,
+                parentThreadId: task.threadId,
                 taskId: task.id,
                 status: "interrupted",
                 result:
@@ -1495,7 +1522,7 @@ const make = Effect.gen(function* () {
             : {
                 type: "delegated_task.remote.stop",
                 commandId,
-                parentThreadId: input.threadId,
+                parentThreadId: task.threadId,
                 taskId: task.id,
               },
         ).pipe(
@@ -1587,6 +1614,7 @@ const make = Effect.gen(function* () {
         );
       },
     ),
+    getTasksExecutedElsewhere: orchestrator.getTasksExecutedElsewhere,
     getThreadProjection,
     getCheckpointContext,
     getThreadSnapshot,

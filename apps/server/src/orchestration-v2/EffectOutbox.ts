@@ -49,7 +49,14 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerSessionId: ProviderSessionId,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
-    subagent: Schema.optional(Schema.Struct({ id: NodeId, nativeTaskId: Schema.String })),
+    subagent: Schema.optional(
+      Schema.Struct({
+        id: NodeId,
+        nativeTaskId: Schema.String,
+        /** Where the task is listed when that is not the run's thread: a nested native task. */
+        threadId: Schema.optional(ThreadId),
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.steer"),

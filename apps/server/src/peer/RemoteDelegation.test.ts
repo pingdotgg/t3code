@@ -31,7 +31,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
-import type * as SqlClient from "effect/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
@@ -44,7 +44,9 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { makeSubagentChildThread } from "@t3tools/provider-core/server/subagentProjection";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -595,6 +597,7 @@ const makeLaptop = (
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(NodeCrypto.layer),
       Layer.provideMerge(layerThreads),
+      Layer.provideMerge(McpProviderSessions.layer),
       Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
       Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
       Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
@@ -615,6 +618,7 @@ const makeLaptop = (
       threads: Context.get(here, ThreadManagement.ThreadManagementService),
       projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
       sink: Context.get(here, EventSink.EventSinkV2),
+      mcpSessions: Context.get(here, McpProviderSessions.McpProviderSessions),
       call: (name: string, args: Record<string, unknown>, scope = parentScope) =>
         server
           .callTool({ name, arguments: args })
@@ -745,18 +749,25 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
     });
   });
 
-const delegateToBox = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+const delegateToBox = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  scope: McpInvocationContext.McpInvocationScope = parentScope,
+) =>
   laptopEnv
-    .call("delegate_task", {
-      task: "Run the full suite on the box.",
-      target: {
-        environmentId: box.environmentId,
-        providerInstanceId: instanceId,
-        model: "gpt-5.4",
+    .call(
+      "delegate_task",
+      {
+        task: "Run the full suite on the box.",
+        target: {
+          environmentId: box.environmentId,
+          providerInstanceId: instanceId,
+          model: "gpt-5.4",
+        },
+        mode: "async",
+        clientRequestId: "suite-on-box",
       },
-      mode: "async",
-      clientRequestId: "suite-on-box",
-    })
+      scope,
+    )
     .pipe(
       Effect.map((result) => {
         expect(result.isError, JSON.stringify(result.content)).toBe(false);
@@ -770,11 +781,20 @@ const delegateToBox = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>)
       }),
     );
 
+const failureOf = (result: McpSchema.CallToolResult) => {
+  const text = result.content[0];
+  return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
+};
+
 /** Waits until the task here has the result its thread there ended with. */
-const taskResult = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>, taskId: NodeId) =>
+const taskResult = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  taskId: NodeId,
+  listingThreadId = parentThreadId,
+) =>
   laptopEnv.orchestrator
     .streamStoredEventsFrom({
-      threadId: parentThreadId,
+      threadId: listingThreadId,
       afterSequence: 0,
       eventType: "subagent.updated",
     })
@@ -919,6 +939,429 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+/** Native subagents of the laptop parent's session, as Codex's adapter projects them. */
+const seedNativeSubagents = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  names: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const { thread: parentThread } = yield* laptopEnv.orchestrator.getThreadRecords(
+      parentThreadId,
+      [],
+    );
+    return yield* Effect.forEach(names, (name) =>
+      Effect.gen(function* () {
+        const taskId = NodeId.make(`node:native-${name}`);
+        const threadId = ThreadId.make(`thread:native-${name}`);
+        const rootNodeId = NodeId.make(`node:native-${name}:root`);
+        const thread = makeSubagentChildThread({
+          parentThread,
+          childThreadId: threadId,
+          parentNodeId: taskId,
+          activeProviderThreadId: null,
+          providerInstanceId: instanceId,
+          modelSelection,
+          title: name,
+          now,
+          createdBy: "agent",
+          creationSource: "provider",
+        });
+        yield* laptopEnv.sink.write({
+          commandId: CommandId.make(`command:seed:native-${name}`),
+          events: [
+            {
+              id: EventId.make(`event:seed-thread:native-${name}`),
+              type: "thread.created",
+              threadId,
+              occurredAt: now,
+              payload: thread,
+            },
+            {
+              id: EventId.make(`event:seed-root:native-${name}`),
+              type: "node.updated",
+              threadId,
+              nodeId: rootNodeId,
+              occurredAt: now,
+              payload: {
+                id: rootNodeId,
+                threadId,
+                runId: null,
+                parentNodeId: null,
+                rootNodeId,
+                kind: "root_turn",
+                status: "running",
+                countsForRun: false,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+            {
+              id: EventId.make(`event:seed-task:native-${name}`),
+              type: "subagent.updated",
+              threadId: parentThreadId,
+              runId: parentRunId,
+              nodeId: taskId,
+              occurredAt: now,
+              payload: {
+                id: taskId,
+                threadId: parentThreadId,
+                runId: parentRunId,
+                parentNodeId: parentRootNode,
+                origin: "provider_native",
+                createdBy: "agent",
+                driver,
+                providerInstanceId: instanceId,
+                providerThreadId: null,
+                childThreadId: threadId,
+                nativeTaskRef: { driver, nativeId: `native-${name}`, strength: "strong" },
+                prompt: `Work as ${name}`,
+                title: name,
+                model: null,
+                status: "running",
+                result: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        // Codex names the calling thread in each MCP call's `_meta.threadId`.
+        yield* laptopEnv.mcpSessions.bindNativeCaller({
+          threadId: parentThreadId,
+          providerSessionId: parentScope.thread!.providerSessionId,
+          callId: `codex-thread:native-${name}`,
+          callerThreadId: threadId,
+        });
+        return {
+          threadId,
+          scope: {
+            ...parentScope,
+            thread: { ...parentScope.thread!, nativeCallId: `codex-thread:native-${name}` },
+          } satisfies McpInvocationContext.McpInvocationScope,
+        };
+      }),
+    );
+  });
+
+const nativeRemoteStops = [
+  "caller cancel",
+  "caller cancel once it ended, with the root lowered",
+  "root Stop",
+  "root cancel",
+  "caller cancel after the root's runtime is lowered",
+  "caller cancel after the root's interaction is lowered",
+  "root cancel after the root's runtime is lowered",
+  "root cancel after the root's interaction is lowered",
+  "root Stop after the root's runtime is lowered",
+  "launch with nothing lowered",
+  "launch once the root's runtime is lowered",
+  "launch once the root's interaction is lowered",
+  "launch once the caller's runtime is lowered",
+] as const;
+
+it.effect.each(nativeRemoteStops)(
+  "a native subagent's task there is listed, read and stopped by %s",
+  (stop) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+        yield* a.mcpSessions.set({
+          environmentId: laptop.environmentId,
+          threadId: parentThreadId,
+          providerSessionId: parentScope.thread!.providerSessionId,
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1/mcp",
+          authorizationHeader: "Bearer token",
+          browserToolsAvailable: false,
+        });
+        const [caller, sibling] = yield* seedNativeSubagents(a, ["caller", "sibling"]);
+
+        const launch = stop.match(
+          /^launch (?:once the (root|caller)'s (runtime|interaction)|with nothing) /,
+        );
+        if (launch !== null) {
+          const [, lowerer, mode] = launch;
+          if (lowerer !== undefined) {
+            const threadId = lowerer === "root" ? parentThreadId : caller!.threadId;
+            const commandId = CommandId.make(`command:lower:native-remote-launch-${lowerer}`);
+            yield* a.orchestrator.dispatch(
+              mode === "runtime"
+                ? {
+                    type: "thread.runtime-mode.set",
+                    commandId,
+                    threadId,
+                    runtimeMode: "approval-required",
+                  }
+                : {
+                    type: "thread.interaction-mode.set",
+                    commandId,
+                    threadId,
+                    interactionMode: "plan",
+                  },
+            );
+          }
+          const expected = {
+            runtimeMode: mode === "runtime" ? "approval-required" : "full-access",
+            interactionMode: mode === "interaction" ? "plan" : "default",
+          } as const;
+          if (lowerer !== undefined) {
+            // Asking for what was lowered launches nothing there and records nothing here.
+            const broader = yield* a.call(
+              "delegate_task",
+              {
+                task: "Run the full suite on the box.",
+                target: {
+                  environmentId: box.environmentId,
+                  providerInstanceId: instanceId,
+                  model: "gpt-5.4",
+                },
+                ...(mode === "runtime"
+                  ? { runtimeMode: "full-access" }
+                  : { interactionMode: "default" }),
+                clientRequestId: "broader-on-box",
+              },
+              caller!.scope,
+            );
+            expect(failureOf(broader)).toMatchObject({ code: `${mode}_mode_escalation_denied` });
+            expect(yield* Ref.get(thread.launched)).toBeNull();
+            expect(
+              (yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"])).subagents,
+            ).toEqual([]);
+          }
+          // Inherited modes go there within the root's and the caller's, whichever is narrower.
+          const launched = yield* delegateToBox(a, caller!.scope);
+          expect(yield* Ref.get(thread.launchedWith)).toEqual({ modelSelection, ...expected });
+          if (lowerer === undefined) {
+            // An accepted launch retried after the root is lowered finds the same thread and task.
+            yield* a.orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:lower:native-remote-launch-retry"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            expect(yield* delegateToBox(a, caller!.scope)).toMatchObject({
+              taskId: launched.taskId,
+              remoteChild: { threadId: launched.remoteChild.threadId },
+            });
+          }
+          expect(
+            (yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"])).subagents.map(
+              (task) => task.id,
+            ),
+          ).toEqual([launched.taskId]);
+          return;
+        }
+
+        const delegated = yield* delegateToBox(a, caller!.scope);
+        // The caller's thread lists it; the parent's run executes it, as for a task here.
+        const { subagents } = yield* a.projections.getThreadRecords(
+          caller!.threadId,
+          ["subagents"],
+          {
+            subagentIds: [delegated.taskId],
+          },
+        );
+        expect(subagents[0]).toMatchObject({
+          threadId: caller!.threadId,
+          runId: parentRunId,
+          executionThreadId: parentThreadId,
+          remoteChild: { threadId: delegated.remoteChild.threadId },
+        });
+        expect(
+          (yield* a.projections.getThreadRecords(parentThreadId, ["subagents"])).subagents.filter(
+            (task) => task.origin === "app_owned",
+          ),
+        ).toEqual([]);
+
+        // Only the caller reads and cancels it; the parent reads what its run executes.
+        expect(
+          (yield* a.call("task_status", { taskId: delegated.taskId }, caller!.scope))
+            .structuredContent,
+        ).toMatchObject({ status: "running" });
+        expect(
+          (yield* a.call("task_status", { taskId: delegated.taskId })).structuredContent,
+        ).toMatchObject({ status: "running" });
+        expect(
+          (yield* a.call("task_status", { taskId: delegated.taskId }, sibling!.scope)).isError,
+        ).toBe(true);
+        expect(
+          (yield* a.call("task_cancel", { taskId: delegated.taskId }, sibling!.scope)).isError,
+        ).toBe(true);
+        expect(yield* Ref.get(thread.stops)).toEqual([]);
+
+        const lowered = stop.match(/after the root's (runtime|interaction) is lowered/)?.[1];
+        if (lowered !== undefined) {
+          // Only the root is lowered below the thread there; the caller keeps its modes.
+          yield* a.orchestrator.dispatch(
+            lowered === "runtime"
+              ? {
+                  type: "thread.runtime-mode.set",
+                  commandId: CommandId.make("command:lower:native-remote-parent"),
+                  threadId: parentThreadId,
+                  runtimeMode: "approval-required",
+                }
+              : {
+                  type: "thread.interaction-mode.set",
+                  commandId: CommandId.make("command:lower:native-remote-parent"),
+                  threadId: parentThreadId,
+                  interactionMode: "plan",
+                },
+          );
+          const stoppedThere = (value: boolean) =>
+            a.orchestrator
+              .streamStoredEventsFrom({
+                threadId: caller!.threadId,
+                afterSequence: 0,
+                eventType: "subagent.updated",
+              })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "subagent.updated" &&
+                    stored.event.payload.id === delegated.taskId &&
+                    stored.event.payload.remoteChild?.stoppedThere === value,
+                ),
+                Stream.runHead,
+              );
+          if (stop.startsWith("root Stop")) {
+            yield* a.threads.stopDelegatedTasks({
+              threadId: parentThreadId,
+              commandId: CommandId.make("command:stop:native-remote-lowered"),
+            });
+            // The box refuses the follower's stop for good, so nothing retries it.
+            expect(Option.isSome(yield* stoppedThere(true))).toBe(true);
+            expect(yield* Ref.get(thread.stops)).toEqual([]);
+            expect(yield* a.projections.getOpenRemoteDelegatedTasks).toEqual([]);
+            return;
+          }
+          const refused = yield* a.call(
+            "task_cancel",
+            { taskId: delegated.taskId, clientRequestId: "cancel-lowered" },
+            stop.startsWith("caller") ? caller!.scope : parentScope,
+          );
+          expect(failureOf(refused)).toMatchObject({ code: `${lowered}_mode_escalation_denied` });
+          // The refused cancel records nothing here: the task runs on, owing no stop.
+          expect(
+            (yield* a.call("task_status", { taskId: delegated.taskId }, caller!.scope))
+              .structuredContent,
+          ).toMatchObject({ status: "running" });
+          // Its run ending there completes it with nothing ever stopped there.
+          yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
+          yield* Ref.set(thread.status, "completed");
+          yield* Deferred.succeed(thread.finished, undefined);
+          expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
+            status: "completed",
+          });
+          expect(yield* Ref.get(thread.stops)).toEqual([]);
+          return;
+        }
+
+        if (stop === "root cancel") {
+          const cancelled = yield* a.call("task_cancel", {
+            taskId: delegated.taskId,
+            clientRequestId: "cancel-root",
+          });
+          expect(cancelled.structuredContent).toEqual({
+            taskId: delegated.taskId,
+            status: "cancel_requested",
+          });
+          expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
+          expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
+            status: "cancelled",
+          });
+          return;
+        }
+
+        if (stop === "root Stop") {
+          const commandId = CommandId.make("command:stop:native-remote-parent");
+          yield* a.orchestrator.dispatch({
+            type: "thread.stop",
+            commandId,
+            threadId: parentThreadId,
+          });
+          const sql = Context.get(database, SqlClient.SqlClient);
+          const effects = yield* sql<{ readonly effect_type: string }>`
+          SELECT effect_type FROM orchestration_v2_effect_outbox WHERE command_id = ${commandId}
+        `;
+          expect(effects.map((effect) => effect.effect_type)).toContain("delegated-tasks.stop");
+          // This harness leaves committed effects for the test to execute.
+          yield* a.threads.stopDelegatedTasks({ threadId: parentThreadId, commandId });
+          expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
+            status: "interrupted",
+          });
+          yield* Deferred.await(thread.interruptedOnce);
+          expect(yield* Ref.get(thread.stops)).toContain("thread.stop");
+          return;
+        }
+
+        // Its end there lands in the caller's thread and wakes the parent's run.
+        yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
+        yield* Ref.set(thread.status, "completed");
+        yield* Deferred.succeed(thread.finished, undefined);
+        expect(yield* taskResult(a, delegated.taskId, caller!.threadId)).toMatchObject({
+          status: "completed",
+        });
+        const parentRun = (yield* a.orchestrator.getThreadProjection(parentThreadId)).runs.find(
+          (run) => run.id === parentRunId,
+        );
+        expect(parentRun?.delegatedCompletion?.delivery?.taskIds).toEqual([delegated.taskId]);
+
+        if (stop === "caller cancel once it ended, with the root lowered") {
+          yield* a.orchestrator.dispatch({
+            type: "thread.runtime-mode.set",
+            commandId: CommandId.make("command:lower:native-remote-parent-ended"),
+            threadId: parentThreadId,
+            runtimeMode: "approval-required",
+          });
+          const before = yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"], {
+            subagentIds: [delegated.taskId],
+          });
+          const refused = yield* a.call(
+            "task_cancel",
+            { taskId: delegated.taskId, clientRequestId: "cancel-after-lowered" },
+            caller!.scope,
+          );
+          expect(failureOf(refused)).toMatchObject({ code: "runtime_mode_escalation_denied" });
+          expect(yield* Ref.get(thread.stops)).toEqual([]);
+          // Nothing here records that stop as made or owed.
+          expect(
+            (yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"], {
+              subagentIds: [delegated.taskId],
+            })).subagents,
+          ).toEqual(before.subagents);
+          return;
+        }
+
+        // The caller's cancel still stops what followed there.
+        const cancelled = yield* a.call(
+          "task_cancel",
+          { taskId: delegated.taskId, clientRequestId: "cancel-after" },
+          caller!.scope,
+        );
+        expect(cancelled.structuredContent).toEqual({
+          taskId: delegated.taskId,
+          status: "completed",
+        });
+        expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect.each(["no active parent run", "a newer run owned by another provider"] as const)(
@@ -1643,10 +2086,11 @@ const stoppedThere = (
   taskId: NodeId,
   // `null` for a cancel's stop, which carries no count.
   stopCount: number | null = 1,
+  listingThreadId = parentThreadId,
 ) =>
   laptopEnv.orchestrator
     .streamStoredEventsFrom({
-      threadId: parentThreadId,
+      threadId: listingThreadId,
       afterSequence: 0,
       eventType: "subagent.updated",
     })
@@ -1847,44 +2291,98 @@ it.effect("a parent stopped while the box is unreachable still stops its task th
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a task cancelled while the box is unreachable is stopped there after a restart", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      // Its links outlive the restart, so the box knows it as the same link session.
-      const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
-      // The laptop cancels while the box sleeps, then restarts before it wakes.
-      const delegated = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const before = yield* makeLaptop(database, offers, linking);
-          yield* linkTo(before.links, b, "full-access");
-          yield* seedParent(before);
-          const task = yield* delegateToBox(before);
-          yield* Ref.set(b.descriptor, descriptorOf("environment-elsewhere", "Elsewhere"));
-          yield* before.call("task_cancel", { taskId: task.taskId });
-          expect(yield* taskResult(before, task.taskId)).toMatchObject({ status: "cancelled" });
-          return task;
-        }),
-      );
-      expect(yield* Ref.get(thread.interrupted)).toBe(0);
+it.effect.each([
+  "its parent",
+  "a native caller",
+  "a native caller whose runtime was narrowed",
+  "the root, whose interaction was narrowed",
+] as const)(
+  "a task cancelled while the box is unreachable is stopped there after a restart by %s",
+  (cancelledBy) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        // Its links outlive the restart, so the box knows it as the same link session.
+        const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+        const narrowed = cancelledBy.endsWith("narrowed");
+        // The laptop cancels while the box sleeps, then restarts before it wakes.
+        const { task: delegated, listingThreadId } = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const before = yield* makeLaptop(database, offers, linking);
+            yield* linkTo(before.links, b, "full-access");
+            yield* seedParent(before);
+            if (cancelledBy === "its parent") {
+              const task = yield* delegateToBox(before);
+              yield* Ref.set(b.descriptor, descriptorOf("environment-elsewhere", "Elsewhere"));
+              yield* before.call("task_cancel", { taskId: task.taskId });
+              expect(yield* taskResult(before, task.taskId)).toMatchObject({
+                status: "cancelled",
+              });
+              return { task, listingThreadId: parentThreadId };
+            }
+            yield* before.mcpSessions.set({
+              environmentId: laptop.environmentId,
+              threadId: parentThreadId,
+              providerSessionId: parentScope.thread!.providerSessionId,
+              providerInstanceId: instanceId,
+              endpoint: "http://127.0.0.1/mcp",
+              authorizationHeader: "Bearer token",
+              browserToolsAvailable: false,
+            });
+            const [caller] = yield* seedNativeSubagents(before, ["caller"]);
+            const task = yield* delegateToBox(before, caller!.scope);
+            // The cancel's narrower mode: its caller's runtime, or the root's interaction.
+            const narrow = (mode: "narrow" | "widen") =>
+              cancelledBy === "the root, whose interaction was narrowed"
+                ? before.orchestrator.dispatch({
+                    type: "thread.interaction-mode.set",
+                    commandId: CommandId.make(`command:${mode}:root-interaction`),
+                    threadId: parentThreadId,
+                    interactionMode: mode === "narrow" ? "plan" : "default",
+                  })
+                : before.orchestrator.dispatch({
+                    type: "thread.runtime-mode.set",
+                    commandId: CommandId.make(`command:${mode}:caller-runtime`),
+                    threadId: caller!.threadId,
+                    runtimeMode: mode === "narrow" ? "approval-required" : "full-access",
+                  });
+            if (narrowed) yield* narrow("narrow");
+            yield* Ref.set(b.descriptor, descriptorOf("environment-elsewhere", "Elsewhere"));
+            yield* before.call(
+              "task_cancel",
+              { taskId: task.taskId },
+              cancelledBy.startsWith("the root") ? parentScope : caller!.scope,
+            );
+            expect(yield* taskResult(before, task.taskId, caller!.threadId)).toMatchObject({
+              status: "cancelled",
+            });
+            // Widened again before the box wakes: the owed stop keeps the cancel's modes.
+            if (narrowed) yield* narrow("widen");
+            return { task, listingThreadId: caller!.threadId };
+          }),
+        );
+        expect(yield* Ref.get(thread.interrupted)).toBe(0);
 
-      yield* Ref.set(b.descriptor, box);
-      const after = yield* makeLaptop(database, offers, linking);
-      yield* after.remote.start();
-      yield* Deferred.await(thread.interruptedOnce);
-      // Once the stop is recorded, nothing is owed there any more.
-      yield* stoppedThere(after, delegated.taskId, null);
-      expect(yield* after.projections.getOpenRemoteDelegatedTasks).toEqual([]);
-      expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
-      // The result here is still the cancel's.
-      expect(yield* taskResult(after, delegated.taskId)).toMatchObject({ status: "cancelled" });
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        yield* Ref.set(b.descriptor, box);
+        const after = yield* makeLaptop(database, offers, linking);
+        yield* after.remote.start();
+        // Once the stop is recorded or refused for good, nothing is owed there any more.
+        yield* stoppedThere(after, delegated.taskId, null, listingThreadId);
+        expect(yield* after.projections.getOpenRemoteDelegatedTasks).toEqual([]);
+        expect(yield* Ref.get(thread.stops)).toEqual(
+          narrowed ? [] : ["thread.stop", "delegated-tasks"],
+        );
+        // The result here is still the cancel's.
+        expect(yield* taskResult(after, delegated.taskId, listingThreadId)).toMatchObject({
+          status: "cancelled",
+        });
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task whose thread there has no run ends with its last reply", () =>

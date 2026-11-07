@@ -212,6 +212,9 @@ export const layerExecutor: Layer.Layer<
                             : {
                                 subagent: {
                                   id: request.subagent.id,
+                                  ...(request.subagent.threadId === undefined
+                                    ? {}
+                                    : { threadId: request.subagent.threadId }),
                                   stoppedAt: DateTime.makeUnsafe(effect.createdAt),
                                   outcome,
                                 },

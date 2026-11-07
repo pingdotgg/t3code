@@ -18,9 +18,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
+import { narrowestModes } from "../mcp/delegatedTaskModes.ts";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import { type CallerLimits, readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
@@ -48,12 +49,14 @@ export class PeerForwarding extends Context.Service<
     /**
      * Runs `tool` in the linked environment `environmentId` with `params`. A
      * `t3_thread_wait` goes in pieces short enough to survive any route.
+     * `ceiling` narrows the scope's own limits, as for `interruptThread`.
      */
     readonly call: <T extends Tool.Any>(
       scope: Scope,
       tool: T,
       environmentId: EnvironmentId,
       params: Tool.Parameters<T>,
+      ceiling?: CallerLimits,
     ) => Effect.Effect<Tool.Success<T>, OrchestratorMcpFailure>;
     /** `t3_thread_read` there. */
     readonly readThread: (
@@ -61,17 +64,22 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadReadInput,
     ) => Effect.Effect<OrchestratorMcpThreadReadResult, OrchestratorMcpFailure>;
-    /** `t3_thread_interrupt` there. */
+    /**
+     * `t3_thread_interrupt` there. `ceiling` narrows the scope's own limits, for a scope that
+     * names the thread a call is recorded under rather than the agent that made it.
+     */
     readonly interruptThread: (
       scope: Scope,
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadInterruptInput,
+      ceiling?: CallerLimits,
     ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
     /** `t3_thread_wait` there, in pieces short enough to survive any route. */
     readonly waitForThread: (
       scope: Scope,
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadWaitInput,
+      ceiling?: CallerLimits,
     ) => Effect.Effect<OrchestratorMcpThreadWaitResult, OrchestratorMcpFailure>;
     /** The environments this one links to, as an agent sees them. */
     readonly links: (
@@ -130,8 +138,10 @@ const make = Effect.gen(function* () {
     success: Schema.Top,
     environmentId: EnvironmentId,
     params: unknown,
+    ceiling?: CallerLimits,
   ) {
-    const limits = yield* callerLimits(scope);
+    const own = yield* callerLimits(scope);
+    const limits = ceiling === undefined ? own : narrowestModes(own, ceiling);
     const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
       params,
     ).pipe(Effect.mapError(unavailable))) as Record<string, unknown>;
@@ -169,6 +179,7 @@ const make = Effect.gen(function* () {
     scope,
     environmentId,
     input,
+    ceiling,
   ) =>
     forward<OrchestratorMcpThreadInterruptResult>(
       scope,
@@ -177,11 +188,12 @@ const make = Effect.gen(function* () {
       OrchestratorMcpThreadInterruptResult,
       environmentId,
       input,
+      ceiling,
     );
 
   const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
     "PeerForwarding.waitForThread",
-  )(function* (scope, environmentId, input) {
+  )(function* (scope, environmentId, input, ceiling) {
     let remaining = Math.min(
       MAX_WAIT_TIMEOUT_MS,
       Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
@@ -203,6 +215,7 @@ const make = Effect.gen(function* () {
             ? {}
             : { untilDelegatedWorkSettled: input.untilDelegatedWorkSettled }),
         },
+        ceiling,
       );
       remaining -= chunk;
       if (!result.timedOut || remaining <= 0) return result;
@@ -217,7 +230,7 @@ const make = Effect.gen(function* () {
     Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
   );
 
-  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
+  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params, ceiling) => {
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
       OrchestratorMcpFailure
@@ -226,8 +239,17 @@ const make = Effect.gen(function* () {
           scope,
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
+          ceiling,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
-      : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
+      : forward(
+          scope,
+          tool.name,
+          tool.parametersSchema,
+          tool.successSchema,
+          environmentId,
+          params,
+          ceiling,
+        );
     return Effect.andThen(requireEnabled, forwarded);
   };
 

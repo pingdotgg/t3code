@@ -66,6 +66,7 @@ import {
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
+  subagentExecutionThreadId,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -464,6 +465,15 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
+  /**
+   * App-owned tasks the thread's runs execute but another thread lists: those a native
+   * subagent of its session delegated. Progress also needs its nested native subagents.
+   */
+  readonly getTasksExecutedElsewhere: (input: {
+    readonly threadId: ThreadId;
+    readonly runIds: ReadonlyArray<RunId>;
+    readonly includeProviderNative?: boolean;
+  }) => Effect.Effect<ReadonlyArray<OrchestrationV2Subagent>, ProjectionStoreV2Error>;
   /** Child threads of the thread's app-owned tasks, in task order, without decoding the tasks. */
   readonly listAppOwnedChildThreadIds: (
     threadId: ThreadId,
@@ -5538,12 +5548,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]?.count ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
+    const getTasksExecutedElsewhere: ProjectionStoreV2Shape["getTasksExecutedElsewhere"] = ({
+      threadId,
+      runIds,
+      includeProviderNative = false,
+    }) =>
+      runIds.length === 0
+        ? Effect.succeed([])
+        : sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_subagents
+            WHERE run_id IN ${sql.in(runIds)} AND thread_id != ${threadId}
+              ${includeProviderNative ? sql`` : sql`AND origin = 'app_owned'`}
+            ORDER BY subagent_id ASC`.pipe(
+            Effect.mapError(controlReadError(threadId)),
+            Effect.flatMap(decodeRows(decodeSubagentPayload, threadId)),
+            Effect.map((tasks) =>
+              tasks.filter((task) => subagentExecutionThreadId(task) === threadId),
+            ),
+          );
     const listAppOwnedChildThreadIds: ProjectionStoreV2Shape["listAppOwnedChildThreadIds"] = (
       threadId,
     ) =>
       sql<{ readonly child_thread_id: string }>`SELECT child_thread_id
         FROM orchestration_v2_projection_subagents
-        WHERE thread_id = ${threadId} AND origin = 'app_owned' AND child_thread_id IS NOT NULL
+        WHERE (
+          thread_id = ${threadId} OR (
+            run_id IN (SELECT run_id FROM orchestration_v2_projection_runs WHERE thread_id = ${threadId})
+            AND json_extract(payload_json, '$.executionThreadId') = ${threadId}
+          )
+        ) AND origin = 'app_owned' AND child_thread_id IS NOT NULL
         ORDER BY COALESCE(started_at, ''), subagent_id ASC`.pipe(
         Effect.map((rows) => [...new Set(rows.map((row) => ThreadId.make(row.child_thread_id)))]),
         Effect.mapError(controlReadError(threadId)),
@@ -7505,6 +7537,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
       getSubagentCount: readOnReader(getSubagentCount),
+      getTasksExecutedElsewhere: readOnReader(getTasksExecutedElsewhere),
       listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
