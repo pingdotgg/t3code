@@ -107,10 +107,13 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(first.changes, [{ kind: "checks-failed", failed: [run(1)] }]);
     const again = evaluatePullRequestWatch(first.next, detail({ checks: [run(2)] }), noRemarks);
     assert.deepEqual(again.changes, [{ kind: "checks-failed", failed: [run(2)] }]);
-    assert.deepEqual(
-      evaluatePullRequestWatch(again.next, detail({ checks: [run(2)] }), noRemarks).changes,
-      [],
-    );
+    // Neither the same run nor one told earlier on this head is news again.
+    for (const job of [2, 1]) {
+      assert.deepEqual(
+        evaluatePullRequestWatch(again.next, detail({ checks: [run(job)] }), noRemarks).changes,
+        [],
+      );
+    }
   });
 
   it("does not repeat a failure an older watch told by name", () => {

@@ -62,7 +62,13 @@ export function evaluatePullRequestWatch(
     );
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
     failedChecks = failed.map((check) => check.name);
-    failedCheckUrls = failed.flatMap((check) => (check.url === null ? [] : [check.url]));
+    // Runs told stay told for the head: GitHub can show either event's failed run of one check.
+    failedCheckUrls = [
+      ...new Set([
+        ...(toldUrls ?? []),
+        ...failed.flatMap((check) => (check.url === null ? [] : [check.url])),
+      ]),
+    ];
 
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
