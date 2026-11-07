@@ -483,6 +483,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarSectionTabsEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarSectionTabsEnabled
+      ? ["Section tabs"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -652,6 +655,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarSectionTabsEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarSectionTabsEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -905,6 +909,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label="Working section"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-section-tabs")}
+          description="Show one sidebar section at a time, with tabs for Active, Working, Snoozed and Settled. Swipe sideways with two fingers on a trackpad to switch tabs."
+          resetAction={
+            settings.sidebarSectionTabsEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarSectionTabsEnabled ? (
+              <SettingResetButton
+                label="section tabs"
+                onClick={() =>
+                  updateSettings({
+                    sidebarSectionTabsEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarSectionTabsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarSectionTabsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarSectionTabsEnabled: Boolean(checked) })
+              }
+              aria-label="Section tabs"
             />
           }
         />
