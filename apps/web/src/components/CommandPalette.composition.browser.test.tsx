@@ -7,6 +7,12 @@ import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
+const browse = vi.hoisted(() => ({ isPending: false }));
+
+function setup({ isBrowsePending = false } = {}) {
+  browse.isPending = isBrowsePending;
+}
+
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
   useAtomValue: (atom: unknown) =>
@@ -93,7 +99,7 @@ vi.mock("../state/filesystem", async (original) => ({
 }));
 vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
-  useEnvironmentQuery: () => ({ data: undefined, isLoading: false }),
+  useEnvironmentQuery: () => ({ data: undefined, isLoading: false, isPending: browse.isPending }),
 }));
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
@@ -105,6 +111,7 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     { isComposing: true, keyCode: 13 },
     { isComposing: false, keyCode: 229 },
   ])("keeps Enter in the input during composition: %j", async (composition) => {
+    setup();
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText(step === "folder" ? "Local folder" : "Git URL", { exact: true }).click();
@@ -134,7 +141,29 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
   });
 });
 
+it.each([
+  { isBrowsePending: false, leavesInput: true },
+  { isBrowsePending: true, leavesInput: false },
+])(
+  "Tab with nothing to complete in the folder path: %j",
+  async ({ isBrowsePending, leavesInput }) => {
+    setup({ isBrowsePending });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    const input = page.getByRole("combobox");
+    await input.fill("/workspace/zzz");
+    await userEvent.keyboard("{Tab}");
+    if (leavesInput) {
+      await expect.element(input).not.toHaveFocus();
+      expect(page.getByRole("dialog").element().contains(document.activeElement)).toBe(true);
+    } else await expect.element(input).toHaveFocus();
+    await expect.element(input).toHaveValue("/workspace/zzz");
+  },
+);
+
 it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
+  setup();
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText("Local folder", { exact: true }).click();

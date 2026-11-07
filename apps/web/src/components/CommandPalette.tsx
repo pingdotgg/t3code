@@ -2575,9 +2575,12 @@ function OpenCommandPaletteDialog(props: {
 
     if (event.key === "Tab" && isBrowsing && !relativePathNeedsActiveProject) {
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
-      event.preventDefault();
+      const claimTab = () => {
+        (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        event.preventDefault();
+      };
       if (highlightedItemValue === "browse:up") {
+        claimTab();
         void browseUp();
         return;
       }
@@ -2588,10 +2591,15 @@ function OpenCommandPaletteDialog(props: {
         ? { name: highlightedEntry.name, isComplete: true }
         : getFilesystemBrowseTabCompletion(visibleBrowseEntries, browsePath.filterQuery);
       if (completion?.isComplete) {
+        claimTab();
         void browseTo(completion.name);
       } else if (completion && !pinnedCloneDirectoryName) {
+        claimTab();
         setHighlightedItemValue(null);
         setQuery(`${getBrowseDirectoryPath(query)}${completion.name}`);
+      } else if (isBrowsePending) {
+        // Nothing to complete yet; keep Tab so a fast typist is not thrown out while entries load.
+        claimTab();
       }
       return;
     }
