@@ -9,7 +9,11 @@ import type {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
-import { exhaustedUsageWindow, resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import {
+  exhaustedUsageWindow,
+  isNewThreadFallbackEligible,
+  resolveNewThreadModelSelection,
+} from "@t3tools/shared/usageLimits";
 import { AsyncResult } from "effect/reactivity";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -62,6 +66,11 @@ export async function refreshNewThreadUsage({
         providers.find((provider) => provider.instanceId === defaultSelection.instanceId),
         input.now,
         defaultSelection.model,
+      ) &&
+      isNewThreadFallbackEligible(
+        providers.find((provider) => provider.instanceId === fallbackSelection.instanceId),
+        input.settings,
+        input.projectId,
       )
     ) {
       providers = (await refresh(fallbackSelection.instanceId)) ?? providers;

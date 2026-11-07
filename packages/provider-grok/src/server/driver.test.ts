@@ -300,13 +300,34 @@ it.layer(layerTest)("GrokDriver", (it) => {
             expect((yield* instance.snapshot.getSnapshot).auth.usageRefreshKey).not.toBe(
               fresh.auth.usageRefreshKey,
             );
+            let expectedRequests = requests;
+            for (const contents of [
+              "{}",
+              JSON.stringify({
+                "https://accounts.x.ai/sign-in": { auth_mode: "api_key", key: "api-key" },
+              }),
+            ]) {
+              const previous = yield* instance.snapshot.getSnapshot;
+              yield* fs.writeFileString(`${home}/auth.json`, contents);
+              yield* instance.snapshot.refreshUsage!;
+              const removed = yield* instance.snapshot.getSnapshot;
+              expect(removed.auth.usageRefreshKey).toBeDefined();
+              expect(removed.auth.usageRefreshKey).not.toBe(previous.auth.usageRefreshKey);
+              expect(removed.usageLimits?.windows).toEqual([]);
+              expect(removed.usageLimits?.unavailable?.reason).toBe("unsupported");
+              expect(requests).toBe(expectedRequests);
+              yield* writeCredential("account-c");
+              yield* instance.snapshot.refreshUsage!;
+              expectedRequests += 1;
+              expect(requests).toBe(expectedRequests);
+            }
             customAuth = true;
             const unsupported = yield* instance.snapshot.refresh;
             expect(unsupported.auth.type).toBe("cached_token");
             expect(unsupported.supportsUsageLimits).toBe(false);
             expect(unsupported.usageLimits?.windows).toEqual([]);
             expect(unsupported.usageLimits?.unavailable?.reason).toBe("unsupported");
-            expect(requests).toBe(3);
+            expect(requests).toBe(expectedRequests);
           }
         }),
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),

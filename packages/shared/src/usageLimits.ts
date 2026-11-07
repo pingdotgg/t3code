@@ -64,6 +64,21 @@ export function exhaustedUsageWindow(
   }
 }
 
+export function isNewThreadFallbackEligible(
+  provider: ServerProvider | undefined,
+  settings?: ServerSettings,
+  projectId?: ProjectId | null,
+): boolean {
+  return (
+    !!provider?.enabled &&
+    provider.installed &&
+    provider.auth.status !== "unauthenticated" &&
+    isProviderAvailable(provider) &&
+    (!settings ||
+      resolveProjectProviderInstanceEnabled(settings, projectId ?? null, provider.instanceId))
+  );
+}
+
 export function resolveNewThreadModelSelection(input: {
   readonly defaultSelection: ModelSelection | null;
   readonly explicitSelection?: ModelSelection | null;
@@ -84,17 +99,8 @@ export function resolveNewThreadModelSelection(input: {
   if (
     !provider ||
     !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
-        input.settings,
-        input.projectId ?? null,
-        fallback.instanceId,
-      ))
+    !isNewThreadFallbackEligible(fallback, input.settings, input.projectId) ||
+    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model)
   )
     return unchanged;
   return {

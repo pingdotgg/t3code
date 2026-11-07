@@ -192,7 +192,7 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
       email,
       usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
       supportsUsageLimits: false,
-      usageRefreshKey: undefined,
+      usageRefreshKey: "grok:unsupported",
     };
   }
   const digest = yield* Digest.Digest;

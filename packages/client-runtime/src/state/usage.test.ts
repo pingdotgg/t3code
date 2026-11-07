@@ -1,5 +1,8 @@
 import {
   EnvironmentId,
+  ProjectId,
+  DEFAULT_SERVER_SETTINGS,
+  type ServerProvider,
   ProviderInstanceId,
   ProviderDriverKind,
   UsageDay,
@@ -15,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import {
   refreshUsage,
+  refreshNewThreadUsage,
   refreshUsageLimits,
   usageLimitsRefreshDelay,
   usageRefreshDeadline,
@@ -296,4 +300,66 @@ describe("limits refresh cooldown", () => {
     expect(await refreshUsageLimits(rebuilt, readRebuilt, true, currentKey)).toBeUndefined();
     expect(readRebuilt).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("new-thread quota preflight", () => {
+  it.each([true, false])(
+    "checks project fallback eligibility before reading (enabled: %s)",
+    async (enabled) => {
+      const primaryId = ProviderInstanceId.make("codex");
+      const fallbackId = ProviderInstanceId.make("claudeAgent");
+      const projectId = ProjectId.make("quota-preflight");
+      const provider = (instanceId: ProviderInstanceId, driver: string): ServerProvider => ({
+        instanceId,
+        driver: ProviderDriverKind.make(driver),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+        usageLimits: {
+          checkedAt: "2026-01-01T00:00:00Z",
+          windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
+        },
+      });
+      const providers = [provider(primaryId, "codex"), provider(fallbackId, "claudeAgent")];
+      const registry = AtomRegistry.make();
+      registries.push(registry);
+      const requested: ProviderInstanceId[] = [];
+      const server = {
+        refreshProviders: {
+          label: "test:preflight",
+          requiredScopes: () => [],
+          permissionAtom: () => Atom.make(true),
+          run: async (_registry, target) => {
+            requested.push(target.input.instanceId!);
+            return AsyncResult.success({ providers, usageLimitSources: [], serverTime: 0 });
+          },
+        },
+      } satisfies Parameters<typeof refreshNewThreadUsage>[0]["server"];
+      await refreshNewThreadUsage({
+        registry,
+        server,
+        environmentId: EnvironmentId.make("preflight"),
+        input: {
+          defaultSelection: { instanceId: primaryId, model: "gpt" },
+          fallbackSelection: { instanceId: fallbackId, model: "claude" },
+          providers,
+          now: 0,
+          projectId,
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            projectSettingsOverrides: {
+              [projectId]: { providerInstances: { [fallbackId]: { enabled } } },
+            },
+          },
+        },
+      });
+      expect(requested).toEqual(enabled ? [primaryId, fallbackId] : [primaryId]);
+    },
+  );
 });
