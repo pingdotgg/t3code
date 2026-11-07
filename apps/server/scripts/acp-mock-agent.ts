@@ -63,7 +63,7 @@ const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const newSessionErrorData =
   process.env.T3_ACP_NEW_SESSION_ERROR_DATA === undefined
     ? undefined
-    : Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(
+    : Schema.decodeSync(Schema.fromJsonString(Schema.Unknown))(
         process.env.T3_ACP_NEW_SESSION_ERROR_DATA,
       );
 const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
