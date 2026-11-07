@@ -15,6 +15,7 @@ import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { buildTriageLaunchPrompt } from "../triage/triagePrompt.ts";
 import { describeServerProcess, writeTriageSession } from "../triage/triageSession.ts";
+import { RECOVERY_MANUAL_INSTRUCTIONS } from "../triage/recoveryPrompt.ts";
 import { baseDirFlag } from "./config.ts";
 import { interactiveStdin } from "./consoleStdin.ts";
 import { resolveCliCommand } from "./invocation.ts";
@@ -57,7 +58,7 @@ export class TriageAgentSpawnError extends Schema.TaggedError<TriageAgentSpawnEr
   }
 }
 
-const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
+const pickAgent = (agents: ReadonlyArray<TriageAgent>, command: "triage" | "unfuck") =>
   Effect.promise(async () => {
     const readline = NodeReadlinePromises.createInterface({
       input: process.stdin,
@@ -68,7 +69,7 @@ const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
         .map((agent, index) => `  [${String(index + 1)}] ${agent.label}`)
         .join("\n");
       for (;;) {
-        const answer = (await readline.question(`Run triage with:\n${menu}\n> `)).trim();
+        const answer = (await readline.question(`Run ${command} with:\n${menu}\n> `)).trim();
         const byNumber = agents[Number.parseInt(answer, 10) - 1];
         if (byNumber !== undefined) {
           return byNumber;
@@ -112,85 +113,93 @@ const modelFlag = Flag.String("model").pipe(
   Flag.optional,
 );
 
-export const triageCommand = Command.make("triage", {
-  baseDir: baseDirFlag,
-  agent: agentFlag,
-  model: modelFlag,
-}).pipe(
-  Command.withDescription(
-    "Investigate a T3 Code problem on this machine with claude or codex, and help file a good issue.",
-  ),
-  Command.withHandler((flags) =>
-    Effect.gen(function* () {
-      // Triage is a user-facing feature: always the userdata state, never dev.
-      const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
-      const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
-      const baseDir = yield* resolveBaseDir(explicitBaseDir ?? Option.getOrUndefined(envHome));
-      const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {});
+const makeSupportCommand = (command: "triage" | "unfuck") =>
+  Command.make(command, {
+    baseDir: baseDirFlag,
+    agent: agentFlag,
+    model: modelFlag,
+  }).pipe(
+    Command.withDescription(
+      command === "unfuck"
+        ? "Recover a broken T3 Code install with guided update instructions in claude or codex."
+        : "Investigate a T3 Code problem on this machine with claude or codex, and help file a good issue.",
+    ),
+    Command.withHandler((flags) =>
+      Effect.gen(function* () {
+        // Support commands inspect the installed userdata state, never dev.
+        const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
+        const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
+        const baseDir = yield* resolveBaseDir(explicitBaseDir ?? Option.getOrUndefined(envHome));
+        const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {});
 
-      const session = yield* writeTriageSession({
-        baseDir,
-        paths,
-        entry: {
-          kind: "cli",
-          cliVersion: packageJson.version,
-          launchedAs: yield* resolveCliCommand("triage"),
-        },
-        server: yield* describeServerProcess(paths.serverRuntimeStatePath),
-      });
+        const session = yield* writeTriageSession({
+          command,
+          baseDir,
+          paths,
+          entry: {
+            kind: "cli",
+            cliVersion: packageJson.version,
+            launchedAs: yield* resolveCliCommand(command),
+          },
+          server: yield* describeServerProcess(paths.serverRuntimeStatePath),
+        });
 
-      const installed: Array<TriageAgent> = [];
-      for (const agent of TRIAGE_AGENTS) {
-        if (yield* isCommandAvailable(agent.command)) {
-          installed.push(agent);
+        const installed: Array<TriageAgent> = [];
+        for (const agent of TRIAGE_AGENTS) {
+          if (yield* isCommandAvailable(agent.command)) {
+            installed.push(agent);
+          }
         }
-      }
 
-      const requested = Option.getOrUndefined(flags.agent);
-      let selected: TriageAgent | undefined;
-      if (requested !== undefined) {
-        selected = installed.find((agent) => agent.id === requested);
+        const requested = Option.getOrUndefined(flags.agent);
+        let selected: TriageAgent | undefined;
+        if (requested !== undefined) {
+          selected = installed.find((agent) => agent.id === requested);
+          if (selected === undefined) {
+            return yield* new TriageAgentUnavailableError({ agent: requested });
+          }
+        } else if (installed.length === 1) {
+          selected = installed[0];
+        } else if (installed.length > 1) {
+          // The picker needs terminal output too, or its invisible prompt hangs.
+          if (!process.stdin.isTTY || !process.stdout.isTTY) {
+            return yield* new TriageAgentChoiceRequiredError();
+          }
+          selected = yield* pickAgent(installed, command);
+        }
+
+        // Windows .cmd shims cannot carry multiline argv; the prompt file also serves as the paste fallback.
+        const { sessionDir, promptFilePath, contextFilePath } = session;
+
         if (selected === undefined) {
-          return yield* new TriageAgentUnavailableError({ agent: requested });
+          yield* Console.log(
+            [
+              "No supported agent CLI (claude, codex) was found on this machine.",
+              "",
+              `The ${command} prompt and machine context were written to:`,
+              `  ${promptFilePath}`,
+              `  ${contextFilePath}`,
+              "",
+              `Paste the prompt file into any coding agent to run ${command} by hand.`,
+              ...(command === "unfuck" ? ["", RECOVERY_MANUAL_INSTRUCTIONS] : []),
+            ].join("\n"),
+          );
+          return;
         }
-      } else if (installed.length === 1) {
-        selected = installed[0];
-      } else if (installed.length > 1) {
-        // The picker needs terminal output too, or its invisible prompt hangs.
-        if (!process.stdin.isTTY || !process.stdout.isTTY) {
-          return yield* new TriageAgentChoiceRequiredError();
+
+        const model = Option.getOrUndefined(flags.model);
+        const spawnSpec = yield* resolveSpawnCommand(selected.command, [
+          ...(model === undefined ? [] : ["--model", model]),
+          buildTriageLaunchPrompt(promptFilePath, command),
+        ]);
+        yield* Console.log(`Starting ${selected.label}. It will ask what went wrong.\n`);
+        const exitCode = yield* runInteractiveSession({ ...spawnSpec, cwd: sessionDir });
+        if (exitCode !== 0) {
+          process.exitCode = exitCode;
         }
-        selected = yield* pickAgent(installed);
-      }
+      }),
+    ),
+  );
 
-      // Windows .cmd shims cannot carry multiline argv; the prompt file also serves as the paste fallback.
-      const { sessionDir, promptFilePath, contextFilePath } = session;
-
-      if (selected === undefined) {
-        yield* Console.log(
-          [
-            "No supported agent CLI (claude, codex) was found on this machine.",
-            "",
-            "The triage prompt and machine context were written to:",
-            `  ${promptFilePath}`,
-            `  ${contextFilePath}`,
-            "",
-            "Paste the prompt file into any coding agent to run triage by hand.",
-          ].join("\n"),
-        );
-        return;
-      }
-
-      const model = Option.getOrUndefined(flags.model);
-      const spawnSpec = yield* resolveSpawnCommand(selected.command, [
-        ...(model === undefined ? [] : ["--model", model]),
-        buildTriageLaunchPrompt(promptFilePath),
-      ]);
-      yield* Console.log(`Starting ${selected.label}. It will ask what went wrong.\n`);
-      const exitCode = yield* runInteractiveSession({ ...spawnSpec, cwd: sessionDir });
-      if (exitCode !== 0) {
-        process.exitCode = exitCode;
-      }
-    }),
-  ),
-);
+export const triageCommand = makeSupportCommand("triage");
+export const unfuckCommand = makeSupportCommand("unfuck");

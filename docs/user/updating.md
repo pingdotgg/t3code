@@ -135,6 +135,17 @@ Only one server can use a T3 home directory at a time. If startup reports that
 another server owns it, stop that server before retrying, or use a separate home
 directory and pair with the running server.
 
+### Recover a broken install
+
+If a broken nightly cannot open, run `npx t3@nightly unfuck` on that machine.
+Like `t3 triage`, it starts an installed Claude Code or Codex CLI with your machine
+context and recovery instructions. It identifies the affected install and guides
+you through updating or replacing it, asking before changes. Use `--agent claude`
+or `--agent codex` to choose one. Without either agent installed, it prints manual
+recovery guidance and saves a prompt you can paste into another coding agent.
+Updating the npx CLI alone does not update the desktop app. Recovery preserves
+your T3 data and checks for a published fix before replacing the app.
+
 ### macOS app does not reopen after an Alpha update
 
 Updating an older **T3 Code (Alpha)** installation can replace it with
