@@ -18,7 +18,10 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { groupPullRequestChecks } from "./pullRequestDetail.logic";
+import {
+  formatPullRequestChecksProgressCount,
+  groupPullRequestChecks,
+} from "./pullRequestDetail.logic";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -149,9 +152,7 @@ export function PullRequestChecksPopover({
   render?: React.ReactElement;
 }) {
   const presentation = pullRequestChecksStatePresentation(checksState);
-  const incompleteCount =
-    checks?.filter((check) => check.status === "pending" || check.status === "action-required")
-      .length ?? 0;
+  const progressCount = checks === undefined ? null : formatPullRequestChecksProgressCount(checks);
   const failedCount =
     checks?.filter((check) => check.status === "failure" || check.status === "cancelled").length ??
     0;
@@ -181,10 +182,8 @@ export function PullRequestChecksPopover({
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
         {variant === "count" ? (
           <>
-            {checks !== undefined && incompleteCount > 0 ? (
-              <span className="tabular-nums">
-                {checks.length - incompleteCount}/{checks.length} checks
-              </span>
+            {progressCount !== null ? (
+              <span className="tabular-nums">{progressCount} completed</span>
             ) : failedCount > 0 ? (
               <span className="tabular-nums">{failedCount} failed</span>
             ) : null}

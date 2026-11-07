@@ -540,16 +540,25 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
   const passed = checks.filter((check) => check.status === "success").length;
+  const incomplete = pending + actionRequired.length;
+  if (incomplete > 0) {
+    const parts = [`${checks.length - incomplete} of ${checks.length} completed`];
+    if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
+      parts.push(
+        `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} and ${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`,
+      );
+    } else if (workflowApprovalRequired > 0) {
+      parts.push(
+        `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} awaiting approval`,
+      );
+    } else if (otherActionRequired > 0) {
+      parts.push(
+        `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`,
+      );
+    }
+    if (failed > 0) parts.push(`${failed} failed`);
+    return parts.join(" · ");
+  }
   if (failed > 0) return `${failed} of ${checks.length} failing`;
-  if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
-    return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} and ${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
-  }
-  if (workflowApprovalRequired > 0) {
-    return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} awaiting approval`;
-  }
-  if (otherActionRequired > 0) {
-    return `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
-  }
-  if (pending > 0) return `${pending} of ${checks.length} running`;
   return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
 }
