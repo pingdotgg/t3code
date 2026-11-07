@@ -58,7 +58,9 @@ function status(
   };
 }
 
-const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
+const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* (
+  options: { readonly relay?: boolean } = {},
+) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
   const listCalls = yield* Ref.make(0);
   const listedEnvironments =
@@ -131,7 +133,9 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const layer = RelayEnvironmentDiscovery.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(ManagedRelay.ManagedRelayClient, client),
+        options.relay === false
+          ? Layer.empty
+          : Layer.succeed(ManagedRelay.ManagedRelayClient, client),
         Layer.succeed(
           ClientCapabilities.CloudSession,
           ClientCapabilities.CloudSession.of({
@@ -491,6 +495,19 @@ describe("RelayEnvironmentDiscovery", () => {
             environments[0]!.environmentId,
           ),
         ).toBe("unknown");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("stays empty on a direct-only client that provides no relay", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ relay: false });
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* discovery.refresh;
+        expect(yield* SubscriptionRef.get(discovery.state)).toEqual(
+          RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
+        );
       }).pipe(Effect.provide(harness.layer));
     }),
   );

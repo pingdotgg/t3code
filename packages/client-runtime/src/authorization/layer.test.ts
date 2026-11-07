@@ -116,6 +116,8 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
   readonly clerkToken?: ClientCapabilities.CloudSession["Service"]["clerkToken"];
+  /** False builds a direct-only client that provides no relay services. */
+  readonly relay?: boolean;
 }) {
   const tokens = yield* Ref.make(
     new Map(
@@ -201,8 +203,12 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     Layer.provideMerge(
       Layer.mergeAll(
         RpcHttp.layerRemoteHttpClient(fetch.fetchFn),
-        Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, signer),
-        Layer.succeed(ManagedRelay.ManagedRelayClient, relay),
+        input.relay === false
+          ? Layer.empty
+          : Layer.mergeAll(
+              Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, signer),
+              Layer.succeed(ManagedRelay.ManagedRelayClient, relay),
+            ),
         Layer.succeed(ClientCapabilities.CloudSession, {
           identity: Ref.get(session),
           clerkToken: input.clerkToken ?? Effect.succeed("clerk-session"),
@@ -314,6 +320,41 @@ describe("RemoteEnvironmentAuthorization", () => {
         "/.well-known/t3/environment",
         "/api/auth/websocket-ticket/rpc",
       ]);
+    }),
+  );
+
+  it.effect("connects a direct bearer client that provides no relay services", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        relay: false,
+        responses: [
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          websocketTicket("direct-ticket"),
+        ],
+      });
+
+      const [prepared] = yield* prepareDirectBearer(harness, 1);
+      expect(prepared).toMatchObject({
+        _tag: "Success",
+        success: { socketUrl: expect.stringContaining("wsTicket=direct-ticket") },
+      });
+
+      const relayAttempt =
+        yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.pipe(
+          Effect.flatMap((remote) =>
+            remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID }),
+          ),
+          Effect.provide(harness.layer),
+          Effect.result,
+        );
+      expect(relayAttempt).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ConnectionBlockedError", reason: "unsupported" },
+      });
+      expect(harness.fetch.calls).toHaveLength(2);
     }),
   );
 
