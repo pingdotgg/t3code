@@ -32,7 +32,7 @@ Lessons write the explanation first, then add a picture, an interactive demo, or
 
 ## Quizzes
 
-Lessons and side chats can ask quiz cards or open-question cards. Pick an option or explain your thinking (with voice dictation on supported clients); your answer goes back to the current chat so it can respond. Mobile shows the card read-only.
+Lessons and side chats can ask quiz cards or open-question cards. Pick an option or explain your thinking (with voice dictation on supported clients); your answer goes back to the current chat so it can respond. On mobile, quiz cards work as on the web; answer open questions in the chat.
 
 ## Follow a course
 

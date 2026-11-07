@@ -1788,6 +1788,14 @@ function renderFeedEntry(
   }
 
   if (entry.type === "quiz-card") {
+    if (!("answer" in entry.quizCard)) {
+      return (
+        <View className="mb-3 rounded-2xl border border-border bg-card p-4">
+          <Text className="font-t3-medium text-base">{entry.quizCard.question}</Text>
+          <Text className="mt-2 text-sm text-foreground-muted">Answer in the chat</Text>
+        </View>
+      );
+    }
     return (
       <QuizCard
         quizCard={entry.quizCard}

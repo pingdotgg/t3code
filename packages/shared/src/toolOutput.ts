@@ -214,14 +214,6 @@ export function lessonCardFromToolItem(item: {
   return toolName === QUIZ_CARD_TOOL_NAME ? output?.quizCard : output?.questionCard;
 }
 
-export function quizCardFromToolItem(item: {
-  readonly toolName: string | null | undefined;
-  readonly output?: unknown;
-}): QuizCard | undefined {
-  const card = lessonCardFromToolItem(item);
-  return card !== undefined && "answer" in card ? card : undefined;
-}
-
 export function htmlRenderFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
