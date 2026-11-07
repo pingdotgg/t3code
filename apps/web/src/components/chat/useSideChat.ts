@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ModelSelection, ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
@@ -18,8 +18,9 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 
 /**
  * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
- * thread's latest stable point, sends `prompt` there, and shows the side chat's tab. It
- * resolves false when the side chat did not start, or another one is still starting.
+ * thread's latest stable point, sends `prompt` there on `modelSelection` (the thread's model
+ * when omitted), and shows the side chat's tab. It resolves false when the side chat did not
+ * start, or another one is still starting.
  */
 export function useSideChat(input: {
   readonly threadRef: ScopedThreadRef | null;
@@ -39,7 +40,11 @@ export function useSideChat(input: {
     const error = squashAtomCommandFailure(failure);
     input.onError(error instanceof Error ? error.message : fallback);
   };
-  const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
+  const start = async (
+    threadRef: ScopedThreadRef,
+    prompt: string | undefined,
+    modelSelection: ModelSelection | undefined,
+  ) => {
     const targetThreadId = newThreadId();
     const fork = await forkSideChat({
       environmentId: threadRef.environmentId,
@@ -76,6 +81,7 @@ export function useSideChat(input: {
           threadId: targetThreadId,
           message: { messageId: newMessageId(), role: "user", text, attachments: [] },
           titleSeed: deriveThreadTitleSeed({ text, attachments: [] }),
+          ...(modelSelection ? { modelSelection } : {}),
           runtimeMode: sideChat.runtimeMode,
           interactionMode: "default",
           createdAt: new Date().toISOString(),
@@ -90,11 +96,11 @@ export function useSideChat(input: {
     useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
     return true;
   };
-  const open = async (prompt?: string) => {
+  const open = async (prompt?: string, modelSelection?: ModelSelection) => {
     const { threadRef } = input;
     if (!threadRef || pendingRef.current) return false;
     pendingRef.current = true;
-    return start(threadRef, prompt).finally(() => {
+    return start(threadRef, prompt, modelSelection).finally(() => {
       pendingRef.current = false;
     });
   };

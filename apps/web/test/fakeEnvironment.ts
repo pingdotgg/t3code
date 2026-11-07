@@ -19,12 +19,14 @@ import {
   WsRpcGroup,
   type VcsStatusStreamEvent,
   type OrchestrationProjectShell,
+  type OrchestrationV2Command,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2Run,
   type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadStreamItem,
+  type ServerConfigStreamEvent,
   type OrchestrationV2TurnItem,
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
@@ -85,7 +87,10 @@ const serverConfig: ServerConfig = {
         status: "ready",
         auth: { status: "authenticated" },
         checkedAt: "2026-03-17T19:12:28.000Z",
-        models: [{ slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null }],
+        models: [
+          { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null },
+          { slug: "gpt-5.5", name: "GPT-5.5", isCustom: false, capabilities: null },
+        ],
       },
     ],
     availableEditors: [],
@@ -316,6 +321,10 @@ const json = (body: unknown, status = 200) =>
 
 // Keyed by thread id: a live thread subscription's queue, for pushing events to it.
 const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStreamItem>>();
+let shellSubscriber: Queue.Queue<OrchestrationV2ShellStreamItem> | null = null;
+let serverConfigSubscriber: Queue.Queue<ServerConfigStreamEvent> | null = null;
+let sideChats = false;
+const dispatched: OrchestrationV2Command[] = [];
 let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null = null;
 let threads: ReadonlyArray<FakeThread> = [];
 let sequence = 1;
@@ -343,19 +352,52 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-    subscribe<OrchestrationV2ShellStreamItem>([
-      {
-        kind: "snapshot",
-        snapshot: {
-          schemaVersion: 1,
-          snapshotSequence: sequence,
-          projects: [project],
-          threads: threads.map(shellOf),
-          archivedThreads: [],
+    subscribe<OrchestrationV2ShellStreamItem>(
+      [
+        {
+          kind: "snapshot",
+          snapshot: {
+            schemaVersion: 1,
+            snapshotSequence: sequence,
+            projects: [project],
+            threads: threads.map(shellOf),
+            archivedThreads: [],
+          },
         },
+        { kind: "synchronized" },
+      ],
+      (queue) => {
+        shellSubscriber = queue;
+        return () => {
+          if (shellSubscriber === queue) shellSubscriber = null;
+        };
       },
-      { kind: "synchronized" },
-    ]),
+    ),
+  // Records every command; a fork lists its new, empty thread in the shell.
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+    Effect.gen(function* () {
+      dispatched.push(command);
+      sequence += 1;
+      if (command.type === "thread.fork") {
+        const fork: FakeThread = {
+          id: command.targetThreadId,
+          title: command.title ?? "Fork",
+          runs: [],
+          items: [],
+          ...(command.sideChat ? { sideChatOf: command.sourceThreadId } : {}),
+        };
+        threads = [...threads, fork];
+        if (shellSubscriber) {
+          yield* Queue.offer(shellSubscriber, {
+            kind: "thread.updated",
+            sequence,
+            location: "active",
+            thread: shellOf(fork),
+          });
+        }
+      }
+      return { sequence };
+    }),
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly threadId: ThreadId }) => {
     const thread = threads.find((candidate) => candidate.id === input.threadId);
     if (!thread) return Stream.never;
@@ -381,8 +423,7 @@ const handlers: Record<string, (input: never) => unknown> = {
         if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
       };
     }),
-  [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+  [WS_METHODS.subscribeServerConfig]: () => subscribeServerConfig(),
 };
 
 // Unanswered calls stay pending, like a server that has not replied yet.
@@ -395,11 +436,36 @@ const client = new Proxy(handlers, {
     }),
 });
 
+const serverConfigSnapshot = (): ServerConfigStreamEvent => ({
+  version: 1,
+  type: "snapshot",
+  config: currentServerConfig(),
+});
+
+// The app keeps its connection across tests, so a later install reaches it through this.
+const subscribeServerConfig = () =>
+  subscribe([serverConfigSnapshot()], (queue) => {
+    serverConfigSubscriber = queue;
+    return () => {
+      if (serverConfigSubscriber === queue) serverConfigSubscriber = null;
+    };
+  });
+
+const currentServerConfig = (): ServerConfig =>
+  sideChats
+    ? {
+        ...serverConfig,
+        environment: {
+          ...serverConfig.environment,
+          capabilities: { ...serverConfig.environment.capabilities, sideChats: true },
+        },
+      }
+    : serverConfig;
+
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
-  initialConfig: Effect.succeed(serverConfig),
-  subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+  initialConfig: Effect.sync(currentServerConfig),
+  subscribeServerConfig,
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -433,8 +499,13 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 );
 
 /** Serves the environment's HTTP API and these threads until disposed. */
-export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Disposable {
+export function installFakeEnvironment(
+  fixtures: ReadonlyArray<FakeThread>,
+  options: { readonly sideChats?: boolean } = {},
+): Disposable {
   threads = fixtures;
+  sideChats = options.sideChats ?? false;
+  if (serverConfigSubscriber) Queue.offerUnsafe(serverConfigSubscriber, serverConfigSnapshot());
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -456,8 +527,15 @@ export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Dis
     [Symbol.dispose]: () => {
       globalThis.fetch = realFetch;
       threads = [];
+      sideChats = false;
+      dispatched.length = 0;
     },
   };
+}
+
+/** The orchestration commands the app has dispatched since install, oldest first. */
+export function dispatchedCommands(): ReadonlyArray<OrchestrationV2Command> {
+  return dispatched;
 }
 
 type ThreadEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>["event"];
