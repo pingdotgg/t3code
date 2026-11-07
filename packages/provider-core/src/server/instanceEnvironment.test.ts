@@ -82,6 +82,35 @@ describe("mergeProviderInstanceEnvironment", () => {
     }),
   );
 
+  it.effect.each([
+    { label: "without configured variables", environment: undefined },
+    {
+      label: "alongside configured variables",
+      environment: [{ name: "CUSTOM_VALUE", value: "set", sensitive: false }],
+    },
+  ])("drops the AppImage runtime from the inherited environment $label", ({ environment }) =>
+    Effect.gen(function* () {
+      const appDir = "/tmp/.mount_T3-CodXXXX";
+      const merged = yield* mergeProviderInstanceEnvironment(environment, {
+        APPIMAGE: "/home/ada/T3-Code.AppImage",
+        APPDIR: appDir,
+        ARGV0: "/home/ada/T3-Code.AppImage",
+        OWD: "/home/ada",
+        PATH: `${appDir}:${appDir}/usr/sbin::/usr/bin`,
+        LD_LIBRARY_PATH: `${appDir}/usr/lib;/home/ada/lib:/home/ada/.local/lib`,
+        XDG_DATA_DIRS: `${appDir}/usr/share/:/usr/share`,
+        GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
+      });
+
+      expect(merged).toEqual({
+        PATH: ":/usr/bin",
+        LD_LIBRARY_PATH: "/home/ada/lib:/home/ada/.local/lib",
+        XDG_DATA_DIRS: "/usr/share",
+        ...(environment ? { CUSTOM_VALUE: "set" } : {}),
+      });
+    }),
+  );
+
   it.effect("replaces every inherited spelling of a name on Windows, and only there", () =>
     Effect.gen(function* () {
       const merge = (platform: NodeJS.Platform) =>
