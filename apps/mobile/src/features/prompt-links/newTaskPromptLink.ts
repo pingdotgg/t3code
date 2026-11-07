@@ -221,7 +221,11 @@ async function findServerPullRequestThread(
   return undefined;
 }
 
-async function openProjectDraft(project: EnvironmentProject, request: LinkedDraftRequest) {
+async function openProjectDraft(
+  project: EnvironmentProject,
+  request: LinkedDraftRequest,
+  title = request.pullRequest ? `PR #${request.pullRequest.number}` : undefined,
+) {
   try {
     await waitForComposerDraftsLoaded();
   } catch {
@@ -263,7 +267,7 @@ async function openProjectDraft(project: EnvironmentProject, request: LinkedDraf
     StackActions.push("Thread", {
       draft: {
         draftId: draftKey,
-        title: request.pullRequest ? `PR #${request.pullRequest.number}` : project.title,
+        ...(title ? { title } : {}),
       },
     }),
   );
@@ -318,7 +322,11 @@ async function openScratchDraft(request: LinkedDraftRequest) {
     }
     return;
   }
-  await openProjectDraft(result.value, { ...request, pullRequest: null });
+  await openProjectDraft(
+    result.value,
+    { ...request, pullRequest: null },
+    request.pullRequest ? `PR #${request.pullRequest.number}` : undefined,
+  );
 }
 
 function cloneRepository(repository: PromptLinkRepository, request: LinkedDraftRequest) {

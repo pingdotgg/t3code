@@ -93,6 +93,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   const goBack = useWorkspaceBackNavigation("threads");
   const params = route.params ?? {};
   const draftId = Array.isArray(params.draftId) ? params.draftId[0] : params.draftId;
+  const title = (Array.isArray(params.title) ? params.title[0] : params.title) || "New thread";
   const projects = useProjects();
   const { state: catalogState } = useWorkspaceState();
 
@@ -199,13 +200,14 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   return (
     <>
       {preparingBranch ? (
-        <ThreadScreenFallback header={<AppBar title="New thread" onBack={goBack} />}>
+        <ThreadScreenFallback header={<AppBar title={title} onBack={goBack} />}>
           <View className="flex-1 items-center justify-center bg-screen">
             <Text className="text-foreground">Switching branch...</Text>
           </View>
         </ThreadScreenFallback>
       ) : (
         <NewTaskDraftScreen
+          title={title}
           initialProjectRef={preparedProjectRef}
           incomingShareId={
             Array.isArray(params.incomingShareId)
