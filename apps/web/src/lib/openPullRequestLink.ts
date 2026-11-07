@@ -106,6 +106,8 @@ export function useOpenChangeRequestLink(
           ...(host === undefined ? {} : { host }),
           repository,
           url: targetUrl,
+          // Hosts name a comment in the fragment, as in `#issuecomment-1`.
+          ...(URL.parse(targetUrl)?.hash ? { revealUrl: targetUrl } : {}),
           number,
         });
         if (!resolvedThreadRef) {

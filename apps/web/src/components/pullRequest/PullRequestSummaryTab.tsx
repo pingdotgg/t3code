@@ -29,6 +29,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { observeResize } from "~/lib/observeResize";
 import { RelativeTime } from "~/components/RelativeTime";
 
 import { Button } from "../ui/button";
@@ -260,6 +261,8 @@ function CollapsedComment({
   replies = null,
   moreReplies = null,
   onAddToChat,
+  revealCount = 0,
+  articleProps,
 }: {
   comment: PullRequestComment;
   editing: CommentEditing;
@@ -272,12 +275,27 @@ function CollapsedComment({
   replies?: ReactNode;
   moreReplies?: ReactNode;
   onAddToChat?: (() => void) | undefined;
+  /** Opens the conversation each time a link reveals a comment in it. */
+  revealCount?: number;
+  articleProps?: LinkedArticleProps | undefined;
 }) {
-  const [open, setOpen] = useState(false);
+  // A reveal opens at once: the opening animation would move the comment after it is scrolled to.
+  const [open, setOpen] = useState<boolean | "revealed">(revealCount > 0 && "revealed");
+  const [seenRevealCount, setSeenRevealCount] = useState(revealCount);
+  if (revealCount !== seenRevealCount) {
+    setSeenRevealCount(revealCount);
+    if (revealCount > 0) setOpen("revealed");
+  }
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <article className="group rounded-lg border border-border/60 [contain-intrinsic-block-size:44px] [content-visibility:auto]">
+    <Collapsible open={open !== false} onOpenChange={setOpen}>
+      <article
+        {...articleProps}
+        className={cn(
+          "group rounded-lg border border-border/60 [contain-intrinsic-block-size:44px] [content-visibility:auto]",
+          articleProps?.className,
+        )}
+      >
         <div className="p-3">
           <div className="flex flex-wrap items-baseline gap-2">
             <CommentIdentity comment={comment} detail={detail} />
@@ -316,7 +334,7 @@ function CollapsedComment({
             </CollapsibleTrigger>
           ) : null}
         </div>
-        <CollapsiblePanel>
+        <CollapsiblePanel animate={open !== "revealed"}>
           {open ? (
             <div className="px-3 pb-3">
               {body === null && !editing.canEdit(comment) ? null : (
@@ -330,6 +348,50 @@ function CollapsedComment({
       </article>
     </Collapsible>
   );
+}
+
+interface LinkedArticleProps {
+  readonly ref: (node: HTMLElement | null) => void;
+  readonly tabIndex: -1;
+  readonly "data-linked-comment": true;
+  readonly className: string;
+}
+
+const USER_SCROLL_INTENT = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+
+/**
+ * Holds a linked comment just below the sticky Comments heading while the conversations around it
+ * open and their markdown loads, until the user scrolls or another comment is linked. Only the
+ * summary scroller moves; scrollIntoView would also scroll the panel's clipped ancestors.
+ */
+function holdCommentInView(node: HTMLElement) {
+  const scroller = node.closest<HTMLElement>("[data-pull-request-summary-scroll]");
+  if (!scroller) return;
+  const controller = new AbortController();
+  const stop = () => {
+    unobserve();
+    controller.abort();
+  };
+  const align = () => {
+    if (!node.isConnected || !node.hasAttribute("data-linked-comment")) return stop();
+    const heading = node.closest("[data-pull-request-summary-section]")?.firstElementChild;
+    const headingHeight = heading?.getBoundingClientRect().height ?? 0;
+    scroller.scrollTop +=
+      node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - headingHeight - 8;
+  };
+  const unobserve = observeResize([...scroller.children], align);
+  for (const type of USER_SCROLL_INTENT) {
+    scroller.addEventListener(type, stop, { passive: true, signal: controller.signal });
+  }
+  align();
+  // Activity can load after the click; by then the user may be typing elsewhere.
+  const active = document.activeElement;
+  if (
+    !(active instanceof HTMLElement) ||
+    !(active.isContentEditable || active.matches("input, textarea, select"))
+  ) {
+    node.focus({ preventScroll: true });
+  }
 }
 
 function MetaRow({
@@ -356,16 +418,25 @@ function Section({
   title,
   defaultOpen = true,
   keepMounted = false,
+  revealCount = 0,
   actions,
   children,
 }: {
   title: string;
   defaultOpen?: boolean;
   keepMounted?: boolean;
+  /** Reopens the section each time a link reveals something in it. */
+  revealCount?: number;
   actions?: ReactNode;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  // Opened by a reveal without animating, like a revealed conversation.
+  const [open, setOpen] = useState<boolean | "revealed">(defaultOpen);
+  const [seenRevealCount, setSeenRevealCount] = useState(revealCount);
+  if (revealCount !== seenRevealCount) {
+    setSeenRevealCount(revealCount);
+    setOpen("revealed");
+  }
   const headingRef = useRef<HTMLDivElement>(null);
   const setOpenWithScrollAnchor = (nextOpen: boolean) => {
     if (!nextOpen) {
@@ -387,7 +458,7 @@ function Section({
   };
   return (
     <Collapsible
-      open={open}
+      open={open !== false}
       onOpenChange={setOpenWithScrollAnchor}
       render={<section aria-label={title} />}
       data-pull-request-summary-section
@@ -408,7 +479,7 @@ function Section({
         </CollapsibleTrigger>
         {actions}
       </div>
-      <CollapsiblePanel keepMounted={keepMounted}>
+      <CollapsiblePanel keepMounted={keepMounted} animate={open !== "revealed"}>
         <div className="px-4 pb-4">{children}</div>
       </CollapsiblePanel>
     </Collapsible>
@@ -431,6 +502,8 @@ export function PullRequestSummaryTab({
   checksStale = false,
   activityError,
   pendingFinding,
+  revealCommentId = null,
+  onCommentRevealed,
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
   onFixFinding,
@@ -447,6 +520,9 @@ export function PullRequestSummaryTab({
   checksStale?: boolean;
   activityError: string | null;
   pendingFinding?: string | null;
+  /** A linked comment to scroll to and mark, until onCommentRevealed reports it shown. */
+  revealCommentId?: string | null;
+  onCommentRevealed?: () => void;
   fixFindingLabel?: string;
   fixCheckLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
@@ -464,7 +540,23 @@ export function PullRequestSummaryTab({
     CommentFilterSchema,
   );
   const items = pullRequestConversationItems(detail.comments, detail.reviewThreads);
-  const filteredItems = filterPullRequestConversationItems(items, commentFilter);
+  // The linked comment stays marked after it is shown, until another link replaces it.
+  const [linked, setLinked] = useState<{
+    readonly commentId: string;
+    readonly revealCount: number;
+    readonly scrolled: boolean;
+  } | null>(null);
+  const [seenRevealCommentId, setSeenRevealCommentId] = useState<string | null>(null);
+  const linkedCommentId = revealCommentId ?? linked?.commentId ?? null;
+  const linkedItem =
+    linkedCommentId === null
+      ? undefined
+      : items.find((item) =>
+          pullRequestConversationItemComments(item).some(
+            (comment) => comment.id === linkedCommentId,
+          ),
+        );
+  const filteredItems = filterPullRequestConversationItems(items, commentFilter, linkedItem);
   const commentCount = items.reduce(
     (count, item) => count + pullRequestConversationItemComments(item).length,
     0,
@@ -475,6 +567,38 @@ export function PullRequestSummaryTab({
       (count, item) => count + pullRequestConversationItemComments(item).length,
       0,
     );
+  if (revealCommentId !== seenRevealCommentId) {
+    setSeenRevealCommentId(revealCommentId);
+    if (revealCommentId !== null && linkedItem !== undefined) {
+      setLinked({
+        commentId: revealCommentId,
+        revealCount: (linked?.revealCount ?? 0) + 1,
+        scrolled: false,
+      });
+      // Page in whole pages, so the older-conversations button keeps its usual step.
+      const fromNewest = filteredItems.length - filteredItems.indexOf(linkedItem);
+      if (fromNewest > shownConversations) {
+        setShown({
+          url: detail.url,
+          count: Math.ceil(fromNewest / COMMENT_PAGE) * COMMENT_PAGE,
+        });
+      }
+    }
+  }
+  const linkedArticleProps = (comment: PullRequestComment): LinkedArticleProps | undefined =>
+    linked?.commentId === comment.id
+      ? {
+          ref: (node) => {
+            if (node === null || linked.scrolled) return;
+            holdCommentInView(node);
+            setLinked({ ...linked, scrolled: true });
+            onCommentRevealed?.();
+          },
+          tabIndex: -1,
+          "data-linked-comment": true,
+          className: "border-primary/60 ring-1 ring-primary/40 outline-none",
+        }
+      : undefined;
   const { shown: recentItems, hidden: hiddenConversationCount } = pagePullRequestConversationItems(
     filteredItems,
     shownConversations,
@@ -643,10 +767,15 @@ export function PullRequestSummaryTab({
           : { kind: "thread", thread };
     // A reply goes with its conversation, from the card that heads it.
     const chat = reply ? null : chatSubject(comment, thread);
+    const articleProps = linkedArticleProps(comment);
     return (
       <article
         key={`${detail.url}:${comment.id}`}
-        className="group rounded-lg border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+        {...articleProps}
+        className={cn(
+          "group rounded-lg border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]",
+          articleProps?.className,
+        )}
       >
         <div className="flex flex-wrap items-baseline gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
@@ -719,6 +848,8 @@ export function PullRequestSummaryTab({
           moreReplies={moreReplies}
           onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
           reactionBar={reactionBarFor(comment)}
+          revealCount={item === linkedItem ? (linked?.revealCount ?? 0) : 0}
+          articleProps={linkedArticleProps(comment)}
         />
       );
     }
@@ -936,6 +1067,7 @@ export function PullRequestSummaryTab({
 
       <Section
         title={`Comments (${detail.commentCount})`}
+        revealCount={linked?.revealCount ?? 0}
         actions={
           <div className="flex shrink-0 items-center gap-1">
             <Menu>

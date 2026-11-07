@@ -628,21 +628,50 @@ function isPullRequestVerdict(reviewState: string | null): boolean {
   return outcome === "approved" || outcome === "changes-requested";
 }
 
+// GitHub's Files view names a review comment `#r1`; its conversation names it `#discussion_r1`.
+const commentAnchor = (url: string) =>
+  URL.parse(url)?.hash.replace(/^#r(?=\d+$)/u, "#discussion_r");
+
+/**
+ * The conversation holding the comment a link points at. Hosts name a comment in the link's
+ * fragment (`#issuecomment-1`, `#note_1`), so a link to the pull request itself finds none.
+ */
+export function pullRequestCommentLinkTarget(
+  items: ReadonlyArray<PullRequestConversationItem>,
+  url: string,
+): { readonly item: PullRequestConversationItem; readonly commentId: string } | null {
+  const anchor = commentAnchor(url);
+  if (!anchor) return null;
+  for (const item of items) {
+    const comment = pullRequestConversationItemComments(item).find(
+      (entry) => entry.url !== null && commentAnchor(entry.url) === anchor,
+    );
+    if (comment) return { item, commentId: comment.id };
+  }
+  return null;
+}
+
 export function filterPullRequestConversationItems(
   items: ReadonlyArray<PullRequestConversationItem>,
   filter: { readonly bots: boolean; readonly resolved: boolean },
+  linked?: PullRequestConversationItem,
 ): ReadonlyArray<PullRequestConversationItem> {
-  return items.filter((item) =>
-    // Matching any member keeps the finding beside a human reply to a bot.
-    pullRequestConversationItemComments(item).some(
-      (comment) =>
-        // A bot's approval or change request is a verdict, not chatter.
-        (filter.bots ||
-          comment.author?.isBot !== true ||
-          isPullRequestVerdict(comment.reviewState)) &&
-        (filter.resolved ||
-          !isPullRequestCommentFinished(comment, item.kind === "thread" ? item.thread : undefined)),
-    ),
+  return items.filter(
+    (item) =>
+      item === linked ||
+      // Matching any member keeps the finding beside a human reply to a bot.
+      pullRequestConversationItemComments(item).some(
+        (comment) =>
+          // A bot's approval or change request is a verdict, not chatter.
+          (filter.bots ||
+            comment.author?.isBot !== true ||
+            isPullRequestVerdict(comment.reviewState)) &&
+          (filter.resolved ||
+            !isPullRequestCommentFinished(
+              comment,
+              item.kind === "thread" ? item.thread : undefined,
+            )),
+      ),
   );
 }
 

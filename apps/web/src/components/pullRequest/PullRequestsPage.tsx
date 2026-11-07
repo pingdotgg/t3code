@@ -1551,6 +1551,13 @@ export function PullRequestsPage() {
               }
               refreshToken={detailRefreshToken}
               tabOnPage
+              revealUrl={renderedPullRequestSurface.revealUrl}
+              onRevealSettled={() => {
+                if (rightPanelRef === null) return;
+                useRightPanelStore
+                  .getState()
+                  .settlePullRequestReveal(rightPanelRef, renderedPullRequestSurface.id);
+              }}
               onActed={(action, phase = "done", reply) => {
                 // From every row held, not the ones on screen: a pull request closed from an open
                 // list has left the screen, and reopening it has to find it anyway.

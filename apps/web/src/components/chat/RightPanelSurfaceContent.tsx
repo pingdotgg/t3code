@@ -153,6 +153,10 @@ export function RightPanelSurfaceContent(props: {
           onTabChange={(tab) => {
             useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);
           }}
+          revealUrl={surface.revealUrl}
+          onRevealSettled={() => {
+            useRightPanelStore.getState().settlePullRequestReveal(threadRef, surface.id);
+          }}
           context={pullRequestPanelContext(
             {
               projectId: pullRequest.projectId,

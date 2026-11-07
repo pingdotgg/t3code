@@ -73,6 +73,8 @@ export type RightPanelSurface =
       repository: string;
       number: number;
       url?: string;
+      /** A comment link waiting for the panel to show its comment; cleared once shown. */
+      revealUrl?: string;
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
@@ -148,6 +150,8 @@ interface RightPanelStoreState {
       repository: string;
       number: number;
       url?: string;
+      /** A clicked link that names a comment; reopening a surface passes only its `url`. */
+      revealUrl?: string;
       detailTab?: PullRequestDetailTab;
     },
   ) => void;
@@ -156,6 +160,7 @@ interface RightPanelStoreState {
     surfaceId: string,
     detailTab: PullRequestDetailTab,
   ) => void;
+  settlePullRequestReveal: (ref: ScopedThreadRef, surfaceId: string) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -752,16 +757,17 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           userAction(state, scopedThreadKey(ref), (current) => {
             const surface = pullRequestSurface(target);
             const next = upsertSurface(current, surface);
-            return target.url
-              ? {
-                  ...next,
-                  surfaces: next.surfaces.map((entry) =>
-                    entry.id === surface.id && entry.kind === "pull-request"
-                      ? { ...entry, ...surface }
-                      : entry,
-                  ),
-                }
-              : next;
+            const { url, revealUrl } = target;
+            if (!url && !revealUrl) return next;
+            return {
+              ...next,
+              surfaces: next.surfaces.map((entry) => {
+                if (entry.id !== surface.id || entry.kind !== "pull-request") return entry;
+                // A later link replaces a comment not yet shown.
+                const { revealUrl: _previous, ...rest } = entry;
+                return { ...rest, ...surface, ...(revealUrl ? { revealUrl } : {}) };
+              }),
+            };
           }),
         ),
       setPullRequestDetailTab: (ref, surfaceId, detailTab) =>
@@ -779,6 +785,22 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 ? { ...surface, detailTab }
                 : surface,
             ),
+          }));
+        }),
+      settlePullRequestReveal: (ref, surfaceId) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const existing = state.byThreadKey[threadKey]?.surfaces.find(
+            (surface) => surface.id === surfaceId,
+          );
+          if (existing?.kind !== "pull-request" || existing.revealUrl === undefined) return state;
+          return automaticUpdate(state, threadKey, (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) => {
+              if (surface.id !== surfaceId || surface.kind !== "pull-request") return surface;
+              const { revealUrl: _settled, ...rest } = surface;
+              return rest;
+            }),
           }));
         }),
       openFile: (ref, requestedPath, line) =>

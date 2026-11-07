@@ -35,6 +35,7 @@ import {
   groupPullRequestTimelineConversations,
   filterPullRequestConversationItems,
   pagePullRequestConversationItems,
+  pullRequestCommentLinkTarget,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
   appendHandoff,
@@ -575,6 +576,29 @@ describe("review thread conversations", () => {
     expect(filterPullRequestConversationItems(resolved, { bots: false, resolved: true })).toEqual(
       resolved,
     );
+  });
+
+  it("finds the conversation a comment link names and keeps it past the filter", () => {
+    const botOnly = { ...comment("bot-only", 7), author: bot };
+    const items = pullRequestConversationItems([...comments, botOnly], [thread]);
+    expect(
+      pullRequestCommentLinkTarget(items, "https://example.test/pull/1/files?w=1#reply"),
+    ).toEqual({ item: items[0], commentId: "reply" });
+    const github = { ...reply, url: "https://github.com/o/r/pull/1#discussion_r42" };
+    const githubItems = pullRequestConversationItems([github], []);
+    expect(
+      pullRequestCommentLinkTarget(githubItems, "https://github.com/o/r/pull/1/files#r42"),
+    ).toEqual({ item: githubItems[0], commentId: "reply" });
+    for (const url of ["https://example.test/pull/1", "https://example.test/pull/1#gone", "#"]) {
+      expect(pullRequestCommentLinkTarget(items, url), url).toBeNull();
+    }
+    const linked = pullRequestCommentLinkTarget(items, "https://example.test/pull/1#bot-only");
+    expect(linked?.commentId).toBe("bot-only");
+    expect(
+      filterPullRequestConversationItems(items, { bots: false, resolved: false }, linked?.item).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["thread", "c1", "bot-only"]);
   });
 
   it("keeps bot review verdicts when bot comments are hidden", () => {

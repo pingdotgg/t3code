@@ -126,6 +126,8 @@ import {
   isStackedPullRequestBase,
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
+  pullRequestCommentLinkTarget,
+  pullRequestConversationItems,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
@@ -273,6 +275,8 @@ export function PullRequestDetailPanel({
   onGuideShown,
   initialTab = "summary",
   onTabChange,
+  revealUrl,
+  onRevealSettled,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -299,6 +303,9 @@ export function PullRequestDetailPanel({
   onGuideShown?: (() => void) | undefined;
   initialTab?: PullRequestDetailTab;
   onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
+  /** A link that may name one of this pull request's comments, waiting to be shown. */
+  revealUrl?: string | undefined;
+  onRevealSettled?: (() => void) | undefined;
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
@@ -356,6 +363,15 @@ export function PullRequestDetailPanel({
     detail,
   } = usePullRequestDetail(environmentId, reference, matchingListEntry);
   const [selectedTab, setTab] = useState<PullRequestDetailTab>(initialTab);
+  const revealCommentId =
+    revealUrl === undefined || detail === null
+      ? null
+      : (pullRequestCommentLinkTarget(
+          pullRequestConversationItems(detail.comments, detail.reviewThreads),
+          revealUrl,
+        )?.commentId ?? null);
+  // A comment link shows the conversation holding it.
+  if (revealCommentId !== null && !tabOnPage && selectedTab !== "summary") setTab("summary");
   const reviewGuidesEnabled = useEnvironmentSettings(
     environmentId,
     (settings) => settings.reviewGuidesEnabled,
@@ -561,6 +577,32 @@ export function PullRequestDetailPanel({
       : "Checking stack membership…";
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
+  // Loaded activity without the comment, keyed by load so a refetch is checked again.
+  const revealMissedAt =
+    revealUrl !== undefined &&
+    revealCommentId === null &&
+    detail !== null &&
+    !activityQuery.isPending
+      ? activityQuery.dataUpdatedAt
+      : null;
+  const revealRefreshedFor = useRef<string | null>(null);
+  const showRevealedComment = useEffectEvent(() => {
+    if (revealCommentId === null) {
+      // Cached activity can predate the comment, so load it once more before giving up.
+      if (revealUrl !== undefined && revealRefreshedFor.current !== revealUrl) {
+        revealRefreshedFor.current = revealUrl;
+        return activityQuery.refresh();
+      }
+      return onRevealSettled?.();
+    }
+    // selectTab's store writes; the local tab already switched during render.
+    if (tabOnPage) useGuideRunStore.getState().showPageDetailTab(guideKey, "summary");
+    onTabChange?.("summary");
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the tab and the pending link live in stores outside the panel
+  useEffect(() => {
+    if (revealCommentId !== null || revealMissedAt !== null) showRevealedComment();
+  }, [revealCommentId, revealMissedAt]);
   const refreshDetail = () => {
     detailQuery.refresh();
     activityQuery.refresh();
@@ -1751,6 +1793,8 @@ export function PullRequestDetailPanel({
                   reference={reference}
                   detail={detail}
                   activityPending={activityPending}
+                  revealCommentId={tab === "summary" ? revealCommentId : null}
+                  {...(onRevealSettled ? { onCommentRevealed: onRevealSettled } : {})}
                   checksStale={checksStale}
                   activityError={activityError}
                   pendingFinding={handoff}
