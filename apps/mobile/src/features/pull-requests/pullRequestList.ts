@@ -304,13 +304,15 @@ export function pullRequestListInput(
   query: string,
 ): PullRequestListInput {
   const parsed = parsePullRequestQuery(query);
+  // The wire caps query at 200; the iOS header search bar has no maxLength to stop longer input.
+  const text = parsed.text.slice(0, 200).trim();
   return {
     state: controls.state,
     involvement: controls.involvement,
     filters: { ...controls.filters, ...parsed.filters },
     limit: PR_LIST_PAGE_SIZE,
     ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
-    ...(parsed.text ? { query: parsed.text } : {}),
+    ...(text ? { query: text } : {}),
   };
 }
 
