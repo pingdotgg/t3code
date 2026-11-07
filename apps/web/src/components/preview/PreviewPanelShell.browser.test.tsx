@@ -21,7 +21,12 @@ const INLINE_SIZE: PreviewPanelInlineSize = {
   observeRow: () => noop,
 };
 
-function Workspace(props: { open: boolean; showOpener?: boolean; openerInert?: boolean }) {
+function Workspace(props: {
+  open: boolean;
+  showOpener?: boolean;
+  openerInert?: boolean;
+  showPanel?: boolean;
+}) {
   return (
     <div className="flex h-96">
       <div className="flex-1">
@@ -32,9 +37,11 @@ function Workspace(props: { open: boolean; showOpener?: boolean; openerInert?: b
           Toggle right panel
         </button>
       </div>
-      <PreviewPanelShell mode="inline" open={props.open} inlineSize={INLINE_SIZE}>
-        <button type="button">Open a surface</button>
-      </PreviewPanelShell>
+      {props.showPanel === false ? null : (
+        <PreviewPanelShell mode="inline" open={props.open} inlineSize={INLINE_SIZE}>
+          <button type="button">Open a surface</button>
+        </PreviewPanelShell>
+      )}
     </div>
   );
 }
@@ -50,6 +57,18 @@ describe("PreviewPanelShell", () => {
     page.getByRole("button", { name: "Open a surface" }).element().focus();
 
     await screen.rerender(<Workspace open={false} />);
+    await expect.element(composer).toHaveFocus();
+  });
+
+  it("returns focus to the opener when closing unmounts the panel without an exit animation", async () => {
+    await using screen = await render(<Workspace open={false} showPanel={false} />);
+    const composer = page.getByRole("textbox", { name: "Composer" });
+    composer.element().focus();
+
+    await screen.rerender(<Workspace open />);
+    page.getByRole("button", { name: "Open a surface" }).element().focus();
+
+    await screen.rerender(<Workspace open={false} showPanel={false} />);
     await expect.element(composer).toHaveFocus();
   });
 

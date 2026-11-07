@@ -42,6 +42,21 @@ function ResizablePreviewPanelShell(props: PreviewPanelShellProps) {
   return <PreviewPanelShellFrame {...props} inlineSize={inlineSize} />;
 }
 
+/** Focuses the element that had focus before the panel opened, else the panel toggle. */
+function returnFocusFromPanel(host: HTMLElement, opener: Element | null): boolean {
+  const doc = host.ownerDocument;
+  // focus() is a no-op on a detached, inert or hidden element, so activeElement confirms it took.
+  const takesFocus = (target: Element | null) => {
+    if (!(target instanceof HTMLElement) || target === doc.body) return false;
+    target.focus();
+    return doc.activeElement === target;
+  };
+  return (
+    (!host.contains(opener) && takesFocus(opener)) ||
+    takesFocus(doc.querySelector("[data-right-panel-toggle]"))
+  );
+}
+
 function PreviewPanelShellFrame(
   props: PreviewPanelShellProps & { inlineSize: PreviewPanelInlineSize },
 ) {
@@ -85,7 +100,7 @@ function PreviewPanelShellFrame(
       stopObservingRow();
     };
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on unmount, returns DOM focus to the panel toggle if removal dropped it on the body
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on unmount, returns DOM focus to the opener or panel toggle if removal dropped it on the body
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host || !collapsible) return;
@@ -94,7 +109,7 @@ function PreviewPanelShellFrame(
       // Unmount moves the toggle; restore focus at its committed location if removal sent focus to body.
       queueMicrotask(() => {
         if (host.ownerDocument.activeElement === host.ownerDocument.body) {
-          host.ownerDocument.querySelector<HTMLButtonElement>("[data-right-panel-toggle]")?.focus();
+          returnFocusFromPanel(host, opener.current);
         }
       });
     };
@@ -112,15 +127,7 @@ function PreviewPanelShellFrame(
     }
     // Move focus before making its current owner inert, while the target is reachable.
     if (collapsed && host.contains(doc.activeElement)) {
-      // focus() is a no-op on a detached, inert or hidden element, so activeElement confirms it took.
-      const takesFocus = (target: Element | null) => {
-        if (!(target instanceof HTMLElement) || target === doc.body) return false;
-        target.focus();
-        return doc.activeElement === target;
-      };
-      returnedFocus.current =
-        (!host.contains(opener.current) && takesFocus(opener.current)) ||
-        takesFocus(doc.querySelector("[data-right-panel-toggle]"));
+      returnedFocus.current = returnFocusFromPanel(host, opener.current);
     }
     host.toggleAttribute("inert", collapsed);
   }, [collapsible, open, hostRef]);
