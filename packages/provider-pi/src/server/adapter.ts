@@ -2550,7 +2550,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             appliedThinking = null;
             restoredBaseline = true;
             contextWindow = rememberModelContextWindow(restoredModel);
-            appliedModel = null;
             const updatedAt = yield* DateTime.now;
             sessionEntity = { ...sessionEntity, model: PI_INHERIT_MODEL_SLUG, updatedAt };
             yield* emit({
@@ -2568,6 +2567,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             yield* request({ type: "set_thinking_level", level: baselineThinking });
             appliedThinking = null;
           }
+          if (restoredBaseline) appliedModel = null;
         } else if (modelSelection.model !== appliedModel) {
           const parsed = parsePiModelSlug(modelSelection.model);
           if (parsed === null) {
