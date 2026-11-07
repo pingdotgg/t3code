@@ -309,6 +309,10 @@ export {
 export const BrowserLinkTarget = Schema.Literals(["system", "app"]);
 export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
 export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
+/** Where preview DevTools open: docked inside the browser panel or in a separate window. */
+export const BrowserDevToolsDock = Schema.Literals(["right", "bottom", "window"]);
+export type BrowserDevToolsDock = typeof BrowserDevToolsDock.Type;
+export const DEFAULT_BROWSER_DEVTOOLS_DOCK: BrowserDevToolsDock = "right";
 /**
  * What the address bar searches with when the input is not an address.
  * "custom" uses `browserCustomSearchUrl`, a template with `%s` for the query.
@@ -426,6 +430,10 @@ export const ClientSettingsSchema = Schema.Struct({
 
   browserLinkTarget: BrowserLinkTarget.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_LINK_TARGET)),
+  ),
+
+  browserDevToolsDock: BrowserDevToolsDock.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_DEVTOOLS_DOCK)),
   ),
 
   browserSearchEngine: BrowserSearchEngine.pipe(
@@ -1872,6 +1880,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserRecordingShowKeyPresses: Schema.optionalKey(Schema.Boolean),
   browserRecordingShowMousePresses: Schema.optionalKey(Schema.Boolean),
   browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
+  browserDevToolsDock: Schema.optionalKey(BrowserDevToolsDock),
   browserSearchEngine: Schema.optionalKey(BrowserSearchEngine),
   browserCustomSearchUrl: Schema.optionalKey(BrowserCustomSearchUrl),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),

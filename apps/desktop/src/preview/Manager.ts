@@ -9,6 +9,7 @@ import type {
   DesktopPreviewAnnotationVoiceConfig,
   DesktopPreviewAnnotationVoiceState,
   DesktopPreviewColorScheme,
+  DesktopPreviewDevToolsBounds,
   DesktopPreviewFavicon,
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
@@ -33,6 +34,7 @@ import {
   clipboard,
   nativeImage,
   shell,
+  WebContentsView,
   webContents,
 } from "electron";
 import * as Cause from "effect/Cause";
@@ -112,6 +114,7 @@ export interface PreviewTabState {
   audible: boolean;
   controller: "human" | "agent" | "none";
   capturing: boolean;
+  devToolsOpen: boolean;
   favicon?: DesktopPreviewFavicon;
   serverTab?: { readonly threadId: string; readonly tabId: string };
   updatedAt: string;
@@ -548,6 +551,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let forwardedShortcuts: ReadonlyArray<PreviewForwardedShortcut> = [];
   const annotationThemeRef = yield* Ref.make(DEFAULT_ANNOTATION_THEME);
   const annotationSendEnabled = new Map<string, boolean>();
+  const dockedDevToolsViews = new Map<
+    string,
+    { readonly view: WebContentsView; readonly window: BrowserWindow }
+  >();
   const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());
   const tabsRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewTabState>>(new Map());
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
@@ -1275,6 +1282,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const audioStateChanged = (
       event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>,
     ) => runFork(syncTabAudible(tabId, wc, event.audible));
+    const devToolsOpened = () => runFork(update(tabId, { devToolsOpen: true }));
+    const devToolsClosed = () => runFork(update(tabId, { devToolsOpen: false }));
     const publishFavicon = Effect.fn("PreviewManager.publishFavicon")(function* (input: {
       readonly captureDocumentId: number;
       readonly dataUrl: string;
@@ -1526,6 +1535,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("dom-ready", restoreRecordingCursor);
         wc.off("did-fail-load", failed as never);
         wc.off("audio-state-changed", audioStateChanged);
+        wc.off("devtools-opened", devToolsOpened);
+        wc.off("devtools-closed", devToolsClosed);
         wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
@@ -1547,6 +1558,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("dom-ready", restoreRecordingCursor);
         wc.on("did-fail-load", failed as never);
         wc.on("audio-state-changed", audioStateChanged);
+        wc.on("devtools-opened", devToolsOpened);
+        wc.on("devtools-closed", devToolsClosed);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
@@ -1648,6 +1661,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           audible: false,
           controller: "none",
           capturing: false,
+          devToolsOpen: false,
           updatedAt,
         };
         return [
@@ -1701,6 +1715,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const closedTab = tab.value;
     if (closedTab.serverTab) browserHost.setShown(closedTab.serverTab, undefined);
     if (closedTab.webContentsId != null) {
+      const wc = webContents.fromId(closedTab.webContentsId);
+      if (wc && !wc.isDestroyed()) {
+        yield* attempt({ operation: "closeTab.closeDevTools", tabId, webContentsId: wc.id }, () => {
+          if (wc.isDevToolsOpened()) wc.closeDevTools();
+        }).pipe(Effect.ignore);
+      }
+      yield* attempt({ operation: "closeTab.removeDockedDevTools", tabId }, () =>
+        removeDockedDevTools(tabId),
+      ).pipe(Effect.ignore);
       yield* Effect.all(
         [
           detachControlSession(closedTab.webContentsId, closedTab.serverTab),
@@ -1723,6 +1746,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       audible: false,
       controller: "none",
       capturing: false,
+      devToolsOpen: false,
       updatedAt,
     };
     yield* emit(tabId, closed);
@@ -1843,6 +1867,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
           audible: attachedAudible,
+          devToolsOpen: current.webContentsId === webContentsId && current.devToolsOpen,
           updatedAt: registeredAt,
         };
         return [
@@ -1946,6 +1971,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         audible: current?.audible ?? false,
         controller: current?.controller ?? "none",
         capturing: current?.capturing ?? false,
+        devToolsOpen: current?.devToolsOpen ?? false,
         ...(current?.favicon ? { favicon: current.favicon } : {}),
         ...(current?.serverTab ? { serverTab: current.serverTab } : {}),
         updatedAt,
@@ -2035,20 +2061,73 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const hardReload = (tabId: string) =>
     withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
 
-  const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (tabId: string) {
+  // Detached DevTools is a separate OS window that tiling window managers give no close button,
+  // so by default the client docks them over the browser panel. Electron 44 cannot host DevTools
+  // in a <webview>, so docked DevTools live in a native view the client positions.
+  const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (
+    tabId: string,
+    docked: boolean,
+  ) {
     const wc = yield* requireWebContents(tabId);
-    if (wc.isDevToolsOpened()) {
-      yield* attempt({ operation: "openDevTools.focus", tabId, webContentsId: wc.id }, () =>
-        wc.devToolsWebContents?.focus(),
-      );
-      return;
+    if (wc.isDevToolsOpened()) return;
+    const mainWindow = docked ? Option.getOrUndefined(yield* Ref.get(mainWindowRef)) : undefined;
+    if (docked && (!mainWindow || mainWindow.isDestroyed())) {
+      return yield* new PreviewMainWindowClosedError({ tabId });
     }
     yield* detachControlSession(wc.id);
     yield* attempt({ operation: "openDevTools", tabId, webContentsId: wc.id }, () => {
       wc.once("devtools-closed", () => {
+        removeDockedDevTools(tabId);
         if (!wc.isDestroyed()) runFork(restoreControlSession(tabId, wc));
       });
-      wc.openDevTools({ mode: "detach" });
+      if (!mainWindow) {
+        wc.openDevTools({ mode: "detach" });
+        return;
+      }
+      // Hidden until the client reports where the panel's DevTools area is.
+      const view = new WebContentsView({ webPreferences: { sandbox: true } });
+      view.setVisible(false);
+      mainWindow.contentView.addChildView(view);
+      dockedDevToolsViews.set(tabId, { view, window: mainWindow });
+      wc.setDevToolsWebContents(view.webContents);
+      wc.openDevTools();
+    });
+  });
+
+  // Closing a docked host is what makes Electron emit `devtools-closed` for it.
+  const removeDockedDevTools = (tabId: string) => {
+    const docked = dockedDevToolsViews.get(tabId);
+    if (!docked) return;
+    dockedDevToolsViews.delete(tabId);
+    if (!docked.window.isDestroyed()) docked.window.contentView.removeChildView(docked.view);
+    if (!docked.view.webContents.isDestroyed()) docked.view.webContents.close();
+  };
+
+  const closeDevTools = (tabId: string) =>
+    withWebContents("closeDevTools", tabId, (wc) => {
+      if (wc.isDevToolsOpened()) wc.closeDevTools();
+    }).pipe(Effect.ensuring(Effect.sync(() => removeDockedDevTools(tabId))));
+
+  const setDevToolsBounds = Effect.fn("PreviewManager.setDevToolsBounds")(function* (
+    tabId: string,
+    bounds: DesktopPreviewDevToolsBounds | null,
+  ) {
+    const docked = dockedDevToolsViews.get(tabId);
+    if (!docked || docked.window.isDestroyed()) return;
+    yield* attempt({ operation: "setDevToolsBounds", tabId }, () => {
+      if (!bounds || bounds.width < 1 || bounds.height < 1) {
+        docked.view.setVisible(false);
+        return;
+      }
+      // The client measures CSS pixels; native views use window DIPs.
+      const zoom = docked.window.webContents.getZoomFactor();
+      docked.view.setBounds({
+        x: Math.round(bounds.x * zoom),
+        y: Math.round(bounds.y * zoom),
+        width: Math.round(bounds.width * zoom),
+        height: Math.round(bounds.height * zoom),
+      });
+      docked.view.setVisible(true);
     });
   });
 
@@ -3369,6 +3448,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     navigate,
     openPictureInPicture,
     openDevTools,
+    closeDevTools,
+    setDevToolsBounds,
     pickElement,
     updateAnnotationVoice,
     prepareWebview,
@@ -3590,7 +3671,15 @@ export class PreviewManager extends Context.Service<
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly setShown: (tabId: string, shown: boolean) => Effect.Effect<void>;
-    readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly openDevTools: (
+      tabId: string,
+      docked: boolean,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly closeDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly setDevToolsBounds: (
+      tabId: string,
+      bounds: DesktopPreviewDevToolsBounds | null,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
     ) => Effect.Effect<void, PreviewManagerError>;
@@ -3736,6 +3825,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setAudioMuted: operations.setAudioMuted,
     setShown: operations.setShown,
     openDevTools: operations.openDevTools,
+    closeDevTools: operations.closeDevTools,
+    setDevToolsBounds: operations.setDevToolsBounds,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession
         .clearCookies(partitions)

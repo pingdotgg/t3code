@@ -7,6 +7,7 @@ import {
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
   BROWSER_PROFILE_MAX_COUNT,
+  type BrowserDevToolsDock,
   type BrowserLinkTarget,
   type BrowserProfile,
   BrowserSearchEngine,
@@ -16,6 +17,7 @@ import {
   BROWSER_RECORDING_FRAME_RATES,
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
   DEFAULT_BROWSER_PROFILE_ID,
+  DEFAULT_BROWSER_DEVTOOLS_DOCK,
   DEFAULT_BROWSER_LINK_TARGET,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
   DEFAULT_BROWSER_SEARCH_ENGINE,
@@ -686,6 +688,56 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
                 {LINK_TARGET_LABELS[target]}
               </SelectItem>
             ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
+const DEVTOOLS_DOCK_LABELS: Readonly<Record<BrowserDevToolsDock, string>> = {
+  right: "Right",
+  bottom: "Bottom",
+  window: "Separate window",
+};
+
+function BrowserDevToolsDockSetting({ disabled }: { readonly disabled: boolean }) {
+  const dock = useClientSettings((settings) => settings.browserDevToolsDock);
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-devtools-dock")}
+      description="Where DevTools open for a browser tab: docked inside the browser panel, or in their own window."
+      resetAction={
+        !disabled && dock !== DEFAULT_BROWSER_DEVTOOLS_DOCK ? (
+          <SettingResetButton
+            label="DevTools position"
+            onClick={() => updateSettings({ browserDevToolsDock: DEFAULT_BROWSER_DEVTOOLS_DOCK })}
+          />
+        ) : null
+      }
+      control={
+        <Select
+          disabled={disabled}
+          value={dock}
+          onValueChange={(value) => {
+            if (value === "right" || value === "bottom" || value === "window") {
+              updateSettings({ browserDevToolsDock: value });
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="DevTools position">
+            <SelectValue>{DEVTOOLS_DOCK_LABELS[dock]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {(Object.keys(DEVTOOLS_DOCK_LABELS) as ReadonlyArray<BrowserDevToolsDock>).map(
+              (option) => (
+                <SelectItem hideIndicator key={option} value={option}>
+                  {DEVTOOLS_DOCK_LABELS[option]}
+                </SelectItem>
+              ),
+            )}
           </SelectPopup>
         </Select>
       }
@@ -1589,6 +1641,7 @@ export function BrowserSettingsPanel() {
         <SettingsUnavailableGroup message={desktopOnlyMessage}>
           <BrowserProfilesSetting disabled={desktopOnly} />
           <BrowserLinkTargetSetting disabled={desktopOnly} />
+          <BrowserDevToolsDockSetting disabled={desktopOnly} />
           <BrowserAutoShowFloatingPreviewSetting disabled={desktopOnly} />
         </SettingsUnavailableGroup>
         {/* Not desktop-only: web clients search from server-run browser tabs too. */}

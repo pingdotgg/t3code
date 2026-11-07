@@ -181,6 +181,7 @@ describe("previewStateStore (single-tab)", () => {
       audioMuted: false,
       audible: false,
       controller: "none" as const,
+      devToolsOpen: false,
       favicon: {
         dataUrl: "data:image/png;base64,AA==",
         pageUrl: "https://example.com",
@@ -215,6 +216,7 @@ describe("previewStateStore (single-tab)", () => {
       audioMuted: false,
       audible: false,
       controller: "none",
+      devToolsOpen: false,
       favicon: null,
     });
     setActivePreviewTab(ref, first.tabId);
@@ -244,6 +246,7 @@ describe("previewStateStore (single-tab)", () => {
       audioMuted: false,
       audible: false,
       controller: "none",
+      devToolsOpen: false,
       favicon: null,
     });
 
@@ -375,6 +378,7 @@ describe("previewStateStore (single-tab)", () => {
       audioMuted: false,
       audible: false,
       controller: "none",
+      devToolsOpen: false,
       favicon: null,
     });
     const restarted = makeSnapshot({

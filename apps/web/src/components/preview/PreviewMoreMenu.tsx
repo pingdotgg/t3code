@@ -35,7 +35,7 @@ export interface PreviewMoreMenuActions {
   readonly resetZoom: () => void;
   readonly clearCookies: () => void;
   readonly clearCache: () => void;
-  readonly openDevTools?: () => void;
+  readonly toggleDevTools?: () => void;
   readonly toggleNativePictureInPicture?: () => void;
 }
 
@@ -47,6 +47,7 @@ interface Props {
   deviceToolbarVisible: boolean;
   onToggleDeviceToolbar: () => void;
   nativePictureInPicture: boolean;
+  devToolsOpen: boolean;
   profileName: string | undefined;
   move?: { readonly label: string; readonly onMove: () => void };
 }
@@ -74,6 +75,7 @@ export function PreviewMoreMenu({
   deviceToolbarVisible,
   onToggleDeviceToolbar,
   nativePictureInPicture,
+  devToolsOpen,
   profileName,
   move,
 }: Props) {
@@ -86,9 +88,9 @@ export function PreviewMoreMenu({
         <MenuItem onClick={actions.hardReload} disabled={disabled}>
           Hard reload
         </MenuItem>
-        {actions.openDevTools ? (
-          <MenuItem onClick={actions.openDevTools} disabled={disabled}>
-            Open DevTools
+        {actions.toggleDevTools ? (
+          <MenuItem onClick={actions.toggleDevTools} disabled={disabled}>
+            {devToolsOpen ? "Close DevTools" : "Open DevTools"}
           </MenuItem>
         ) : null}
         {actions.toggleNativePictureInPicture ? (

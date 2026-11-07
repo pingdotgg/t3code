@@ -607,6 +607,7 @@ export interface DesktopPreviewTabState {
   controller: "human" | "agent" | "none";
   /** A screenshot or stream of the guest is pending, so the client keeps it painting while hidden. */
   capturing: boolean;
+  devToolsOpen: boolean;
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
 }
@@ -998,6 +999,26 @@ export const DesktopPreviewSetShownInputSchema = Schema.Struct({
   shown: Schema.Boolean,
 });
 
+export const DesktopPreviewOpenDevToolsInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  /** Docks DevTools inside the main window; otherwise they open in a separate window. */
+  docked: Schema.Boolean,
+});
+
+export const DesktopPreviewDevToolsBoundsSchema = Schema.Struct({
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  height: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type DesktopPreviewDevToolsBounds = typeof DesktopPreviewDevToolsBoundsSchema.Type;
+
+export const DesktopPreviewSetDevToolsBoundsInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  /** CSS pixels in the main window; null hides docked DevTools. */
+  bounds: Schema.NullOr(DesktopPreviewDevToolsBoundsSchema),
+});
+
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 });
@@ -1249,7 +1270,10 @@ export interface DesktopPreviewBridge {
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
   /** Tells the tab's server whether its webview is on screen. */
   setShown: (tabId: string, shown: boolean) => Promise<void>;
-  openDevTools: (tabId: string) => Promise<void>;
+  openDevTools: (tabId: string, docked: boolean) => Promise<void>;
+  closeDevTools: (tabId: string) => Promise<void>;
+  /** Places docked DevTools over the browser panel; null hides them. */
+  setDevToolsBounds: (tabId: string, bounds: DesktopPreviewDevToolsBounds | null) => Promise<void>;
   clearCookies: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   clearCache: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   getPreviewConfig: (

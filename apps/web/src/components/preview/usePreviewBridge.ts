@@ -9,6 +9,7 @@ import { useEffect, useEffectEvent, useRef } from "react";
 import { recordFaviconForThread } from "~/browserFaviconStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { acquireBrowserSurfaceActivity } from "~/browser/browserSurfaceStore";
+import { usePreviewDevToolsStore } from "~/browser/previewDevTools";
 import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -65,6 +66,7 @@ export function usePreviewBridge(input: {
       lastDesktopNavStatus.current = state.navStatus;
       captureActivity.current?.update(state.capturing);
       applyPreviewDesktopState(stableThreadRef, tabId, projectDesktopState(state));
+      usePreviewDevToolsStore.getState().syncOpen(runtimeTabId, state.devToolsOpen);
       if (state.favicon) {
         recordFaviconForThread(stableThreadRef, state.favicon);
       }
@@ -130,6 +132,7 @@ export function projectDesktopState(state: DesktopPreviewTabState): DesktopPrevi
     audioMuted: state.audioMuted,
     audible: state.audible,
     controller: state.controller,
+    devToolsOpen: state.devToolsOpen,
     favicon: state.favicon && originOf(state.favicon.pageUrl) === navOrigin ? state.favicon : null,
   };
 }

@@ -143,6 +143,7 @@ const {
   browserWindowConstructor,
   clipboardItemConstructor,
   createFromPath,
+  devToolsViews,
   fromId,
   getFocusedWebContents,
   mkdir,
@@ -158,6 +159,11 @@ const {
     isEmpty: () => false,
     toPNG: () => Buffer.from("png"),
   })),
+  devToolsViews: [] as Array<{
+    readonly webContents: { readonly isDestroyed: () => boolean; readonly close: () => void };
+    readonly setVisible: ReturnType<typeof vi.fn>;
+    readonly setBounds: ReturnType<typeof vi.fn>;
+  }>,
   fromId: vi.fn<(_id?: number) => Electron.WebContents | null>((_id?: number) => null),
   getFocusedWebContents: vi.fn(() => null),
   mkdir: vi.fn((_path: string) => undefined),
@@ -187,6 +193,22 @@ vi.mock("electron", () => ({
   },
   session: {
     fromPartition: vi.fn(),
+  },
+  WebContentsView: class {
+    readonly setVisible = vi.fn();
+    readonly setBounds = vi.fn();
+    readonly webContents = (() => {
+      let closed = false;
+      return {
+        isDestroyed: () => closed,
+        close: () => {
+          closed = true;
+        },
+      };
+    })();
+    constructor() {
+      devToolsViews.push(this);
+    }
   },
   webContents: {
     fromId,
@@ -1111,13 +1133,28 @@ describe("PreviewManager", () => {
     const detachListeners = new Set<() => void>();
     let chromiumDetaches = 0;
     let destroyed = false;
+    let devToolsOpened = false;
+    const eventListeners = new Map<string, Set<() => void>>();
+    const fire = (event: string) => {
+      listeners.get(event)?.();
+      for (const listener of eventListeners.get(event) ?? []) listener();
+    };
     const wc = {
       id,
       isDestroyed: () => destroyed,
       isDevToolsOpened: () => {
         if (destroyed) throw new TypeError("Object has been destroyed");
-        return false;
+        return devToolsOpened;
       },
+      openDevTools: vi.fn(() => {
+        devToolsOpened = true;
+        fire("devtools-opened");
+      }),
+      closeDevTools: vi.fn(() => {
+        devToolsOpened = false;
+        fire("devtools-closed");
+      }),
+      setDevToolsWebContents: vi.fn(),
       getType: () => "webview",
       getURL: () => "http://localhost:5173/README.md",
       getTitle: () => "README.md",
@@ -1126,8 +1163,14 @@ describe("PreviewManager", () => {
       setZoomFactor: vi.fn(),
       setAudioMuted: vi.fn(),
       isCurrentlyAudible: () => false,
-      on: vi.fn(),
-      off: vi.fn(),
+      on: (event: string, listener: () => void) => {
+        const set = eventListeners.get(event) ?? new Set();
+        set.add(listener);
+        eventListeners.set(event, set);
+      },
+      off: (event: string, listener: () => void) => {
+        eventListeners.get(event)?.delete(listener);
+      },
       once: (event: string, listener: () => void) => {
         listeners.set(event, listener);
       },
@@ -1167,6 +1210,81 @@ describe("PreviewManager", () => {
       },
     };
   };
+
+  effectIt.effect("docks preview DevTools in the main window and closes them with the tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAttachingGuest(49);
+        fromId.mockReturnValue(guest.wc);
+        devToolsViews.length = 0;
+        const addChildView = vi.fn();
+        const removeChildView = vi.fn();
+        const devToolsOpen: Array<boolean> = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            if (devToolsOpen.at(-1) !== state.devToolsOpen) devToolsOpen.push(state.devToolsOpen);
+          }),
+        );
+        yield* manager.createTab("tab_devtools");
+        yield* manager.registerWebview("tab_devtools", 49);
+        // After registration, which checks the guest belongs to the main window.
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          contentView: { addChildView, removeChildView },
+          webContents: { setBackgroundThrottling: vi.fn(), getZoomFactor: () => 1.25 },
+        } as never);
+
+        yield* manager.openDevTools("tab_devtools", true);
+        const view = devToolsViews[0]!;
+        expect(addChildView).toHaveBeenCalledWith(view);
+        expect(guest.wc.setDevToolsWebContents).toHaveBeenCalledWith(view.webContents);
+        expect(guest.wc.openDevTools).toHaveBeenLastCalledWith();
+        expect(view.setVisible).toHaveBeenLastCalledWith(false);
+
+        yield* manager.setDevToolsBounds("tab_devtools", {
+          x: 100,
+          y: 40,
+          width: 400,
+          height: 300,
+        });
+        expect(view.setBounds).toHaveBeenLastCalledWith({ x: 125, y: 50, width: 500, height: 375 });
+        expect(view.setVisible).toHaveBeenLastCalledWith(true);
+        yield* manager.setDevToolsBounds("tab_devtools", null);
+        expect(view.setVisible).toHaveBeenLastCalledWith(false);
+
+        yield* manager.closeDevTools("tab_devtools");
+        expect(guest.wc.isDevToolsOpened()).toBe(false);
+        expect(removeChildView).toHaveBeenCalledWith(view);
+        expect(view.webContents.isDestroyed()).toBe(true);
+        yield* Effect.yieldNow;
+        expect(devToolsOpen).toEqual([false, true, false]);
+
+        yield* manager.openDevTools("tab_devtools", true);
+        const reopened = devToolsViews[1]!;
+        yield* manager.closeTab("tab_devtools");
+        expect(guest.wc.isDevToolsOpened()).toBe(false);
+        expect(reopened.webContents.isDestroyed()).toBe(true);
+      }),
+    ),
+  );
+
+  effectIt.effect("opens preview DevTools in a separate window when not docked", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAttachingGuest(51);
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_devtools_window");
+        yield* manager.registerWebview("tab_devtools_window", 51);
+
+        yield* manager.openDevTools("tab_devtools_window", false);
+        expect(guest.wc.openDevTools).toHaveBeenLastCalledWith({ mode: "detach" });
+        expect(guest.wc.setDevToolsWebContents).not.toHaveBeenCalled();
+        yield* manager.closeDevTools("tab_devtools_window");
+        expect(guest.wc.isDevToolsOpened()).toBe(false);
+      }),
+    ),
+  );
 
   effectIt.effect("reattaches a debugger that Chromium dropped on its own", () =>
     withManager((manager) =>

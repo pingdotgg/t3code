@@ -24,6 +24,7 @@ import {
   previewPdfAssetUrl,
   resolveSearchUrlTemplate,
 } from "@t3tools/shared/preview";
+import { X } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
@@ -76,12 +77,14 @@ import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browse
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
 import { BROWSER_DEVICE_TOOLBAR_HEIGHT } from "~/browser/browserViewportLayout";
 import { useBrowserLayoutZoomFactor } from "~/browser/useBrowserLayoutZoomFactor";
+import { togglePreviewDevTools, usePreviewDevToolsStore } from "~/browser/previewDevTools";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
@@ -217,6 +220,10 @@ export function PreviewView({
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
+  const devToolsOpen = desktopOverlay?.devToolsOpen ?? false;
+  const devToolsDocked = usePreviewDevToolsStore((state) =>
+    runtimeTabId ? state.byTabId[runtimeTabId] !== undefined : false,
+  );
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
@@ -439,6 +446,9 @@ export function PreviewView({
     useRightPanelStore.getState().close(threadRef);
   };
 
+  const handleToggleDevTools = () => {
+    if (runtimeTabId) void togglePreviewDevTools(runtimeTabId, devToolsOpen).catch(() => undefined);
+  };
   const desktopCall = (op: ((tabId: string) => Promise<void>) | undefined) => () => {
     if (op && runtimeTabId) void op(runtimeTabId).catch(() => undefined);
   };
@@ -453,7 +463,7 @@ export function PreviewView({
         clearCache: () => void adjustServerTab({ clear: "cache" }),
         ...(nativeServerTab && previewBridge
           ? {
-              openDevTools: desktopCall(previewBridge.openDevTools),
+              toggleDevTools: handleToggleDevTools,
               toggleNativePictureInPicture: () => handleNativePictureInPicture(),
             }
           : {}),
@@ -476,7 +486,7 @@ export function PreviewView({
             void previewBridge
               ?.clearCache(threadRef.environmentId, activeProfileId)
               .catch(() => undefined),
-          openDevTools: desktopCall(previewBridge.openDevTools),
+          toggleDevTools: handleToggleDevTools,
           toggleNativePictureInPicture: () => handleNativePictureInPicture(),
         }
       : null;
@@ -966,11 +976,27 @@ export function PreviewView({
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
               nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+              devToolsOpen={devToolsOpen}
             />
           ) : null
         }
       />
 
+      {devToolsOpen && !devToolsDocked && moreMenuActions?.toggleDevTools ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
+          <span className="min-w-0 flex-1">DevTools are open in a separate window.</span>
+          <Button
+            variant="secondary"
+            size="micro"
+            type="button"
+            className="shrink-0"
+            onClick={moreMenuActions.toggleDevTools}
+          >
+            <X />
+            Close DevTools
+          </Button>
+        </div>
+      ) : null}
       <div ref={serverBodyRef} className="relative min-h-0 flex-1 overflow-hidden">
         {runtimeTabId && snapshot && isServerTab ? (
           <>

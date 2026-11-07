@@ -1031,6 +1031,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["links default browser in-app browser external open"],
   },
   {
+    id: "browser-devtools-dock",
+    title: "DevTools position",
+    to: "/settings/browser",
+    searchTerms: ["browser preview devtools inspect dock right bottom separate window"],
+  },
+  {
     id: "browser-search-engine",
     title: "Search engine",
     to: "/settings/browser",

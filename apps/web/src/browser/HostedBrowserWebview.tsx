@@ -22,6 +22,8 @@ import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab, withDesktopTab } from "./desktopTabLifetime";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
+import { DockedDevToolsArea } from "./DockedDevToolsArea";
+import { splitDockedDevToolsRect, usePreviewDevToolsStore } from "./previewDevTools";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
@@ -100,6 +102,7 @@ export function HostedBrowserWebview(props: {
     (state) => (state.activityByTabId[runtimeTabId] ?? 0) > 0,
   );
   const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
+  const dockedDevTools = usePreviewDevToolsStore((state) => state.byTabId[runtimeTabId] ?? null);
   usePreviewBridge({ threadRef, tabId, runtimeTabId, serverDriven });
 
   const serverColorScheme = serverRendering?.colorScheme;
@@ -119,6 +122,9 @@ export function HostedBrowserWebview(props: {
       lease.release();
     };
   }, [clientSettingsHydrated, runtimeTabId, serverDriven, tabId, threadRef.threadId]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the tab's DevTools dock when its webview goes away
+  useEffect(() => () => usePreviewDevToolsStore.getState().clear(runtimeTabId), [runtimeTabId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the server color scheme to the desktop preview tab through the desktop bridge
   useEffect(() => {
@@ -207,7 +213,14 @@ export function HostedBrowserWebview(props: {
     webviewGeneration,
   ]);
 
-  const lastRect = presentation.rect;
+  const panelRect = presentation.rect;
+  // The floating mini-player is too small to share; DevTools stay hidden until the panel returns.
+  const devToolsDocked = dockedDevTools !== null && !presentation.fitSourceContent;
+  const devToolsSplit =
+    devToolsDocked && panelRect
+      ? splitDockedDevToolsRect(panelRect, dockedDevTools.side, dockedDevTools.fraction)
+      : null;
+  const lastRect = devToolsSplit?.page ?? panelRect;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(zoomFactor);
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
   const viewportHeight = viewport._tag === "fill" ? null : viewport.height;
@@ -315,88 +328,103 @@ export function HostedBrowserWebview(props: {
   });
 
   return (
-    <div
-      ref={wrapperRef}
-      className="fixed overflow-hidden bg-muted/35"
-      style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
-      onScroll={syncContentPresentation}
-      data-preview-rendering={renderingActive ? "active" : "suspended"}
-      data-preview-viewport={runtimeTabId}
-    >
-      <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
-        {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
-          <BrowserDeviceToolbar
-            setting={effectiveViewport}
-            width={Math.max(1, Math.round(active && lastRect ? lastRect.width : hiddenWidth))}
-            aspectRatio={lockedAspectRatio}
-            onAspectRatioChange={handleAspectRatioChange}
-            onChange={commitViewportChange}
-          />
-        ) : null}
-        <webview
-          key={webviewGeneration}
-          ref={setWebviewRef}
-          // Electron needs allowpopups at attachment. React drops boolean values for unknown attributes.
-          {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
-          src={webviewGeneration === 0 ? initialSrc : recoverySrc}
-          partition={config.partition}
-          webpreferences={config.webPreferences}
-          {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
-          data-preview-tab={runtimeTabId}
-          data-preview-server-tab={tabId}
-          data-preview-viewport-mode={effectiveViewport._tag}
-          data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
-          data-preview-css-width={
-            fittedSourceViewport
-              ? fittedSourceViewport.width
-              : effectiveViewport._tag === "fill"
-                ? Math.max(1, Math.round(layout.viewportWidth / layoutZoomFactor))
-                : effectiveViewport.width
-          }
-          data-preview-css-height={
-            fittedSourceViewport
-              ? fittedSourceViewport.height
-              : effectiveViewport._tag === "fill"
-                ? Math.max(1, Math.round(layout.viewportHeight / layoutZoomFactor))
-                : effectiveViewport.height
-          }
-          aria-hidden={active ? undefined : true}
-          className={cn(
-            "absolute flex overflow-hidden bg-white",
-            active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
-          )}
-          style={{
-            left: layout.viewportX,
-            top: layout.viewportY,
-            width: layout.viewportWidth / layout.viewportScale,
-            height: layout.viewportHeight / layout.viewportScale,
-            transform: layout.viewportScale < 1 ? `scale(${layout.viewportScale})` : undefined,
-            transformOrigin: "top left",
-          }}
-        />
-        {active && effectiveViewport._tag !== "fill" && !fittedSourceViewport ? (
-          <>
-            <BrowserViewportResizeHandles
-              layout={layout}
-              activeDirection={activeDrag?.direction ?? null}
-              onPointerDown={handleResizePointerDown}
-              onKeyDown={handleResizeKeyDown}
+    <>
+      <div
+        ref={wrapperRef}
+        className="fixed overflow-hidden bg-muted/35"
+        style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
+        onScroll={syncContentPresentation}
+        data-preview-rendering={renderingActive ? "active" : "suspended"}
+        data-preview-viewport={runtimeTabId}
+      >
+        <div
+          className="relative"
+          style={{ width: layout.canvasWidth, height: layout.canvasHeight }}
+        >
+          {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
+            <BrowserDeviceToolbar
+              setting={effectiveViewport}
+              width={Math.max(1, Math.round(active && lastRect ? lastRect.width : hiddenWidth))}
+              aspectRatio={lockedAspectRatio}
+              onAspectRatioChange={handleAspectRatioChange}
+              onChange={commitViewportChange}
             />
-            {activeDrag ? (
-              <div
-                className="pointer-events-none absolute z-40 -translate-x-1/2 rounded-md border border-border/80 bg-background/95 px-2 py-1 text-2xs font-medium tabular-nums text-foreground shadow-md backdrop-blur-sm"
-                style={{
-                  left: layout.viewportX + layout.viewportWidth / 2,
-                  top: layout.viewportY + 10,
-                }}
-                aria-hidden="true"
-              >
-                {activeDrag.width} × {activeDrag.height}
-              </div>
-            ) : null}
-          </>
-        ) : null}
+          ) : null}
+          <webview
+            key={webviewGeneration}
+            ref={setWebviewRef}
+            // Electron needs allowpopups at attachment. React drops boolean values for unknown attributes.
+            {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
+            src={webviewGeneration === 0 ? initialSrc : recoverySrc}
+            partition={config.partition}
+            webpreferences={config.webPreferences}
+            {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
+            data-preview-tab={runtimeTabId}
+            data-preview-server-tab={tabId}
+            data-preview-viewport-mode={effectiveViewport._tag}
+            data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
+            data-preview-css-width={
+              fittedSourceViewport
+                ? fittedSourceViewport.width
+                : effectiveViewport._tag === "fill"
+                  ? Math.max(1, Math.round(layout.viewportWidth / layoutZoomFactor))
+                  : effectiveViewport.width
+            }
+            data-preview-css-height={
+              fittedSourceViewport
+                ? fittedSourceViewport.height
+                : effectiveViewport._tag === "fill"
+                  ? Math.max(1, Math.round(layout.viewportHeight / layoutZoomFactor))
+                  : effectiveViewport.height
+            }
+            aria-hidden={active ? undefined : true}
+            className={cn(
+              "absolute flex overflow-hidden bg-white",
+              active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
+            )}
+            style={{
+              left: layout.viewportX,
+              top: layout.viewportY,
+              width: layout.viewportWidth / layout.viewportScale,
+              height: layout.viewportHeight / layout.viewportScale,
+              transform: layout.viewportScale < 1 ? `scale(${layout.viewportScale})` : undefined,
+              transformOrigin: "top left",
+            }}
+          />
+          {active && effectiveViewport._tag !== "fill" && !fittedSourceViewport ? (
+            <>
+              <BrowserViewportResizeHandles
+                layout={layout}
+                activeDirection={activeDrag?.direction ?? null}
+                onPointerDown={handleResizePointerDown}
+                onKeyDown={handleResizeKeyDown}
+              />
+              {activeDrag ? (
+                <div
+                  className="pointer-events-none absolute z-40 -translate-x-1/2 rounded-md border border-border/80 bg-background/95 px-2 py-1 text-2xs font-medium tabular-nums text-foreground shadow-md backdrop-blur-sm"
+                  style={{
+                    left: layout.viewportX + layout.viewportWidth / 2,
+                    top: layout.viewportY + 10,
+                  }}
+                  aria-hidden="true"
+                >
+                  {activeDrag.width} × {activeDrag.height}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
-    </div>
+      {dockedDevTools ? (
+        <DockedDevToolsArea
+          runtimeTabId={runtimeTabId}
+          dock={dockedDevTools}
+          active={active && devToolsDocked}
+          panelRect={panelRect}
+          rect={devToolsSplit?.devTools ?? null}
+          zIndex={presentation.zIndex}
+        />
+      ) : null}
+    </>
   );
 }
