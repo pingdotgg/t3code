@@ -16,6 +16,7 @@ import {
   type LayoutState,
   type LayoutTabDestination,
 } from "./layoutModel";
+import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
 
 export type LayoutDragSource =
@@ -173,7 +174,8 @@ function layoutDropDestination(
     return { kind: "column", workspaceId: workspace.id, index: workspace.columns.length };
   }
   // The bottom edge starts a workspace below: the empty one that always
-  // waits at the bottom.
+  // waits at the bottom. Without scrolling workspaces there is nowhere below.
+  if (!isScrollingWorkspacesEnabled()) return null;
   const trailing = layout.workspaces.at(-1);
   if (!trailing || trailing.id === workspace.id) return null;
   return { kind: "column", workspaceId: trailing.id, index: 0 };
