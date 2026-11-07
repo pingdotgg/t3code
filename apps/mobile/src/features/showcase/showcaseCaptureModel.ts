@@ -16,13 +16,17 @@ function sceneFromPathname(pathname: string): ShowcaseScene | null {
   return null;
 }
 
-/** Agent activity is staged on the threads list, so that route counts as the scene. */
+/**
+ * Agent activity is staged on the threads list, so that route counts as the scene. Tapping the
+ * Live Activity opens a thread, which stays part of the scene instead of navigating back.
+ */
 export function showcaseSceneOnScreen(
   requestedScene: ShowcaseScene | null,
   pathname: string,
 ): ShowcaseScene | null {
   const routeScene = sceneFromPathname(pathname);
-  return requestedScene === "agent-activity" && routeScene === "threads"
+  return requestedScene === "agent-activity" &&
+    (routeScene === "threads" || routeScene === "thread")
     ? "agent-activity"
     : routeScene;
 }

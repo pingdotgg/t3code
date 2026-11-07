@@ -246,6 +246,27 @@ export const SHOWCASE_THREADS = [
     response:
       "Kills now report the winning heuristic and the runner-up alongside the usual dump, assembled entirely from data the path already had.",
   },
+  // Staged by the Live Activity handoff fixtures; settled, so they stay in the collapsed Settled group.
+  {
+    id: "fix-login-redirect",
+    projectId: "t3code",
+    title: "Fix login redirect",
+    branch: "fix/login-redirect",
+    minutesAgo: 3 * 24 * 60,
+    settled: true,
+    request: "After signing in from a deep link, land on the page the link pointed to.",
+    response: "Sign-in now returns to the original deep link instead of the home screen.",
+  },
+  {
+    id: "update-snapshots",
+    projectId: "t3code",
+    title: "Update snapshots",
+    branch: "test/update-snapshots",
+    minutesAgo: 3 * 24 * 60 + 5,
+    settled: true,
+    request: "Refresh the visual snapshots after the header change.",
+    response: "Snapshots now match the new header; no other screens changed.",
+  },
 ] as const;
 
 function minutesBefore(now: number, minutes: number): string {

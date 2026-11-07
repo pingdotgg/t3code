@@ -9,16 +9,52 @@ import type {
   AgentActivityRowProps,
 } from "../../widgets/AgentActivity";
 
-const SHOWCASE_AGENT_ACTIVITY_ROWS = [
-  { threadId: "pocket-command-center", phase: "waiting_for_approval", minutesAgo: 1 },
-  { threadId: "beautiful-boot", phase: "waiting_for_input", minutesAgo: 4 },
-  { threadId: "buttery-suspense", phase: "running", minutesAgo: 2 },
-  { threadId: "remote-command-center", phase: "completed", minutesAgo: 3 },
-] as const satisfies ReadonlyArray<{
+interface ShowcaseAgentActivityRow {
   readonly threadId: string;
   readonly phase: AgentActivityPhase;
   readonly minutesAgo: number;
-}>;
+}
+
+const fixLoginRedirect = (phase: AgentActivityPhase): ShowcaseAgentActivityRow => ({
+  threadId: "fix-login-redirect",
+  phase,
+  minutesAgo: 1,
+});
+const updateSnapshots = (phase: AgentActivityPhase): ShowcaseAgentActivityRow => ({
+  threadId: "update-snapshots",
+  phase,
+  minutesAgo: 1,
+});
+
+// Rows follow the relay's order: threads that need the user, failures, work, then outcomes.
+const SHOWCASE_AGENT_ACTIVITY_FIXTURES = {
+  store: [
+    { threadId: "pocket-command-center", phase: "waiting_for_approval", minutesAgo: 1 },
+    { threadId: "beautiful-boot", phase: "waiting_for_input", minutesAgo: 4 },
+    { threadId: "buttery-suspense", phase: "running", minutesAgo: 2 },
+    { threadId: "remote-command-center", phase: "completed", minutesAgo: 3 },
+  ],
+  "handoff-working": [fixLoginRedirect("running"), updateSnapshots("running")],
+  "handoff-approval": [fixLoginRedirect("waiting_for_approval"), updateSnapshots("completed")],
+  "handoff-input": [fixLoginRedirect("waiting_for_input"), updateSnapshots("completed")],
+  "phase-starting": [fixLoginRedirect("starting")],
+  "phase-running": [fixLoginRedirect("running")],
+  "phase-waiting_for_approval": [fixLoginRedirect("waiting_for_approval")],
+  "phase-waiting_for_input": [fixLoginRedirect("waiting_for_input")],
+  "phase-completed": [fixLoginRedirect("completed")],
+  "phase-failed": [fixLoginRedirect("failed")],
+  "phase-stale": [fixLoginRedirect("stale"), updateSnapshots("stale")],
+} as const satisfies Record<string, ReadonlyArray<ShowcaseAgentActivityRow>>;
+
+export type ShowcaseAgentActivityFixture = keyof typeof SHOWCASE_AGENT_ACTIVITY_FIXTURES;
+
+export function parseShowcaseAgentActivityFixture(
+  value: string | undefined,
+): ShowcaseAgentActivityFixture {
+  return value !== undefined && Object.hasOwn(SHOWCASE_AGENT_ACTIVITY_FIXTURES, value)
+    ? (value as ShowcaseAgentActivityFixture)
+    : "store";
+}
 
 const STATUS_BY_PHASE: Record<AgentActivityPhase, string> = {
   starting: "Connecting",
@@ -30,21 +66,17 @@ const STATUS_BY_PHASE: Record<AgentActivityPhase, string> = {
   failed: "Failed",
 };
 
-const ACTIVE_PHASES: ReadonlySet<AgentActivityPhase> = new Set([
-  "starting",
-  "running",
-  "waiting_for_approval",
-  "waiting_for_input",
-]);
+const TERMINAL_PHASES: ReadonlySet<AgentActivityPhase> = new Set(["completed", "failed"]);
 
 /** Returns null until every staged thread and its project have loaded. */
 export function buildShowcaseAgentActivity(
   threads: ReadonlyArray<EnvironmentThreadShell>,
   projects: ReadonlyArray<EnvironmentProject>,
   now: number,
+  fixture: ShowcaseAgentActivityFixture = "store",
 ): AgentActivityProps | null {
   const rows: AgentActivityRowProps[] = [];
-  for (const definition of SHOWCASE_AGENT_ACTIVITY_ROWS) {
+  for (const definition of SHOWCASE_AGENT_ACTIVITY_FIXTURES[fixture]) {
     const thread = threads.find((candidate) => String(candidate.id) === definition.threadId);
     const project = thread
       ? projects.find(
@@ -66,10 +98,16 @@ export function buildShowcaseAgentActivity(
       deepLink: `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(definition.threadId)}`,
     });
   }
+  const activeCount = rows.filter((row) => !TERMINAL_PHASES.has(row.phase)).length;
   return {
     title: "T3 Code",
-    subtitle: "Agent work in progress",
-    activeCount: rows.filter((row) => ACTIVE_PHASES.has(row.phase)).length,
+    subtitle:
+      activeCount > 0
+        ? "Agent work in progress"
+        : rows.some((row) => row.phase === "failed")
+          ? "Agent work failed"
+          : "Agent work completed",
+    activeCount,
     updatedAt: new Date(now).toISOString(),
     activities: rows,
   };

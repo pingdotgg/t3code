@@ -27,6 +27,7 @@ import { workspaceConnections } from "../../state/workspace";
 import { resolveThemeAppearance } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   applyNativeShowcaseOrientation,
+  getNativeShowcaseAgentActivityFixture,
   getNativeShowcaseOrientation,
   getNativeShowcasePairingUrls,
   getNativeShowcaseScene,
@@ -34,7 +35,10 @@ import {
   markNativeShowcaseReady,
   type ShowcaseScene,
 } from "./nativeShowcaseScene";
-import { buildShowcaseAgentActivity } from "./showcaseAgentActivity";
+import {
+  buildShowcaseAgentActivity,
+  type ShowcaseAgentActivityFixture,
+} from "./showcaseAgentActivity";
 import {
   isShowcaseThemeApplied,
   SHOWCASE_THREAD_ID,
@@ -127,6 +131,7 @@ export function installShowcaseCapture(
   let requestedTheme: MobileThemeId | null = null;
   let orientationSettled = false;
   let requestedScene: ShowcaseScene | null = null;
+  let requestedFixture: ShowcaseAgentActivityFixture = "store";
   let pendingTasks: Run | null = null;
   let agentActivity: Run | null = null;
   let lastNavigation: ShowcaseNavigationTarget | null = null;
@@ -189,6 +194,11 @@ export function installShowcaseCapture(
       clearShowcaseRenderSignal();
       agentActivity = cancelRun(agentActivity);
     }
+    const fixture = getNativeShowcaseAgentActivityFixture();
+    if (fixture !== requestedFixture) {
+      requestedFixture = fixture;
+      agentActivity = cancelRun(agentActivity);
+    }
   };
 
   const seedPendingTasks = () => {
@@ -228,11 +238,12 @@ export function installShowcaseCapture(
           appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
           appAtomRegistry.get(environmentProjects.projectsAtom),
           now,
+          requestedFixture,
         );
         const outcome =
           activity === null
             ? "fixture threads not loaded"
-            : await stageShowcaseAgentActivity(activity, now);
+            : await stageShowcaseAgentActivity(activity, now, isCancelled(run));
         if (outcome === true) return true;
         if (outcome !== lastOutcome) {
           console.warn(`[showcase] agent activity not staged: ${outcome}`);
