@@ -46,12 +46,12 @@ function scrollFileToLine(
   fileContainer: HTMLElement,
   instance: SourceFileInstance,
   line: number,
-): void {
+): boolean {
   updateFileLinkReveal(fileContainer, line);
-  if (!(instance instanceof VirtualizedFile)) return;
+  if (!(instance instanceof VirtualizedFile)) return false;
   const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
   const linePosition = instance.getLinePosition(line);
-  if (!scrollContainer || !linePosition) return;
+  if (!scrollContainer || !linePosition) return false;
   const scrollContainerRect = scrollContainer.getBoundingClientRect();
   const fileTop =
     scrollContainer.scrollTop + fileContainer.getBoundingClientRect().top - scrollContainerRect.top;
@@ -75,6 +75,7 @@ function scrollFileToLine(
       : {}),
   });
   if (targetTop !== null) scrollContainer.scrollTop = targetTop;
+  return true;
 }
 
 export default function ReadOnlySourcePreview(props: {
@@ -84,6 +85,7 @@ export default function ReadOnlySourcePreview(props: {
   readonly onPostRender?: SourcePostRender;
   /** When true, shows an in-surface marks jump control. Full file surfaces opt in. */
   readonly marksMenu?: boolean;
+  readonly xcodeMarkDecorations?: boolean;
   /** A preview's own wrap toggle; omitted follows the word wrap setting. */
   readonly wordWrap?: boolean;
 }) {
@@ -106,8 +108,9 @@ export default function ReadOnlySourcePreview(props: {
     const surface = surfaceRef.current;
     if (!surface) return;
     const line = clampLine(props.text, reveal.line);
-    scrollFileToLine(surface.fileContainer, surface.instance, line);
-    handledRevealRequestIdRef.current = reveal.requestId;
+    if (scrollFileToLine(surface.fileContainer, surface.instance, line)) {
+      handledRevealRequestIdRef.current = reveal.requestId;
+    }
   }, [props.text, reveal]);
 
   const handlePostRender: SourcePostRender = (fileContainer, instance, phase) => {
@@ -118,14 +121,13 @@ export default function ReadOnlySourcePreview(props: {
     }
 
     surfaceRef.current = { fileContainer, instance };
-    updateXcodeMarkDecorations(fileContainer, marks);
+    updateXcodeMarkDecorations(fileContainer, props.xcodeMarkDecorations === false ? [] : marks);
     if (reveal !== null) {
       const line = clampLine(props.text, reveal.line);
       // Keep the reveal highlight on later virtualized ranges, but scroll only once per jump.
       if (handledRevealRequestIdRef.current === reveal.requestId) {
         updateFileLinkReveal(fileContainer, line);
-      } else {
-        scrollFileToLine(fileContainer, instance, line);
+      } else if (scrollFileToLine(fileContainer, instance, line)) {
         handledRevealRequestIdRef.current = reveal.requestId;
       }
     } else {

@@ -76,9 +76,8 @@ function RawView({
     async scrollToFile() {},
     async setTokensJson(value: string) {
       mocks.tokens(value);
-      if (contentResetKey !== undefined) {
-        setTokenRowIds(Object.keys(JSON.parse(value).tokensByRowId ?? {}));
-      }
+      // Full token payloads are a direct row-id map; patches wrap tokensByRowId.
+      setTokenRowIds(Object.keys(JSON.parse(value)));
     },
     async setTokensPatchJson(value: string) {
       mocks.tokens(value);
@@ -380,7 +379,7 @@ it("renders identical rows after switching sections when the reset key prop land
 it("redelivers unchanged tokensJson after contentResetKey changes", async () => {
   using screen = setup();
   const tokensJson = JSON.stringify({
-    tokensByRowId: { r0: [{ content: "const", color: "#ff0000", fontStyle: null }] },
+    r0: [{ content: "const", color: "#ff0000", fontStyle: null }],
   });
   await screen.render({
     rowsJson: '[{"kind":"line","id":"r0"}]',
@@ -388,7 +387,7 @@ it("redelivers unchanged tokensJson after contentResetKey changes", async () => 
     contentResetKey: "path:1",
   });
   await screen.deliverPayloads();
-  expect(mocks.tokens).toHaveBeenCalledTimes(1);
+  expect(screen.tokenRows).toBe("r0");
 
   mocks.tokens.mockClear();
   await screen.render({
@@ -398,7 +397,7 @@ it("redelivers unchanged tokensJson after contentResetKey changes", async () => 
   });
   await screen.deliverPayloads();
   expect(mocks.tokens).toHaveBeenCalledTimes(1);
-  expect(JSON.parse(mocks.tokens.mock.calls[0]![0])).toEqual(JSON.parse(tokensJson));
+  expect(screen.tokenRows).toBe("r0");
 });
 
 it.each([false, undefined])(

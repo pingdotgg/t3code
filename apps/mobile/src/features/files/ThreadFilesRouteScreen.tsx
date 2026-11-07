@@ -638,10 +638,26 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     line: number;
     requestId: number;
     baselineRouteLine: number | null;
+    cwd: string | null;
+    environmentId: EnvironmentId | null;
   } | null>(null);
-  // Drop the mark jump once a same-file route line arrives so deep links are not overridden.
+  // Drop stale jumps when the route line or workspace changes so deep links cannot revive them.
+  if (
+    markJump !== null &&
+    (markJump.baselineRouteLine !== routeLine ||
+      markJump.path !== relativePath ||
+      markJump.cwd !== cwd ||
+      markJump.environmentId !== environmentId)
+  ) {
+    setMarkJump(null);
+  }
   const activeMarkJump =
-    markJump?.path === relativePath && markJump.baselineRouteLine === routeLine ? markJump : null;
+    markJump?.path === relativePath &&
+    markJump.baselineRouteLine === routeLine &&
+    markJump.cwd === cwd &&
+    markJump.environmentId === environmentId
+      ? markJump
+      : null;
   const targetLine = activeMarkJump?.line ?? routeLine;
   const jumpRequestId = activeMarkJump?.requestId;
   const fileAccessSession = useEnvironmentQuery(
@@ -1053,8 +1069,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
                 setMarkJump((current) => ({
                   path: relativePath,
                   line: mark.line,
-                  requestId: current?.path === relativePath ? (current.requestId ?? 0) + 1 : 1,
+                  requestId:
+                    current?.path === relativePath &&
+                    current.cwd === cwd &&
+                    current.environmentId === environmentId
+                      ? (current.requestId ?? 0) + 1
+                      : 1,
                   baselineRouteLine: routeLine,
+                  cwd,
+                  environmentId,
                 })),
             },
           ];
