@@ -6,14 +6,23 @@
  * README.md for how to run it and add cases.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
 import * as NodeVM from "node:vm";
 import * as NodeZlib from "node:zlib";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { OrchestratorMcpTaskRole, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ComposerContextRecord,
+  DeviceOperationError,
+  DeviceSummary,
+  OrchestratorMcpTaskRole,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -26,11 +35,21 @@ import { Tool } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
-import { taskPrompt } from "../../apps/server/src/mcp/OrchestratorMcpService.ts";
+import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
-import { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } from "@t3tools/contracts";
+import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
+import * as Contracts from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  PullRequestState,
+  ThreadId,
+} from "@t3tools/contracts";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
+import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
+import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -39,14 +58,34 @@ import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestr
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
 import { ProjectToolkit } from "../../apps/server/src/mcp/toolkits/project/tools.ts";
-import { PullRequestsToolkit } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
+import {
+  CHILD_PULL_REQUEST_REPORT_NEXT,
+  PullRequestsToolkit,
+} from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
   CLAUDE_PROVIDER,
   makeClaudeQueryOptions,
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
+import { DeviceExpect, gradeDevice } from "./device-grading.ts";
+import {
+  AGENT_DEVICE_SHELL,
+  deviceFailure,
+  type DeviceTools,
+  isDeviceTool,
+  launcherHelp,
+  makeDeviceTools,
+} from "./devices.ts";
+import {
+  argvForm,
+  gradeSecret,
+  scriptSources,
+  SecretExpect,
+  secretDiagnostics,
+} from "./secret-grading.ts";
 /** Agent models by id, with the display name a harness gives them. */
 const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
@@ -66,9 +105,22 @@ const PRICES = {
   "claude-opus-5-5": { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 },
 };
 type PricedModel = keyof typeof PRICES;
+/** GPT models that can play the shell through CLIProxyAPI, when no Anthropic key is at hand. */
+const PROXY_SHELL_MODELS = ["gpt-6-luna", "gpt-6.1-terra"] as const;
+type ShellModel = PricedModel | (typeof PROXY_SHELL_MODELS)[number];
+const isPricedModel = (model: ShellModel): model is PricedModel => model in PRICES;
 const T3_PREFIX = "mcp__t3-code__";
 const RUNTIME_MARKER = "<runtime_info>";
 const TOOL_LOADED = "Tool loaded.";
+
+class EvalToolCallError extends Schema.TaggedError<EvalToolCallError>()("EvalToolCallError", {
+  tool: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `The ${this.tool} tool call failed.`;
+  }
+}
 const DEFERRED_LIST =
   /(The following deferred tools are now available via ToolSearch\.[^\n]*\n)((?:[^\n]+\n)*)/;
 const MODEL_LINE = /You are powered by the model named .+?\. The exact model ID is [\w.-]+\./;
@@ -82,13 +134,26 @@ type Block = { readonly type: string; readonly [key: string]: unknown };
 type ApiMessage = { readonly role: "user" | "assistant"; readonly content: ReadonlyArray<Block> };
 type ApiTool = { readonly name: string; readonly [key: string]: unknown };
 type Usage = Record<keyof (typeof PRICES)[PricedModel], number>;
-type Call = { readonly step: number; readonly tool: string; readonly input: unknown };
+type Call = {
+  readonly step: number;
+  readonly tool: string;
+  readonly input: unknown;
+  /** The tool_use id, when the call was a tool use of its own. */
+  readonly id?: string;
+  /** Once answered: whether the agent saw an error, and the result text it saw. */
+  failed?: boolean;
+  output?: string;
+};
 export type SampleRun = {
   readonly calls: ReadonlyArray<Call>;
   text: string;
   stopReason: string;
+  /** The agent's final answer: its last response's text, if it ended its turn. */
+  readonly finalText?: string;
   /** PRs linked to the thread when the sample ends, by the agent or by T3. */
   readonly linked?: ReadonlyArray<string>;
+  /** The `agent-device` commands T3's device_open returned, prior turns included. */
+  readonly launchers?: ReadonlyArray<string>;
 };
 
 const Rest = [Schema.Record(Schema.String, Schema.Unknown)] as const;
@@ -96,12 +161,15 @@ const Rest = [Schema.Record(Schema.String, Schema.Unknown)] as const;
 const PriorToolCall = Schema.Struct({
   tool: Schema.String,
   input: Schema.Unknown,
+  /** For a device tool, `"default"` runs the call on the world's devices for T3's result. */
   result: Schema.Unknown,
+  /** Repository-relative file whose current contents supply this tool result. */
+  resultFile: Schema.optional(Schema.String),
 });
 
 /**
  * One expected call. `args` match partially: `~text` is a case-insensitive substring,
- * `"<=N"` / `">=N"` bound a number, and keys may be dotted paths.
+ * `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths.
  */
 const McpToolUseCall = Schema.Struct({
   tool: Schema.String,
@@ -113,6 +181,8 @@ type McpToolUseCall = typeof McpToolUseCall.Type;
 const McpToolUseExpect = Schema.Struct({
   /** Each entry needs one matching call. */
   calls: Schema.optional(Schema.Array(McpToolUseCall)),
+  /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
+  distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
   /** No call may match any entry. */
   callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
@@ -120,15 +190,36 @@ const McpToolUseExpect = Schema.Struct({
   order: Schema.optional(Schema.Array(Schema.String)),
   minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
+  /**
+   * One `args`-style value per new top-level thread the agent asks for, by `t3_thread_launch` or a
+   * `create_threads` entry. Each matches a different thread's request; no other thread is asked for.
+   */
+  newThreads: Schema.optional(Schema.Array(Schema.Unknown)),
   /** The last step with tool calls includes this tool, then the turn ends. */
   endsTurnAfter: Schema.optional(Schema.String),
-  /** Regexes that no shell command may match. */
+  /**
+   * Regexes that no shell command may match. In a case with `secret` checks, a command also carries
+   * the source of the scripts it runs that the agent wrote earlier in the sample.
+   */
   shellMustNot: Schema.optional(Schema.Array(Schema.String)),
+  /** Regexes that some shell command must match, each. */
+  shellMust: Schema.optional(Schema.Array(Schema.String)),
   /** Case-sensitive regexes on the agent's visible text. */
   textMust: Schema.optional(Schema.Array(Schema.String)),
   textMustNot: Schema.optional(Schema.Array(Schema.String)),
+  /** Case-sensitive regexes on the final answer: the last response's text, once the turn ended. */
+  finalTextMust: Schema.optional(Schema.Array(Schema.String)),
   /** Each entry matches a PR URL linked at the end, as `args` values match. */
   linked: Schema.optional(Schema.Array(Schema.String)),
+  /** The PR numbers linked at the end, exactly. */
+  linkedNumbers: Schema.optional(Schema.Array(Schema.Number)),
+  /** Device manager checks: child briefs, simulator UI over the shell, failures, recordings. */
+  device: Schema.optional(DeviceExpect),
+  /**
+   * Secret checks: chat asks in text and question tools, where fixture values went, and how the
+   * files request_secret returned were read. See `SecretExpect` in secret-grading.ts.
+   */
+  secret: Schema.optional(SecretExpect),
 });
 
 /**
@@ -148,6 +239,35 @@ const McpToolUseWorld = Schema.StructWithRest(
         Schema.StructWithRest(Schema.Struct({ sha: Schema.String, subject: Schema.String }), Rest),
       ),
     ),
+    /** Simulators and emulators. With them, T3's device tools answer from this world. */
+    devices: Schema.optional(Schema.Array(DeviceSummary)),
+    /** Labels of the SSH device hosts in `devices`, by id. The local host always exists. */
+    deviceHosts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    /**
+     * agent-device sessions that prior turns started, by device id, with the app `open` put in
+     * each. Otherwise a device's session starts at its launcher's first `open` in the sample.
+     */
+    agentDeviceSessions: Schema.optional(
+      Schema.Record(Schema.String, Schema.Struct({ app: Schema.optional(Schema.String) })),
+    ),
+    /**
+     * Hosts whose hub fails to list devices, by id, with the error, such as F1's
+     * `{"_tag": "DeviceOperationError", "operation": "list", "reason": "request_failed", "cause": null}`.
+     * T3 marks each one failed on every call and lists none of its devices.
+     */
+    deviceDiscoveryFailures: Schema.optional(Schema.Record(Schema.String, DeviceOperationError)),
+    /** false: agent device access is off. T3 denies every device call and drops its device text. */
+    deviceAgentAccess: Schema.optional(Schema.Boolean),
+    /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
+    deviceInvalidCapture: Schema.optional(Schema.Boolean),
+    /** Devices another thread's agent-device session holds, by device id: that thread's id. */
+    deviceOwners: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    /** PRs already linked to the thread, with the state T3 last saw. */
+    linkedPullRequests: Schema.optional(
+      Schema.Array(
+        Schema.Struct({ number: Schema.Number, state: PullRequestState, title: Schema.String }),
+      ),
+    ),
   }),
   Rest,
 );
@@ -165,6 +285,8 @@ export const McpToolUseCase = Schema.Struct({
     role: Schema.Literals(["top", "delegated-child", "native-subagent"]),
     /** Runs only on this harness, for cases whose right answer depends on it. */
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
+    /** The Linked environments beta is on, so T3 lists its link tools. */
+    linkedEnvironments: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -178,14 +300,24 @@ export const McpToolUseCase = Schema.Struct({
       ),
     ),
     world: Schema.optional(McpToolUseWorld),
-    /** Canned tool results by bare name, T3 or native. `"default"` uses the runner's result. */
+    /**
+     * Canned tool results by bare name, T3 or native. `"default"` uses the runner's result. For a
+     * device tool, a T3 `DeviceError` (`{"_tag": ..., "cause": null}`) fails it inside T3.
+     */
     mocks: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
     /** Regexes on one part of a shell command. A match wins over the shell simulator. */
     shellMocks: Schema.optional(
       Schema.Array(Schema.Struct({ match: Schema.String, output: Schema.String })),
     ),
+    /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
+    sideChat: Schema.optional(
+      Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
+    ),
   }),
+  /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
+  /** Records for the context chips `prompt` links, projected as T3 sends them. */
+  promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
   expect: McpToolUseExpect,
   /** Model calls this case may need. Overrides `--max-steps`. */
   maxSteps: Schema.optional(Schema.Number),
@@ -267,6 +399,8 @@ const CODEX_NAMES: Readonly<Record<string, string>> = {
   shell: "Bash",
   spawn_agent: "Agent",
   apply_patch: "Edit",
+  request_user_input: "AskUserQuestion",
+  request_user_input_async: "AskUserQuestion",
   write_stdin: "write_stdin",
   web__run: "WebFetch",
 };
@@ -276,12 +410,15 @@ export const normalizeToolName = (name: string) => {
     ? bare.slice(T3_PREFIX.length)
     : (CODEX_NAMES[bare] ?? bare.slice(bare.lastIndexOf("_") + 1));
 };
-export const normalizeToolInput = (name: string, input: unknown) =>
-  normalizeToolName(name) === "Bash" && isRecord(input)
+export const normalizeToolInput = (name: string, input: unknown) => {
+  const decode = t3InputDecoders.get(normalizeToolName(name));
+  if (decode !== undefined) return Option.getOrElse(decode(input), () => input);
+  return normalizeToolName(name) === "Bash" && isRecord(input)
     ? { ...input, command: input.command ?? input.cmd }
     : typeof input === "string" && normalizeToolName(name) === "Edit"
       ? { patch: input }
       : input;
+};
 
 // McpHttpServer advertises each tool's JSON schema, and Claude Code passes the MCP name,
 // description, and schema through unchanged.
@@ -298,37 +435,114 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   DeviceToolkit,
   HtmlToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
+// McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
+const t3InputDecoders = new Map(
+  t3SourceTools.map((tool) => [
+    tool.name,
+    Schema.decodeUnknownOption(
+      Schema.toCodecJson(tool.parametersSchema as Schema.Codec<unknown, unknown>),
+    ),
+  ]),
+);
 const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
   name: `${T3_PREFIX}${tool.name}`,
   description: Tool.getDescription(tool) ?? "",
-  input_schema: Tool.getJsonSchema(tool),
+  input_schema: advertisedJsonSchema(tool),
 }));
-// T3 does not offer these to a delegated child, so its harness never lists them.
-const hiddenFromSubagents = new Set(
+const enabledWhen = (predicate: () => boolean) =>
+  new Set(
+    t3SourceTools
+      .filter(
+        (tool) => Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen) === predicate,
+      )
+      .map((tool) => `${T3_PREFIX}${tool.name}`),
+  );
+// Claude Code loads a tool whose `_meta` sets anthropic/alwaysLoad up front instead of deferring it.
+const alwaysLoaded = new Set(
   t3SourceTools
-    .filter(
-      (tool) =>
-        Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen) ===
-        McpInvocationContext.hiddenFromSubagents,
-    )
+    .filter((tool) => {
+      const meta = Context.getOrUndefined(tool.annotations, Tool.Meta);
+      return meta !== undefined && meta["anthropic/alwaysLoad"] === true;
+    })
     .map((tool) => `${T3_PREFIX}${tool.name}`),
 );
-const visibleT3Tools = (subagent: boolean) =>
-  subagent ? t3Tools.filter((tool) => !hiddenFromSubagents.has(tool.name)) : t3Tools;
+// Refs whose request_secret takes `value` save a secret the user already pasted, with no card.
+export const savesPastedSecrets = t3Tools.some(
+  (tool) =>
+    tool.name === `${T3_PREFIX}request_secret` &&
+    isRecord(tool.input_schema) &&
+    isRecord(tool.input_schema.properties) &&
+    "value" in tool.input_schema.properties,
+);
+/** A request_secret call that hands T3 a pasted secret, on a ref that takes one. */
+const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
+  savesPastedSecrets && name === "request_secret" && typeof input.value === "string";
+// T3 does not offer these to a delegated child, so its harness never lists them.
+const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
+// The Linked environments beta starts off, and T3 lists its tools only while it is on.
+const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
+const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
+  t3Tools.filter(
+    (tool) =>
+      (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
+  );
 
-/** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model) => {
-  const { systemPrompt } = makeClaudeQueryOptions({
+/**
+ * T3's Claude Code options for an eval thread: its system prompt append and its hooks. `device` says
+ * whether the thread holds the `device` capability, as agent device access decides.
+ */
+const claudeQueryOptions = (model: Model, device = true) => {
+  // Refs whose device text follows the capability read deviceToolsAvailable; older ones ignore it.
+  const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
+    readonly deviceToolsAvailable?: boolean;
+  } = {
     modelSelection: { instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER), model },
     nativeThreadId: "mcp-tool-use-eval",
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
-  });
+    deviceToolsAvailable: device,
+  };
+  return makeClaudeQueryOptions(input);
+};
+
+/** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
+export const t3SystemAppend = (model: Model, device = true) => {
+  const { systemPrompt } = claudeQueryOptions(model, device);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
   throw new Error("makeClaudeQueryOptions no longer appends T3 text to a preset prompt.");
+};
+
+/**
+ * The context T3's SubagentStart hooks give a native subagent, which gets none of the append.
+ * Empty when T3 registers no such hook.
+ */
+export const t3SubagentContext = async (model: Model, device = true) => {
+  const hooks = (claudeQueryOptions(model, device).hooks?.SubagentStart ?? []).flatMap(
+    (m) => m.hooks,
+  );
+  const input = {
+    hook_event_name: "SubagentStart" as const,
+    session_id: "mcp-tool-use-eval",
+    transcript_path: "",
+    cwd: "",
+    agent_id: "mcp-tool-use-eval",
+    agent_type: "general-purpose",
+  };
+  const outputs = await Promise.all(
+    hooks.map((hook) => hook(input, undefined, { signal: AbortSignal.timeout(10_000) })),
+  );
+  return outputs
+    .flatMap((output) =>
+      "hookSpecificOutput" in output && output.hookSpecificOutput?.hookEventName === "SubagentStart"
+        ? [output.hookSpecificOutput.additionalContext ?? ""]
+        : [],
+    )
+    .filter(Boolean)
+    .join("\n\n");
 };
 
 /**
@@ -377,9 +591,14 @@ export const buildBase = (
     readonly model: Model;
     readonly keepUserInstructions: boolean;
     readonly subagent?: boolean;
+    readonly links?: boolean;
+    /** A native subagent starts from its task: T3 appends nothing to its system prompt. */
+    readonly nativeSubagent?: boolean;
+    /** false: the thread has no agent device access, so T3's text leaves devices out. */
+    readonly deviceAccess?: boolean;
   },
 ) => {
-  const t3 = visibleT3Tools(options.subagent === true);
+  const t3 = visibleT3Tools(options);
   const firstAssistant = template.messages.findIndex((message) => message.role === "assistant");
   const head = template.messages.slice(0, firstAssistant === -1 ? undefined : firstAssistant);
   const systemTexts = [
@@ -393,9 +612,14 @@ export const buildBase = (
     throw new Error(`The template needs one ${RUNTIME_MARKER} block and a deferred tool list.`);
   }
   const nativeDeferred = deferredList.split("\n").filter((name) => name && !isT3Name(name));
-  const names = [...nativeDeferred, ...t3.map((tool) => tool.name)].toSorted().join("\n");
+  const names = [
+    ...nativeDeferred,
+    ...t3.filter((tool) => !alwaysLoaded.has(tool.name)).map((tool) => tool.name),
+  ]
+    .toSorted()
+    .join("\n");
   const { model } = options;
-  const append = t3SystemAppend(model);
+  const append = options.nativeSubagent ? "" : t3SystemAppend(model, options.deviceAccess);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -435,14 +659,21 @@ export const buildBase = (
       platform: /Platform: (\w+)/.exec(joined)?.[1] ?? "linux",
       date: /Today's date is ([\d-]+)/.exec(reminders.join("\n"))?.[1],
     },
-    nativeTools: template.tools.filter((tool) => !isT3Name(tool.name)),
+    nativeTools: [
+      ...template.tools.filter((tool) => !isT3Name(tool.name)),
+      ...t3.filter((tool) => alwaysLoaded.has(tool.name)),
+    ],
     /** Tools ToolSearch loads: T3 tools from source, and native tools the template only names. */
     t3,
     deferred: [...t3, ...nativeDeferred.map((name) => ({ name, ...nativeSchema(name) }))],
   };
 };
 
-type Base = ReturnType<typeof buildBase> & { readonly codex?: typeof ResponsesRequest.Type };
+type Base = ReturnType<typeof buildBase> & {
+  readonly codex?: typeof ResponsesRequest.Type;
+  /** What T3's SubagentStart hooks give a native subagent. */
+  readonly subagentContext?: string;
+};
 
 /** Keep the captured harness prompt and tools; replace app-owned context and the real user. */
 const buildCodexBase = (
@@ -452,9 +683,12 @@ const buildCodexBase = (
     readonly keepUserInstructions: boolean;
     readonly effort?: string | undefined;
     readonly subagent?: boolean;
+    readonly links?: boolean;
+    /** false: the thread has no agent device access, so T3's text leaves devices out. */
+    readonly deviceAccess?: boolean;
   },
 ): Base => {
-  const t3 = visibleT3Tools(options.subagent === true);
+  const t3 = visibleT3Tools(options);
   const contentText = (item: Block) =>
     Array.isArray(item.content)
       ? item.content.map((block: Block) => valueText(block.text)).join("\n")
@@ -487,7 +721,7 @@ const buildCodexBase = (
   });
   const context = buildCodexAdditionalContext(
     { model: options.model, reasoningEffort: effort },
-    { browser: true, device: true },
+    { browser: true, device: options.deviceAccess ?? true },
   );
   input.push(
     ...Object.entries(context).map(([key, entry]) => message(`<${key}>${entry.value}</${key}>`)),
@@ -574,7 +808,8 @@ const createdPullRequests = ({ tool, input, output }: ShellEntry) =>
     : [];
 /**
  * One sample's state. ToolSearch adds loaded schemas to `tools`, like Claude Code. `shell` is the
- * history the simulator keeps consistent with; `linked` and `nextTask` do the same for T3 results.
+ * history the simulator keeps consistent with; `linked`, `nextTask` and `threads` do the same for
+ * T3 results.
  */
 type Sample = {
   readonly testCase: McpToolUseCase;
@@ -586,6 +821,15 @@ type Sample = {
   readonly linked: Set<string>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
+  /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
+  readonly threads: Map<string, { readonly title: string; readonly brief: string }>;
+  /** Files T3's request_secret saved in this sample, in call order. */
+  readonly secretFiles: Array<string>;
+  secretRequests: number;
+  /** T3's device tools, once `withDevices` builds them for a world with devices. */
+  devices?: DeviceTools;
+  /** T3's results for prior device calls whose case result is "default". */
+  readonly priorResults: Map<unknown, string>;
 };
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
@@ -594,11 +838,22 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
   const prior = testCase.setup.priorTurns ?? [];
   const priorCalls = prior.flatMap((turn) => turn.toolCalls ?? []);
   const repo = testCase.setup.world?.repo ?? "acme/app";
-  const urls = priorCalls.flatMap((call) =>
-    ["link_pull_request", "watch_pull_request"].includes(call.tool) && isRecord(call.input)
-      ? [pullRequest(repo, call.input).url]
-      : [],
-  );
+  const urls = [
+    ...(testCase.setup.world?.linkedPullRequests ?? []).map(
+      ({ number }) => pullRequest(repo, { number }).url,
+    ),
+    ...priorCalls.flatMap((call) =>
+      ["link_pull_request", "watch_pull_request"].includes(call.tool) && isRecord(call.input)
+        ? [pullRequest(repo, call.input).url]
+        : call.tool === "link_pull_requests" &&
+            isRecord(call.input) &&
+            Array.isArray(call.input.urls)
+          ? call.input.urls
+              .filter((url) => PULL_REQUEST_URL.test(valueText(url)))
+              .map((url) => pullRequest(repo, { url }).url)
+          : [],
+    ),
+  ];
   const taskNumbers = [...valueText(prior).matchAll(/task-(\d+)/g)].map((match) =>
     Number(match[1]),
   );
@@ -615,8 +870,31 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
     codeStore: {},
     nextTask: Math.max(0, ...taskNumbers) + 1,
+    threads: new Map(),
+    secretFiles: [],
+    secretRequests: 0,
+    priorResults: new Map(),
   };
 };
+
+/**
+ * Builds T3's device tools for a world with devices. Prior device calls whose result is "default"
+ * run first, in order and without the case's mocks, so their results and sessions are T3's. As in
+ * the real flow, device_open starts no agent-device session: one starts at a launcher `open` in the
+ * sample's shell history, prior turns included, or where `world.agentDeviceSessions` declares it.
+ */
+export const withDevices = Effect.fn("evaluateMcpToolUse.withDevices")(function* (sample: Sample) {
+  const world = sample.testCase.setup.world;
+  if (world?.devices === undefined) return;
+  sample.devices = yield* makeDeviceTools(
+    { ...world, devices: world.devices },
+    sample.base.environment,
+  );
+  for (const call of (sample.testCase.setup.priorTurns ?? []).flatMap((t) => t.toolCalls ?? [])) {
+    if (call.result !== "default" || !isDeviceTool(call.tool)) continue;
+    sample.priorResults.set(call, (yield* sample.devices.call(call.tool, call.input)).text);
+  }
+});
 
 // Main's history under every case's world.
 const MAIN_COMMITS = [
@@ -677,8 +955,22 @@ export const buildMessages = (sample: Sample) => {
     else messages[messages.length - 1] = { role, content: [...last.content, ...blocks] };
   };
   const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
+  const sideChat = testCase.setup.sideChat;
+  if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
+    throw new Error(
+      `${testCase.id}: Empty-prompt replay requires a top-level thread without side-chat context.`,
+    );
+  }
+  const sideChatContext =
+    sideChat === undefined
+      ? undefined
+      : makeSideChatContext({
+          parentThreadId: ThreadId.make(sideChat.parentThreadId),
+          digest: sideChat.digest,
+        });
+  const native = role === "native-subagent";
   const notes = [
-    role === "native-subagent"
+    native
       ? "You are a subagent started by the parent agent's Agent tool. Your final message goes to the parent agent, not to the user."
       : undefined,
     context,
@@ -691,7 +983,10 @@ export const buildMessages = (sample: Sample) => {
     const calls = (turn.toolCalls ?? []).map((call) => {
       const tool = findTool(base, call.tool);
       if (tool === undefined) throw new Error(`${testCase.id}: unknown prior tool ${call.tool}.`);
-      return { ...call, id: `toolu_prior_${nextId++}`, name: tool.name, tool };
+      if (call.result === "default" && isDeviceTool(call.tool) && !sample.priorResults.has(call)) {
+        throw new Error(`${testCase.id}: prior ${call.tool} needs T3's result; run withDevices.`);
+      }
+      return { ...call, id: `toolu_prior_${nextId++}`, name: tool.name, tool, prior: call };
     });
     // Prior T3 calls load their schemas first, as in a real deferred session.
     const unloaded = [...new Set(calls.map((call) => call.tool))].filter(
@@ -705,19 +1000,29 @@ export const buildMessages = (sample: Sample) => {
       push("user", loadTools(tools, id, unloaded), text(TOOL_LOADED));
     }
     // One call per step, as most real turns run them.
-    for (const { id, name, input, result, tool } of calls) {
+    for (const { id, name, input, result, tool, prior } of calls) {
       push("assistant", { type: "tool_use", id, name, input });
       const replayed =
         normalizeToolName(tool.name) === "orchestrator_capabilities"
           ? capabilities(sample, result)
-          : result;
+          : (sample.priorResults.get(prior) ?? result);
       push("user", toolResult(id, replayed));
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
-  const { prompt } = testCase;
+  const userText =
+    testCase.promptContext === undefined
+      ? testCase.prompt
+      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+  const prompt =
+    sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  if (testCase.prompt !== "")
+    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
+  if (native && base.subagentContext) {
+    push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
+  }
   return messages;
 };
 
@@ -759,6 +1064,8 @@ const DEFAULT_THREAD = {
 const HTML_RENDERED =
   "Shown to the reader above your reply. Don't mention or describe the page; reply with only what it doesn't already say.";
 
+const PULL_REQUEST_URL = /\/pull\/\d+\/?$/;
+
 /** Pull request identity from a `url` or `repository` plus `number` input, like T3's results. */
 const pullRequest = (repo: string, input: Readonly<Record<string, unknown>>) => {
   const url = typeof input.url === "string" ? input.url : "";
@@ -773,10 +1080,51 @@ const pullRequest = (repo: string, input: Readonly<Record<string, unknown>>) => 
   };
 };
 
+/** A linked PR as `list_thread_pull_requests` shows it. Links made in the sample are open. */
+const linkedEntry = (sample: Sample, url: string) => {
+  const pr = pullRequest(sample.repo, { url });
+  const seeded = sample.testCase.setup.world?.linkedPullRequests?.find(
+    ({ number }) => number === pr.number && pr.repository === sample.repo,
+  );
+  return { ...pr, state: seeded?.state ?? "open", title: seeded?.title ?? null };
+};
+
 /** A believable T3 result for a tool the case does not mock. */
-const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, unknown>>) => {
+export const t3Default = (
+  sample: Sample,
+  name: string,
+  input: Readonly<Record<string, unknown>>,
+) => {
   const pr = () => pullRequest(sample.repo, input);
+  const newThread = (request: unknown, brief: unknown) => {
+    const n = sample.nextTask++;
+    const title =
+      isRecord(request) && typeof request.title === "string" ? request.title : "New thread";
+    const text = typeof brief === "string" ? brief.trim() : "";
+    sample.threads.set(uuid(n), { title, brief: text });
+    return {
+      threadId: uuid(n),
+      title,
+      ...(text ? { runId: `run-${n}`, status: "starting" } : { status: "idle" }),
+    };
+  };
   switch (name) {
+    case "t3_thread_launch":
+      return newThread(input, input.message);
+    case "create_threads":
+      return {
+        threads: (Array.isArray(input.threads) ? input.threads : []).map((request) => {
+          const target = isRecord(request) && isRecord(request.target) ? request.target : {};
+          return {
+            ...newThread(request, isRecord(request) ? request.prompt : undefined),
+            createdBy: "agent",
+            creationSource: "mcp",
+            providerInstanceId:
+              target.providerInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent"),
+            model: target.model ?? sample.base.model,
+          };
+        }),
+      };
     case "orchestrator_capabilities":
       return {
         inheritedProviderInstanceId: "claudeAgent",
@@ -816,17 +1164,59 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
       sample.linked.add(pr().url);
       return { ...pr(), alreadyLinked };
     }
+    case "link_pull_requests": {
+      const urls = Array.isArray(input.urls) ? input.urls.map(valueText) : [];
+      const invalidUrls = urls.filter((url) => !PULL_REQUEST_URL.test(url));
+      const targets = [...new Set(urls.filter((url) => PULL_REQUEST_URL.test(url)))].map((url) =>
+        pullRequest(sample.repo, { url }),
+      );
+      const fresh = targets.filter(({ url }) => !sample.linked.has(url));
+      for (const { url } of targets) sample.linked.add(url);
+      const byRepository = (prs: ReadonlyArray<ReturnType<typeof pullRequest>>) =>
+        [...Map.groupBy(prs, (pr) => pr.repository).values()].map((group) => ({
+          host: "github.com",
+          repository: group[0]!.repository,
+          numbers: group.map((pr) => pr.number),
+        }));
+      return {
+        linked: byRepository(fresh),
+        alreadyLinked: byRepository(targets.filter((pr) => !fresh.includes(pr))),
+        linkedCount: targets.length,
+        ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
+      };
+    }
     case "request_secret": {
-      // T3 names both a ref and a file with 32 hex characters, and keeps files in its secrets dir.
-      const id = "5f0c9e2a7b4d4183a6e1c8d2b9f07a64";
+      // T3 names a ref and a file with 32 hex characters, new for each request, in its secrets dir.
+      const id = NodeCrypto.createHash("sha256")
+        .update(`${sample.testCase.id}:${sample.secretRequests++}`)
+        .digest("hex")
+        .slice(0, 32);
       const home =
         /^\/(?:home|Users)\/[^/]+/.exec(sample.base.environment.cwd)?.[0] ?? "/home/user";
-      return input.delivery === "file"
+      return input.delivery === "file" || pastedSecret(name, input)
         ? { status: "saved", file: `${home}/.t3/userdata/secrets/files/${id}` }
         : { status: "saved", secretRef: `secret-ref:${id}` };
     }
     case "unlink_pull_request":
       return { ...pr(), wasLinked: sample.linked.delete(pr().url) };
+    case "unlink_pull_requests": {
+      const states = Array.isArray(input.states) ? input.states : [];
+      const unlinked = [...sample.linked]
+        .map((url) => linkedEntry(sample, url))
+        .filter((entry) => states.includes(entry.state));
+      for (const { url } of unlinked) sample.linked.delete(url);
+      const groups = Map.groupBy(unlinked, (entry) => `${entry.repository}/${entry.state}`);
+      return {
+        unlinked: [...groups.values()].map((entries) => ({
+          host: "github.com",
+          repository: entries[0]!.repository,
+          state: entries[0]!.state,
+          numbers: entries.map((entry) => entry.number),
+        })),
+        unlinkedCount: unlinked.length,
+        remaining: sample.linked.size,
+      };
+    }
     case "watch_pull_request":
       sample.linked.add(pr().url);
       return { ...pr(), watching: true, wasWatching: false };
@@ -835,15 +1225,28 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
     case "list_thread_pull_requests":
       return {
         pullRequests: [...sample.linked].map((url) => ({
-          ...pullRequest(sample.repo, { url }),
+          ...linkedEntry(sample, url),
           source: "agent",
           watching: false,
-          state: "open",
         })),
         chains: [],
       };
     case "t3_thread_read": {
       const threadId = valueText(input.threadId);
+      const launched = sample.threads.get(threadId);
+      if (launched !== undefined) {
+        const items = launched.brief
+          ? [{ position: 1, createdBy: "agent", creationSource: "mcp", text: launched.brief }]
+          : [];
+        const thread = {
+          threadId,
+          title: launched.title,
+          createdBy: "agent",
+          creationSource: "mcp",
+          status: launched.brief ? "running" : "idle",
+        };
+        return { thread, items, nextPosition: items.length + 1, hasMore: false };
+      }
       const { title, status, items } = DEFAULT_THREAD;
       return { thread: { threadId, title, status }, items, nextPosition: 3, hasMore: false };
     }
@@ -868,18 +1271,38 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
   }
 };
 
+/** The machine the fake threads live on. */
+const EVAL_ENVIRONMENT_ID = EnvironmentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+
+// The note T3 adds when a secret card ends unsaved, on refs that have one (looked up by name so
+// the runner still builds on refs without it).
+const unsavedSecretNote = (Contracts as Record<string, unknown>).SECRET_REQUEST_UNSAVED_NOTE as
+  | Readonly<Record<string, string>>
+  | undefined;
+
 /** Fields T3 adds to real thread and task results, applied to mocks and defaults alike. */
-const withProductFields = (name: string, value: unknown): unknown => {
+const withProductFields = (name: string, value: unknown, child: boolean): unknown => {
   if (!isRecord(value)) return value;
   const linked = (thread: unknown, idKey = "threadId") => {
     if (!isRecord(thread) || thread.link !== undefined) return thread;
     const id = thread[idKey] ?? thread.id;
-    const title = valueText(thread.title) || "Thread";
-    return typeof id === "string" ? { ...thread, link: formatThreadLink(id, title) } : thread;
+    return typeof id === "string"
+      ? {
+          ...thread,
+          link: formatThreadLink({
+            environmentId: EVAL_ENVIRONMENT_ID,
+            threadId: ThreadId.make(id),
+          }),
+        }
+      : thread;
   };
   const listed = (key: string) =>
     Array.isArray(value[key]) ? { ...value, [key]: value[key].map((item) => linked(item)) } : value;
   switch (name) {
+    case "request_secret": {
+      const note = typeof value.status === "string" ? unsavedSecretNote?.[value.status] : undefined;
+      return note === undefined || value.note !== undefined ? value : { ...value, note };
+    }
     case "delegate_task":
     case "task_status": {
       const task = linked(value, "childThreadId") as Record<string, unknown>;
@@ -890,12 +1313,16 @@ const withProductFields = (name: string, value: unknown): unknown => {
       return { ...value, thread: linked(value.thread) };
     case "t3_thread_launch":
     case "t3_thread_send":
+    case "run_scheduled_task_now":
       return linked(value);
     case "t3_thread_list":
     case "create_threads":
       return listed("threads");
     case "t3_thread_search":
       return listed("matches");
+    case "link_pull_request":
+    case "link_pull_requests":
+      return child ? { ...value, next: CHILD_PULL_REQUEST_REPORT_NEXT } : value;
     default:
       return value;
   }
@@ -965,11 +1392,34 @@ const decodeShellReply = Schema.decodeUnknownOption(Schema.fromJsonString(ShellR
 const callText = ({ tool, input }: Omit<ShellEntry, "output">) =>
   `<call>${tool} ${valueText(input)}</call>`;
 
+/**
+ * Absolute paths the case's context or files name exist, wherever the template's working
+ * directory is. Without this the simulator denies a checkout the agent was told to work in.
+ */
+export const namedPathsLine = ({ setup }: McpToolUseCase) => {
+  const absolute = /(?:^|[\s(`'"])((?:\/home|\/Users|\/tmp)\/[^\s`'",;:)]+)/g;
+  const fromContext = [...(setup.context ?? "").matchAll(absolute)].flatMap(([, path]) =>
+    path ? [path] : [],
+  );
+  const fromFiles = Object.keys(isRecord(setup.world?.files) ? setup.world.files : {}).filter(
+    (path) => path.startsWith("/"),
+  );
+  const paths = [
+    ...new Set([...fromContext, ...fromFiles].map((path) => path.replace(/[.]+$/, ""))),
+  ];
+  return paths.length > 0
+    ? [
+        `These paths exist on this machine, with the contents the world gives: ${paths.join(", ")}. The working directory above is only where the shell starts; the agent may cd into them.`,
+      ]
+    : [];
+};
+
 /** The simulator's request: the machine, this sample's earlier calls, then the new call. */
 export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, model: string) => {
-  const { testCase, base, repo, shell } = sample;
+  const { testCase, base, repo, shell, devices } = sample;
   const { world, context, shellMocks = [] } = testCase.setup;
   const { cwd, platform, date } = base.environment;
+  const command = call.tool === "Bash" && isRecord(call.input) ? call.input.command : undefined;
   const machine = [
     `Working directory: ${cwd} on ${platform}, a git checkout of github.com/${repo}.${date ? ` Today is ${date}.` : ""}`,
     gitStatus(testCase),
@@ -977,8 +1427,21 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
     ...(shellMocks.length > 0
       ? [`Commands that match these regexes print exactly this output: ${valueText(shellMocks)}`]
       : []),
+    // Which device each launcher and session drives, and which of this call's opens are refused.
+    ...(devices?.describe(shell, typeof command === "string" ? command : undefined) ?? []),
+    ...(world?.deviceInvalidCapture
+      ? [
+          "T3's device_screenshot gets each capture with adb screencap's multi-display warning ahead of the PNG, so it reports 0×0. agent-device's own screenshot finds the PNG and is unaffected.",
+        ]
+      : []),
+    ...(sample.secretFiles.length > 0
+      ? [
+          `T3's request_secret saved these files in this sample: ${sample.secretFiles.join(", ")}. Each exists, is readable only by the user, and holds exactly the value the user gave, typed into T3's private card or pasted in chat and saved by the agent, the right one for the task, with no trailing newline. A program that reads it, as in "$(cat <file>)", < <file> or a --*-file flag, gets that value. What appears in the output is whatever that program prints: one that prints or logs its input shows the value. No other file in that directory exists.`,
+        ]
+      : []),
     ...(context ? [`The agent was told: ${context}`] : []),
     `The agent's task: ${testCase.prompt}`,
+    ...namedPathsLine(testCase),
   ];
   const history = shell.map((entry) => `${callText(entry)}\n<output>\n${entry.output}\n</output>`);
   return {
@@ -986,7 +1449,8 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
     max_tokens: 8_000,
     // The "facts" field keeps the simulator's reasoning out of the output the agent sees.
     output_config: { effort: "low", format: { type: "json_schema", schema: SHELL_REPLY_SCHEMA } },
-    system: SHELL_PROMPT,
+    // A case with devices also gets agent-device's own CLI, so T3's launchers answer as it does.
+    system: devices ? `${SHELL_PROMPT}\n\n${AGENT_DEVICE_SHELL}` : SHELL_PROMPT,
     messages: [
       {
         role: "user",
@@ -997,6 +1461,22 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
     ],
   };
 };
+
+/** The same simulator request in Responses form, for a GPT shell model through the proxy. */
+export const shellResponsesRequest = (body: ReturnType<typeof shellRequest>) => ({
+  model: body.model,
+  stream: true,
+  store: false,
+  reasoning: { effort: "low" },
+  instructions: body.system,
+  text: {
+    format: { type: "json_schema", name: "shell_reply", schema: SHELL_REPLY_SCHEMA, strict: true },
+  },
+  input: body.messages.map((message) => ({
+    role: message.role,
+    content: message.content.map((block) => ({ type: "input_text", text: block.text })),
+  })),
+});
 
 /** The tool output in the simulator's JSON reply, or its raw text if that is not JSON. */
 export const shellOutput = (content: ReadonlyArray<Block>) => {
@@ -1020,24 +1500,31 @@ type Config = {
   readonly proxy?: { readonly url: string; readonly headers: Readonly<Record<string, string>> };
   readonly effort: string;
   readonly maxSteps: number;
-  readonly shellModel: PricedModel;
+  readonly shellModel: ShellModel;
 };
 
-/** Output for a shell, file, or web tool: a matching shell mock, else the shell simulator. */
+/**
+ * Output for a command that needs no simulator: a matching shell mock, else, for a plain command
+ * on a launcher T3 returned, agent-device's help or its error for a session not yet started.
+ */
+export const cannedOutput = (sample: Sample, command: string) =>
+  mockOutput(sample, command) ??
+  launcherHelp(sample.devices?.launchers ?? [], command) ??
+  sample.devices?.sessionError(sample.shell, command);
+
+/** Output for a shell, file, or web tool: canned output, else the shell simulator. */
 const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   sample: Sample,
   config: Config,
   call: Omit<ShellEntry, "output">,
 ) {
   const command = call.tool === "Bash" && isRecord(call.input) ? call.input.command : undefined;
-  let output = typeof command === "string" ? mockOutput(sample, command) : undefined;
+  let output = typeof command === "string" ? cannedOutput(sample, command) : undefined;
   if (output === undefined) {
     const body = shellRequest(sample, call, config.shellModel);
-    const response = yield* callModel(
-      config.apiKey,
-      body,
-      config.apiKey ? undefined : config.proxy,
-    );
+    const response = isPricedModel(config.shellModel)
+      ? yield* callModel(config.apiKey, body, config.apiKey ? undefined : config.proxy)
+      : yield* callCodex(config, shellResponsesRequest(body));
     addUsage(sample.shellUsage, response.usage);
     output = shellOutput(response.content);
   }
@@ -1048,8 +1535,13 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   return output;
 });
 
+/** Tells the shell simulator about a file request_secret saved, so it exists for later commands. */
+const savedSecretFile = (sample: Sample, result: unknown) => {
+  if (isRecord(result) && typeof result.file === "string") sample.secretFiles.push(result.file);
+};
+
 /** The result for one tool call. */
-const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
+export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
   sample: Sample,
   config: Config,
   call: typeof ToolUse.Type,
@@ -1079,24 +1571,35 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
     return loadTools(tools, call.id, found);
   }
   const mock = testCase.setup.mocks?.[name];
-  if (mock !== undefined && mock !== "default")
+  // T3 answers device calls from the world. A mock that is a T3 device error fails inside T3.
+  const failure = deviceFailure(mock);
+  const fromWorld = mock === undefined || mock === "default" || failure !== undefined;
+  if (sample.devices && isT3Name(call.name) && isDeviceTool(name) && fromWorld) {
+    const result = yield* sample.devices.call(name, input, failure);
+    return result.isError ? failed(result.text) : toolResult(call.id, result.text);
+  }
+  // A pasted secret is saved without a card, so a mocked card outcome does not apply.
+  if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
+    if (name === "request_secret") savedSecretFile(sample, mock);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
         ? capabilities(sample, mock)
-        : withProductFields(name, mock),
+        : withProductFields(name, mock, testCase.setup.role === "delegated-child"),
     );
+  }
   if (isT3Name(call.name)) {
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
     }
     const value = t3Default(sample, name, input);
+    if (name === "request_secret") savedSecretFile(sample, value);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
         ? capabilities(sample, value)
-        : withProductFields(name, value),
+        : withProductFields(name, value, testCase.setup.role === "delegated-child"),
     );
   }
   if (call.name === "clock__curr_time")
@@ -1112,8 +1615,12 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
 });
 
 const BOUND = /^([<>]=)(-?\d+(?:\.\d+)?)$/;
-/** Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number. */
+/**
+ * Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number, and `null`
+ * matches a missing or null value.
+ */
 const matches = (expected: unknown, actual: unknown): boolean => {
+  if (expected === null) return actual === undefined || actual === null;
   const bound = typeof expected === "string" ? BOUND.exec(expected) : null;
   if (bound !== null) {
     const limit = Number(bound[2]);
@@ -1135,6 +1642,35 @@ const matches = (expected: unknown, actual: unknown): boolean => {
   return Object.entries(expected).every(([path, value]) => matches(value, at(path)));
 };
 
+/** Each new top-level thread request in a run; a failed call created nothing. */
+const newThreadRequests = (calls: ReadonlyArray<Call>) =>
+  calls.flatMap((call): ReadonlyArray<{ request: unknown; brief: unknown }> => {
+    if (call.failed === true || !isRecord(call.input)) return [];
+    if (call.tool === "t3_thread_launch")
+      return [{ request: call.input, brief: call.input.message }];
+    if (call.tool !== "create_threads" || !Array.isArray(call.input.threads)) return [];
+    return call.input.threads.map((request: unknown) => ({
+      request,
+      brief: isRecord(request) ? request.prompt : undefined,
+    }));
+  });
+
+/** Whether every expected value can take a different request it matches. */
+const matchesDistinct = (
+  expected: ReadonlyArray<unknown>,
+  requests: ReturnType<typeof newThreadRequests>,
+  taken: ReadonlySet<number> = new Set(),
+): boolean => {
+  const [first, ...rest] = expected;
+  if (expected.length === 0) return true;
+  return requests.some(
+    ({ request, brief }, i) =>
+      !taken.has(i) &&
+      matches(first, typeof first === "string" ? brief : request) &&
+      matchesDistinct(rest, requests, new Set([...taken, i])),
+  );
+};
+
 /** delegate_task takes `target.options` as an object or `[{id, value}]`. Grade both as an object. */
 const withOptionsObject = (input: unknown) => {
   if (!isRecord(input) || !isRecord(input.target) || !Array.isArray(input.target.options)) {
@@ -1148,7 +1684,16 @@ const withOptionsObject = (input: unknown) => {
   return { ...input, target: { ...input.target, options } };
 };
 
-export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) => {
+/** What the user wrote in the case's thread: its context, prior user turns and the prompt. */
+export const pastedText = ({ prompt, setup }: Pick<McpToolUseCase, "prompt" | "setup">) =>
+  [
+    setup.context ?? "",
+    ...(setup.priorTurns ?? []).flatMap((turn) => (turn.role === "user" ? [turn.text ?? ""] : [])),
+    prompt,
+  ].join("\n");
+
+/** `pasted` is the thread's user text (`pastedText`), for request_secret's `value`. */
+export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") => {
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
   const calls = run.calls.map((call) => ({ ...call, input: withOptionsObject(call.input) }));
@@ -1158,6 +1703,17 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) =>
     calls.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
+  if (expect.distinctCalls !== undefined) {
+    const expected = expect.distinctCalls.map(({ tool, args }) => ({ tool, input: args ?? {} }));
+    add(
+      "distinctCalls",
+      calls.every((call) => expected.filter((entry) => matches(entry, call)).length <= 1) &&
+        matchesDistinct(
+          expected,
+          calls.map((request) => ({ request, brief: "" })),
+        ),
+    );
+  }
   for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
   for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
   if (expect.order !== undefined) {
@@ -1169,31 +1725,58 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) =>
     add(`minCalls ${t} >= ${n}`, count(t) >= n);
   for (const [t, n] of Object.entries(expect.maxCalls ?? {}))
     add(`maxCalls ${t} <= ${n}`, count(t) <= n);
+  if (expect.newThreads !== undefined) {
+    const requests = newThreadRequests(calls);
+    add(
+      `newThreads ${valueText(expect.newThreads)}`,
+      requests.length === expect.newThreads.length && matchesDistinct(expect.newThreads, requests),
+    );
+  }
   if (expect.endsTurnAfter !== undefined) {
     const lastStep = Math.max(-1, ...calls.map((call) => call.step));
     const last = calls.filter((call) => call.step === lastStep).map((call) => call.tool);
     const ended = run.stopReason === "end_turn" && last.includes(expect.endsTurnAfter);
     add(`endsTurnAfter ${expect.endsTurnAfter}`, ended);
   }
-  // Bash and Monitor both take a shell `command`.
-  const shell = calls.flatMap((call) =>
-    isRecord(call.input) && typeof call.input.command === "string" ? [call.input.command] : [],
+  // Bash and Monitor both take a shell `command`. Secret cases also check, one by one, the scripts
+  // the agent wrote and a command ran: `node run.mjs signup.mjs` after a Write of signup.mjs.
+  const sources = expect.secret === undefined ? [] : scriptSources(calls);
+  const shell = calls.flatMap((call, i) =>
+    isRecord(call.input) && typeof call.input.command === "string"
+      ? [call.input.command, ...(sources[i] ?? [])]
+      : [],
   );
   const test = (pattern: string, value: string) => new RegExp(pattern).test(value);
   for (const p of expect.shellMustNot ?? [])
     add(`shellMustNot /${p}/`, !shell.some((c) => test(p, c)));
+  // A positive check also reads argv lists as command lines: spawnSync('pnpm', ['exec', …]).
+  for (const p of expect.shellMust ?? [])
+    add(
+      `shellMust /${p}/`,
+      shell.some((c) => test(p, c) || test(p, argvForm(c))),
+    );
   for (const p of expect.textMust ?? []) add(`textMust /${p}/`, test(p, run.text));
   for (const p of expect.textMustNot ?? []) add(`textMustNot /${p}/`, !test(p, run.text));
+  for (const p of expect.finalTextMust ?? [])
+    add(`finalTextMust /${p}/`, run.stopReason === "end_turn" && test(p, run.finalText ?? ""));
   const isLinked = (url: string) => (run.linked ?? []).some((at) => matches(url, at));
   for (const url of expect.linked ?? []) add(`linked ${url}`, isLinked(url));
+  if (expect.linkedNumbers !== undefined) {
+    const numbers = (run.linked ?? []).map((url) => Number(/(\d+)\/?$/.exec(url)?.[1]));
+    const exact = valueText(numbers.toSorted((a, b) => a - b));
+    add("linkedNumbers", exact === valueText(expect.linkedNumbers.toSorted((a, b) => a - b)));
+  }
+  checks.push(...gradeDevice(expect.device, run));
+  checks.push(...gradeSecret(expect.secret, run, pasted));
   return checks;
 };
 
 // Checks that can only go from pass to fail as a sample goes on.
-const SETTLED = /^(notCalls|callsMustNot|shellMustNot|maxCalls|textMustNot) /;
+const SETTLED =
+  /^(?:(?:notCalls|callsMustNot|shellMustNot|maxCalls|textMustNot) |secret\.(?:chatAsk|askTools|values|fileUse|noCardDemand|afterDecline) )/;
 /** True once the sample has failed for good, so the rest of it cannot change the result. */
-export const failedEarly = (expect: McpToolUseCase["expect"], run: SampleRun) =>
-  gradeSample(expect, run).some((check) => !check.pass && SETTLED.test(check.check));
+export const failedEarly = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") =>
+  gradeSample(expect, run, pasted).some((check) => !check.pass && SETTLED.test(check.check));
 
 const requestBody = ({ base, tools }: Sample, effort: string, messages: unknown) => ({
   model: base.model,
@@ -1331,33 +1914,11 @@ const callCodex = Effect.fn("evaluateMcpToolUse.callCodex")(function* (
   };
 });
 
-// Read credentials into memory only. Python's TOML parser avoids another runner dependency.
-const decodeProxyConfig = Schema.decodeUnknownSync(
-  Schema.Struct({ url: Schema.String, headers: Schema.Record(Schema.String, Schema.String) }),
+// Concurrent runs share an organization's rate limits. Backing off for up to about 4 minutes
+// lets a sample wait out a busy spell, with jitter so samples do not retry in step.
+const RETRY = Schedule.min([Schedule.exponential("2 seconds"), Schedule.spaced("1 minute")]).pipe(
+  Schedule.jittered,
 );
-const proxyConfig = () =>
-  decodeProxyConfig(
-    JSON.parse(
-      NodeChildProcess.execFileSync(
-        "python3",
-        [
-          "-c",
-          `
-import json, os, pathlib, tomllib
-home = pathlib.Path.home() / '.codex'
-p = tomllib.loads((home / 'config.toml').read_text())['model_providers']['vibeproxy']
-h = p.get('http_headers', {}).copy()
-h.update({k: os.environ[v] for k,v in p.get('env_http_headers', {}).items()})
-key = os.environ[p['env_key']] if p.get('env_key') else p.get('experimental_bearer_token')
-if not key and p.get('requires_openai_auth'): key = json.loads((home / 'auth.json').read_text()).get('OPENAI_API_KEY')
-if key: h['Authorization'] = 'Bearer ' + key
-print(json.dumps({'url': p['base_url'].rstrip('/'), 'headers': h}))
-`,
-        ],
-        { encoding: "utf8" },
-      ),
-    ),
-  );
 
 const postModel = Effect.fn("evaluateMcpToolUse.postModel")(function* (
   apiKey: string,
@@ -1366,10 +1927,14 @@ const postModel = Effect.fn("evaluateMcpToolUse.postModel")(function* (
   responses = false,
 ) {
   const client = (yield* HttpClient.HttpClient).pipe(
+    // Anthropic answers 529 when it is overloaded; retryTransient already retries 429 and 5xx.
+    HttpClient.filterStatus((status) => status !== 529),
     HttpClient.retryTransient({
       retryOn: "errors-and-responses",
-      schedule: Schedule.exponential("2 seconds"),
-      times: 4,
+      while: (error) =>
+        error.reason._tag === "StatusCodeError" && error.reason.response.status === 529,
+      schedule: RETRY,
+      times: 8,
     }),
   );
   const response = yield* HttpClientRequest.post(
@@ -1401,7 +1966,21 @@ const recordedCall = (step: number, use: typeof ToolUse.Type): Call => {
   const tool = normalizeToolName(use.name);
   const input = normalizeToolInput(use.name, use.input);
   const claudeAgent = tool === "Agent" && !use.name.endsWith("spawn_agent") && isRecord(input);
-  return { step, tool, input: claudeAgent ? { run_in_background: true, ...input } : input };
+  return {
+    step,
+    tool,
+    input: claudeAgent ? { run_in_background: true, ...input } : input,
+    id: use.id,
+  };
+};
+
+/** Records on a call what the agent saw, so graders can count failed attempts. */
+const settle = (call: Call | undefined, result: Block) => {
+  if (call !== undefined) {
+    call.failed = result.is_error === true;
+    call.output = valueText(result.content);
+  }
+  return result;
 };
 
 /** Calls that ran. Claude Code rejects a deferred tool that was not loaded, so it never runs. */
@@ -1416,14 +1995,16 @@ export const ranCalls = (
 
 /**
  * Runs one sample until the model ends its turn, uses up its steps, or fails a check that no
- * later step can undo.
+ * later step can undo. Tokens add up in `spent`, so a sample that errors still reports them.
  */
 const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   testCase: McpToolUseCase,
   config: Config,
   base: Base,
+  spent: { readonly usage: Usage; readonly shellUsage: Usage },
 ) {
-  const sample = makeSample(testCase, base);
+  const sample = { ...makeSample(testCase, base), shellUsage: spent.shellUsage };
+  yield* withDevices(sample);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
   const messages = buildMessages(sample);
   const input = base.codex ? codexMessages(messages) : undefined;
@@ -1431,8 +2012,9 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   const start = messages.length;
   const calls: Array<Call> = [];
   const said: Array<string> = [];
-  const usage = emptyUsage();
+  const { usage } = spent;
   let stopReason = "max_steps";
+  let finalText = "";
   // Codex's code-mode cells take more model calls, so a case's own budget grows for it too.
   const extra = isCodex(config.model) ? 4 : 0;
   const maxSteps = testCase.maxSteps === undefined ? config.maxSteps : testCase.maxSteps + extra;
@@ -1446,26 +2028,43 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       transcript.push(...response.raw);
     }
     messages.push({ role: "assistant", content: response.content });
-    said.push(...response.content.filter(isText).map((block) => block.text));
+    const texts = response.content.filter(isText).map((block) => block.text);
+    said.push(...texts);
     const uses = response.content.filter(isToolUse);
     calls.push(...ranCalls(sample, step, uses));
     if (response.stop_reason !== "tool_use") {
       stopReason = response.stop_reason ?? "unknown";
+      finalText = texts.join("\n\n");
       break;
     }
-    if (failedEarly(testCase.expect, { calls, text: said.join("\n\n"), stopReason })) {
+    if (
+      failedEarly(
+        testCase.expect,
+        { calls, text: said.join("\n\n"), stopReason },
+        pastedText(testCase),
+      )
+    ) {
       stopReason = "failed_early";
       break;
     }
     const results = yield* Effect.forEach(uses, (use) =>
       Effect.gen(function* () {
-        if (!input) return yield* answerToolCall(sample, config, use);
+        const own = calls.find((call) => call.id === use.id);
+        if (!input) {
+          return settle(own, yield* answerToolCall(sample, config, use));
+        }
         const answer = (name: string, args: unknown, record = true) => {
           const tool = normalizeToolName(name);
           const normalized = normalizeToolInput(name, args);
-          if (record) calls.push({ step, tool, input: normalized });
+          // A code cell's calls are recorded here; a direct function call already was.
+          let recorded = own;
+          if (record) {
+            recorded = { step, tool, input: normalized };
+            calls.push(recorded);
+          }
           const call = { ...use, name, input: normalized };
           return answerToolCall(sample, config, call).pipe(
+            Effect.map((result) => settle(recorded, result)),
             Effect.map((result) => {
               const output = valueText(result.content);
               if (isT3Name(name))
@@ -1486,31 +2085,40 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
             runPromise,
           );
         };
-        return yield* Effect.tryPromise(async () => {
-          const output =
-            use.name === "exec"
-              ? await executeCodex(
-                  valueText(use.input),
-                  codexCatalog(base),
-                  answer,
-                  sample.codeStore,
-                )
-              : await answer(use.name, use.input, false);
-          const item = {
-            type: use.name === "exec" ? "custom_tool_call_output" : "function_call_output",
-            call_id: use.id,
-            output: valueText(output),
-          };
-          input.push(item);
-          transcript.push(item);
-          return toolResult(use.id, output);
+        return yield* Effect.tryPromise({
+          try: async () => {
+            const output =
+              use.name === "exec"
+                ? await executeCodex(
+                    valueText(use.input),
+                    codexCatalog(base),
+                    answer,
+                    sample.codeStore,
+                  )
+                : await answer(use.name, use.input, false);
+            const item = {
+              type: use.name === "exec" ? "custom_tool_call_output" : "function_call_output",
+              call_id: use.id,
+              output: valueText(output),
+            };
+            input.push(item);
+            transcript.push(item);
+            return toolResult(use.id, output);
+          },
+          catch: (cause) => new EvalToolCallError({ tool: use.name, cause }),
         });
       }),
     );
     // Claude Code adds this text after a ToolSearch that loaded tools.
     const loaded = results.some((result) => Array.isArray(result.content));
     messages.push({ role: "user", content: [...results, ...(loaded ? [text(TOOL_LOADED)] : [])] });
-    if (failedEarly(testCase.expect, { calls, text: said.join("\n\n"), stopReason })) {
+    if (
+      failedEarly(
+        testCase.expect,
+        { calls, text: said.join("\n\n"), stopReason },
+        pastedText(testCase),
+      )
+    ) {
       stopReason = "failed_early";
       break;
     }
@@ -1520,39 +2128,48 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     calls,
     text: said.join("\n\n"),
     stopReason,
+    finalText,
     linked: [...sample.linked],
+    ...(sample.devices ? { launchers: [...sample.devices.launchers] } : {}),
     usage,
     shellUsage: sample.shellUsage,
     transcript: input ? transcript : messages.slice(start),
   };
-});
+}, Effect.scoped);
 
 type ResultRow = Pick<McpToolUseCase, "id" | "kind" | "pattern"> & {
   readonly role: string;
   readonly pass: boolean;
+  /** Set when the sample could not run to the end, even after retries. It is not graded. */
+  readonly error?: string;
   readonly usage: Usage;
   readonly shellUsage: Usage;
 };
 
-const passRate = (rows: ReadonlyArray<{ readonly pass: boolean }>) =>
-  rows.filter((row) => row.pass).length / rows.length;
-const percent = (rate: number) => `${Math.round(rate * 100)}%`;
+/** The share of samples that passed. Samples that errored are left out: NaN if all did. */
+const passRate = (
+  rows: ReadonlyArray<{ readonly pass: boolean; readonly error?: string | undefined }>,
+) => {
+  const finished = rows.filter((row) => row.error === undefined);
+  return finished.filter((row) => row.pass).length / finished.length;
+};
+const percent = (rate: number) => (Number.isNaN(rate) ? "-" : `${Math.round(rate * 100)}%`);
 const groups = <A>(rows: ReadonlyArray<A>, key: (row: A) => string) =>
   [...Map.groupBy(rows, key)].toSorted(([left], [right]) => left.localeCompare(right));
 
 const USAGE_KEYS = ["input", "output", "cacheWrite", "cacheRead"] as const;
 /** Token totals and their cost in USD at one model's prices. Proxy runs have no price. */
-const spend = (usages: ReadonlyArray<Usage>, model: PricedModel | undefined) => {
+const spend = (usages: ReadonlyArray<Usage>, model: ShellModel | undefined) => {
   const total = (key: keyof Usage) => usages.reduce((sum, usage) => sum + usage[key], 0);
-  const price = (key: keyof Usage) => (model ? PRICES[model][key] : 0);
+  const price = (key: keyof Usage) => (model && isPricedModel(model) ? PRICES[model][key] : 0);
   const cost = USAGE_KEYS.reduce((sum, key) => sum + total(key) * price(key), 0) / 1e6;
   return { cost, tokens: USAGE_KEYS.map((key) => `${key} ${total(key)}`).join(", ") };
 };
 
 /** Markdown report. With a baseline, each case shows its earlier pass rate and the change. */
-const summarize = (
+export const summarize = (
   rows: Array<ResultRow>,
-  options: { readonly header: string; readonly shellModel: PricedModel; readonly model: Model },
+  options: { readonly header: string; readonly shellModel: ShellModel; readonly model: Model },
   before?: Map<string, number>,
 ) => {
   const codex = isCodex(options.model);
@@ -1572,21 +2189,32 @@ const summarize = (
     ...groups(rows, key).map(([group, members]) => {
       const now = passRate(members);
       const was = before?.get(group);
+      const errored = members.filter((row) => row.error !== undefined).length;
       const delta =
-        was === undefined ? "new | |" : `${percent(was)} | ${Math.round((now - was) * 100)} pts |`;
-      return `| ${group} | ${percent(now)} of ${members.length} |${compare ? ` ${delta}` : ""}`;
+        was === undefined
+          ? "new | |"
+          : `${percent(was)} | ${Number.isNaN(now) ? "" : `${Math.round((now - was) * 100)} pts`} |`;
+      const pass = `${percent(now)} of ${members.length - errored}${errored > 0 ? `, ${errored} errored` : ""}`;
+      return `| ${group} | ${pass} |${compare ? ` ${delta}` : ""}`;
     }),
     "",
   ];
+  const errors = groups(
+    rows.filter((row) => row.error !== undefined),
+    (row) => row.id,
+  );
+  const errorNote = `- Errored: ${errors.map(([id, failed]) => `${id} ×${failed.length}`).join(", ")}. These samples did not finish, even after retries, so pass rates leave them out; tokens they spent are counted.`;
   const nativeNote =
-    "- native-subagent cases are approximate: the harness gives subagents their own system prompt, which this runner does not rebuild.";
+    "- native-subagent cases are approximate: the harness gives subagents their own system prompt, which this runner does not rebuild. T3's append is left out and its SubagentStart hook context added after the task.";
   const identityNote = `- The captured Claude Code identity line is replaced with "${NEUTRAL_IDENTITY}"`;
+  const finished = rows.filter((row) => row.error === undefined).length;
   return [
     "# MCP tool-use eval\n",
     `- ${options.header}`,
-    `- Pass: ${percent(passRate(rows))} of ${rows.length} samples. Samples that failed to run count as failures.`,
+    `- Pass: ${percent(passRate(rows))} of ${finished} samples.`,
+    ...(errors.length > 0 ? [errorNote] : []),
     codex
-      ? "- Cost: not applicable (subscription through proxy)."
+      ? "- Cost: the agent is not priced. `vibeproxy` in `~/.codex/config.toml` may use a subscription or bill an API key per token; agent tokens are below."
       : `- Estimated cost $${cost.toFixed(2)}, $${(cost / rows.length).toFixed(3)} per sample.`,
     `- Agent tokens: ${agent.tokens}${codex ? "." : ` ($${agent.cost.toFixed(2)}).`}`,
     `- Shell simulator (${options.shellModel}) tokens: ${shell.tokens} (API-price estimate $${shell.cost.toFixed(2)}).`,
@@ -1619,7 +2247,10 @@ const Flags = Schema.Struct({
   concurrency: PositiveInt,
   "max-steps": Schema.optional(PositiveInt),
   effort: Schema.optional(Schema.Literals(EFFORTS)),
-  "shell-model": Schema.Literals(Object.keys(PRICES) as Array<PricedModel>),
+  "shell-model": Schema.Literals([
+    ...(Object.keys(PRICES) as Array<PricedModel>),
+    ...PROXY_SHELL_MODELS,
+  ]),
   "user-instructions": Schema.Literals(["keep", "drop"]),
   "dry-run": Schema.Boolean,
   "stop-on-regression": Schema.Boolean,
@@ -1631,7 +2262,13 @@ const decodeCapture = Schema.decodeUnknownEffect(Schema.fromJsonString(Capture))
 const decodeCodexCapture = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexCapture));
 const decodeCase = Schema.decodeUnknownEffect(Schema.fromJsonString(McpToolUseCase));
 const decodeBaselineRow = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ id: Schema.String, pass: Schema.Boolean })),
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.String,
+      pass: Schema.Boolean,
+      error: Schema.optional(Schema.String),
+    }),
+  ),
 );
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const string = { type: "string" } as const;
@@ -1672,7 +2309,7 @@ const main = Effect.gen(function* () {
   }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const readJsonl = <A, E>(file: string, decode: (line: string) => Effect.Effect<A, E>) =>
+  const readNdjson = <A, E>(file: string, decode: (line: string) => Effect.Effect<A, E>) =>
     fs.readFileString(file).pipe(
       Effect.map((content) => content.split("\n").filter((line) => line.trim() !== "")),
       Effect.flatMap((lines) => Effect.forEach(lines, (line) => decode(line))),
@@ -1681,19 +2318,42 @@ const main = Effect.gen(function* () {
   const caseFiles =
     flags.cases ??
     (yield* fs.readDirectory(casesDir))
-      .filter((name) => name.endsWith(".jsonl"))
+      .filter((name) => name.endsWith(".ndjson"))
       .toSorted()
       .map((name) => path.join(casesDir, name));
-  const cases = (yield* Effect.forEach(caseFiles, (file) => readJsonl(file, decodeCase))).flat();
+  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase))).flat();
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";
-  const selected = cases.filter(
+  const selectedCases = cases.filter(
     ({ id, setup }) =>
       (wanted === undefined || wanted.includes(id)) &&
       (setup.harness === undefined || setup.harness === harness),
   );
-  if (selected.length === 0) return yield* Effect.die(new Error("No case matches --case."));
+  if (selectedCases.length === 0) return yield* Effect.die(new Error("No case matches --case."));
+  const selected = yield* Effect.forEach(selectedCases, (testCase) =>
+    Effect.gen(function* () {
+      const priorTurns = yield* Effect.forEach(testCase.setup.priorTurns ?? [], (turn) =>
+        Effect.gen(function* () {
+          const toolCalls = yield* Effect.forEach(turn.toolCalls ?? [], (call) =>
+            call.resultFile === undefined
+              ? Effect.succeed(call)
+              : fs
+                  .readFileString(path.resolve(import.meta.dirname, "../..", call.resultFile))
+                  .pipe(Effect.map((result) => ({ ...call, result }))),
+          );
+          return { ...turn, toolCalls };
+        }),
+      );
+      return {
+        ...testCase,
+        setup: {
+          ...testCase.setup,
+          priorTurns,
+        },
+      };
+    }),
+  );
   // Trimmed captures without user data ship beside the cases. `--template` also takes a raw
   // CLIProxyAPI capture.
   const templatePath =
@@ -1704,7 +2364,11 @@ const main = Effect.gen(function* () {
     templatePath.endsWith(".gz") ? NodeZlib.gunzipSync(templateBytes) : templateBytes,
   );
   const keepUserInstructions = flags["user-instructions"] === "keep";
-  const buildFor = (subagent: boolean): Effect.Effect<Base, Schema.SchemaError> =>
+  const buildFor = (
+    role: McpToolUseCase["setup"]["role"],
+    deviceAccess: boolean,
+    links: boolean,
+  ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
           Effect.map((capture) =>
@@ -1712,37 +2376,60 @@ const main = Effect.gen(function* () {
               model: flags.model,
               keepUserInstructions,
               effort: flags.effort,
-              subagent,
+              subagent: role === "delegated-child",
+              links,
+              deviceAccess,
             }),
           ),
         )
       : decodeCapture(template).pipe(
-          Effect.map((capture) =>
-            buildBase(capture.request.provider_native, {
+          Effect.flatMap((capture) => {
+            const built = buildBase(capture.request.provider_native, {
               model: flags.model,
               keepUserInstructions,
-              subagent,
-            }),
-          ),
+              subagent: role === "delegated-child",
+              nativeSubagent: role === "native-subagent",
+              links,
+              deviceAccess,
+            });
+            return role === "native-subagent"
+              ? Effect.promise(() => t3SubagentContext(flags.model, deviceAccess)).pipe(
+                  Effect.map((subagentContext): Base => ({ ...built, subagentContext })),
+                )
+              : Effect.succeed(built);
+          }),
         );
-  const base = yield* buildFor(false);
-  const childBase = yield* buildFor(true);
-  const baseFor = (testCase: McpToolUseCase) =>
-    testCase.setup.role === "delegated-child" ? childBase : base;
+  // Codex has no native subagents; its cases with that role run as top-level threads.
+  const baseKey = ({ setup }: McpToolUseCase) =>
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}`;
+  const base = yield* buildFor("top", true, false);
+  const bases = new Map<string, Base>([["top:true:false", base]]);
+  for (const testCase of selected) {
+    const key = baseKey(testCase);
+    if (bases.has(key)) continue;
+    const [role = "top", access, links] = key.split(":") as [
+      McpToolUseCase["setup"]["role"],
+      string,
+      string,
+    ];
+    bases.set(key, yield* buildFor(role, access === "true", links === "true"));
+  }
+  const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";
   if (flags["dry-run"]) {
     // One JSON line per case. Without --case this also checks that every case builds.
     for (const testCase of selected) {
       const sample = makeSample(testCase, baseFor(testCase));
+      yield* Effect.scoped(withDevices(sample));
       const messages = buildMessages(sample);
-      const body = base.codex
-        ? codexRequest(base, codexMessages(messages))
+      const body = sample.base.codex
+        ? codexRequest(sample.base, codexMessages(messages))
         : requestBody(sample, effort, messages);
       process.stdout.write(`${yield* encodeJson(body)}\n`);
     }
     return;
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
+  const apiKey = yield* Config.String("ANTHROPIC_API_KEY").pipe(Config.withDefault(""));
   const out = flags.out;
   if ((!apiKey && !codex) || out === undefined) {
     const message =
@@ -1752,22 +2439,31 @@ const main = Effect.gen(function* () {
   const config: Config = {
     apiKey,
     model: flags.model,
-    ...(codex ? { proxy: proxyConfig() } : {}),
+    ...(codex || !isPricedModel(flags["shell-model"]) ? { proxy: proxyConfig() } : {}),
     effort,
     maxSteps: flags["max-steps"] ?? (codex ? 10 : 6),
     shellModel: flags["shell-model"],
   };
   const previous =
-    flags.baseline === undefined ? [] : yield* readJsonl(flags.baseline, decodeBaselineRow);
-  const baseline = new Map(groups(previous, (row) => row.id).map(([id, r]) => [id, passRate(r)]));
+    flags.baseline === undefined ? [] : yield* readNdjson(flags.baseline, decodeBaselineRow);
+  const baseline = new Map(
+    groups(previous, (row) => row.id)
+      .map(([id, r]) => [id, passRate(r)] as const)
+      .filter(([, rate]) => !Number.isNaN(rate)),
+  );
   // Only a case that passed every baseline sample can stop a run; flaky ones are just reported.
   const passedBefore = (id: string) => baseline.get(id) === 1;
   // Before the paid runs, so a missing git cannot lose their results.
-  const commit = yield* Effect.try(() =>
-    NodeChildProcess.execFileSync("git", ["describe", "--always", "--dirty"], {
-      encoding: "utf8",
-    }).trim(),
-  ).pipe(Effect.orElseSucceed(() => "unknown"));
+  const commit = yield* Effect.sync(() =>
+    Option.getOrElse(
+      Option.liftThrowable(() =>
+        NodeChildProcess.execFileSync("git", ["describe", "--always", "--dirty"], {
+          encoding: "utf8",
+        }).trim(),
+      )(),
+      () => "unknown",
+    ),
+  );
   const inFlight = yield* Semaphore.make(flags.concurrency);
   const runOne = (testCase: McpToolUseCase) => {
     const { id, kind, pattern } = testCase;
@@ -1776,9 +2472,10 @@ const main = Effect.gen(function* () {
     const privateValues = [config.apiKey, ...Object.values(config.proxy?.headers ?? {})]
       .flatMap((value) => [value, value.replace(/^Bearer /i, "")])
       .filter(Boolean);
-    return runSample(testCase, config, baseFor(testCase)).pipe(
+    return runSample(testCase, config, baseFor(testCase), usage).pipe(
       inFlight.withPermits(1),
       Effect.matchCause({
+        // Not graded: a sample that errors is left out of pass rates, with its tokens so far.
         onFailure: (cause) => ({
           ...identity,
           ...usage,
@@ -1789,11 +2486,21 @@ const main = Effect.gen(function* () {
           ),
         }),
         onSuccess: (sample) => {
-          const checks = gradeSample(testCase.expect, sample);
-          return { ...identity, pass: checks.every((check) => check.pass), checks, ...sample };
+          const checks = gradeSample(testCase.expect, sample, pastedText(testCase));
+          const { secret } = testCase.expect;
+          return {
+            ...identity,
+            pass: checks.every((check) => check.pass),
+            checks,
+            // Not graded: how the agent handled a secret it needed, for a person reading the run.
+            ...(secret ? { secret: secretDiagnostics(sample, secret) } : {}),
+            ...sample,
+          };
         },
       }),
-      Effect.tap((row) => Effect.log(`${row.id}: ${row.pass ? "pass" : "FAIL"}`)),
+      Effect.tap((row) =>
+        Effect.log(`${row.id}: ${"error" in row ? "ERROR" : row.pass ? "pass" : "FAIL"}`),
+      ),
     );
   };
   // Without --samples, a case whose 2 samples disagree gets a 3rd to settle it.
@@ -1819,7 +2526,8 @@ const main = Effect.gen(function* () {
       runCase(testCase).pipe(
         Effect.flatMap((caseRows) => {
           rows.push(...caseRows);
-          if (!stopEarly || !passedBefore(testCase.id) || passRate(caseRows) > 0.5) {
+          // A case whose samples all errored has no rate, so it is no regression either.
+          if (!stopEarly || !passedBefore(testCase.id) || !(passRate(caseRows) <= 0.5)) {
             return Effect.void;
           }
           regressions.push(testCase.id);
@@ -1855,7 +2563,9 @@ const main = Effect.gen(function* () {
 
 if (import.meta.main) {
   main.pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, PlatformNodeCrypto.layer, FetchHttpClient.layer),
+    ),
     NodeRuntime.runMain,
   );
 }

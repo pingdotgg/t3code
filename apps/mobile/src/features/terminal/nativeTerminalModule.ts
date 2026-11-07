@@ -36,12 +36,16 @@ export interface NativeTerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
   readonly initialBuffer: string;
   readonly fontSize: number;
+  /** `[cols, rows]` of the shared PTY, or empty before the server reports one. */
+  readonly sharedGrid?: ReadonlyArray<number>;
   readonly onInput?: (event: NativeSyntheticEvent<TerminalInputEvent>) => void;
   readonly onResize?: (event: NativeSyntheticEvent<TerminalResizeEvent>) => void;
 }
 
 export interface NativeTerminalSurfaceHandle {
   readonly writeOutput: (data: string, reset: boolean) => Promise<void>;
+  /** Absent on native builds that predate it. */
+  readonly resetInput?: () => Promise<void>;
 }
 
 let cachedNativeTerminalSurfaceView: ComponentType<NativeTerminalSurfaceProps> | undefined;

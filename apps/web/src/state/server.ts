@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import {
   AVAILABLE_CONNECTION_STATE,
-  presentEnvironmentConnection,
+  presentConnectionState,
   type EnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
@@ -68,10 +68,11 @@ const primaryServerStateAtom = Atom.make((get): PrimaryServerState => {
   }
 
   const target = { environmentId, input: {} };
-  const configProjection = Option.getOrNull(
-    AsyncResult.value(get(serverEnvironment.configProjection(target))),
+  const configProjection = AsyncResult.getOrElse(
+    get(serverEnvironment.configProjection(target)),
+    () => null,
   );
-  const welcome = Option.getOrNull(AsyncResult.value(get(serverEnvironment.welcome(target))));
+  const welcome = AsyncResult.getOrElse(get(serverEnvironment.welcome(target)), () => null);
 
   return {
     config: get(serverEnvironment.configValueAtom(environmentId)),
@@ -98,8 +99,9 @@ export const primaryServerLegacyThreadMigrationAtom = Atom.make(
     if (environmentId === null) {
       return null;
     }
-    return Option.getOrNull(
-      AsyncResult.value(get(serverEnvironment.legacyThreadMigration({ environmentId, input: {} }))),
+    return AsyncResult.getOrElse(
+      get(serverEnvironment.legacyThreadMigration({ environmentId, input: {} })),
+      () => null,
     );
   },
 ).pipe(Atom.withLabel("web-primary-server-legacy-thread-migration"));
@@ -143,14 +145,14 @@ const environmentConnectionsAtom = Atom.make((get) => {
     Pick<EnvironmentPresentation, "connection" | "serverConfig">
   >();
   for (const [environmentId, entry] of get(environmentCatalog.catalogValueAtom).entries) {
-    const state = Option.getOrElse(
-      AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))),
+    const state = AsyncResult.getOrElse(
+      get(environmentCatalog.stateAtom(environmentId)),
       () => AVAILABLE_CONNECTION_STATE,
     );
     environments.set(environmentId, {
       connection:
         entry.unsupportedReason === undefined
-          ? presentEnvironmentConnection(state)
+          ? presentConnectionState(state)
           : { phase: "unsupported", error: entry.unsupportedReason, traceId: null },
       serverConfig: get(serverEnvironment.configValueAtom(environmentId)),
     });

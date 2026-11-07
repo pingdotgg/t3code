@@ -26,6 +26,8 @@ import {
   androidHeaderMenuActions,
   findHeaderMenuAction,
 } from "../../components/ui/headerMenu.android";
+import { AppBar } from "../../components/ui/AppBar";
+import { useBarOverlap } from "../../components/ui/useBarInset";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { useAppForeground } from "../../lib/appState";
 import { useHardwareBack } from "../../lib/backHandler";
@@ -58,6 +60,7 @@ export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProp
   const onClose = () => navigation.goBack();
   const { environmentId, threadId } = route.params;
   const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops a deep-linked route with a blank environment or thread off the navigator
   useEffect(() => {
     if (isBlankLink) onClose();
   }, [isBlankLink, onClose]);
@@ -87,7 +90,9 @@ export function DevicePreviewScreen({
 }) {
   const embedded = onMaximize !== undefined;
   const insets = useSafeAreaInsets();
-  // NativeColumnContent already insets the sides, so only a book fold moves the reveal handle.
+  // In a pane the stream sits below the pane's bar, which content otherwise slides under.
+  const barOverlap = useBarOverlap();
+  // NativeColumnContent already insets the sides, so only a book fold moves the hidden-controls pill.
   const handleBounds = deriveBottomControlInsets(useNativeColumnLayoutMetrics());
   const { themeVariables } = useAppearancePreferences();
   const focused = useIsFocused();
@@ -105,11 +110,13 @@ export function DevicePreviewScreen({
   const preview = selectedThreadDevicePreview(previews, selectedKey);
   const onInputConnected = async (connected: boolean) => {
     setInputConnected(connected);
-    if (connected && !embedded) setControlsVisible(false);
+    if (!connected) setControlsVisible(true);
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the focused route through the navigator once the thread has no device previews
   useEffect(() => {
     if (focused && state.data !== null && previews.length === 0) onClose();
   }, [focused, state.data, previews.length, onClose]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Accelerometer while focused to toggle controls on a shake
   useEffect(() => {
     if (!focused || !foreground || embedded) return;
     const shaken = createShakeDetector();
@@ -262,20 +269,19 @@ export function DevicePreviewScreen({
     <View className="flex-1" style={{ backgroundColor: themeVariables["--color-sheet-solid"] }}>
       {!embedded ? <StatusBar hidden animated /> : null}
       {embedded ? (
-        <View
-          className="flex-row items-center gap-1 px-2 pb-2"
-          style={{ paddingTop: Math.max(insets.top, 8) }}
-        >
-          <SheetCloseButton accessibilityLabel="Close device preview" onClose={onClose} />
-          <AppText numberOfLines={1} className="min-w-0 flex-1 font-t3-medium text-sm">
-            {preview?.name ?? "Devices"}
-          </AppText>
-          <ControlPill
-            accessibilityLabel="Maximize device"
-            icon="arrow.up.left.and.arrow.down.right"
-            onPress={() => onMaximize(preview?.key ?? null)}
+        <>
+          <AppBar
+            title={preview?.name ?? "Devices"}
+            actions={[
+              {
+                accessibilityLabel: "Maximize device",
+                icon: "arrow.up.left.and.arrow.down.right",
+                onPress: () => onMaximize(preview?.key ?? null),
+              },
+            ]}
           />
-        </View>
+          <View style={{ height: barOverlap }} />
+        </>
       ) : null}
       {preview && focused && foreground ? (
         <OpenDevicePreview
@@ -345,20 +351,23 @@ export function DevicePreviewScreen({
           </View>
         </Animated.View>
       ) : (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Show device controls"
-          accessibilityHint="Shaking the phone also shows them"
-          hitSlop={12}
-          className="absolute h-11 w-16 items-center justify-center self-center"
+        <View
+          pointerEvents="box-none"
+          className="absolute self-center"
           style={{
             top: Math.max(insets.top, 12),
             transform: [{ translateX: (handleBounds.left - handleBounds.right) / 2 }],
           }}
-          onPress={() => setControlsVisible(true)}
         >
-          <View className="h-1.5 w-10 rounded-full bg-white/40" />
-        </Pressable>
+          <GlassSurface className="flex-row items-center gap-1 p-1">
+            <SheetCloseButton accessibilityLabel="Close device preview" onClose={onClose} />
+            <ControlPill
+              accessibilityLabel="Show device controls"
+              icon="chevron.down"
+              onPress={() => setControlsVisible(true)}
+            />
+          </GlassSurface>
+        </View>
       )}
     </View>
   );
@@ -408,6 +417,7 @@ function OpenDevicePreview({
       access={access}
       platform={session.platform}
       deviceId={session.deviceId}
+      serveSimOnly={preview.serveSimOnly}
       colors={{
         background: themeVariables["--color-sheet-solid"],
         foreground: themeVariables["--color-foreground"],
