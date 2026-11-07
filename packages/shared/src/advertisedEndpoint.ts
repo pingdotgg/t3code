@@ -1,10 +1,11 @@
-import type {
-  AdvertisedEndpoint,
-  AdvertisedEndpointHostedHttpsCompatibility,
-  AdvertisedEndpointProvider,
-  AdvertisedEndpointReachability,
-  AdvertisedEndpointSource,
-  AdvertisedEndpointStatus,
+import {
+  LAN_GATEWAY_ROUTE_PREFIX,
+  type AdvertisedEndpoint,
+  type AdvertisedEndpointHostedHttpsCompatibility,
+  type AdvertisedEndpointProvider,
+  type AdvertisedEndpointReachability,
+  type AdvertisedEndpointSource,
+  type AdvertisedEndpointStatus,
 } from "@t3tools/contracts";
 
 export interface CreateAdvertisedEndpointInput {
@@ -20,6 +21,12 @@ export interface CreateAdvertisedEndpointInput {
   readonly description?: string;
 }
 
+/** The `/__t3_gateway/:id` root of a peer reached through a LAN gateway, or "" for any other URL. */
+export const gatewayPathPrefix = (url: URL): string => {
+  const [, root, peer] = url.pathname.split("/");
+  return `/${root}` === LAN_GATEWAY_ROUTE_PREFIX && peer ? `/${root}/${peer}` : "";
+};
+
 export function normalizeHttpBaseUrl(rawValue: string): string {
   const url = new URL(rawValue);
   if (url.protocol === "ws:") {
@@ -32,7 +39,8 @@ export function normalizeHttpBaseUrl(rawValue: string): string {
     throw new Error(`Endpoint must use HTTP or HTTPS. Received ${url.protocol}`);
   }
 
-  url.pathname = "/";
+  const prefix = gatewayPathPrefix(url);
+  url.pathname = prefix.length === 0 ? "/" : `${prefix}/`;
   url.search = "";
   url.hash = "";
   return url.toString();

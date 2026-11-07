@@ -5,6 +5,7 @@ import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 
 import {
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import {
   RelayConnectionRegistration,
@@ -67,9 +68,17 @@ import {
 
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
+export interface GatewayPairingPrefill {
+  readonly host: string;
+  readonly expectedEnvironmentId: EnvironmentId;
+  readonly gatewayEnvironmentId: EnvironmentId;
+  readonly peerLabel: string;
+}
+
 export function AddEnvironmentDialog({
   open,
   routeTarget,
+  gatewayPairPrefill = null,
   error,
   savedEnvironments,
   onOpenChange,
@@ -77,6 +86,7 @@ export function AddEnvironmentDialog({
 }: {
   readonly open: boolean;
   readonly routeTarget: EnvironmentPresentation | null;
+  readonly gatewayPairPrefill?: GatewayPairingPrefill | null;
   readonly error: string | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
   readonly onOpenChange: (open: boolean) => void;
@@ -110,7 +120,7 @@ export function AddEnvironmentDialog({
     return keys;
   })();
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
-  const [savedBackendHost, setSavedBackendHost] = useState("");
+  const [savedBackendHost, setSavedBackendHost] = useState(gatewayPairPrefill?.host ?? "");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
@@ -229,7 +239,14 @@ export function AddEnvironmentDialog({
 
     const result = await connectPairing({
       ...remotePairingInput,
-      ...(routeTarget ? { expectedEnvironmentId: routeTarget.environmentId } : {}),
+      ...(routeTarget
+        ? { expectedEnvironmentId: routeTarget.environmentId }
+        : gatewayPairPrefill
+          ? {
+              expectedEnvironmentId: gatewayPairPrefill.expectedEnvironmentId,
+              gatewayEnvironmentId: gatewayPairPrefill.gatewayEnvironmentId,
+            }
+          : {}),
     });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
@@ -625,12 +642,18 @@ export function AddEnvironmentDialog({
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
+            {routeTarget
+              ? `Add a route to ${routeTarget.label}`
+              : gatewayPairPrefill
+                ? `Add ${gatewayPairPrefill.peerLabel}`
+                : "Add Environment"}
           </DialogTitle>
           <DialogDescription>
             {routeTarget
               ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-              : "Pair another environment to this client."}
+              : gatewayPairPrefill
+                ? "Paste the pairing code from that machine. Traffic goes through the connected LAN gateway host."
+                : "Pair another environment to this client."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

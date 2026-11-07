@@ -1,12 +1,14 @@
 import { Atom, AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render, stubGlobal } from "../../../test/render";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import type { GatewayPairingPrefill } from "./AddEnvironmentDialog";
 
 const mocks = vi.hoisted(() => ({
   connectSshEnvironment: vi.fn<() => Promise<AtomCommandResult<void, Error>>>(async () =>
@@ -43,14 +45,19 @@ vi.mock(import("~/state/server"), async (original) => ({
 
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
 
-function Owner() {
-  const [open, setOpen] = useState(false);
+function Owner({
+  gatewayPairPrefill = null,
+}: {
+  readonly gatewayPairPrefill?: GatewayPairingPrefill | null;
+}) {
+  const [open, setOpen] = useState(gatewayPairPrefill !== null);
   const [error, setError] = useState<string | null>(null);
   return (
     <AppAtomRegistryProvider>
       <AddEnvironmentDialog
         open={open}
         routeTarget={null}
+        gatewayPairPrefill={gatewayPairPrefill}
         error={error}
         savedEnvironments={[]}
         onOpenChange={setOpen}
@@ -83,6 +90,27 @@ async function expectDefaultModeAfterReopen() {
 }
 
 describe("AddEnvironmentDialog", () => {
+  it("prefills the gateway peer host when opened from an advertisement", async () => {
+    const peer = EnvironmentId.make("env_peer");
+    const host = `https://gateway.example/__t3_gateway/${peer}/`;
+    await using _screen = await render(
+      <Owner
+        gatewayPairPrefill={{
+          host,
+          expectedEnvironmentId: peer,
+          gatewayEnvironmentId: EnvironmentId.make("env_gateway"),
+          peerLabel: "Desk",
+        }}
+      />,
+    );
+
+    await expect.element(page.getByRole("heading", { name: "Add Desk" })).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Paste the pairing code from that machine/))
+      .toBeInTheDocument();
+    await expect.element(page.getByPlaceholder("backend.example.com")).toHaveValue(host);
+  });
+
   it("reopens on Remote link after adding an SSH environment", async () => {
     using _bridge = setup();
     await using _screen = await render(<Owner />);

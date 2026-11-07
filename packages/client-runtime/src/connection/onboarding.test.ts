@@ -69,8 +69,9 @@ function layerPairingHttp(
   const fetchFn = ((input, init = {}) => {
     const url = String(input);
     calls.push({ url, init });
+    const pathname = new URL(url).pathname;
 
-    if (url.endsWith("/.well-known/t3/environment")) {
+    if (pathname.endsWith("/.well-known/t3/environment")) {
       if (options?.failDescriptor === true) {
         return Promise.resolve(
           Response.json({ message: "descriptor unavailable" }, { status: 503 }),
@@ -94,7 +95,7 @@ function layerPairingHttp(
       );
     }
 
-    if (url.endsWith("/oauth/token")) {
+    if (pathname.endsWith("/oauth/token")) {
       if (options?.failExchange === true) {
         return Promise.resolve(
           Response.json(
@@ -138,7 +139,7 @@ function layerPairingHttp(
       return gate.release.then(() => granted);
     }
 
-    if (url.endsWith("/api/auth/session")) {
+    if (pathname.endsWith("/api/auth/session")) {
       return Promise.resolve(
         Response.json({
           authenticated: true,
@@ -191,7 +192,10 @@ function layerPairingOnboarding(
       ConnectionWakeups.ConnectionWakeups,
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
     ),
-    Layer.mock(GatewayHop.GatewayHopAuthorization)({ remember: () => Effect.void }),
+    Layer.mock(GatewayHop.GatewayHopAuthorization)({
+      remember: () => Effect.void,
+      issueTicket: () => Effect.succeedSome("hop-ticket"),
+    }),
   );
   return Onboarding.layer.pipe(
     Layer.provideMerge(EnvironmentRegistry.layer.pipe(Layer.provideMerge(dependencies))),
@@ -279,6 +283,40 @@ describe("connection onboarding", () => {
       expect(tokenParams.get("client_label")).toBe("T3 Code Test");
       expect(tokenParams.get("client_device_type")).toBe("desktop");
       expect(tokenParams.get("client_os")).toBe("Test OS");
+    }),
+  );
+
+  it.effect("pairs through a LAN gateway with a hop ticket and stores the gateway host id", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const gatewayEnvironmentId = EnvironmentId.make("env_gateway");
+      const registration = yield* preparePairingRegistration({
+        host: `https://gateway.example.test/__t3_gateway/${PAIRED_ENVIRONMENT_ID}/`,
+        pairingCode: "pairing-token",
+        gatewayEnvironmentId,
+        expectedEnvironmentId: PAIRED_ENVIRONMENT_ID,
+      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
+
+      expect(registration.profile).toMatchObject({
+        httpBaseUrl: `https://gateway.example.test/__t3_gateway/${PAIRED_ENVIRONMENT_ID}/`,
+        wsBaseUrl: `wss://gateway.example.test/__t3_gateway/${PAIRED_ENVIRONMENT_ID}/`,
+        gatewayEnvironmentId,
+      });
+      expect(calls.map((call) => call.url)).toEqual([
+        `https://gateway.example.test/__t3_gateway/${PAIRED_ENVIRONMENT_ID}/.well-known/t3/environment?gatewayTicket=hop-ticket`,
+        `https://gateway.example.test/__t3_gateway/${PAIRED_ENVIRONMENT_ID}/oauth/token?gatewayTicket=hop-ticket`,
+      ]);
+    }),
+  );
+
+  it.effect("refuses a gateway path without a connected gateway host id", () =>
+    Effect.gen(function* () {
+      const error = yield* preparePairingRegistration({
+        host: `https://gateway.example.test/__t3_gateway/${PAIRED_ENVIRONMENT_ID}/`,
+        pairingCode: "pairing-token",
+      }).pipe(Effect.provide(layerPairingOnboarding()), Effect.flip);
+      expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+      expect(error.message).toContain("LAN gateway");
     }),
   );
 

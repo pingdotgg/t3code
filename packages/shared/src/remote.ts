@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { gatewayPathPrefix } from "./advertisedEndpoint.ts";
+
 const PAIRING_TOKEN_PARAM = "token";
 const HOSTED_PAIRING_HOST_PARAM = "host";
 const HOSTED_PAIRING_LABEL_PARAM = "label";
@@ -99,7 +101,8 @@ const normalizeRemoteBaseUrl = (
       protocol: url.protocol,
     });
   }
-  url.pathname = "/";
+  const prefix = gatewayPathPrefix(url);
+  url.pathname = prefix.length === 0 ? "/" : `${prefix}/`;
   url.search = "";
   url.hash = "";
   return url;
@@ -112,7 +115,8 @@ const toHttpBaseUrl = (url: URL): string => {
   } else if (next.protocol === "wss:") {
     next.protocol = "https:";
   }
-  next.pathname = "/";
+  const prefix = gatewayPathPrefix(next);
+  next.pathname = prefix.length === 0 ? "/" : `${prefix}/`;
   next.search = "";
   next.hash = "";
   return next.toString();
@@ -125,7 +129,8 @@ const toWsBaseUrl = (url: URL): string => {
   } else if (next.protocol === "https:") {
     next.protocol = "wss:";
   }
-  next.pathname = "/";
+  const prefix = gatewayPathPrefix(next);
+  next.pathname = prefix.length === 0 ? "/" : `${prefix}/`;
   next.search = "";
   next.hash = "";
   return next.toString();

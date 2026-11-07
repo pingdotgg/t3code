@@ -9,7 +9,12 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 
 import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
-import { deriveWsBaseUrl, normalizeHttpBaseUrl } from "../environment/endpoint.ts";
+import {
+  deriveWsBaseUrl,
+  gatewayPathPrefix,
+  normalizeHttpBaseUrl,
+  withGatewayTicket,
+} from "../environment/endpoint.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
@@ -32,6 +37,7 @@ import {
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
+import * as GatewayHop from "./gatewayHop.ts";
 import { connectionRoutes, routeEntry, sshTargetKey } from "./routes.ts";
 
 export interface PairingConnectionInput {
@@ -39,6 +45,8 @@ export interface PairingConnectionInput {
   readonly host?: string;
   readonly pairingCode?: string;
   readonly expectedEnvironmentId?: EnvironmentId;
+  /** When pairing through a LAN gateway, mint hop tickets against this connected host. */
+  readonly gatewayEnvironmentId?: EnvironmentId;
 }
 
 export interface SshConnectionInput {
@@ -103,14 +111,37 @@ export const preparePairingRegistration = Effect.fn(
 )(function* (input: PairingConnectionInput) {
   const target = yield* resolvePairingTarget(input);
   const presentation = yield* ClientCapabilities.ClientPresentation;
+  const gatewayPrefix = gatewayPathPrefix(new URL(target.httpBaseUrl));
+  const gatewayEnvironmentId = input.gatewayEnvironmentId;
+  if (gatewayPrefix.length > 0 && gatewayEnvironmentId === undefined) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail:
+        "Pairing through a LAN gateway needs the gateway host connected. Add the peer from Connections → Gateway peers.",
+    });
+  }
+  // Tickets are request-scoped; the saved profile keeps only the gateway path + host id.
+  const requestHttpBaseUrl =
+    gatewayEnvironmentId === undefined
+      ? target.httpBaseUrl
+      : withGatewayTicket(
+          target.httpBaseUrl,
+          yield* Effect.service(GatewayHop.GatewayHopAuthorization).pipe(
+            Effect.flatMap((hop) => hop.issueTicket(gatewayEnvironmentId)),
+          ),
+        );
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-    httpBaseUrl: target.httpBaseUrl,
+    httpBaseUrl: requestHttpBaseUrl,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   // Checked before redeeming the one-time code, so a wrong link is not spent.
   if (
     input.expectedEnvironmentId !== undefined &&
     descriptor.environmentId !== input.expectedEnvironmentId
   ) {
+    return yield* differentMachineError(descriptor.label);
+  }
+  const peerIdFromPath = gatewayPrefix.split("/")[2];
+  if (peerIdFromPath !== undefined && peerIdFromPath !== descriptor.environmentId) {
     return yield* differentMachineError(descriptor.label);
   }
   const connectionId = bearerConnectionId(descriptor.environmentId, target.httpBaseUrl);
@@ -126,6 +157,7 @@ export const preparePairingRegistration = Effect.fn(
       label: descriptor.label,
       httpBaseUrl: target.httpBaseUrl,
       wsBaseUrl: target.wsBaseUrl,
+      ...(gatewayEnvironmentId === undefined ? {} : { gatewayEnvironmentId }),
     }),
   };
   // The registry checks again under its lease; this early check keeps a refused code unspent.
@@ -139,7 +171,7 @@ export const preparePairingRegistration = Effect.fn(
     return yield* compatibilityError;
   }
   const access = yield* bootstrapRemoteBearerSession({
-    httpBaseUrl: target.httpBaseUrl,
+    httpBaseUrl: requestHttpBaseUrl,
     credential: target.credential,
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
@@ -241,6 +273,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       }),
   });
   const connectionId = entry.target.connectionId;
+  const gatewayEnvironmentId = entry.profile.value.gatewayEnvironmentId;
   return new BearerConnectionRegistration({
     target: new BearerConnectionTarget({
       environmentId: options.input.environmentId,
@@ -253,6 +286,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       label,
       httpBaseUrl,
       wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
+      ...(gatewayEnvironmentId === undefined ? {} : { gatewayEnvironmentId }),
     }),
     credential: credential.value,
   });
@@ -304,6 +338,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const gatewayHop = yield* GatewayHop.GatewayHopAuthorization;
 
   // Provisioning retains the delegated onboarding operation spans.
   return ConnectionOnboarding.of({
@@ -314,6 +349,7 @@ export const make = Effect.gen(function* () {
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(GatewayHop.GatewayHopAuthorization, gatewayHop),
     ),
     registerSsh: Effect.fnUntraced(
       function* (input) {
