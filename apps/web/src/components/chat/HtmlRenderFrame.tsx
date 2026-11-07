@@ -1,6 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
+  HTML_RENDER_MAX_FIT_HEIGHT,
   htmlRenderFileName,
   htmlRenderFrameHeight,
   type HtmlRenderReference,
@@ -76,6 +77,8 @@ export function HtmlRenderFrame(props: {
             threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={setContentHeight}
+            // Until the page reports, a remounted frame sits at the height cap.
+            fitted={contentHeight === undefined || contentHeight <= HTML_RENDER_MAX_FIT_HEIGHT}
             onFullscreenChange={onFullscreenChange}
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
