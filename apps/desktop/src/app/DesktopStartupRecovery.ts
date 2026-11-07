@@ -217,7 +217,6 @@ export const listen: Effect.Effect<
           const download = yield* updates.download;
           if (!download.completed) return;
         }
-        // Waits for a running background check; plain install would refuse.
         yield* updates.installPrepared(current.version);
         return;
       }
