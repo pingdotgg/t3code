@@ -45,12 +45,20 @@ function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }
 
-function alertAllowedForPhase(
+export function environmentEnabledOnDevice(
   preferences: RelayAgentAwarenessPreferences | null,
-  phase: string,
+  environmentId: string,
+): boolean {
+  return !preferences?.disabledEnvironmentIds?.some((disabled) => disabled === environmentId);
+}
+
+function alertAllowedForRow(
+  preferences: RelayAgentAwarenessPreferences | null,
+  row: { readonly phase: string; readonly environmentId: string },
 ): boolean {
   if (preferences === null) return true;
-  switch (phase) {
+  if (!environmentEnabledOnDevice(preferences, row.environmentId)) return false;
+  switch (row.phase) {
     case "waiting_for_approval":
       return preferences.notifyOnApproval;
     case "waiting_for_input":
@@ -74,7 +82,7 @@ export function attentionTransitionRows(input: TransitionInput) {
     (row) =>
       isAttentionPhase(row.phase) &&
       !previouslyAttention.has(rowKey(row)) &&
-      alertAllowedForPhase(input.preferences, row.phase),
+      alertAllowedForRow(input.preferences, row),
   );
 }
 
@@ -107,7 +115,7 @@ export function terminalTransitionRows(
     input.includeUnobserved,
   ).filter((row) => {
     return (
-      alertAllowedForPhase(input.preferences, row.phase) &&
+      alertAllowedForRow(input.preferences, row) &&
       isFreshTerminalNotification(row.updatedAt, input.nowMs)
     );
   });
@@ -143,10 +151,11 @@ export function alertForTerminalAggregate(input: {
 }): AgentActivityAlert | null {
   const row = input.aggregate?.activities[0];
   if (!row || (row.phase !== "completed" && row.phase !== "failed")) return null;
-  return alertAllowedForPhase(input.preferences, row.phase) ? alertForActivityRows([row]) : null;
+  return alertAllowedForRow(input.preferences, row) ? alertForActivityRows([row]) : null;
 }
 
 export function shouldAlertForActivity(input: {
+  readonly environmentId: string;
   readonly phase: RelayAgentActivityAggregateRow["phase"];
   readonly updatedAt: string;
   readonly preferences: RelayAgentAwarenessPreferences | null;
@@ -154,7 +163,7 @@ export function shouldAlertForActivity(input: {
 }): boolean {
   return (
     input.preferences?.notificationsEnabled === true &&
-    alertAllowedForPhase(input.preferences, input.phase) &&
+    alertAllowedForRow(input.preferences, input) &&
     ((input.phase !== "completed" && input.phase !== "failed") ||
       isFreshTerminalNotification(input.updatedAt, input.nowMs))
   );

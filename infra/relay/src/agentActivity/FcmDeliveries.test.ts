@@ -353,6 +353,37 @@ describe("Android delivery routing", () => {
     },
   );
 
+  it.effect("keeps a device-disabled environment off the phone until a silent re-enable", () => {
+    const h = harness();
+    const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
+    h.current.target.last_aggregate_json = encodeJson(aggregateFor([state, other]));
+    h.current.state = { ...state, phase: "waiting_for_approval" };
+    h.current.otherStates = [{ ...other, phase: "waiting_for_input" }];
+    const otherJob = { ...h.job, state: h.current.otherStates[0]! };
+    h.current.target.preferences_json = encodeJson({
+      ...preferences,
+      disabledEnvironmentIds: [other.environmentId],
+    });
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      yield* delivery.process(otherJob);
+      expect(h.sent.filter((message) => message.alert).map((message) => message.data)).toEqual([
+        expect.objectContaining({ alert_title: "Fix notifications" }),
+      ]);
+      expect(h.marked.at(-1)?.aggregate?.activities).toMatchObject([
+        { environmentId: state.environmentId },
+      ]);
+
+      h.current.target.preferences_json = encodeJson(preferences);
+      yield* delivery.enqueue({ target: h.current.target, state: null, replay: true });
+      yield* delivery.process(h.queued[0]);
+      yield* delivery.process(otherJob);
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      expect(h.marked.at(-1)?.aggregate?.activities).toHaveLength(2);
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it("gives a group a stable retry identity independent of row order", () => {
     const other = {
       ...secondState,

@@ -515,7 +515,10 @@ const make = Effect.gen(function* () {
   const apns = yield* Apns.ApnsClient;
   const activityRows = yield* AgentActivityRows.AgentActivityRows;
 
-  const userHasContentToShow = Effect.fnUntraced(function* (userId: string) {
+  const userHasContentToShow = Effect.fnUntraced(function* (
+    userId: string,
+    preferences: RelayAgentAwarenessPreferences | null,
+  ) {
     const now = yield* DateTime.now;
     return yield* activityRows.listForUser({ userId }).pipe(
       Effect.map(
@@ -524,6 +527,7 @@ const make = Effect.gen(function* () {
             activeStates,
             terminalState: null,
             nowMs: now.epochMilliseconds,
+            preferences,
           }) !== null,
       ),
       // Keep the card on persistence failures; a later sweep can retry.
@@ -725,7 +729,10 @@ const make = Effect.gen(function* () {
       input.kind === "live_activity_end" &&
       aggregate === null &&
       parsePreferences(currentTarget.preferences_json)?.liveActivitiesEnabled !== false &&
-      (yield* userHasContentToShow(input.target.user_id))
+      (yield* userHasContentToShow(
+        input.target.user_id,
+        parsePreferences(currentTarget.preferences_json),
+      ))
     ) {
       yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,

@@ -207,6 +207,7 @@ const make = Effect.gen(function* () {
         activeStates: states,
         terminalState: null,
         nowMs: now.epochMilliseconds,
+        preferences: preferences.value,
       });
       const previousAggregate = target.last_aggregate_json
         ? Option.getOrNull(decodePreviousActivity(target.last_aggregate_json))
