@@ -812,6 +812,44 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("backs off polling a steady command and still sees it exit within five seconds", () =>
+    Effect.gen(function* () {
+      const shell = { pid: 9000, ppid: 1, name: "zsh" };
+      let table = [shell, { pid: 200, ppid: 9000, name: "node" }];
+      let queries = 0;
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        subprocessPollIntervalMs: 1_000,
+        processKillGraceMs: 0,
+        processTable: Effect.sync(() => {
+          queries += 1;
+          return table;
+        }),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const activity = Effect.map(getEvents, (events) =>
+        events.flatMap((event) =>
+          event.type === "activity" ? [event.hasRunningSubprocess ? event.label : null] : [],
+        ),
+      );
+      yield* manager.open(openInput());
+
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* activity).toEqual(["node"]);
+      expect(queries).toBeLessThanOrEqual(125);
+
+      table = [...table, { pid: 201, ppid: 200, name: "esbuild" }];
+      ptyAdapter.processes[0]!.emitData("rebuilt\r\n");
+      queries = 0;
+      yield* TestClock.adjust("1 second");
+      expect(queries).toBe(1);
+
+      yield* TestClock.adjust("1 minute");
+      table = [shell];
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* activity).toEqual(["node", null]);
+      yield* manager.close({ threadId: "thread-1" });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   // Answers process-table queries after `queryDuration`, honoring the caller's
   // timeout the way ProcessRunner's `timedOutResult` mode does.
   const slowProcessTable = (
