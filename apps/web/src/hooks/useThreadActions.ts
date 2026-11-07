@@ -330,6 +330,7 @@ export function useThreadActions() {
   });
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
+  const confirmThreadArchive = useClientSettings((settings) => settings.confirmThreadArchive);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
@@ -921,6 +922,25 @@ export function useThreadActions() {
       (result) => result._tag === "Success",
     );
 
+  const confirmAndArchiveThread = async (
+    target: ScopedThreadRef,
+    opts: { onArchived?: () => void } = {},
+  ) => {
+    const permissionFailure = threadOperationFailure(target);
+    if (permissionFailure) return permissionFailure;
+    const localApi = readLocalApi();
+    const resolved = resolveThreadTarget(target);
+    if (!resolved) return AsyncResult.success(undefined);
+    if (confirmThreadArchive && localApi) {
+      const confirmation = await settlePromise(() =>
+        localApi.dialogs.confirm(`Archive thread "${resolved.thread.title}"?`),
+      );
+      if (confirmation._tag === "Failure") return confirmation;
+      if (!confirmation.value) return AsyncResult.success(undefined);
+    }
+    return archiveThread(target, opts);
+  };
+
   const confirmAndDeleteThread = async (target: ScopedThreadRef) => {
     const permissionFailure = threadOperationFailure(target);
     if (permissionFailure) return permissionFailure;
@@ -951,6 +971,7 @@ export function useThreadActions() {
 
   return {
     archiveThread,
+    confirmAndArchiveThread,
     unarchiveThread,
     deleteThread,
     confirmAndDeleteThread,

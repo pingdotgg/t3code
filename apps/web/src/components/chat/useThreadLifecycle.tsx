@@ -177,7 +177,14 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   } = input;
   const navigate = useNavigate();
   const router = useRouter();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const {
+    settleThread,
+    pinThread,
+    confirmAndUnpinThread,
+    confirmAndArchiveThread,
+    confirmAndDeleteThread,
+  } = useThreadActions();
+  const destructiveShortcutPending = useRef(false);
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -653,6 +660,41 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       );
     };
   const shortcuts = {
+    "thread.archive": ({ event }) => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
+      if (event.repeat || destructiveShortcutPending.current) return;
+      destructiveShortcutPending.current = true;
+      let didArchive = false;
+      void confirmAndArchiveThread(activeThreadRef, {
+        onArchived: () => {
+          didArchive = true;
+        },
+      })
+        .then((result) =>
+          toastThreadActionFailure(
+            didArchive ? "Thread archived, but navigation failed" : "Failed to archive thread",
+          )(result),
+        )
+        .finally(() => {
+          destructiveShortcutPending.current = false;
+        });
+    },
+    "thread.delete": ({ event }) => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
+      if (event.repeat || destructiveShortcutPending.current) return;
+      destructiveShortcutPending.current = true;
+      const target = activeThreadRef;
+      void confirmAndDeleteThread(target)
+        .then((result) => {
+          if (readThreadShell(target) !== null)
+            toastThreadActionFailure("Failed to delete thread")(result);
+        })
+        .finally(() => {
+          destructiveShortcutPending.current = false;
+        });
+    },
     "thread.settle": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;

@@ -1045,6 +1045,8 @@ function useNewKeybindingDraft({
   onSave: (input: ServerUpsertKeybindingInput) => void;
 }) {
   const [commandDraft, setCommandDraft] = useState<KeybindingCommand | "">("");
+  const [hasAutomaticWhen, setHasAutomaticWhen] = useState(false);
+  const [hasEditedWhen, setHasEditedWhen] = useState(false);
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
     keyDraft: "",
     whenDraft: undefined,
@@ -1089,7 +1091,19 @@ function useNewKeybindingDraft({
 
   return {
     commandDraft,
-    setCommandDraft,
+    setCommandDraft: (command: KeybindingCommand) => {
+      setCommandDraft(command);
+      const needsTerminalGuard = command === "thread.archive" || command === "thread.delete";
+      if (needsTerminalGuard && !whenDraft && !hasEditedWhen) {
+        setDraft({
+          whenDraft: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
+        });
+        setHasAutomaticWhen(true);
+      } else if (!needsTerminalGuard && hasAutomaticWhen) {
+        setDraft({ whenDraft: undefined });
+        setHasAutomaticWhen(false);
+      }
+    },
     keyDraft,
     whenDraft,
     whenDraftExpression,
@@ -1098,6 +1112,11 @@ function useNewKeybindingDraft({
     commandLabelText,
     canSave,
     setDraft,
+    setWhenDraft: (whenDraft: KeybindingWhenNode | undefined) => {
+      setHasAutomaticWhen(false);
+      setHasEditedWhen(true);
+      setDraft({ whenDraft });
+    },
     save,
     captureKeybinding,
   };
@@ -1182,7 +1201,7 @@ function NewKeybindingWhen({
       expression={draft.whenDraftExpression}
       value={draft.whenDraft}
       variables={variables}
-      onChange={(whenDraft) => draft.setDraft({ whenDraft })}
+      onChange={draft.setWhenDraft}
       onValidityChange={(isWhenDraftValid) => draft.setDraft({ isWhenDraftValid })}
     />
   );

@@ -125,3 +125,59 @@ it("re-enables Save when a When editor closes on an expression it could not pars
   await expect.element(expression).toHaveValue("terminalFocus");
   await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });
+
+it("clears only the automatic terminal guard when changing commands", async () => {
+  await using screen = await render(
+    <RegistryProvider>
+      <KeybindingsSettingsPanel />
+    </RegistryProvider>,
+  );
+  await screen.getByRole("button", { name: "Add keybinding" }).click();
+  const select = screen.getByRole("combobox");
+  const newWhenText = () =>
+    select
+      .element()
+      .closest('[data-slot="settings-row"]')
+      ?.querySelector('[aria-label^="Edit when clause"]')?.textContent;
+  await select.click();
+  await page.getByRole("option", { name: "Thread: Archive" }).click();
+  await expect
+    .element(screen.getByRole("button", { name: "Edit when clause for Thread: Archive" }))
+    .toHaveTextContent("!terminalFocus");
+
+  await select.click();
+  await page.getByRole("option", { name: "Terminal: Toggle" }).click();
+  await vi.waitFor(() => expect(newWhenText()).toContain("Always"));
+
+  await select.click();
+  await page.getByRole("option", { name: "Thread: Delete" }).click();
+  const when = screen.getByRole("button", { name: "Edit when clause for Thread: Delete" });
+  await when.click();
+  const expression = screen.getByRole("textbox", { name: "When expression" });
+  await userEvent.clear(expression);
+  await userEvent.type(expression, "editorFocus");
+  await userEvent.keyboard("{Escape}");
+  await select.click();
+  await page.getByRole("option", { name: "Terminal: Toggle" }).click();
+  await vi.waitFor(() => expect(newWhenText()).toContain("editorFocus"));
+});
+
+it("preserves an explicitly cleared condition when changing commands", async () => {
+  await using screen = await render(
+    <RegistryProvider>
+      <KeybindingsSettingsPanel />
+    </RegistryProvider>,
+  );
+  await screen.getByRole("button", { name: "Add keybinding" }).click();
+  const select = screen.getByRole("combobox");
+  await select.click();
+  await page.getByRole("option", { name: "Thread: Archive" }).click();
+  await screen.getByRole("button", { name: "Edit when clause for Thread: Archive" }).click();
+  await userEvent.clear(screen.getByRole("textbox", { name: "When expression" }));
+  await userEvent.keyboard("{Escape}");
+  await select.click();
+  await page.getByRole("option", { name: "Thread: Delete" }).click();
+  await expect
+    .element(screen.getByRole("button", { name: "Edit when clause for Thread: Delete" }))
+    .toHaveTextContent("Always");
+});

@@ -83,8 +83,8 @@ export function useThreadActionMenu(input: {
     pinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
-    archiveThread,
-    deleteThread,
+    confirmAndArchiveThread,
+    confirmAndDeleteThread,
     markThreadUnread,
     turnThreadIntoProject,
   } = useThreadActions();
@@ -92,8 +92,6 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
-  const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
-  const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
@@ -304,14 +302,8 @@ export function useThreadActionMenu(input: {
           copyThreadIdToClipboard(thread.id, { threadId: thread.id });
           return;
         case "archive": {
-          if (confirmThreadArchive) {
-            const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(`Archive thread "${thread.title}"?`),
-            );
-            if (confirmed._tag === "Failure" || !confirmed.value) return;
-          }
           let didArchive = false;
-          const result = await archiveThread(threadRef, {
+          const result = await confirmAndArchiveThread(threadRef, {
             onArchived: () => {
               didArchive = true;
             },
@@ -325,19 +317,7 @@ export function useThreadActionMenu(input: {
           return;
         }
         case "delete": {
-          if (confirmThreadDelete) {
-            const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(
-                [
-                  `Delete thread "${thread.title}"?`,
-                  "This permanently clears conversation history for this thread.",
-                ].join("\n"),
-                { variant: "destructive" },
-              ),
-            );
-            if (confirmed._tag === "Failure" || !confirmed.value) return;
-          }
-          const deleted = await deleteThread(threadRef);
+          const deleted = await confirmAndDeleteThread(threadRef);
           if (
             deleted._tag === "Failure" &&
             !isAtomCommandInterrupted(deleted) &&

@@ -130,8 +130,8 @@ vi.mock("./useThreadActions", () => ({
         "unsnoozeThread",
         "pinThread",
         "confirmAndUnpinThread",
-        "archiveThread",
-        "deleteThread",
+        "confirmAndArchiveThread",
+        "confirmAndDeleteThread",
       ].map((action) => [
         action,
         async () => {
