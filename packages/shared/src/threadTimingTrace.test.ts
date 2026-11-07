@@ -153,6 +153,44 @@ describe("deriveThreadTimingTrace", () => {
     expect(trace!.totalMs).toBe(30_000);
   });
 
+  it("counts overlapping wait spans once per turn", () => {
+    const trace = deriveThreadTimingTrace({
+      runs: [
+        run({
+          id: "r1",
+          ordinal: 1,
+          requestedAt: "2026-05-22T12:00:00.000Z",
+          startedAt: "2026-05-22T12:00:00.000Z",
+          completedAt: "2026-05-22T12:00:20.000Z",
+        }),
+      ],
+      turnItems: [
+        item({
+          id: "wait-a" as TurnItemId,
+          type: "approval_request",
+          runId: "r1" as RunId,
+          startedAt: utc("2026-05-22T12:00:00.000Z"),
+          completedAt: utc("2026-05-22T12:00:10.000Z"),
+          requestId: "req-a" as never,
+          requestKind: "command" as never,
+        }),
+        item({
+          id: "wait-b" as TurnItemId,
+          type: "approval_request",
+          runId: "r1" as RunId,
+          startedAt: utc("2026-05-22T12:00:05.000Z"),
+          completedAt: utc("2026-05-22T12:00:15.000Z"),
+          requestId: "req-b" as never,
+          requestKind: "command" as never,
+        }),
+      ],
+      nowMs: NOW,
+    });
+
+    expect(trace!.turns[0]!.waitMs).toBe(15_000);
+    expect(trace!.turns[0]!.workMs).toBe(5_000);
+  });
+
   it("extends an active run to nowMs", () => {
     const trace = deriveThreadTimingTrace({
       runs: [
