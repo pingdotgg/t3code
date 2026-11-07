@@ -85,7 +85,7 @@ export const CursorProviderCapabilitiesV2 = {
   threads: {
     canCreateEmptyThread: true,
     canReadThreadSnapshot: true,
-    canRollbackThread: false,
+    canRollbackThread: true,
     canForkThread: false,
     canForkFromTurn: false,
     canForkFromSubagentThread: false,
@@ -153,8 +153,9 @@ export const CursorProviderCapabilitiesV2 = {
   checkpointing: {
     appCanCheckpointFilesystem: true,
     supportsNestedCheckpointScopes: true,
+    // SDK cannot truncate; rollback clears the native agent and the next turn hands off kept turns.
     providerCanRollbackConversation: false,
-    providerRollbackReturnsSnapshot: false,
+    providerRollbackReturnsSnapshot: true,
     providerCanReadConversationSnapshot: true,
   },
   identity: {
@@ -2619,7 +2620,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 runtimePolicy: threadInput.runtimePolicy,
               });
               const now = yield* DateTime.now;
-              return makeProviderThread({
+              const created = makeProviderThread({
                 idAllocator,
                 providerInstanceId: adapterOptions.instanceId,
                 appThreadId: threadInput.threadId,
@@ -2627,6 +2628,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 nativeThreadId: opened.nativeThreadId,
                 now,
               });
+              // Adoption after rollback clears the native ref; keep the stored row id.
+              return threadInput.existingProviderThread === undefined
+                ? created
+                : { ...created, id: threadInput.existingProviderThread.id };
             },
             (effect, threadInput) =>
               effect.pipe(
@@ -2801,15 +2806,49 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ),
               ),
           ),
-          rollbackThread: (rollbackInput) =>
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterRollbackThreadError({
-                driver: CursorAgentSdk.CURSOR_PROVIDER,
-                providerThreadId: rollbackInput.providerThread.id,
-                checkpointId: rollbackInput.target.checkpointId,
-                cause: "Cursor Agent SDK does not expose conversation rollback.",
-              }),
-            ),
+          // The SDK cannot truncate; the next turn creates an agent and hands it the kept turns.
+          rollbackThread: Effect.fn("CursorAdapterV2.rollbackThread")(
+            function* (rollbackInput: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) {
+              const currentTurn = yield* Ref.get(activeTurn);
+              if (currentTurn !== null) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: `Cannot roll back Cursor provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
+                });
+              }
+              const existing = yield* Ref.get(liveAgent);
+              if (existing !== null) {
+                yield* existing.session.close.pipe(Effect.ignore);
+                yield* Ref.set(liveAgent, null);
+              }
+              yield* Ref.set(told, null);
+              const now = yield* DateTime.now;
+              return {
+                providerThread: {
+                  ...rollbackInput.providerThread,
+                  nativeThreadRef: null,
+                  nativeConversationHeadRef: null,
+                  status: "idle" as const,
+                  updatedAt: now,
+                },
+                providerTurns: [],
+                messages: [],
+                runtimeRequests: [],
+              };
+            },
+            (effect, rollbackInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      providerThreadId: rollbackInput.providerThread.id,
+                      checkpointId: rollbackInput.target.checkpointId,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
           forkThread: (forkInput) =>
             Effect.fail(
               new ProviderAdapter.ProviderAdapterForkThreadError({
