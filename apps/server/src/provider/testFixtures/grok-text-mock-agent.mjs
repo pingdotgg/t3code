@@ -12,6 +12,17 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
     NodeFS.appendFileSync(process.env.T3_ACP_REQUEST_LOG_PATH, `${line}\n`);
   }
   if (request.id === undefined) continue;
+  if (request.method === "session/prompt" && process.env.T3_ACP_PROMPT_ERROR_MESSAGE) {
+    write({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: {
+        code: Number(process.env.T3_ACP_PROMPT_ERROR_CODE ?? -32003),
+        message: process.env.T3_ACP_PROMPT_ERROR_MESSAGE,
+      },
+    });
+    continue;
+  }
   let result;
   switch (request.method) {
     case "initialize":

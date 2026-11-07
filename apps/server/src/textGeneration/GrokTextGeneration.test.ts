@@ -133,4 +133,59 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
         }),
     ),
   );
+
+  it.effect("maps ACP failures to safe details and preserves their cause", () =>
+    Effect.gen(function* () {
+      for (const [code, detail] of [
+        [-32003, "Grok usage limit reached. Try again later."],
+        [-32000, "Grok authentication is required."],
+        [-32603, "Grok ACP request failed."],
+        [-32602, "Grok ACP request failed."],
+      ] as const) {
+        yield* withFakeAcpGrok(
+          {
+            T3_ACP_PROMPT_ERROR_MESSAGE: "private provider payload " + "x".repeat(4096),
+            T3_ACP_PROMPT_ERROR_CODE: String(code),
+          },
+          (textGeneration) =>
+            Effect.gen(function* () {
+              const error = yield* textGeneration
+                .generateThreadTitle({
+                  cwd: process.cwd(),
+                  message: "the lint job is red",
+                  modelSelection: createModelSelection(
+                    ProviderInstanceId.make("grok"),
+                    "grok-mock-alt",
+                  ),
+                })
+                .pipe(Effect.flip);
+              expect(error.detail).toBe(detail);
+              expect(error.cause).toMatchObject({
+                code,
+                errorMessage: "private provider payload " + "x".repeat(4096),
+              });
+            }),
+        );
+      }
+    }),
+  );
+
+  it.effect("explains rejected model settings without copying provider text", () =>
+    withFakeAcpGrok({}, (textGeneration) =>
+      Effect.gen(function* () {
+        const error = yield* textGeneration
+          .generateThreadTitle({
+            cwd: process.cwd(),
+            message: "the lint job is red",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("grok"),
+              "grok-mock-missing",
+            ),
+          })
+          .pipe(Effect.flip);
+        expect(error.cause).toMatchObject({ code: -32602, errorMessage: "Unknown Grok model" });
+        expect(error.detail).toBe("Grok rejected the text generation model settings.");
+      }),
+    ),
+  );
 });
