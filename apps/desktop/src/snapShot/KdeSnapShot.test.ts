@@ -8,10 +8,8 @@ const execute = vi.hoisted(() => vi.fn());
 const startEffects = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ execFile: execute }));
 vi.mock("./NativeCaptureFeedback.ts", () => ({ startNativeCaptureFeedback: startEffects }));
-vi.mock("electron", () => ({
-  nativeImage: {
-    createFromBuffer: () => ({ isEmpty: () => false, getSize: () => ({ width: 2, height: 1 }) }),
-  },
+vi.mock("./LinuxCaptureResize.ts", () => ({
+  resizeLinuxCaptureInRenderer: async (png: Buffer) => png,
 }));
 import { KdeCaptureSetup, captureKdeWindow, kdeCapturePaths } from "./KdeSnapShot.ts";
 
