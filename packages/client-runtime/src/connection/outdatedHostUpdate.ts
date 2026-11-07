@@ -24,6 +24,7 @@ import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { makeWsRpcProtocolClient, PING_TIMEOUT } from "../rpc/protocol.ts";
 import { isLegacyUpdateHandoffLoss, resolveServerUpdateProgressResult } from "../state/server.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
+import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import {
@@ -95,22 +96,20 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
 
     // A host updated by hand is already compatible, and a bare socket would be
     // rejected with 426, so there is nothing to update.
-    if (isCompatibleDescriptor(descriptor)) {
+    const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
+    if (compatibilityError === null) {
       yield* switchBackOn;
       return { targetVersion: descriptor.serverVersion };
     }
 
-    const capabilities = descriptor.capabilities;
-    if (
-      capabilities.serverSelfUpdate === undefined ||
-      (capabilities.serverSelfUpdate === "desktop-managed" &&
-        capabilities.desktopAppUpdate !== true)
-    ) {
+    if (compatibilityError.serverUpdateRequired !== true) {
       return yield* new OutdatedHostUpdateError({
         environmentId,
-        message: `Update T3 Code on ${descriptor.label} manually; it cannot update itself.`,
+        message: compatibilityError.message,
       });
     }
+
+    const capabilities = descriptor.capabilities;
 
     const result = yield* Effect.scoped(
       Effect.gen(function* () {

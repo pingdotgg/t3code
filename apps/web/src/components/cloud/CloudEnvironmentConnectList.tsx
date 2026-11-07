@@ -1,5 +1,6 @@
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
+  type ConnectionCatalogEntry,
   type EnvironmentConnectionPresentation,
   RelayConnectionRegistration,
   RelayConnectionTarget,
@@ -20,15 +21,19 @@ import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
+import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 
+import { APP_VERSION } from "~/branding";
 import { environmentCatalog } from "~/connection/catalog";
 import { cn } from "~/lib/utils";
 import { relayEnvironmentDiscovery } from "~/state/relay";
+import { serverEnvironment } from "~/state/server";
 import { useRelayEnvironmentDiscovery } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { OutdatedServerUpdateAction, serverUpdateStageLabel } from "../ServerUpdateAction";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { Checkbox } from "../ui/checkbox";
@@ -40,11 +45,56 @@ import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnec
 
 const EMPTY_DISCOVERY_REFRESH_INTERVAL_MS = 5_000;
 
-function discoveredCompatibilityError(
+function cloudEnvironmentCompatibility(
   status: Option.Option<RelayEnvironmentStatusResponse> | undefined,
+  saved?: SavedCloudEnvironmentConnection,
 ) {
   const descriptor = status === undefined ? undefined : Option.getOrNull(status)?.descriptor;
-  return descriptor === undefined ? null : orchestrationProtocolCompatibilityError(descriptor);
+  // The runtime owns a saved server's compatibility. It knows which route a
+  // rejection came from and keeps a newer socket rejection over replayed discovery.
+  if (saved !== undefined) {
+    const updatable = saved.entry?.serverUpdateRequired === true;
+    const unsupported = updatable || saved.connection.phase === "unsupported";
+    return {
+      descriptor,
+      unsupported,
+      updatable,
+      blocked: unsupported && !updatable,
+      detail: unsupported ? saved.connection.error : null,
+    };
+  }
+  const error =
+    descriptor === undefined ? null : orchestrationProtocolCompatibilityError(descriptor);
+  const updatable = error?.serverUpdateRequired === true;
+  return {
+    descriptor,
+    unsupported: error !== null,
+    updatable,
+    blocked: error !== null && !updatable,
+    detail: error?.message ?? null,
+  };
+}
+
+function OutdatedServerRowUpdate(props: {
+  readonly environmentId: EnvironmentId;
+  readonly serverLabel: string;
+  readonly fromVersion: string | undefined;
+}) {
+  const state = useAtomValue(serverEnvironment.updateStateAtom(props.environmentId));
+  if (state.status === "running") {
+    return (
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {serverUpdateStageLabel(state.stage)}
+      </span>
+    );
+  }
+  return (
+    <OutdatedServerUpdateAction
+      {...props}
+      targetVersion={APP_VERSION}
+      label={state.status === "failed" ? "Retry update" : "Update"}
+    />
+  );
 }
 
 export interface SavedCloudEnvironmentConnection {
@@ -52,6 +102,7 @@ export interface SavedCloudEnvironmentConnection {
   readonly connection: EnvironmentConnectionPresentation;
   readonly relayManaged: boolean;
   readonly serverConfig?: Pick<ServerConfig, "environment"> | null;
+  readonly entry?: Partial<Pick<ConnectionCatalogEntry, "serverUpdateRequired" | "enabled">>;
 }
 
 function RemoteEnvironmentRowsSkeleton() {
@@ -93,6 +144,7 @@ export function CloudEnvironmentConnectRows({
   const registerEnvironment = useAtomCommand(environmentCatalog.register, {
     reportFailure: false,
   });
+  const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled);
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
@@ -137,12 +189,11 @@ export function CloudEnvironmentConnectRows({
   }, [refreshRelayEnvironments, refreshWhileEmpty, onDiscoveryReady]);
 
   const connectEnvironment = async (environment: RelayClientEnvironmentRecord) => {
-    if (
-      discoveredCompatibilityError(
-        environmentsState.environments.get(environment.environmentId)?.status,
-      ) !== null
-    )
-      return false;
+    const { blocked } = cloudEnvironmentCompatibility(
+      environmentsState.environments.get(environment.environmentId)?.status,
+      savedById.get(environment.environmentId),
+    );
+    if (blocked) return false;
     setConnectingEnvironmentIds((current) => new Set([...current, environment.environmentId]));
     const result = await connectRelayEnvironment(environment);
     setConnectingEnvironmentIds((current) => {
@@ -202,12 +253,10 @@ export function CloudEnvironmentConnectRows({
         if (!isVisibleEnvironment(environment.environmentId)) continue;
         const id = environment.environmentId;
         if (availability === "checking") continue;
-        if (
-          discoveredCompatibilityError(status) !== null ||
-          savedById.get(id)?.connection.phase === "unsupported"
-        ) {
+        const { unsupported, blocked } = cloudEnvironmentCompatibility(status, savedById.get(id));
+        if (unsupported) {
           seen.add(id);
-          if (selection.selectedIds.has(id)) selection.onChange(id, false);
+          if (blocked && selection.selectedIds.has(id)) selection.onChange(id, false);
           continue;
         }
         if (seen.has(id)) continue;
@@ -308,11 +357,13 @@ export function CloudEnvironmentConnectRows({
 
   return visibleEnvironments.map(({ environment, availability, error, status }) => {
     const savedEnvironment = savedById.get(environment.environmentId);
-    const compatibilityError = discoveredCompatibilityError(status);
-    const unsupported =
-      compatibilityError !== null || savedEnvironment?.connection.phase === "unsupported";
-    const unsupportedDetail =
-      compatibilityError?.message ?? savedEnvironment?.connection.error ?? null;
+    const {
+      descriptor,
+      unsupported,
+      detail: unsupportedDetail,
+      updatable,
+      blocked,
+    } = cloudEnvironmentCompatibility(status, savedEnvironment);
     const savedConnection = unsupported
       ? presentSavedCloudEnvironmentConnection({
           phase: "unsupported",
@@ -323,7 +374,14 @@ export function CloudEnvironmentConnectRows({
         ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
         : null;
     const relayStatus = status === undefined ? null : Option.getOrNull(status);
-    const descriptor = relayStatus?.descriptor;
+    const updateAction =
+      updatable && savedEnvironment ? (
+        <OutdatedServerRowUpdate
+          environmentId={environment.environmentId}
+          serverLabel={`${environment.label} server`}
+          fromVersion={descriptor?.serverVersion}
+        />
+      ) : null;
     const offlineReason =
       availability === "offline" && relayStatus !== null
         ? relayOfflineReasonMessage(relayStatus)
@@ -352,7 +410,7 @@ export function CloudEnvironmentConnectRows({
       : "Not added";
     const statusText =
       unsupported && !savedEnvironment
-        ? `T3 Connect · ${notAdded} · Client not supported`
+        ? `T3 Connect · ${notAdded} · ${updatable ? "Server update required" : "Client not supported"}`
         : offlineReason !== null
           ? offlineReason
           : savedConnection
@@ -372,14 +430,20 @@ export function CloudEnvironmentConnectRows({
           className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 has-disabled:cursor-default"
         >
           <Checkbox
-            checked={!unsupported && selection.selectedIds.has(environment.environmentId)}
-            disabled={unsupported || connectingEnvironmentIds.has(environment.environmentId)}
+            checked={!blocked && selection.selectedIds.has(environment.environmentId)}
+            disabled={blocked || connectingEnvironmentIds.has(environment.environmentId)}
             onCheckedChange={async (checked) => {
-              if (unsupported) return;
+              if (blocked) return;
               selection.onChange(environment.environmentId, checked);
               if (checked && !savedEnvironment) {
                 const connected = await connectEnvironment(environment);
                 if (!connected) selection.onChange(environment.environmentId, false);
+              } else if (checked && !unsupported && savedEnvironment?.entry?.enabled === false) {
+                const result = await setEnvironmentEnabled({
+                  environmentId: environment.environmentId,
+                  enabled: true,
+                });
+                if (result._tag !== "Success") selection.onChange(environment.environmentId, false);
               }
             }}
           />
@@ -396,27 +460,31 @@ export function CloudEnvironmentConnectRows({
               </span>
             ) : null}
           </span>
-          <Tooltip>
-            <TooltipTrigger
-              render={<span tabIndex={0} />}
-              className={cn(
-                "max-w-[45%] shrink-0 truncate text-xs",
-                savedConnection?.tone === "error" ? "text-destructive" : "text-muted-foreground",
-              )}
-            >
-              {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Connecting…"
-                : (savedConnection?.buttonLabel ??
-                  (availability === "online"
-                    ? "Available"
-                    : availability === "offline"
-                      ? "Offline"
-                      : availability === "error"
-                        ? "Unavailable"
-                        : "Checking…"))}
-            </TooltipTrigger>
-            <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
-          </Tooltip>
+          {updateAction ?? (
+            <Tooltip>
+              <TooltipTrigger
+                render={<span tabIndex={0} />}
+                className={cn(
+                  "max-w-[45%] shrink-0 truncate text-xs",
+                  savedConnection?.tone === "error" ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                {connectingEnvironmentIds.has(environment.environmentId)
+                  ? "Connecting…"
+                  : updatable && !savedEnvironment
+                    ? "Server update required"
+                    : (savedConnection?.buttonLabel ??
+                      (availability === "online"
+                        ? "Available"
+                        : availability === "offline"
+                          ? "Offline"
+                          : availability === "error"
+                            ? "Unavailable"
+                            : "Checking…"))}
+              </TooltipTrigger>
+              <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
+            </Tooltip>
+          )}
         </label>
       );
     }
@@ -469,32 +537,33 @@ export function CloudEnvironmentConnectRows({
               {statusText}
             </p>
           </div>
-          {unsupported && !savedEnvironment ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
-                <Button size="sm" disabled>
-                  Add
-                </Button>
-              </TooltipTrigger>
-              <TooltipPopup>{unsupportedDetail ?? "Client not supported"}</TooltipPopup>
-            </Tooltip>
-          ) : savedConnection ? (
-            <Button size="sm" variant="outline" disabled>
-              {savedConnection.buttonLabel}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              disabled={connectingEnvironmentIds.size > 0}
-              onClick={() => void connectEnvironment(environment)}
-            >
-              {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Adding…"
-                : savedWithoutRelay.has(environment.environmentId)
-                  ? "Add route"
-                  : "Add"}
-            </Button>
-          )}
+          {updateAction ??
+            (savedEnvironment && savedConnection ? (
+              <Button size="sm" variant="outline" disabled>
+                {savedConnection.buttonLabel}
+              </Button>
+            ) : blocked ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
+                  <Button size="sm" disabled>
+                    Add
+                  </Button>
+                </TooltipTrigger>
+                <TooltipPopup>{unsupportedDetail ?? "Client not supported"}</TooltipPopup>
+              </Tooltip>
+            ) : (
+              <Button
+                size="sm"
+                disabled={connectingEnvironmentIds.size > 0}
+                onClick={() => void connectEnvironment(environment)}
+              >
+                {connectingEnvironmentIds.has(environment.environmentId)
+                  ? "Adding…"
+                  : savedWithoutRelay.has(environment.environmentId)
+                    ? "Add route"
+                    : "Add"}
+              </Button>
+            ))}
         </div>
       </div>
     );

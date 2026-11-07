@@ -254,7 +254,9 @@ function CloudEnvironmentRow(props: {
         }
       }}
       onToggleError={props.onToggleError}
-      disabled={presentation.connectionState === "unsupported"}
+      disabled={
+        presentation.connectionState === "unsupported" && !presentation.serverUpdateRequired
+      }
       statusText={presentation.statusText}
       value={false}
     />
