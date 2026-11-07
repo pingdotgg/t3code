@@ -17,7 +17,7 @@ import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
-import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
+import { configureOutboundFetch, extendConnectionAttemptTimeout } from "./outboundHttp.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
 import { threadCommand } from "./cli/thread.ts";
@@ -114,7 +114,7 @@ export const cli = makeCli();
 
 export function runCli() {
   extendConnectionAttemptTimeout();
-  keepOutboundFetchOnHttp1();
+  configureOutboundFetch();
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,
     Effect.provide(layerCliRuntime),
