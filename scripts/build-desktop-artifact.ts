@@ -1168,7 +1168,7 @@ export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErro
   {},
 ) {
   override get message(): string {
-    return "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.";
+    return "T3CODE_MACOS_PROVISIONING_PROFILE must point to a provisioning profile.";
   }
 }
 
@@ -1177,7 +1177,7 @@ export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedErro
   {},
 ) {
   override get message(): string {
-    return "T3CODE_CLERK_PUBLISHABLE_KEY or T3CODE_CLERK_PASSKEY_RP_DOMAINS is required for signed macOS passkey builds.";
+    return "The provisioning profile grants Associated Domains, so T3CODE_CLERK_PUBLISHABLE_KEY or T3CODE_CLERK_PASSKEY_RP_DOMAINS is required.";
   }
 }
 
@@ -1192,22 +1192,12 @@ export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedError<Inv
   }
 }
 
-export class MissingMacPasskeyRpDomainError extends Schema.TaggedError<MissingMacPasskeyRpDomainError>()(
-  "MissingMacPasskeyRpDomainError",
-  {},
-) {
-  override get message(): string {
-    return "At least one Clerk passkey RP domain is required.";
-  }
-}
-
 export const MacPasskeySigningConfigurationError = Schema.Union([
   InvalidMacPasskeyRpDomainError,
   InvalidAppleTeamIdError,
   MissingMacPasskeyProvisioningProfileError,
   MissingMacPasskeyDomainConfigurationError,
   InvalidMacPasskeyPublishableKeyError,
-  MissingMacPasskeyRpDomainError,
 ]);
 export type MacPasskeySigningConfigurationError = typeof MacPasskeySigningConfigurationError.Type;
 export const isMacPasskeySigningConfigurationError = Schema.is(MacPasskeySigningConfigurationError);
@@ -1267,14 +1257,13 @@ export function resolveMacPasskeySigningConfiguration(
   }
 
   const configuredRpDomains = env.T3CODE_CLERK_PASSKEY_RP_DOMAINS?.trim();
+  const publishableKey = env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim();
   let rpDomains: readonly string[];
   if (configuredRpDomains) {
     rpDomains = configuredRpDomains.split(",").map(normalizePasskeyRpDomain);
+  } else if (!publishableKey) {
+    rpDomains = [];
   } else {
-    const publishableKey = env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim();
-    if (!publishableKey) {
-      throw new MissingMacPasskeyDomainConfigurationError();
-    }
     let hostname: string;
     try {
       hostname = clerkFrontendApiHostnameFromPublishableKey(publishableKey);
@@ -1284,15 +1273,10 @@ export function resolveMacPasskeySigningConfiguration(
     rpDomains = [normalizePasskeyRpDomain(hostname)];
   }
 
-  const uniqueRpDomains = [...new Set(rpDomains)];
-  if (uniqueRpDomains.length === 0) {
-    throw new MissingMacPasskeyRpDomainError();
-  }
-
   return {
     appId: DESKTOP_APP_ID,
     teamId,
-    rpDomains: uniqueRpDomains,
+    rpDomains: [...new Set(rpDomains)],
     provisioningProfilePath,
   };
 }
@@ -1308,14 +1292,18 @@ function escapeXml(value: string): string {
 
 /** macOS refuses restricted entitlements absent from the provisioning profile. */
 export interface MacWebAuthnEntitlements {
+  readonly associatedDomains: readonly string[];
   readonly touchIdKeychainAccessGroup: string | undefined;
   readonly browserPasskeys: boolean;
 }
 
+const ASSOCIATED_DOMAINS_ENTITLEMENT = "com.apple.developer.associated-domains";
 const BROWSER_PASSKEYS_ENTITLEMENT = "com.apple.developer.web-browser.public-key-credential";
 
 const ProvisioningProfilePlist = Schema.Struct({
   Entitlements: Schema.Struct({
+    // Profiles grant every domain as "*"; the app picks its own.
+    [ASSOCIATED_DOMAINS_ENTITLEMENT]: Schema.optional(Schema.Unknown),
     "keychain-access-groups": Schema.optional(Schema.Array(Schema.String)),
     [BROWSER_PASSKEYS_ENTITLEMENT]: Schema.optional(Schema.Boolean),
   }),
@@ -1336,9 +1324,13 @@ const readProfileEntitlements = (provisioningProfile: string) => {
 
 export function resolveMacWebAuthnEntitlements(
   provisioningProfile: string,
-  configuration: Pick<MacPasskeySigningConfiguration, "appId" | "teamId">,
+  configuration: Pick<MacPasskeySigningConfiguration, "appId" | "teamId" | "rpDomains">,
 ): MacWebAuthnEntitlements {
   const entitlements = readProfileEntitlements(provisioningProfile);
+  const associatedDomainsGranted = entitlements?.[ASSOCIATED_DOMAINS_ENTITLEMENT] !== undefined;
+  if (associatedDomainsGranted && configuration.rpDomains.length === 0) {
+    throw new MissingMacPasskeyDomainConfigurationError();
+  }
   const keychainAccessGroup = `${configuration.teamId}.${configuration.appId}.webauthn`;
   const keychainGroupAuthorized = (entitlements?.["keychain-access-groups"] ?? []).some((group) =>
     group.endsWith("*")
@@ -1346,18 +1338,24 @@ export function resolveMacWebAuthnEntitlements(
       : group === keychainAccessGroup,
   );
   return {
+    associatedDomains: associatedDomainsGranted ? configuration.rpDomains : [],
     touchIdKeychainAccessGroup: keychainGroupAuthorized ? keychainAccessGroup : undefined,
     browserPasskeys: entitlements?.[BROWSER_PASSKEYS_ENTITLEMENT] === true,
   };
 }
 
 export function renderMacPasskeyEntitlements(
-  configuration: MacPasskeySigningConfiguration,
+  configuration: Pick<MacPasskeySigningConfiguration, "appId" | "teamId">,
   webAuthn: MacWebAuthnEntitlements,
 ): string {
-  const associatedDomains = configuration.rpDomains
-    .map((domain) => `      <string>webcredentials:${escapeXml(domain)}</string>`)
-    .join("\n");
+  const associatedDomains =
+    webAuthn.associatedDomains.length > 0
+      ? `
+    <key>${ASSOCIATED_DOMAINS_ENTITLEMENT}</key>
+    <array>
+${webAuthn.associatedDomains.map((domain) => `      <string>webcredentials:${escapeXml(domain)}</string>`).join("\n")}
+    </array>`
+      : "";
   const keychainAccessGroups = webAuthn.touchIdKeychainAccessGroup
     ? `
     <key>keychain-access-groups</key>
@@ -1378,11 +1376,7 @@ export function renderMacPasskeyEntitlements(
     <key>com.apple.application-identifier</key>
     <string>${escapeXml(`${configuration.teamId}.${configuration.appId}`)}</string>
     <key>com.apple.developer.team-identifier</key>
-    <string>${escapeXml(configuration.teamId)}</string>
-    <key>com.apple.developer.associated-domains</key>
-    <array>
-${associatedDomains}
-    </array>${keychainAccessGroups}${browserPasskeys}
+    <string>${escapeXml(configuration.teamId)}</string>${associatedDomains}${keychainAccessGroups}${browserPasskeys}
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
@@ -3831,12 +3825,13 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
       });
     }
-    macWebAuthn = resolveMacWebAuthnEntitlements(
-      yield* fs.readFileString(macPasskeySigning.provisioningProfilePath),
-      macPasskeySigning,
-    );
+    const provisioningProfile = yield* fs.readFileString(macPasskeySigning.provisioningProfilePath);
+    macWebAuthn = yield* Effect.try({
+      try: () => resolveMacWebAuthnEntitlements(provisioningProfile, macPasskeySigning),
+      catch: MacPasskeySigningConfigurationResolutionError.fromCause,
+    });
     yield* Effect.log(
-      `[desktop-artifact] In-app browser passkeys: Touch ID ${macWebAuthn.touchIdKeychainAccessGroup ? "enabled" : "disabled"}, browser passkeys ${macWebAuthn.browserPasskeys ? "enabled" : "disabled"}.`,
+      `[desktop-artifact] Passkey entitlements: associated domains ${macWebAuthn.associatedDomains.length > 0 ? macWebAuthn.associatedDomains.join(", ") : "none"}, Touch ID ${macWebAuthn.touchIdKeychainAccessGroup ? "enabled" : "disabled"}, browser passkeys ${macWebAuthn.browserPasskeys ? "enabled" : "disabled"}.`,
     );
     yield* fs.writeFileString(
       macEntitlementsPath,
