@@ -90,6 +90,9 @@ const PI_UNSOLICITED_ACTIVITY_ERROR =
   "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
+// Pi has no signal for extension work that outlives a turn. Statuses under this key, or
+// `<key>:<job>`, are pending background tasks, so the idle release keeps Pi alive for them.
+const PI_BACKGROUND_STATUS_KEY = "t3:background";
 
 const PiProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "client-boundary" },
@@ -546,6 +549,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // Turn failures can leave Pi alive; pump termination retires the runtime.
       let runtimeRetired = false;
       let pendingWake: PiWake | null = null;
+      // threadState is cleared during a session switch; this thread still lists the roster.
+      let backgroundTaskOwner: PiThreadState | null = null;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -641,7 +646,41 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             driver: PI_PROVIDER,
             providerSession: sessionEntity,
           });
+          yield* syncBackgroundTasks();
         });
+
+      const backgroundTasks = () =>
+        (sessionEntity.extensionStatuses ?? []).flatMap((status) =>
+          status.key === PI_BACKGROUND_STATUS_KEY ||
+          status.key.startsWith(`${PI_BACKGROUND_STATUS_KEY}:`)
+            ? [{ taskId: status.key, kind: "background_task" as const, description: status.text }]
+            : [],
+        );
+
+      const syncBackgroundTasks = Effect.fnUntraced(function* () {
+        const owner = threadState ?? backgroundTaskOwner;
+        const previous = backgroundTaskOwner;
+        backgroundTaskOwner = owner;
+        if (
+          previous !== null &&
+          previous.providerThread.id !== owner?.providerThread.id &&
+          previous.providerThread.pendingBackgroundTasks?.length
+        )
+          yield* updateProviderThread(previous, { pendingBackgroundTasks: [] });
+        if (owner === null) return;
+        const tasks = backgroundTasks();
+        const listed = owner.providerThread.pendingBackgroundTasks ?? [];
+        if (
+          tasks.length === listed.length &&
+          tasks.every(
+            (task, index) =>
+              task.taskId === listed[index]?.taskId &&
+              task.description === listed[index]?.description,
+          )
+        )
+          return;
+        yield* updateProviderThread(owner, { pendingBackgroundTasks: tasks });
+      });
 
       // Frequent notifications share the event pump's tracing boundary and outlive individual turns.
       const updateExtensionStatus = Effect.fnUntraced(function* (event: PiRpcRecord) {
@@ -2503,6 +2542,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 providerSessionId: input.providerSessionId,
                 nativeThreadRef: providerRef(nativeId),
                 ...(needsNewSession ? { nativeConversationHeadRef: null, contextUsage: null } : {}),
+                pendingBackgroundTasks: backgroundTasks(),
                 status: "idle",
                 updatedAt: createdAt,
               }
@@ -2523,23 +2563,27 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 lastRunOrdinal: null,
                 handoffIds: [],
                 forkedFrom: null,
-                pendingBackgroundTasks: [],
+                pendingBackgroundTasks: backgroundTasks(),
                 createdAt,
                 updatedAt: createdAt,
               };
-        threadState = { providerThread, activeTurn: null };
+        const state: PiThreadState = { providerThread, activeTurn: null };
+        threadState = state;
+        // Clears the outgoing thread's roster after a session switch.
+        yield* syncBackgroundTasks();
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
           Effect.orElseSucceed(() => undefined),
         );
         lastKnownLeaf = recordString(baselineEntries, "leafId") ?? null;
         leafCursorStale = baselineEntries === undefined;
+        // Status changes while get_entries was pending advanced state.providerThread.
         if (publish)
           yield* emit({
             type: "provider_thread.updated",
             driver: PI_PROVIDER,
-            providerThread,
+            providerThread: state.providerThread,
           });
-        return providerThread;
+        return state.providerThread;
       });
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
@@ -2634,11 +2678,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
+        hasPendingBackgroundWork: Effect.sync(
+          () => pendingWake !== null || backgroundTasks().length > 0,
+        ),
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            () =>
+              (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              // The run must see the cleared roster before it stops listening.
+              (providerThread.pendingBackgroundTasks?.length ?? 0) > 0 ||
+              (backgroundTaskOwner?.providerThread.id === providerThread.id &&
+                backgroundTasks().length > 0),
           ),
+        backgroundTasksEndWithProcess: true,
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
           const slug =
@@ -2790,7 +2842,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 return yield* protocolError("Pi native wake belongs to a different app thread");
               }
               pendingWake = null;
-              state.providerThread = turnInput.providerThread;
+              state.providerThread = {
+                ...turnInput.providerThread,
+                pendingBackgroundTasks: backgroundTasks(),
+              };
               state.activeTurn = activeTurn;
               activeTurn.adoptedWake = wake !== null && !continuation;
               if (compactCommand !== null) {
@@ -2928,6 +2983,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (turn === null && interruptInput.requestRuntimeRestart === true) {
               if (pendingWake !== null)
                 yield* sessionEventPermit.withPermits(1)(stopPendingWake(pendingWake));
+              else if (backgroundTasks().length > 0) {
+                stopRequested = true;
+                yield* connection.terminate;
+              }
               return;
             }
             if (turn === null || turn.providerTurn.id !== interruptInput.providerTurnId) {
