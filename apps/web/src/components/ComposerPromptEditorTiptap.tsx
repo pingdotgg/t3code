@@ -1551,6 +1551,10 @@ function ComposerPromptEditorTiptapInner(
           run.nodeName === "composer-citation" &&
           run.mdStart === pendingCitation.citationStart,
       );
+      if (!target) {
+        pendingCitation.sourceAnchor.commentInput?.release();
+        citationInputRequestRef.current = null;
+      }
       if (target) {
         const node = editor.state.doc.nodeAt(target.pmPos);
         const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
@@ -1668,7 +1672,12 @@ function ComposerPromptEditorTiptapInner(
             run.nodeName === "composer-citation" &&
             run.mdStart === request.citationStart,
         );
-        if (!target) return;
+        if (!target) {
+          request.sourceAnchor.commentInput?.release();
+          citationInputRequestRef.current = null;
+          citationRequestRef.current = null;
+          return;
+        }
         const node = editor.state.doc.nodeAt(target.pmPos);
         const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
         if (citeKey) {

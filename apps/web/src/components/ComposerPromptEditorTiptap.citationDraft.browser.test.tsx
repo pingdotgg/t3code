@@ -58,11 +58,13 @@ it.each(["remove", "unmount"])(
 function Composer({
   question,
   editorRef,
+  initialPrompt = promptBefore,
 }: {
   question: boolean;
+  initialPrompt?: string;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }) {
-  const [prompt, setPrompt] = useState(promptBefore);
+  const [prompt, setPrompt] = useState(initialPrompt);
   const [answer, setAnswer] = useState("");
   return (
     <>
@@ -130,3 +132,51 @@ it.each(["typed", "seeded"])(
     await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
   },
 );
+
+it.each(["Escape", "Cancel"])("discards a seeded new citation with %s", async (action) => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation)!;
+  sourceAnchor.commentInput = createCitationCommentInput("unsaved comment");
+  await act(async () =>
+    editorRef.current?.requestCitationComment({
+      previousValue: "See ",
+      value: promptBefore,
+      citationStart: "See ".length,
+      sourceAnchor,
+      insertedSpaces: { before: false, after: true },
+    }),
+  );
+  await expect
+    .element(page.getByLabelText("Comment on selected text"))
+    .toHaveValue("unsaved comment");
+  if (action === "Escape") await userEvent.keyboard("{Escape}");
+  else await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.element(page.getByLabelText("Comment on selected text")).not.toBeInTheDocument();
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe("See ");
+  expect(sourceAnchor.commentInput.pending).toBe(false);
+});
+
+it("releases input when a 513-character message ID has no citation node", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using _screen = await render(<Composer question={false} editorRef={editorRef} />);
+  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation)!;
+  sourceAnchor.commentInput = createCitationCommentInput("a");
+  const value = serializeAssistantCitation({
+    ...citation,
+    messageId: MessageId.make("m".repeat(513)),
+  });
+  await _screen.rerender(
+    <Composer question={false} editorRef={editorRef} initialPrompt={value} key="invalid" />,
+  );
+  await act(async () =>
+    editorRef.current?.requestCitationComment({
+      previousValue: "",
+      value,
+      citationStart: 0,
+      sourceAnchor,
+      insertedSpaces: { before: false, after: false },
+    }),
+  );
+  expect(sourceAnchor.commentInput.pending).toBe(false);
+});

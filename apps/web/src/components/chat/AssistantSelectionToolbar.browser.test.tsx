@@ -162,6 +162,24 @@ it("routes selected assistant text through Cite only when enabled", async () => 
     ).toBeNull();
   });
   expect(onCite.mock.lastCall?.[1]).toMatchObject({ initialComment: "dictated comment continued" });
+  await select();
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  expect(onCite).toHaveBeenCalledTimes(2);
+  expect(shouldTypeToFocusComposer(new KeyboardEvent("keydown", { key: "z" }))).toBe(true);
+  expect(onCite).toHaveBeenCalledTimes(2);
+  source.dataset.assistantCitationSource = "m".repeat(513);
+  await select();
+  for (const key of ["a", "b"]) {
+    const event = new KeyboardEvent("keydown", { key, cancelable: true });
+    expect(shouldTypeToFocusComposer(event)).toBe(true);
+    expect(event.defaultPrevented).toBe(false);
+  }
+  const fallbackPaste = new ClipboardEvent("paste", { clipboardData: plainText, cancelable: true });
+  expect(pasteTextToFocusComposer(fallbackPaste)).toBe("composer paste");
+  expect(fallbackPaste.defaultPrevented).toBe(false);
+  expect(onCite).toHaveBeenCalledTimes(2);
   source.textContent = "x".repeat(ASSISTANT_CITATION_MAX_TEXT_LENGTH + 1);
   await select("Selection is too long to cite");
   expect(shouldTypeToFocusComposer(new KeyboardEvent("keydown", { key: "a" }))).toBe(true);

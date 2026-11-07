@@ -1,4 +1,8 @@
 import {
+  formatAssistantCitationHref,
+  parseAssistantCitationHref,
+} from "@t3tools/shared/assistantCitations";
+import {
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   MessageId,
   type AssistantCitation,
@@ -184,7 +188,8 @@ export function AssistantSelectionToolbar({
     setSelection(null);
   };
   const cite = (comment?: string, accept?: (anchor: AssistantCitationSourceAnchor) => void) => {
-    if (!selection) return false;
+    if (!selection || !parseAssistantCitationHref(formatAssistantCitationHref(selection.citation)))
+      return false;
     const anchor = {
       ...selection.sourceAnchor,
       ...(comment === undefined
