@@ -397,6 +397,49 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("downloads any draft workspace file when the resource asks for an attachment", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-draft-download-" });
+      for (const name of ["notes.ts", "no-extension", "report.docx"]) {
+        const filePath = path.join(root, name);
+        yield* fs.writeFileString(filePath, "draft file bytes");
+        const result = yield* issueAssetUrl({
+          resource: {
+            _tag: "draft-workspace-file",
+            cwd: root,
+            path: name,
+            disposition: "attachment",
+          },
+          workspaceRoot: root,
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        const asset = yield* resolveAsset(token, suffix.slice(separator + 1));
+        expect(asset).toMatchObject({
+          kind: "file",
+          download: true,
+          fileName: name,
+          mimeType: "application/octet-stream",
+        });
+        if (asset?.kind !== "file") throw new Error("Expected a downloadable draft file");
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(response.headers.get("content-disposition")).toContain("attachment;");
+        expect(response.headers.get("content-type")).toBe("application/octet-stream");
+        expect(yield* Effect.promise(() => response.text())).toBe("draft file bytes");
+        expect(yield* resolveAsset(token, "sibling.ts")).toBeNull();
+        expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
+      }
+      const error = yield* issueAssetUrl({
+        resource: { _tag: "draft-workspace-file", cwd: root, path: "notes.ts" },
+        workspaceRoot: root,
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("AssetPreviewTypeValidationError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect(
     "rejects draft media escapes and disallowed types without enabling non-draft media",
     () =>

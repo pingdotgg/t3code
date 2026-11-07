@@ -51,8 +51,10 @@ function fileChipMetadata(target: FileChipTarget) {
   if (!path) return null;
   const name = fileBasename(path);
   const dot = name.lastIndexOf(".");
-  const mimeType = dot < 0 ? null : hostPreviewMimeTypeFromExtension(name.slice(dot));
-  return mimeType ? { path, name, mimeType } : null;
+  const mimeType =
+    (dot < 0 ? null : hostPreviewMimeTypeFromExtension(name.slice(dot))) ??
+    "application/octet-stream";
+  return { path, name, mimeType };
 }
 
 /** Use literal resolved paths so encoded filename characters are not decoded twice. */
@@ -62,7 +64,12 @@ export function fileChipShareSource(target: FileChipTarget, threadId: ThreadId) 
     ? {
         name: metadata.name,
         mimeType: metadata.mimeType,
-        resource: { _tag: "media-file" as const, threadId, path: metadata.path },
+        resource: {
+          _tag: "media-file" as const,
+          threadId,
+          path: metadata.path,
+          disposition: "attachment" as const,
+        },
       }
     : null;
 }

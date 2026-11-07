@@ -76,15 +76,27 @@ describe("file chip downloads", () => {
     expect(fileChipShareSource(target, threadId)).toEqual({
       name: path.split("/").at(-1),
       mimeType,
-      resource: { _tag: "media-file", threadId, path },
+      resource: {
+        _tag: "media-file",
+        threadId,
+        path,
+        disposition: "attachment",
+      },
     });
   });
 
-  it("does not offer downloads the host asset endpoint cannot serve", () => {
-    for (const href of ["src/app.ts", "/tmp/archive.7z", "/tmp/clip.mp4.txt"]) {
+  it.each(["src/app.ts", "/tmp/archive.7z", "/tmp/clip.mp4.txt", "Dockerfile"])(
+    "offers a download for files without a preview MIME type: %s",
+    (href) => {
       const target = resolveFileChipTarget(href, "/repo")!;
-      expect(fileChipShareSource(target, threadId)).toBeNull();
-      expect(fileChipMenu(target).actions.some(({ id }) => id === "save")).toBe(false);
-    }
-  });
+      expect(fileChipMenu(target).actions).toContainEqual({
+        id: "save",
+        title: "Save or share",
+      });
+      expect(fileChipShareSource(target, threadId)).toMatchObject({
+        mimeType: "application/octet-stream",
+        resource: { disposition: "attachment" },
+      });
+    },
+  );
 });
