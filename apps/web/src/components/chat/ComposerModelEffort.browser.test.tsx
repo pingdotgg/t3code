@@ -4,7 +4,7 @@ import {
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -75,13 +75,18 @@ function traitsInput(
   };
 }
 
+// The configured default names High, which the agent does not mark as its own default.
+const defaultModelSelection = createModelSelection(ProviderInstanceId.make("devin"), "fusion", [
+  { id: "thought_level", value: "high" },
+]);
+
 function Column() {
   const [options, setOptions] = useState<ReadonlyArray<ProviderOptionSelection>>([]);
   const traits = traitsInput(options, (next) => setOptions(next ?? []));
   return (
     <>
       <div data-model-picker-effort>
-        <ComposerEffortColumn traits={traits} />
+        <ComposerEffortColumn traits={traits} defaultModelSelection={defaultModelSelection} />
       </div>
       <p role="status">{describeComposerEffort(traits, "bars", "sm").suffix}</p>
     </>
@@ -96,6 +101,8 @@ it("draws an agent's reasoning as bars and keeps its mode out of the levels", as
 
   const levels = screen.getByRole("radiogroup", { name: "Thinking" });
   await expect.element(levels.getByRole("radio")).toHaveLength(3);
+  // Only the configured High carries the Default badge, not the selected Medium.
+  await expect.element(levels).toHaveTextContent("LowMediumHighDefault");
   await expect.element(screen.getByRole("radio", { name: "Plan" })).not.toBeInTheDocument();
 
   // Up and Down walk from the levels through the option rows without opening their menus.

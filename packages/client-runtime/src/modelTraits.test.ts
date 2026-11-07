@@ -1,7 +1,17 @@
-import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderOptionDescriptor,
+  type SelectProviderOptionDescriptor,
+} from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildTraitsTriggerDisplay, getDescriptorStringValue } from "./modelTraits.ts";
+import {
+  buildTraitsTriggerDisplay,
+  getDescriptorStringValue,
+  resolveDefaultChoiceId,
+} from "./modelTraits.ts";
 
 describe("buildTraitsTriggerDisplay", () => {
   it.each([
@@ -32,5 +42,41 @@ describe("buildTraitsTriggerDisplay", () => {
       }).label,
     ).toBe(input.label);
     expect(getDescriptorStringValue(descriptor)).toBe(input.value);
+  });
+});
+
+const claude = ProviderInstanceId.make("claudeAgent");
+const effort: SelectProviderOptionDescriptor = {
+  id: "effort",
+  label: "Reasoning",
+  type: "select",
+  options: [
+    { id: "low", label: "Low" },
+    { id: "medium", label: "Medium", isDefault: true },
+    { id: "high", label: "High" },
+    { id: "ultrathink", label: "Ultrathink" },
+  ],
+  promptInjectedValues: ["ultrathink"],
+};
+const opus = { instanceId: claude, model: "claude-opus-5-5" };
+
+describe("resolveDefaultChoiceId", () => {
+  it("marks the configured default's level, falling back to the provider's default", () => {
+    const configured = (instanceId: ProviderInstanceId, model: string, value: string) =>
+      createModelSelection(instanceId, model, [{ id: "effort", value }]);
+    const work = ProviderInstanceId.make("claudeAgent_work");
+
+    expect(resolveDefaultChoiceId(effort, opus, configured(claude, opus.model, "high"))).toBe(
+      "high",
+    );
+    expect(
+      resolveDefaultChoiceId(effort, opus, configured(claude, "claude-fable-5-1", "high")),
+    ).toBe("medium");
+    expect(resolveDefaultChoiceId(effort, opus, configured(work, opus.model, "high"))).toBe(
+      "medium",
+    );
+    expect(resolveDefaultChoiceId(effort, opus, configured(claude, opus.model, "ultrathink"))).toBe(
+      "medium",
+    );
   });
 });
