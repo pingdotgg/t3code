@@ -178,6 +178,7 @@ const THREAD_ENV = "thread-env";
 function setup(options: { readonly destination?: string | null } = {}) {
   mocks.settings = {};
   setDestination(options.destination ?? null);
+  if (!options.destination) localStorage.removeItem("t3code:voice-audio-grant:v1");
   chooseTranscriptCleanup(false);
   mocks.primaryEnvironmentId = "primary-env";
   mocks.connected = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
@@ -243,15 +244,22 @@ it.each([
   ["nothing is configured", {}],
   // A transcription host picked by an earlier PoC build is not consent.
   ["a legacy transcription host is configured", { voiceTranscriptionEnvironmentId: "env-a" }],
-])("stays local-only when %s, even with voice-capable environments", async (_, legacy) => {
+])("opens destination setup without sending audio when %s", async (_, legacy) => {
   setup();
   mocks.settings = { ...legacy, speechSilenceFiltering: true };
-  await using _screen = await render(<Probe />);
+  await using screen = await render(<Probe />);
+  // The composer mic and the dictation shortcut both gate on this.
+  expect(mocks.voice.available).toBe(true);
   await act(() => mocks.voice.start());
+  expect(screen.router?.state.location).toMatchObject({
+    pathname: "/settings/voice",
+    hash: "voice-transcription-destination",
+  });
   expectNoAudioSent();
   expect(mocks.committed).not.toHaveBeenCalled();
-  expect(mocks.voice.available).toBe(false);
+  expect(mocks.voice.state.phase).toBe("idle");
   expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+  expect(localStorage.getItem("t3code:voice-audio-grant:v1")).toBeNull();
 });
 
 it.each([true, false])(
@@ -302,6 +310,7 @@ it.each([
   expect(mocks.voice.state.phase).toBe("recording");
   setDestination(next);
   await screen.rerender(<Probe />);
+  if (next === null) expect(mocks.voice.available).toBe(false);
   expect(mocks.voice.state.phase).toBe("idle");
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual([]);
@@ -390,7 +399,7 @@ it("revokes across windows even before the storage event and survives stale pref
     expect(storage.getItem(key)).toBeNull();
     expect(canSend()).toBe(false);
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: false });
-    await vi.waitFor(() => expect(mocks.voice.available).toBe(false));
+    await vi.waitFor(() => expect(mocks.voice.transcriptionEnvironmentId).toBeNull());
     expect(mocks.voice.state.phase).toBe("idle");
     await act(() => mocks.voice.stop());
     expect(mocks.transcribeCalls).toEqual([]);
@@ -401,26 +410,30 @@ it("revokes across windows even before the storage event and survives stale pref
   }
 });
 
-it("recovers from a corrupt choice without enabling cloud dictation before the save completes", async () => {
-  setup();
-  mocks.cloudVoiceCapable.add("env-b");
-  mocks.modelState = "missing-model";
-  window.localStorage.setItem("t3code:voice-audio-grant:v1", "not-json");
-  const save = pendingCloudAudioChoice({
-    kind: "cloud",
-    environmentId: EnvironmentId.make("env-b"),
-    provider: "xai",
-  });
-  await using _screen = await render(<Probe />);
-  expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
-  await act(() => mocks.voice.start());
-  expectNoAudioSent();
-  await act(save);
-  await act(() => mocks.voice.start());
-  await act(() => mocks.voice.stop());
-  expect(mocks.transcribeCalls).toEqual(["xai via env-b"]);
-  expect(mocks.statusRequests).toEqual([]);
-});
+it.each(["not-json", JSON.stringify("off")])(
+  "does not enable a pending provider over %s before the save completes",
+  async (previous) => {
+    setup();
+    mocks.cloudVoiceCapable.add("env-b");
+    mocks.modelState = "missing-model";
+    window.localStorage.setItem("t3code:voice-audio-grant:v1", previous);
+    const save = pendingCloudAudioChoice({
+      kind: "cloud",
+      environmentId: EnvironmentId.make("env-b"),
+      provider: "xai",
+    });
+    await using _screen = await render(<Probe />);
+    expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+    if (previous === JSON.stringify("off")) expect(mocks.voice.available).toBe(false);
+    await act(() => mocks.voice.start());
+    expectNoAudioSent();
+    await act(save);
+    await act(() => mocks.voice.start());
+    await act(() => mocks.voice.stop());
+    expect(mocks.transcribeCalls).toEqual(["xai via env-b"]);
+    expect(mocks.statusRequests).toEqual([]);
+  },
+);
 
 it("sends audio to OpenRouter only under a device grant naming the exact model", async () => {
   setup();
@@ -468,6 +481,7 @@ it("uses neither destination when the cloud save marker cannot be read", async (
   await using _screen = await render(<Probe />);
   expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
   expect(canSendToPrevious()).toBe(false);
+  expect(mocks.voice.available).toBe(false);
   await act(() => mocks.voice.start());
   expectNoAudioSent();
 });

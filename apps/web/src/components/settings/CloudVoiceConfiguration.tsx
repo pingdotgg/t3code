@@ -38,7 +38,7 @@ import {
 import {
   chooseAudioDestination,
   pendingCloudAudioChoice,
-  useAudioGrant,
+  useAudioChoice,
 } from "../../speech/voiceConsent";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
@@ -172,7 +172,8 @@ export function CloudVoiceConfiguration({
     routed && canUse ? prepared : null,
     getCloudSpeechModels,
   );
-  const grant = useAudioGrant();
+  const choice = useAudioChoice();
+  const grant = choice === "off" ? null : choice;
   const currentModel =
     active && grant?.destination.kind === "cloud" && grant.destination.provider === "openrouter"
       ? grant.destination.model

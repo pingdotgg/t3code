@@ -16,13 +16,15 @@ const CLEANUP_KEY = "t3code:voice-cleanup-grant:v1";
 const Grant = Schema.Struct({ id: Schema.String, destination: VoiceTranscriptionDestination });
 const AudioGrant = Schema.NullOr(Grant);
 const sameGrant = Schema.toEquivalence(AudioGrant);
-const AudioChoice = Schema.NullOr(
-  Schema.Union([Grant, Schema.Struct({ pending: Grant, previous: AudioGrant })]),
-);
+const SavedChoice = Schema.Union([AudioGrant, Schema.Literal("off")]);
+const AudioChoice = Schema.Union([
+  SavedChoice,
+  Schema.Struct({ pending: Grant, previous: SavedChoice }),
+]);
 type AudioChoice = typeof AudioChoice.Type;
 const savedKey = (id: string) => `${AUDIO_KEY}:saved:${id}`;
 const pendingGrant = (choice: AudioChoice) =>
-  choice && "pending" in choice ? choice.pending : null;
+  choice && choice !== "off" && "pending" in choice ? choice.pending : null;
 const CleanupGrant = Schema.NullOr(Schema.String);
 const decodeChoice = Schema.decodeSync(Schema.fromJsonString(AudioChoice));
 const readChoice = () => readLocalStorageValue(AUDIO_KEY, null, AudioChoice);
@@ -35,14 +37,14 @@ function readSaveMarker(id: string | undefined) {
   }
 }
 
-function activeGrant(choice: AudioChoice, marker: string | null | undefined) {
-  if (!choice || !("pending" in choice)) return choice;
+function activeChoice(choice: AudioChoice, marker: string | null | undefined) {
+  if (!choice || choice === "off" || !("pending" in choice)) return choice;
   // Only a confirmed missing marker means the previous grant still applies.
   if (marker === null) return choice.previous;
-  return marker === "true" ? choice.pending : null;
+  return marker === "true" ? choice.pending : ("off" as const);
 }
 
-export function useAudioGrant() {
+export function useAudioChoice() {
   const [choice] = useLocalStorage(AUDIO_KEY, null, AudioChoice);
   const id = pendingGrant(choice)?.id;
   const marker = useSyncExternalStore(
@@ -50,7 +52,7 @@ export function useAudioGrant() {
     () => readSaveMarker(id),
     () => undefined,
   );
-  return activeGrant(choice, marker);
+  return activeChoice(choice, marker);
 }
 
 function replaceChoice(choice: AudioChoice, previous = readChoice()) {
@@ -61,7 +63,7 @@ function replaceChoice(choice: AudioChoice, previous = readChoice()) {
 }
 
 export function chooseAudioDestination(destination: VoiceTranscriptionDestination | null) {
-  replaceChoice(destination && { id: randomUUID(), destination });
+  replaceChoice(destination ? { id: randomUUID(), destination } : "off");
 }
 
 export function pendingCloudAudioChoice(
@@ -70,7 +72,7 @@ export function pendingCloudAudioChoice(
   const choice = readChoice();
   const pending = { id: randomUUID(), destination };
   replaceChoice(
-    { pending, previous: activeGrant(choice, readSaveMarker(pendingGrant(choice)?.id)) },
+    { pending, previous: activeChoice(choice, readSaveMarker(pendingGrant(choice)?.id)) },
     choice,
   );
   // A late response can acknowledge only its own choice, never write the destination another tab picked.
@@ -91,7 +93,8 @@ export function bindAudioGrant(id: string) {
         choice = raw ? decodeChoice(raw) : null;
         cachedRaw = raw;
       }
-      return activeGrant(choice, readSaveMarker(pendingGrant(choice)?.id));
+      const active = activeChoice(choice, readSaveMarker(pendingGrant(choice)?.id));
+      return active === "off" ? null : active;
     };
     const bound = current();
     if (bound?.id !== id) return () => false;
