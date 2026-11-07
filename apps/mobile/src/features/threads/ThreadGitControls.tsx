@@ -387,8 +387,13 @@ function shortGitBarLabel(
       case "push":
         return { label: "Push", disabled: quickAction.disabled };
       case "commit":
-      case "commit_push":
         return { label: "Commit", disabled: quickAction.disabled };
+      case "commit_push":
+        // Default-branch ahead uses action commit_push with label "Push".
+        return {
+          label: quickAction.label === "Push" ? "Push" : "Commit",
+          disabled: quickAction.disabled,
+        };
       default:
         return null;
     }
@@ -422,7 +427,8 @@ export function useThreadGitBar(props: ThreadGitMenuProps): {
     : null;
   return {
     primaryAction,
-    menu: threadGitMenuFromModel(props, model, primaryAction !== null),
+    // Keep the menu quick-action (and its disabled hint) when the pill is disabled.
+    menu: threadGitMenuFromModel(props, model, primaryAction !== null && !primaryAction.disabled),
   };
 }
 

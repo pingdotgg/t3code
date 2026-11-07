@@ -26,8 +26,26 @@ export function ThreadHeader(props: {
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const { primaryAction: gitPrimaryAction, menu: gitMenu } = useThreadGitBar(props.gitControls);
-  // Keep the bar narrow when Create/View PR is on it — terminal stays in split/inspector flows.
-  const terminalMenu = gitPrimaryAction === null ? threadTerminalMenu(props.gitControls) : null;
+  const terminalMenu = threadTerminalMenu(props.gitControls);
+  // Pill already crowds the bar — nest Terminal under Git instead of a second toolbar control.
+  const menus: AppBarMenu[] =
+    gitPrimaryAction !== null && terminalMenu
+      ? [
+          {
+            ...gitMenu,
+            items: [
+              ...gitMenu.items,
+              {
+                id: "git-terminal",
+                title: terminalMenu.title,
+                icon:
+                  typeof terminalMenu.icon === "string" ? terminalMenu.icon : terminalMenu.icon.ios,
+                items: terminalMenu.items,
+              },
+            ],
+          },
+        ]
+      : [gitMenu, ...(terminalMenu ? [terminalMenu] : [])];
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
@@ -41,7 +59,6 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
-  const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (
     <AppBar
