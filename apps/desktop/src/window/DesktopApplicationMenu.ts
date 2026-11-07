@@ -4,9 +4,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type { DesktopUpdateState } from "@t3tools/contracts";
 import type * as Electron from "electron";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -34,6 +36,7 @@ export class DesktopApplicationMenu extends Context.Service<
 
 type DesktopApplicationMenuRuntimeServices =
   | DesktopUpdates.DesktopUpdates
+  | ElectronApp.ElectronApp
   | DesktopWindow.DesktopWindow
   | ElectronDialog.ElectronDialog;
 
@@ -64,9 +67,20 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   yield* desktopWindow.runMainContentsCommand(command);
 });
 
-const checkForUpdatesFromMenu = Effect.gen(function* () {
+const UPDATE_BUTTON = "the update button at the bottom of the sidebar";
+
+function describeUpdate(
+  state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
+): string {
+  const version = state.downloadedVersion ?? state.availableVersion;
+  return version === null ? "An update" : `T3 Code ${version}`;
+}
+
+export const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const electronApp = yield* ElectronApp.ElectronApp;
   const result = yield* updates.check("menu");
   const updateState = result.state;
 
@@ -85,6 +99,40 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       detail: updateState.message ?? "An unknown error occurred. Please try again later.",
       buttons: ["OK"],
     });
+  } else if (updateState.status === "available") {
+    const { response } = yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update available",
+      message: `${describeUpdate(updateState)} is available.`,
+      detail: `You're on ${updateState.currentVersion}. You can keep working while it downloads, and T3 Code will ask before it restarts.`,
+      buttons: ["Download", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response !== 0) return;
+    const download = yield* updates.download;
+    if (download.completed) {
+      yield* desktopWindow.dispatchMenuAction("install-update", { reveal: false });
+      yield* electronApp.bounceDock;
+      return;
+    }
+    yield* electronDialog.showMessageBox({
+      type: "warning",
+      title: "Could not download update",
+      message: "The update did not download.",
+      detail: `Please try again from ${UPDATE_BUTTON}.`,
+      buttons: ["OK"],
+    });
+  } else if (updateState.status === "downloading") {
+    yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update downloading",
+      message: `${describeUpdate(updateState)} is downloading.`,
+      detail: `When it finishes, install it from ${UPDATE_BUTTON}.`,
+      buttons: ["OK"],
+    });
+  } else if (updateState.status === "downloaded") {
+    yield* desktopWindow.dispatchMenuAction("install-update");
   }
 }).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
 
