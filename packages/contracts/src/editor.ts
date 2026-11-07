@@ -146,6 +146,7 @@ export const EDITORS = [
     jetbrainsProductCode: "WS",
   },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
+  { id: "terminal", label: "Terminal", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
 export const EditorId = Schema.Literals(EDITORS.map((e) => e.id));
@@ -218,6 +219,39 @@ export const buildRemoteOpenUrl = (input: {
   // VS Code opens a bare vscode-remote path as a folder; a trailing position makes it open the file.
   return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : ""}`;
 };
+
+/** Directory for a remote SSH terminal; file targets open in their parent folder. */
+export function remoteTerminalWorkingDirectory(absolutePath: string, isFile: boolean): string {
+  const posixPath = absolutePath.replaceAll("\\", "/");
+  const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
+  if (!isFile) return rootedPath;
+  const lastSlash = rootedPath.lastIndexOf("/");
+  return lastSlash <= 0 ? "/" : rootedPath.slice(0, lastSlash);
+}
+
+export function buildRemoteSshTerminalDestination(host: string, username?: string): string {
+  return username === undefined || username.length === 0 ? host : `${username}@${host}`;
+}
+
+/**
+ * Host or username for a desktop SSH terminal launch. Leading dashes would be
+ * parsed as ssh options without `--`, so reject them at the IPC boundary too.
+ */
+export const SshTerminalDestinationSegment = TrimmedNonEmptyString.check(
+  Schema.makeFilter((value: string) => !value.startsWith("-"), {
+    expected: "a host or username that does not start with '-'",
+  }),
+);
+export type SshTerminalDestinationSegment = typeof SshTerminalDestinationSegment.Type;
+
+/**
+ * Single ssh remote-command argv: run POSIX cd + login shell through /bin/sh so
+ * fish/csh login shells do not have to parse parameter expansion.
+ */
+export function buildRemoteSshTerminalRemoteCommand(directory: string): string {
+  const quoted = `'${directory.replaceAll("'", `'\\''`)}'`;
+  return `exec /bin/sh -c 'cd -- "$1" && exec "\${SHELL:-/bin/sh}" -l' sh ${quoted}`;
+}
 
 export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
 export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;

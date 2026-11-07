@@ -17,6 +17,19 @@ then copy. Cmd+A on macOS and Ctrl+Shift+A elsewhere select the same output.
 Ctrl+A still moves to the beginning of shell input on Windows and Linux.
 Jump to latest in the context menu returns to the current output.
 
+To work in a system terminal instead, choose Terminal from the Open in menu. It
+opens a new window in the project folder on the machine running T3 Code; from a
+file preview it opens in that file's folder. On macOS this is Terminal.app, on
+Windows it is PowerShell, and on Linux T3 Code uses the first terminal it finds,
+starting with your desktop's default.
+
+When you are connected to a remote environment over SSH or an advertised
+Tailscale or local network host, Terminal (desktop app) opens a local system
+terminal that SSHs into that host and starts in the project folder, the same way
+Open in opens editors over SSH. The remote host needs a POSIX `/bin/sh` (Linux
+and macOS SSH servers); Windows OpenSSH targets are not supported for this
+action. On Windows desktop, T3 Code prefers Windows Terminal in a new window.
+
 ## fish
 
 T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal

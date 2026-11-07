@@ -48,6 +48,7 @@ interface EditorLaunch {
   readonly target: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly cwd?: string;
   readonly detached?: boolean;
 }
 
@@ -93,6 +94,19 @@ const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.Proces
       }),
     ),
   );
+
+const LINUX_TERMINAL_COMMANDS = [
+  "xdg-terminal-exec",
+  "x-terminal-emulator",
+  "gnome-terminal",
+  "kgx",
+  "konsole",
+  "xfce4-terminal",
+  "kitty",
+  "alacritty",
+  "foot",
+  "xterm",
+] as const;
 
 const BrowserLaunchEnvConfig = Config.all({
   SYSTEMROOT: Config.String("SYSTEMROOT").pipe(Config.option),
@@ -357,6 +371,27 @@ const fileManagerRevealKindForPlatform = Effect.fn(
   return hasGraphicalLinuxSession(env) ? "files" : undefined;
 });
 
+const resolveTerminalCommand = Effect.fn("externalLauncher.resolveTerminalCommand")(function* (
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<
+  string | undefined,
+  never,
+  FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+> {
+  if (platform === "darwin") return "open";
+  if (platform === "win32") {
+    const powershell = resolvePowerShellPath(env);
+    return (yield* isCommandAvailable(powershell, { env })) ? powershell : undefined;
+  }
+  if (!hasGraphicalLinuxSession(env) && !hasGraphicalLinuxSession(yield* readGraphicalSessionEnv()))
+    return undefined;
+  for (const command of LINUX_TERMINAL_COMMANDS) {
+    if (yield* isCommandAvailable(command, { env })) return command;
+  }
+  return undefined;
+});
+
 function resolveWslFileManagerPath(target: string, distroName: string): string {
   const relativePath = target.replace(/^\/+/, "").replaceAll("/", "\\");
   return `\\\\wsl.localhost\\${distroName}${relativePath.length > 0 ? `\\${relativePath}` : ""}`;
@@ -406,7 +441,11 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
 
   for (const editor of EDITORS) {
     if (editor.commands === null) {
-      if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
+      const command =
+        editor.id === "terminal"
+          ? yield* resolveTerminalCommand(platform, env)
+          : yield* resolveUsableFileManagerCommand(platform, env);
+      if (command !== undefined) {
         available.push(editor.id);
       }
       continue;
@@ -491,6 +530,14 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     };
   }
 
+  if (editorDef.id === "terminal") {
+    const command = yield* resolveTerminalCommand(platform, env);
+    if (command === undefined) {
+      return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+    }
+    return yield* resolveTerminalLaunch(input.cwd, platform, command);
+  }
+
   if (editorDef.id !== "file-manager") {
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
@@ -517,6 +564,69 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
           : [input.cwd],
   };
 });
+
+// Terminal.app runs a file it is asked to open, so a file target must become its folder.
+const resolveTerminalLaunch = Effect.fn("resolveTerminalLaunch")(function* (
+  target: string,
+  platform: NodeJS.Platform,
+  command: string,
+): Effect.fn.Return<EditorLaunch, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const isDirectory = yield* fileSystem.stat(target).pipe(
+    Effect.map((info) => info.type === "Directory"),
+    Effect.orElseSucceed(() => false),
+  );
+
+  if (platform === "win32") {
+    const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+    const windowsTarget = normalizeWindowsFileManagerPath(target);
+    const directory = isDirectory ? windowsTarget : path.dirname(windowsTarget);
+    return {
+      editor: "terminal",
+      target,
+      command,
+      args: [
+        ...POWERSHELL_ARGUMENTS_PREFIX,
+        encodeUtf16LeBase64(
+          `$ProgressPreference = 'SilentlyContinue'; Start-Process 'powershell.exe' -WorkingDirectory ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encodeUtf16LeBase64(directory)}')))`,
+        ),
+      ],
+      detached: WINDOWS_POWERSHELL_DETACHED,
+    };
+  }
+
+  const path = yield* Path.Path;
+  const directory = isDirectory ? target : path.dirname(target);
+  return platform === "darwin"
+    ? { editor: "terminal", target, command, args: ["-a", "Terminal", directory] }
+    : {
+        editor: "terminal",
+        target,
+        command,
+        args: linuxTerminalArgs(command, directory),
+        cwd: directory,
+      };
+});
+
+function linuxTerminalArgs(command: string, directory: string): ReadonlyArray<string> {
+  switch (command) {
+    case "xdg-terminal-exec":
+      return [`--dir=${directory}`];
+    case "konsole":
+      return ["--workdir", directory];
+    case "kitty":
+      return ["--directory", directory];
+    case "gnome-terminal":
+    case "kgx":
+    case "xfce4-terminal":
+    case "alacritty":
+    case "foot":
+      return [`--working-directory=${directory}`];
+    default:
+      // The desktop's x-terminal-emulator can ignore its inherited cwd.
+      return ["-e", "/bin/sh", "-c", 'cd -- "$1" && exec "${SHELL:-/bin/sh}"', "sh", directory];
+  }
+}
 
 // A replacement manager registers a default Directory shell verb; stock Windows
 // uses "none". Explorer needs its /select argument passed verbatim through
@@ -774,6 +884,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       command: spawnCommand.command,
       args: spawnCommand.args,
       options: {
+        ...(launch.cwd === undefined ? {} : { cwd: launch.cwd }),
         detached: launch.detached ?? true,
         shell: spawnCommand.shell,
         env: yield* readGraphicalSessionEnv(),

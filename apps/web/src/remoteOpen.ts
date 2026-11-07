@@ -19,6 +19,8 @@ export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
   readonly host: string;
   readonly username?: string;
+  /** SSH listen port from the connection profile; not the forwarded HTTP port. */
+  readonly port?: number;
 }
 
 export type RemoteOpenState =
@@ -50,7 +52,11 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
+  readonly sshTarget: {
+    readonly alias: string;
+    readonly username: string | null;
+    readonly port?: number | null;
+  } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
 }): RemoteOpenState {
@@ -78,12 +84,14 @@ export function resolveRemoteOpenState(input: {
     const username =
       input.sshTarget.username?.trim() ||
       (userSeparator === -1 ? null : alias.slice(0, userSeparator));
+    const port = input.sshTarget.port ?? null;
     return {
       mode: "remote-links",
       host: {
         kind: "ssh-alias",
         host,
         ...(username === null ? {} : { username }),
+        ...(port === null ? {} : { port }),
       },
     };
   }
@@ -100,7 +108,8 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
   return (
     previous.host.kind === next.host.kind &&
     previous.host.host === next.host.host &&
-    previous.host.username === next.host.username
+    previous.host.username === next.host.username &&
+    previous.host.port === next.host.port
   );
 }
 
@@ -146,17 +155,22 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
+const withRemoteTerminal = (ids: ReadonlyArray<EditorId>): ReadonlyArray<EditorId> =>
+  window.desktopBridge?.openRemoteTerminal !== undefined && !ids.includes("terminal")
+    ? [...ids, "terminal"]
+    : ids;
+
 // Probed once per page: installed editors rarely change, and the probe spawns processes.
 const remoteCapableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
   const probe = window.desktopBridge?.probeRemoteEditors;
   probe?.().then(
     (ids) => {
       const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
-      if (remoteCapable.length > 0) get.setSelf(remoteCapable);
+      if (remoteCapable.length > 0) get.setSelf(withRemoteTerminal(remoteCapable));
     },
     () => undefined,
   );
-  return REMOTE_FALLBACK_EDITORS;
+  return withRemoteTerminal(REMOTE_FALLBACK_EDITORS);
 }).pipe(Atom.keepAlive, Atom.withLabel("remote-capable-editors"));
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
@@ -175,6 +189,27 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   }
   window.location.assign(url);
   return true;
+}
+
+/** Opens a local system terminal that SSHs into the remote host. Desktop only. */
+export async function openRemoteTerminal(input: {
+  readonly host: RemoteOpenHost;
+  readonly absolutePath: string;
+  readonly isFile?: boolean;
+}): Promise<boolean> {
+  const bridge = window.desktopBridge;
+  if (bridge?.openRemoteTerminal === undefined) return false;
+  try {
+    return await bridge.openRemoteTerminal({
+      host: input.host.host,
+      ...(input.host.username === undefined ? {} : { username: input.host.username }),
+      ...(input.host.port === undefined ? {} : { port: input.host.port }),
+      absolutePath: input.absolutePath,
+      ...(input.isFile === undefined ? {} : { isFile: input.isFile }),
+    });
+  } catch {
+    return false;
+  }
 }
 
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";

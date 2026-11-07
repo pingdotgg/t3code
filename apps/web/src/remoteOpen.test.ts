@@ -3,10 +3,20 @@ import {
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
+import {
+  buildRemoteOpenUrl,
+  buildRemoteSshTerminalDestination,
+  buildRemoteSshTerminalRemoteCommand,
+  DesktopOpenRemoteTerminalInputSchema,
+  EnvironmentId,
+  remoteTerminalWorkingDirectory,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveRemoteOpenState } from "./remoteOpen";
+
+const decodeRemoteTerminalInput = Schema.decodeUnknownExit(DesktopOpenRemoteTerminalInputSchema);
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -85,6 +95,29 @@ describe("resolveRemoteOpenState", () => {
     );
   });
 
+  it("carries the profile SSH port into remote-links state for Terminal", () => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+      sshTarget: { alias: "sol", username: "theo", port: 2222 },
+      isDesktopRenderer: true,
+      remoteOpenTargets: [],
+    });
+    expect(state).toEqual({
+      mode: "remote-links",
+      host: { kind: "ssh-alias", host: "sol", username: "theo", port: 2222 },
+    });
+  });
+
+  it("omits a null profile SSH port so OpenSSH uses config / default 22", () => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+      sshTarget: { alias: "sol", username: null, port: null },
+      isDesktopRenderer: true,
+      remoteOpenTargets: [],
+    });
+    expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
+  });
+
   it.each([
     { alias: "server", username: "admin-user" },
     { alias: "admin-user@server", username: null },
@@ -140,6 +173,54 @@ describe("resolveRemoteOpenState", () => {
         }),
       ).toEqual({ mode: "remote-unavailable" });
     }
+  });
+});
+
+describe("remote SSH terminal helpers", () => {
+  it("builds a destination that matches remote editor hosts", () => {
+    expect(buildRemoteSshTerminalDestination("sol")).toBe("sol");
+    expect(buildRemoteSshTerminalDestination("sol.tail.ts.net", "theo")).toBe(
+      "theo@sol.tail.ts.net",
+    );
+  });
+
+  it("opens file targets in their parent folder", () => {
+    expect(remoteTerminalWorkingDirectory("/work/project", false)).toBe("/work/project");
+    expect(remoteTerminalWorkingDirectory("/work/project/README.md", true)).toBe("/work/project");
+    expect(remoteTerminalWorkingDirectory("C:\\Users\\theo\\app\\file.ts", true)).toBe(
+      "/C:/Users/theo/app",
+    );
+  });
+
+  it("runs cd and the login shell through /bin/sh for non-POSIX login shells", () => {
+    expect(buildRemoteSshTerminalRemoteCommand("/work/my project")).toBe(
+      `exec /bin/sh -c 'cd -- "$1" && exec "\${SHELL:-/bin/sh}" -l' sh '/work/my project'`,
+    );
+    expect(buildRemoteSshTerminalRemoteCommand("/tmp/o'brian")).toBe(
+      `exec /bin/sh -c 'cd -- "$1" && exec "\${SHELL:-/bin/sh}" -l' sh '/tmp/o'\\''brian'`,
+    );
+  });
+
+  it("rejects advertised hosts that would become ssh options", () => {
+    expect(
+      decodeRemoteTerminalInput({
+        host: "-oProxyCommand=x",
+        absolutePath: "/work/project",
+      })._tag,
+    ).toBe("Failure");
+    expect(
+      decodeRemoteTerminalInput({
+        host: "sol",
+        username: "-oProxyCommand=x",
+        absolutePath: "/work/project",
+      })._tag,
+    ).toBe("Failure");
+    expect(
+      decodeRemoteTerminalInput({
+        host: "sol",
+        absolutePath: "/work/project",
+      })._tag,
+    ).toBe("Success");
   });
 });
 
