@@ -669,6 +669,9 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.equal(systemPrompt.preset, "claude_code");
     assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
     assert.include(systemPrompt.append ?? "", "call `t3_background_wait`");
+    const backgroundWaitKey: keyof typeof OrchestratorToolkit.tools.t3_background_wait.parametersSchema.fields =
+      "taskIds";
+    assert.include(systemPrompt.append ?? "", `\`${backgroundWaitKey}: [id]\``);
     assert.notInclude(systemPrompt.append ?? "", "## T3 Code devices");
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.equal(logged.hasMcpServers, true);
