@@ -2526,6 +2526,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) {
       return false;
     }
+    if (
+      options?.citationCommentAnchor?.commentInput &&
+      !composerEditorRef.current?.canInsertCitation()
+    ) {
+      return false;
+    }
     if (options?.clipboardData) {
       text = importPastedComposerText(options.clipboardData, importContextFragment);
     }

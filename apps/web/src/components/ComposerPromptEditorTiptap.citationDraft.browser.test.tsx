@@ -31,6 +31,21 @@ const citation = {
 };
 const promptBefore = `See ${serializeAssistantCitation(citation)} `;
 
+it("falls back to composer text when a code block cannot contain a citation", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const code = "```\ncode\n```";
+  await using screen = await render(
+    <Composer question={false} editorRef={editorRef} initialPrompt={code} />,
+  );
+  await act(async () => editorRef.current?.focusAt(0));
+  expect(editorRef.current?.canInsertCitation()).toBe(false);
+  await userEvent.keyboard("x");
+  await expect
+    .element(screen.container.querySelector<HTMLElement>("pre code"))
+    .toHaveTextContent("xcode");
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe("```\nxcode\n```");
+});
+
 it.each(["remove", "unmount"])(
   "releases pending citation input before subscription on %s",
   async (action) => {
@@ -82,6 +97,7 @@ function Composer({
         editorRef={editorRef}
         value={question ? answer : prompt}
         cursor={0}
+        richTextEnabled
         contextRecords={new Map()}
         skills={[]}
         disabled={false}
