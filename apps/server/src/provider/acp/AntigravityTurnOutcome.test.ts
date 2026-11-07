@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as EffectAcpSchema from "effect-acp/compat";
+import type { OrchestrationV2ProviderFailure } from "@t3tools/contracts";
 
 import { watchAntigravityPromptOutcome } from "./AntigravityTurnOutcome.ts";
 
@@ -32,10 +33,19 @@ const RATE_LIMIT_ERROR = errorPayload(
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+// Vertex Claude rejects a resumed history whose saved thinking block lost its signature.
+const MISSING_SIGNATURE_ERROR = errorPayload(
+  'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0.thinking.signature: Field required"},"request_id":"req_vrtx_test"}, Status: INVALID_ARGUMENT, Details: []',
+);
+const INVALID_SIGNATURE_ERROR = errorPayload(
+  'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.3.content.0: Invalid `signature` in `thinking` block"}}, Status: INVALID_ARGUMENT, Details: []',
+);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
 );
+const reusable = (failure: OrchestrationV2ProviderFailure) =>
+  ({ failure, threadDisposition: "reusable" }) as const;
 
 describe("watchAntigravityPromptOutcome", () => {
   it.effect("fails only turns whose own steps end in an upstream error", () =>
@@ -83,13 +93,13 @@ describe("watchAntigravityPromptOutcome", () => {
           [USER_INPUT, input],
           [ERROR_MESSAGE, QUOTA_ERROR],
         ]),
-        {
+        reusable({
           class: "usage_limit",
           message: "You have reached your Antigravity quota for this period.",
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T01:00:00.000Z",
-        },
+        }),
       );
       // The earlier error step is outside this turn.
       assert.isUndefined(
@@ -109,26 +119,35 @@ describe("watchAntigravityPromptOutcome", () => {
           [USER_INPUT, input],
           [ERROR_MESSAGE, RATE_LIMIT_ERROR],
         ]),
-        {
+        reusable({
           class: "usage_limit",
           message: "Resource has been exhausted (e.g. check quota).",
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T00:00:42.000Z",
-        },
+        }),
       );
       assert.deepEqual(
         yield* turn([
           [USER_INPUT, input],
           [ERROR_MESSAGE, INVALID_ARGUMENT_ERROR],
         ]),
-        {
+        reusable({
           class: "provider_error",
           message: "Request contains an invalid argument.",
           code: "INVALID_ARGUMENT",
           retryable: false,
-        },
+        }),
       );
+      // A saved thinking block without a valid signature fails every later prompt.
+      for (const error of [MISSING_SIGNATURE_ERROR, INVALID_SIGNATURE_ERROR]) {
+        const outcome = yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, error],
+        ]);
+        assert.equal(outcome?.failure.code, "INVALID_THINKING_SIGNATURE");
+        assert.equal(outcome?.threadDisposition, "broken");
+      }
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
         (yield* turn(
@@ -142,7 +161,7 @@ describe("watchAntigravityPromptOutcome", () => {
             stopReason: "end_turn",
             usage: { inputTokens: 40, outputTokens: 5, totalTokens: 45 },
           },
-        ))?.class,
+        ))?.failure.class,
         "usage_limit",
       );
       assert.isUndefined(
@@ -152,12 +171,15 @@ describe("watchAntigravityPromptOutcome", () => {
         ]),
       );
       // The agent maps the SDK's QUOTA_EXHAUSTED stop reason to `refusal`.
-      assert.deepEqual(yield* turn([], { stopReason: "refusal" }), {
-        class: "usage_limit",
-        message: "You have reached your Antigravity quota for this period.",
-        code: "QUOTA_EXHAUSTED",
-        retryable: true,
-      });
+      assert.deepEqual(
+        yield* turn([], { stopReason: "refusal" }),
+        reusable({
+          class: "usage_limit",
+          message: "You have reached your Antigravity quota for this period.",
+          code: "QUOTA_EXHAUSTED",
+          retryable: true,
+        }),
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -193,19 +215,22 @@ describe("watchAntigravityPromptOutcome", () => {
       const linked = yield* watchAntigravityPromptOutcome(profileDirectory, own);
       append(peer, ERROR_MESSAGE, QUOTA_ERROR);
       assert.isUndefined(yield* linked({ stopReason: "end_turn" }));
-      assert.equal((yield* linked({ stopReason: "refusal" }))?.class, "usage_limit");
+      assert.equal((yield* linked({ stopReason: "refusal" }))?.failure.class, "usage_limit");
 
       // An unreadable log gives no evidence, but the agent's typed refusal still fails the turn.
       yield* fs.remove(path.join(conversations, `${own}.db`));
       yield* fs.writeFileString(path.join(conversations, `${own}.db`), "not a database");
       const corrupt = yield* watchAntigravityPromptOutcome(profileDirectory, own);
       assert.isUndefined(yield* corrupt({ stopReason: "end_turn" }));
-      assert.deepEqual(yield* corrupt({ stopReason: "refusal" }), {
-        class: "usage_limit",
-        message: "You have reached your Antigravity quota for this period.",
-        code: "QUOTA_EXHAUSTED",
-        retryable: true,
-      });
+      assert.deepEqual(
+        yield* corrupt({ stopReason: "refusal" }),
+        reusable({
+          class: "usage_limit",
+          message: "You have reached your Antigravity quota for this period.",
+          code: "QUOTA_EXHAUSTED",
+          retryable: true,
+        }),
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
