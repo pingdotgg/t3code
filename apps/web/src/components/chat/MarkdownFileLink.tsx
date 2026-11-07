@@ -35,6 +35,7 @@ interface MarkdownFileLinkProps {
   panelPath: string | null;
   line?: number | undefined;
   label: string;
+  wrapLabel?: boolean | undefined;
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
@@ -60,6 +61,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   panelPath,
   line,
   label,
+  wrapLabel,
   copyMarkdown,
   theme,
   threadRef,
@@ -361,6 +363,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 path={iconPath}
                 environmentId={environmentId}
                 label={label}
+                wrapLabel={wrapLabel}
                 theme={theme}
               />
             </ContextChip>
@@ -385,6 +388,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 path={iconPath}
                 environmentId={environmentId}
                 label={label}
+                wrapLabel={wrapLabel}
                 theme={theme}
               />
             </ContextChip>
@@ -411,6 +415,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&
+    previous.wrapLabel === next.wrapLabel &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
     previous.threadRef === next.threadRef &&
