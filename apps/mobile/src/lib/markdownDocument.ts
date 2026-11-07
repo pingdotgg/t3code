@@ -191,10 +191,19 @@ export function markdownHtmlContent(
     anchorMarkdown(tags.map((tag) => tag[0]).filter((tag) => ANCHOR_TAG.test(tag)));
   let result = "";
   let end = 0;
+  // A dropped icon leaves its gap behind; `** Title**` would no longer be bold.
+  let dropSpace = false;
+  const nextText = (text: string) => {
+    if (!text) return text;
+    const trimmed = dropSpace ? text.replace(/^[ \t]/, "") : text;
+    dropSpace = false;
+    return anchors.open > 0 ? escapeLinkLabel(trimmed) : trimmed;
+  };
   for (const match of tags) {
-    const text = content.slice(end, match.index);
-    result += anchors.open > 0 ? escapeLinkLabel(text) : text;
+    result += nextText(content.slice(end, match.index));
     const replacement = htmlTagMarkdown(match[0], anchors, options);
+    if (replacement) dropSpace = false;
+    else if (/^<img\b/i.test(match[0])) dropSpace = endsWithOpener(result);
     if (replacement === "[" && bangBefore(result, result.length))
       result = `${result.slice(0, -1)}\\!`;
     result +=
@@ -203,8 +212,40 @@ export function markdownHtmlContent(
         : replacement;
     end = match.index + match[0].length;
   }
-  const text = content.slice(end);
-  return result + (anchors.open > 0 ? escapeLinkLabel(text) : text);
+  return result + nextText(content.slice(end));
+}
+
+const ICON_MAX_SIZE = 24;
+
+function iconSized(tag: string): boolean {
+  return ["width", "height"].some((name) => {
+    const value = attribute(tag, name)?.trim();
+    return (
+      value !== undefined &&
+      /^\d+(?:\.\d+)?(?:px)?$/i.test(value) &&
+      Number.parseFloat(value) <= ICON_MAX_SIZE
+    );
+  });
+}
+
+// Alt text can land at the start of a line, so a leading block marker must stay literal.
+function markdownText(text: string): string {
+  if (!text.trim()) return "";
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/[\\`!*_[\]<>&|~]/g, "\\$&")
+    .replace(/^( ?)(?:([#+=-])|(\d+)([.)]))/, (_, space, marker, digits, delimiter) =>
+      marker ? `${space}\\${marker}` : `${space}${digits}\\${delimiter}`,
+    );
+}
+
+/**
+ * True when a space after `text` is removable: whitespace, or an emphasis delimiter that opens.
+ * A delimiter touching the end of a word closes it, and an escaped one is literal.
+ */
+function endsWithOpener(text: string): boolean {
+  if (/[*_]$/.test(text)) return /(?:^|[^\p{L}\p{N}\\*_])[*_]+$/u.test(text);
+  return text === "" || /\s$/.test(text);
 }
 
 function htmlTagMarkdown(
@@ -222,6 +263,8 @@ function htmlTagMarkdown(
   if (/^<img\b/i.test(tag)) {
     const src = attribute(tag, "src");
     if (!src) return "";
+    // Native draws an image that starts a line as a 200pt block, so icons keep only their text.
+    if (iconSized(tag)) return markdownText(attribute(tag, "alt") ?? "");
     const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
     return `![${alt}](${markdownDestination(src)})`;
   }
@@ -255,22 +298,35 @@ export function markdownWithHtml(markdown: string): string {
                 : [],
             ),
           );
+    // An icon that is its own node is dropped here, so the space after it is trimmed across siblings.
+    let previous = "\n";
+    let dropSpace = false;
     for (const child of children) {
       const start = child.position?.start.offset;
       const end = child.position?.end.offset;
       const linkLabel = inLink || (anchors?.open ?? 0) > 0;
       if (child.type === "text") {
-        if (linkLabel && start !== undefined && end !== undefined) {
-          const content = escapeLinkLabel(markdown.slice(start, end));
-          if (content !== markdown.slice(start, end)) edits.push({ start, end, content });
+        if (start !== undefined && end !== undefined) {
+          const source = markdown.slice(start, end);
+          let content = linkLabel ? escapeLinkLabel(source) : source;
+          if (dropSpace) content = content.replace(/^[ \t]/, "");
+          if (content !== source) edits.push({ start, end, content });
+          previous = content || previous;
         }
+        dropSpace = false;
         continue;
       }
       if (child.type !== "html") {
+        previous = "x";
+        dropSpace = false;
         visit(child, inTableCell, linkLabel);
         continue;
       }
       const content = markdownHtmlContent(child.value, { anchors, inTableCell });
+      if (content) {
+        previous = content;
+        dropSpace = false;
+      } else if (/^<img\b/i.test(child.value)) dropSpace = endsWithOpener(previous);
       if (start === undefined || end === undefined) continue;
       // Text before an outermost link is never edited, so this edit cannot overlap another.
       if (content.startsWith("[") && !linkLabel && bangBefore(markdown, start))
@@ -429,9 +485,56 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+const SVG_URL = /\.svg(?:$|[?#])/i;
+
+/**
+ * Native image attachments cannot decode SVG and leave an empty box. Only a standalone image
+ * paragraph outside lists reaches the React image renderer, so every other SVG keeps its alt text.
+ */
+function markdownWithInlineSvgAsText(markdown: string): string {
+  if (!/\.svg/i.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  const root = parser.parse(markdown);
+  const definitions = new Map<string, string>();
+  const collect = (node: MarkdownNode) => {
+    if (node.type === "definition" && !definitions.has(node.identifier.toUpperCase()))
+      definitions.set(node.identifier.toUpperCase(), node.url);
+    if ("children" in node) node.children.forEach(collect);
+  };
+  collect(root);
+  const visit = (node: MarkdownNode, inSlotContainer: boolean) => {
+    if (!("children" in node)) return;
+    const standalone = inSlotContainer && node.type === "paragraph" && node.children.length === 1;
+    const hostsSlots = node.type === "root" || (node.type === "blockquote" && inSlotContainer);
+    for (const child of node.children) {
+      if (child.type !== "image" && child.type !== "imageReference") {
+        visit(child, hostsSlots);
+        continue;
+      }
+      const url =
+        child.type === "image" ? child.url : definitions.get(child.identifier.toUpperCase());
+      const start = child.position?.start.offset;
+      const end = child.position?.end.offset;
+      if (!standalone && url && SVG_URL.test(url) && start !== undefined && end !== undefined) {
+        const content = markdownText(child.alt ?? "");
+        // A removed image would leave `** Title**`, which is not bold.
+        const dropSpace =
+          !content &&
+          /^[ \t]/.test(markdown.slice(end, end + 1)) &&
+          endsWithOpener(markdown.slice(Math.max(0, start - 16), start));
+        edits.push({ start, end: dropSpace ? end + 1 : end, content });
+      }
+    }
+  };
+  visit(root, true);
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 export function markdownForNativeParsing(markdown: string): string {
-  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
+  return markdownWithInlineSvgAsText(
+    markdownWithWindowsPathDestinations(markdownWithHtml(markdown)),
+  );
 }
 
 export function parseMarkdownDocument(markdown: string): Root {
