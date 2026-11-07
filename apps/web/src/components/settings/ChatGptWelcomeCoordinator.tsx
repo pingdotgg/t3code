@@ -78,9 +78,6 @@ export function ChatGptWelcomeCoordinator() {
         </DialogHeader>
         <DialogFooter className="sm:items-center">
           <ChatGptUsageButton size="default" variant="secondary" className="sm:mr-auto" />
-          <Button variant="secondary" onClick={dismiss}>
-            Close
-          </Button>
           <Button ref={continueRef} onClick={dismiss}>
             Continue
           </Button>
