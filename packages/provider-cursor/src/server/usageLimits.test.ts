@@ -1,7 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./usageLimits.ts";
@@ -56,41 +54,29 @@ describe("Cursor usage limits", () => {
     ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 100 }]);
   });
 
-  it.effect("ignores CLI logins and accepts an explicit auth token", () =>
+  it.effect("requires explicit credentials and accepts an auth token", () =>
     Effect.gen(function* () {
-      for (const platform of ["linux", "darwin"] as const) {
-        for (const token of [undefined, "explicit-token"]) {
-          const limits = yield* readCursorUsageLimits(
-            { apiEndpoint: "" },
-            {
-              AGENT_CLI_CREDENTIAL_STORE: platform === "linux" ? "memory" : "default",
-              ...(token ? { CURSOR_AUTH_TOKEN: token } : {}),
-            },
-          ).pipe(
-            Effect.provideService(HostProcess.Platform, platform),
-            Effect.provideService(
-              FileSystem.FileSystem,
-              FileSystem.makeNoop({
-                readFileString: () => Effect.die("must not read an unrelated credential file"),
-              }),
-            ),
-            Effect.provideService(
-              HttpClient.HttpClient,
-              HttpClient.make((request) => {
-                expect(token).toBe("explicit-token");
-                expect(request.headers.authorization).toBe("Bearer explicit-token");
-                return Effect.succeed(
-                  HttpClientResponse.fromWeb(
-                    request,
-                    Response.json({ planUsage: { totalPercentUsed: 10 } }),
-                  ),
-                );
-              }),
-            ),
-          );
-          if (token) expect(limits.windows[0]?.usedPercent).toBe(10);
-          else expect(limits.unavailable?.reason).toBe("unsupported");
-        }
+      for (const token of [undefined, "explicit-token"]) {
+        const limits = yield* readCursorUsageLimits(
+          { apiEndpoint: "" },
+          token ? { CURSOR_AUTH_TOKEN: token } : {},
+        ).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              expect(token).toBe("explicit-token");
+              expect(request.headers.authorization).toBe("Bearer explicit-token");
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ planUsage: { totalPercentUsed: 10 } }),
+                ),
+              );
+            }),
+          ),
+        );
+        if (token) expect(limits.windows[0]?.usedPercent).toBe(10);
+        else expect(limits.unavailable?.reason).toBe("unsupported");
       }
     }),
   );
@@ -120,47 +106,38 @@ describe("Cursor usage limits", () => {
     }),
   );
 
-  it.effect("reads an API key's own account instead of a stored login", () =>
+  it.effect("exchanges an API key to read its account limits", () =>
     Effect.gen(function* () {
-      for (const platform of ["linux", "darwin"] as const) {
-        const requests: Array<readonly [string, string | undefined]> = [];
-        const limits = yield* readCursorUsageLimits(
-          { apiEndpoint: "" },
-          { CURSOR_API_KEY: "api-key" },
-        ).pipe(
-          Effect.provideService(HostProcess.Platform, platform),
-          Effect.provideService(
-            FileSystem.FileSystem,
-            FileSystem.makeNoop({
-              readFileString: () => Effect.die("must not read a stored login"),
-            }),
-          ),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) => {
-              requests.push([request.url, request.headers.authorization]);
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(
-                  request,
-                  Response.json(
-                    request.url.endsWith("/auth/exchange_user_api_key")
-                      ? { accessToken: "api-key-access-token" }
-                      : { planUsage: { totalPercentUsed: 37 } },
-                  ),
+      const requests: Array<readonly [string, string | undefined]> = [];
+      const limits = yield* readCursorUsageLimits(
+        { apiEndpoint: "" },
+        { CURSOR_API_KEY: "api-key" },
+      ).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push([request.url, request.headers.authorization]);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  request.url.endsWith("/auth/exchange_user_api_key")
+                    ? { accessToken: "api-key-access-token" }
+                    : { planUsage: { totalPercentUsed: 37 } },
                 ),
-              );
-            }),
-          ),
-        );
-        expect(requests).toEqual([
-          ["https://api2.cursor.sh/auth/exchange_user_api_key", "Bearer api-key"],
-          [
-            "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
-            "Bearer api-key-access-token",
-          ],
-        ]);
-        expect(limits.windows[0]?.usedPercent).toBe(37);
-      }
+              ),
+            );
+          }),
+        ),
+      );
+      expect(requests).toEqual([
+        ["https://api2.cursor.sh/auth/exchange_user_api_key", "Bearer api-key"],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          "Bearer api-key-access-token",
+        ],
+      ]);
+      expect(limits.windows[0]?.usedPercent).toBe(37);
     }),
   );
 
@@ -173,7 +150,6 @@ describe("Cursor usage limits", () => {
         ["https://cursor-proxy.example", { CURSOR_API_KEY: "api-key" }],
       ] as const) {
         const limits = yield* readCursorUsageLimits({ apiEndpoint }, environment).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make(() => Effect.die("must not send an API key to a proxy")),
