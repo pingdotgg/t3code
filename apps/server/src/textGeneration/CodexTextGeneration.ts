@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -34,6 +35,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
+// Bounds staleness from layers no file stamp sees: macOS MDM and cloud-delivered config.
+const CODEX_MCP_LIST_CACHE_TTL_MS = 60_000;
 // Plugins/apps add MCP servers; use trailing config overrides because --disable loses to user -c flags.
 const CODEX_NO_PLUGIN_ARGS = [
   "--config",
@@ -156,14 +159,23 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return imagePaths;
   });
 
-  // Config files Codex merges: the user's, then `.codex/config.toml` in cwd and its ancestors.
-  const codexConfigStamp = (cwd: string, codexHome: string) => {
-    const paths = [path.join(codexHome, "config.toml")];
+  // Config files Codex merges: system and managed layers, the user's, then `.codex/config.toml`
+  // in cwd and its ancestors.
+  const codexConfigStamp = Effect.fn("codexConfigStamp")(function* (
+    cwd: string,
+    codexHome: string,
+  ) {
+    const platform = yield* HostProcess.Platform;
+    const paths = [
+      ...(platform === "win32" ? [] : ["/etc/codex/config.toml", "/etc/codex/managed_config.toml"]),
+      path.join(codexHome, "managed_config.toml"),
+      path.join(codexHome, "config.toml"),
+    ];
     for (let directory = cwd; ; directory = path.dirname(directory)) {
       paths.push(path.join(directory, ".codex", "config.toml"));
       if (path.dirname(directory) === directory) break;
     }
-    return Effect.forEach(
+    return yield* Effect.forEach(
       paths,
       (configPath) =>
         fileSystem.stat(configPath).pipe(
@@ -172,11 +184,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         ),
       { concurrency: "unbounded" },
     ).pipe(Effect.map((stamps) => stamps.join(",")));
-  };
+  });
   // Listing spawns Codex on every call; reuse the last answer until a config file changes.
   const mcpServerCache = new Map<
     string,
-    { readonly configStamp: string; readonly names: ReadonlyArray<string> }
+    {
+      readonly configStamp: string;
+      readonly listedAt: number;
+      readonly names: ReadonlyArray<string>;
+    }
   >();
 
   const listEnabledMcpServers = Effect.fn("listEnabledMcpServers")(
@@ -189,8 +205,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     }) {
       const cacheKey = [input.binary, input.codexHome, input.cwd, ...input.launchArgs].join("\0");
       const configStamp = yield* codexConfigStamp(input.cwd, input.codexHome);
+      const now = yield* Clock.currentTimeMillis;
       const cached = mcpServerCache.get(cacheKey);
-      if (cached?.configStamp === configStamp) return cached.names;
+      if (
+        cached?.configStamp === configStamp &&
+        now - cached.listedAt < CODEX_MCP_LIST_CACHE_TTL_MS
+      ) {
+        return cached.names;
+      }
       const spawnCommand = yield* resolveSpawnCommand(
         input.binary,
         [...input.launchArgs, ...CODEX_NO_PLUGIN_ARGS, "mcp", "list", "--json"],
@@ -227,7 +249,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         ),
       );
       const names = servers.filter((server) => server.enabled).map((server) => server.name);
-      mcpServerCache.set(cacheKey, { configStamp, names });
+      mcpServerCache.set(cacheKey, { configStamp, listedAt: now, names });
       return names;
     },
     Effect.scoped,

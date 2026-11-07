@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -323,6 +324,15 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             yield* fs.utimes(configPath, 0, 0);
             yield* generate;
             expect(yield* listCount).toBe(2);
+
+            yield* fs.writeFileString(path.join(codexHome, "managed_config.toml"), "");
+            yield* generate;
+            expect(yield* listCount).toBe(3);
+
+            // Layers no file stamp sees (MDM, cloud config) are bounded by the cache lifetime.
+            yield* TestClock.adjust("1 minute");
+            yield* generate;
+            expect(yield* listCount).toBe(4);
           }),
       );
     }),
