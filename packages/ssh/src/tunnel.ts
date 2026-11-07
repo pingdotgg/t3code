@@ -523,8 +523,26 @@ fi
 exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
 
+const REMOTE_PROCESS_START_SCRIPT = `process_start() {
+  # Boot identity and start ticks survive clock corrections without matching across reboots.
+  if [ -r /proc/sys/kernel/random/boot_id ]; then
+    PROCESS_STAT="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+    BOOT_ID="$(cat /proc/sys/kernel/random/boot_id)" || return 1
+    # Strip the command, which may contain spaces or parentheses, before field 22.
+    set -- \${PROCESS_STAT##*) }
+    [ "$#" -ge 20 ] || return 1
+    shift 19
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    printf 'linux:%s:%s\\n' "$BOOT_ID" "$1"
+  else
+    LC_ALL=C TZ=UTC ps -p "$1" -o lstart= 2>/dev/null
+  fi
+}
+`;
+
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
+@@T3_PROCESS_START_SCRIPT@@
 STATE_KEY="$1"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
 DEFAULT_SERVER_HOME="$HOME/.t3"
@@ -534,6 +552,8 @@ PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
+ACTIVE_RUNNER_FILE="$STATE_DIR/active-runner.sh"
+PROCESS_START_FILE="$STATE_DIR/process-start"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 mkdir -p "$STATE_DIR"
 cleanup_runner_next() {
@@ -544,7 +564,11 @@ cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
 RUNNER_CHANGED=0
-if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
+RUNNING_RUNNER="$RUNNER_FILE"
+if [ -f "$ACTIVE_RUNNER_FILE" ]; then
+  RUNNING_RUNNER="$ACTIVE_RUNNER_FILE"
+fi
+if ! cmp -s "$RUNNER_NEXT" "$RUNNING_RUNNER"; then
   RUNNER_CHANGED=1
 fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
@@ -580,10 +604,14 @@ NODE
 wait_for_pid_exit() {
   PID_TO_WAIT="$1"
   WAIT_COUNT=0
-  while kill -0 "$PID_TO_WAIT" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+  while server_running "$PID_TO_WAIT" && [ "$WAIT_COUNT" -lt 20 ]; do
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
+  if server_running "$PID_TO_WAIT"; then
+    printf 'Remote T3 server did not stop. Retry the connection.\\n' >&2
+    exit 1
+  fi
 }
 # kill -0 also succeeds for a server that exited but was not reaped yet, so
 # a zombie does not count as running. Without ps to tell, trust kill -0.
@@ -619,9 +647,29 @@ try {
 }
 NODE
 }
+launcher_state_dir_for_pid() {
+  for OTHER_STATE_DIR in "$HOME/.t3/ssh-launch"/*; do
+    [ "$OTHER_STATE_DIR" != "$STATE_DIR" ] || continue
+    [ "$(cat "$OTHER_STATE_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
+    [ "$(cat "$OTHER_STATE_DIR/pid" 2>/dev/null || true)" = "$1" ] || continue
+    [ -f "$OTHER_STATE_DIR/active-runner.sh" ] || continue
+    RECORDED_START="$(cat "$OTHER_STATE_DIR/process-start" 2>/dev/null || true)"
+    [ -n "$RECORDED_START" ] || continue
+    [ "$(process_start "$1")" = "$RECORDED_START" ] || continue
+    printf '%s\\n' "$OTHER_STATE_DIR"
+    return 0
+  done
+  return 1
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+RECORDED_START="$(cat "$PROCESS_START_FILE" 2>/dev/null || true)"
+if [ -n "$RECORDED_START" ] && [ "$(process_start "$REMOTE_PID")" != "$RECORDED_START" ]; then
+  REMOTE_PID=""
+  REMOTE_MANAGED=""
+  rm -f "$PID_FILE" "$MANAGED_FILE" "$PROCESS_START_FILE"
+fi
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
@@ -636,6 +684,32 @@ fi
 if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$REMOTE_MANAGED" = "managed" ] && [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+elif [ -n "$DEFAULT_REMOTE_PORT" ] && PREVIOUS_STATE_DIR="$(launcher_state_dir_for_pid "$DEFAULT_RUNTIME_PID")"; then
+  REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+  if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then
+      RUNNER_CHANGED=0
+    else
+      RUNNER_CHANGED=1
+    fi
+    if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+      kill "$REMOTE_PID" 2>/dev/null || true
+      wait_for_pid_exit "$REMOTE_PID"
+    fi
+    printf 'managed\\n' >"$MANAGED_FILE"
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    cp "$PREVIOUS_STATE_DIR/process-start" "$PROCESS_START_FILE"
+    cp "$PREVIOUS_STATE_DIR/active-runner.sh" "$ACTIVE_RUNNER_FILE"
+    # Publish the prepared record atomically; only one alias can claim it.
+    if ! mv "$PREVIOUS_STATE_DIR/pid" "$PID_FILE" 2>/dev/null; then
+      printf 'Another SSH connection claimed the remote server. Retry the connection.\\n' >&2
+      exit 1
+    fi
+    REMOTE_PID="$DEFAULT_RUNTIME_PID"
+    REMOTE_MANAGED="managed"
+  else
+    REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
+  fi
 elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
@@ -673,10 +747,14 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   fi
-elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PID"; then
+elif [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PID"; then
   # Reconnect owns the local tunnel, not the lifetime of an already running
   # server. A changed runner is the update path and still replaces it.
   if [ "$RUNNER_CHANGED" -eq 1 ]; then
+    if [ "$(cat "$PID_FILE" 2>/dev/null || true)" != "$REMOTE_PID" ]; then
+      printf 'Remote server ownership changed. Retry the connection.\\n' >&2
+      exit 1
+    fi
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
     REMOTE_PID=""
@@ -703,6 +781,7 @@ if [ -z "$REMOTE_PORT" ]; then
   fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
+  process_start "$REMOTE_PID" >"$PROCESS_START_FILE" || true
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
@@ -718,6 +797,7 @@ if [ -z "$REMOTE_PORT" ]; then
     rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     exit 1
   fi
+  cp "$RUNNER_FILE" "$ACTIVE_RUNNER_FILE"
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
@@ -742,7 +822,7 @@ PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   kill "$REMOTE_PID" 2>/dev/null || true
   WAIT_COUNT=0
   while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
@@ -825,8 +905,9 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    T3_PROCESS_START_SCRIPT: REMOTE_PROCESS_START_SCRIPT,
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
