@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -432,6 +433,19 @@ export const make = Effect.gen(function* () {
       trigger === "settle"
         ? `settle-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`
         : `setup-${script.id}`;
+    // A surviving setup shell may still hold a deleted worktree directory.
+    if (trigger === "setup") {
+      yield* terminalManager.close({ threadId: input.threadId, terminalId }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectSetupScriptOperationError({
+              ...errorContext,
+              operation: "openTerminal",
+              cause,
+            }),
+        ),
+      );
+    }
     const cwd = input.worktreePath;
     const env = {
       ...projectScriptRuntimeEnv({
@@ -516,7 +530,7 @@ export const make = Effect.gen(function* () {
 
     // Return once the terminal exists so callers can show it while a startup prompt waits.
     // PowerShell and cmd have no line-editor signal.
-    yield* (
+    const commandWriter = yield* (
       completionShell === "posix" || completionShell === "fish"
         ? readiness.wait
         : Effect.succeed("ready" as const)
@@ -542,6 +556,13 @@ export const make = Effect.gen(function* () {
     );
 
     const completion = observed?.completion.pipe(
+      Effect.onInterrupt(() =>
+        Fiber.interrupt(commandWriter).pipe(
+          Effect.andThen(Effect.sync(() => readiness.unsubscribe())),
+          Effect.andThen(terminalManager.close({ threadId: input.threadId, terminalId })),
+          Effect.ignore,
+        ),
+      ),
       Effect.tap(({ exitCode }) =>
         exitCode === 0
           ? terminalManager.closeIdle({ threadId: input.threadId, terminalId })
