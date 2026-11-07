@@ -38,6 +38,8 @@ export function HtmlRenderFrame(props: {
   const [contentHeight, setContentHeight] = useState<number>();
   const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
   const fileName = htmlRenderFileName(title);
+  // Inline stays mounted under the fullscreen viewer, so each live document keeps its own input.
+  const formStateKey = `${props.environmentId}:${attachmentId}`;
   const resource = {
     _tag: "attachment" as const,
     attachmentId,
@@ -74,6 +76,7 @@ export function HtmlRenderFrame(props: {
             src={src}
             title={title}
             threadRef={props.threadRef}
+            formStateKey={formStateKey}
             className="block size-full"
             onContentHeight={setContentHeight}
             onFullscreenChange={onFullscreenChange}
@@ -112,6 +115,7 @@ export function HtmlRenderFrame(props: {
               src={expandedSrc}
               title={title}
               threadRef={props.threadRef}
+              formStateKey={`${formStateKey}:fullscreen`}
               onClose={() => setExpandedSrc(null)}
             />
           ) : null}

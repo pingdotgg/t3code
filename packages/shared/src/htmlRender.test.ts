@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   injectHtmlRenderBootstrap,
+  readHtmlRenderFormState,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
 } from "./htmlRender.ts";
@@ -115,6 +116,22 @@ describe("readHtmlRenderImageRequest", () => {
     expect(readHtmlRenderImageRequest(image({ src: "javascript:alert(1)" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "data:text/html,<p>" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "blob:null/1" }))).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderFormState", () => {
+  it("accepts only a complete list of form fields and drops extra properties", () => {
+    const formState = (fields: unknown) => ({
+      jsonrpc: "2.0",
+      method: "t3/notifications/form-state",
+      params: { fields },
+    });
+    const note = { key: "TEXTAREA|textarea|note", value: "keep this", checked: false };
+    expect(readHtmlRenderFormState(formState([{ ...note, extra: 1 }]))).toEqual([note]);
+    expect(readHtmlRenderFormState(formState([]))).toEqual([]);
+    expect(readHtmlRenderFormState(formState([note, { key: "x", value: 1 }]))).toBeUndefined();
+    expect(readHtmlRenderFormState(formState("note"))).toBeUndefined();
+    expect(readHtmlRenderFormState({ ...formState([note]), jsonrpc: "1.0" })).toBeUndefined();
   });
 });
 

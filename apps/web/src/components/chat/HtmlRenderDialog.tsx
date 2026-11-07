@@ -10,6 +10,7 @@ export function HtmlRenderDialog(props: {
   readonly src: string;
   readonly title: string;
   readonly threadRef?: ScopedThreadRef | undefined;
+  readonly formStateKey: string;
   readonly onClose: () => void;
 }) {
   const [zoom, setZoom] = useState(1);
@@ -41,6 +42,7 @@ export function HtmlRenderDialog(props: {
                 src={props.src}
                 title={props.title}
                 threadRef={props.threadRef}
+                formStateKey={props.formStateKey}
                 className="block size-full"
               />
             </div>
