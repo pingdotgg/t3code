@@ -1108,6 +1108,32 @@ describe("MessagesTimeline attachments", () => {
   });
 });
 
+it("ignores horizontal wheel gestures without releasing timeline follow", async () => {
+  setup();
+  const base = baseProps();
+  const navigations: TimelineNavigation[] = [];
+  await using _screen = await renderTimeline([message("Scroll the table sideways")], {
+    ...base,
+    onViewportAttach: (viewport) =>
+      viewport.subscribe((navigation) => navigations.push(navigation)),
+  });
+  const viewport = base.listRef.current!.getScrollableNode()!;
+  await act(() => {
+    for (const gesture of [
+      { deltaX: 80, deltaY: -30 },
+      { deltaX: -80, deltaY: 30 },
+      { deltaX: 0, deltaY: -30, shiftKey: true },
+    ]) {
+      viewport.dispatchEvent(new WheelEvent("wheel", { ...gesture, bubbles: true }));
+    }
+  });
+  expect(navigations).toEqual([]);
+  await act(() => {
+    viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -30, bubbles: true }));
+  });
+  expect(navigations).toEqual([{ source: "wheel", direction: "up" }]);
+});
+
 describe("MessagesTimeline thread find", () => {
   // Opening find is navigation; on a list already showing the thread the open
   // action navigates, so the list itself releases follow only when it starts

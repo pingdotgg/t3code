@@ -77,7 +77,8 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
     for (const listener of listeners) listener(navigation);
   };
   const handleWheel = (event: WheelEvent) => {
-    if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY)) return;
+    if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY, event))
+      return;
     emit({ source: "wheel", direction: event.deltaY < 0 ? "up" : "down" });
   };
   const handleTouchMove = () => emit({ source: "touch" });
