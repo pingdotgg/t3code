@@ -68,9 +68,7 @@ function createVisitScrollState(
     // thread switches. LegendList fires scroll events with isAtEnd=false while
     // initialScrollAtEnd is settling; hiding is always immediate.
     showScrollDebouncer: new Debouncer(() => showScrollToBottom(visit), { wait: 150 }),
-    // LegendList only re-pins within one viewport of the end, so a follow scroll
-    // cut short further up (an instant adjustment cancels a smooth one) stays there.
-    repinEndDebouncer: new Debouncer((repinEnd: () => void) => repinEnd(), { wait: 150 }),
+    repinEndTimer: null as number | null,
     positionedAnchor: null as MessageId | null,
     settledAnchor: null as MessageId | null,
     releaseAnchorScrollHold: null as (() => void) | null,
@@ -502,16 +500,20 @@ export function useTimelineFollow(input: TimelineFollowInput) {
 
   const onIsAtEndChange = (isAtEnd: boolean) => {
     const scroll = visitScroll();
+    if (scroll.repinEndTimer !== null) window.clearTimeout(scroll.repinEndTimer);
+    scroll.repinEndTimer = null;
     if (!isAtEnd && readFollow().mode === "following") {
       scroll.showScrollDebouncer.cancel();
       setShowScrollToBottom(false);
-      // Every scroll event reports again, so this runs once scrolling stops short.
-      scroll.repinEndDebouncer.maybeExecute(() => {
+      // LegendList re-pins only within one viewport of the end, so a follow scroll cut short
+      // further up (an instant correction cancels a smooth one) stays there. Every scroll
+      // event reports again, so this runs once scrolling stops short.
+      scroll.repinEndTimer = window.setTimeout(() => {
+        scroll.repinEndTimer = null;
         if (visitScrollRef.current === scroll) repinEndStable();
-      });
+      }, 150);
       return;
     }
-    scroll.repinEndDebouncer.cancel();
     const { before, after } = followStore.dispatch(visit, {
       type: isAtEnd ? "reachedEnd" : "leftEnd",
     });

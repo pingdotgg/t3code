@@ -6,11 +6,8 @@ import {
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./composerFocusRedirect";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
-import {
-  createUpwardScrollDetector,
-  isTimelineScrollTarget,
-  type TimelineScrollAdjustment,
-} from "./timelineScrollTarget";
+import type { LegendListRef } from "@legendapp/list/react";
+import { createUpwardScrollDetector, isTimelineScrollTarget } from "./timelineScrollTarget";
 
 /**
  * Which thread the mounted timeline list opened on. LegendList's
@@ -64,12 +61,6 @@ export interface TimelineViewport {
   readonly onFollowReleased: (listener: () => void) => () => void;
 }
 
-export interface AttachedTimelineViewport extends TimelineViewport {
-  /** LegendList scrolled itself to keep visible content in place (its onScrollAdjust). */
-  readonly scrollAdjusted: (adjustment: TimelineScrollAdjustment) => void;
-  readonly dispose: () => void;
-}
-
 const UP_KEYS = new Set(["PageUp", "Home", "ArrowUp"]);
 const DOWN_KEYS = new Set(["PageDown", "End", "ArrowDown", " "]);
 
@@ -77,7 +68,12 @@ const DOWN_KEYS = new Set(["PageDown", "End", "ArrowDown", " "]);
  * Owns the timeline scroll node's input listeners for as long as the node is
  * mounted, and turns them into one navigation signal.
  */
-export function attachTimelineViewport(scrollNode: HTMLElement): AttachedTimelineViewport {
+export function attachTimelineViewport(
+  scrollNode: HTMLElement,
+  list: LegendListRef,
+): TimelineViewport & {
+  readonly dispose: () => void;
+} {
   const listeners = new Set<(navigation: TimelineNavigation) => void>();
   const followReleasedListeners = new Set<() => void>();
   let programmaticHolds = 0;
@@ -121,14 +117,26 @@ export function attachTimelineViewport(scrollNode: HTMLElement): AttachedTimelin
   };
   // Input inside an embedded frame reaches none of the listeners above, but
   // its scroll still chains out to the timeline.
-  const scrollPosition = () => ({
-    offset: scrollNode.scrollTop,
-    maxOffset: scrollNode.scrollHeight - scrollNode.clientHeight,
+  const scrolledUp = createUpwardScrollDetector(scrollNode.scrollTop);
+  // The list scrolls itself to keep rows in place as rows above resize; the scroll event
+  // after that is not the reader's. Its public listen types omit this signal.
+  let listAdjusted = false;
+  const listen = list.getState().listen as unknown as (
+    signal: "scrollAdjust",
+    callback: () => void,
+  ) => () => void;
+  const stopListeningToListAdjust = listen("scrollAdjust", () => {
+    listAdjusted = true;
   });
-  const upwardScroll = createUpwardScrollDetector(scrollPosition());
   const handleScroll = () => {
+    const programmatic = programmaticHolds > 0 || listAdjusted;
+    listAdjusted = false;
     if (
-      upwardScroll.scrolled(scrollPosition(), programmaticHolds > 0) &&
+      scrolledUp({
+        offset: scrollNode.scrollTop,
+        maxOffset: scrollNode.scrollHeight - scrollNode.clientHeight,
+        programmatic,
+      }) &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
         contentLength: scrollNode.scrollHeight,
@@ -151,7 +159,6 @@ export function attachTimelineViewport(scrollNode: HTMLElement): AttachedTimelin
       return () => listeners.delete(listener);
     },
     navigate: ({ releasesFollow }) => emit({ source: "command", releasesFollow }),
-    scrollAdjusted: (adjustment) => upwardScroll.adjusted(adjustment, programmaticHolds > 0),
     holdProgrammaticScroll: () => {
       programmaticHolds += 1;
       let released = false;
@@ -171,6 +178,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): AttachedTimelin
     dispose: () => {
       listeners.clear();
       followReleasedListeners.clear();
+      stopListeningToListAdjust();
       scrollNode.removeEventListener("scroll", handleScroll);
       scrollNode.removeEventListener("wheel", handleWheel);
       scrollNode.removeEventListener("touchmove", handleTouchMove);

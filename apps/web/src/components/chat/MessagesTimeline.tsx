@@ -130,7 +130,6 @@ import { startTimelinePositionRestore } from "./useTimelinePositionRestore";
 import {
   attachTimelineViewport,
   nextListOpening,
-  type AttachedTimelineViewport,
   type TimelineListOpening,
   type TimelineViewport,
 } from "./timelineViewport";
@@ -730,7 +729,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const nextOpening = nextListOpening(listOpening, !showsEmptyState, listIdentityKey);
   if (nextOpening !== listOpening) setListOpening(nextOpening);
   const listOpenedOn = nextOpening.mounted ? nextOpening.identity : null;
-  const viewportRef = useRef<AttachedTimelineViewport | null>(null);
+  const viewportRef = useRef<TimelineViewport | null>(null);
   const navigateTimeline = () => viewportRef.current?.navigate({ releasesFollow: true });
   const restoreReady = restoringThreadPosition && rows.length > 0;
   // Z: syncs LegendList's scroll position with which thread it shows. The list
@@ -1140,7 +1139,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
     registerTimeline?.(scrollNode);
-    const viewport = scrollNode ? attachTimelineViewport(scrollNode) : null;
+    const viewport = list && scrollNode ? attachTimelineViewport(scrollNode, list) : null;
     viewportRef.current = viewport;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
@@ -1359,7 +1358,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
               maintainScrollAtEndThreshold={1}
               onScroll={handleScroll}
               onItemSizeChanged={handleItemSizeChanged}
-              onScrollAdjust={(adjustment) => viewportRef.current?.scrollAdjusted(adjustment)}
               className={cn(
                 "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
                 topFadeEnabled && "topbar-scroll-fade",
