@@ -393,6 +393,51 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData).not.toHaveBeenCalled();
   });
 
+  it("lets the macOS Vietnamese Telex input source rewrite the letters before the caret", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    const telex = new Map([
+      ["tie|e", "tiê"],
+      ["tiêng|s", "tiếng"],
+      ["vie|e", "viê"],
+      ["viê|j", "việ"],
+    ]);
+    const insert = (value: string, data: string) => {
+      surface.input.value = value;
+      surface.input.dispatchEvent(
+        Object.assign(new Event("input"), { inputType: "insertText", data, isComposing: false }),
+      );
+    };
+
+    for (const char of "tieengs vieejt") {
+      const code = char === " " ? "Space" : `Key${char.toUpperCase()}`;
+      const keyCode = char.toUpperCase().charCodeAt(0);
+      // The input source reads the word before the caret and commits its rewrite with
+      // insertText:replacementRange:, which Chromium applies before forwarding the
+      // keydown with its real keyCode and no char event, so the key inserts nothing.
+      const word = /\S*$/.exec(surface.input.value)?.[0] ?? "";
+      const rewrite = telex.get(`${word}|${char}`);
+      if (rewrite !== undefined) {
+        insert(surface.input.value.slice(0, -word.length) + rewrite, rewrite);
+        key(surface, char, code, { keyCode });
+        continue;
+      }
+      if (!key(surface, char, code, { keyCode }).defaultPrevented) {
+        insert(surface.input.value + char, char);
+      }
+    }
+
+    const line: string[] = [];
+    for (const [data] of harness.onData.mock.calls) {
+      for (const point of data) {
+        if (point === "\x7f") line.pop();
+        else line.push(point);
+      }
+    }
+    expect(line.join("")).toBe("tiếng việt");
+  });
+
   function paste(surface: GhosttyTerminalSurface, text: string) {
     surface.input.dispatchEvent(
       Object.assign(new Event("paste", { cancelable: true }), {
