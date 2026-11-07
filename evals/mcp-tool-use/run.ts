@@ -1185,6 +1185,8 @@ export const t3Default = (
         ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
       };
     }
+    case "send_secret":
+      return { deliveryId: "a".repeat(64), status: "available", expiresAt: 1794132000000 };
     case "request_secret": {
       // T3 names a ref and a file with 32 hex characters, new for each request, in its secrets dir.
       const id = NodeCrypto.createHash("sha256")

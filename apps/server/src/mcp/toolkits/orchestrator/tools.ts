@@ -14,6 +14,8 @@ import {
   OrchestratorMcpDeleteScheduledTaskInput,
   OrchestratorMcpDeleteScheduledTaskResult,
   OrchestratorMcpEnvironmentTarget,
+  SendSecretInput,
+  SecretDeliveryReceipt,
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
   OrchestratorMcpFailure,
@@ -195,6 +197,18 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   .annotate(Tool.Title, "Delete a scheduled task")
   .annotate(Tool.Destructive, true);
 
+const SendSecretTool = Tool.make("send_secret", {
+  description:
+    "Deliver a secret to the user in this thread for 24 hours. Generate it directly into an owner-private regular UTF-8 file outside the repository (at most 64 KiB), without printing or reading its contents into tool output. Pass only filePath, a non-sensitive label, and a stable clientRequestId for retries. Preserves the source file and exact text. Returns metadata only; never paste secrets into chat or tool arguments. There is no agent retrieval tool.",
+  parameters: SendSecretInput,
+  success: SecretDeliveryReceipt,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Send a secret to the user")
+  .annotate(Tool.Destructive, false);
+
 const RequestSecretTool = Tool.make("request_secret", {
   description:
     'Ask for one secret per single-line card; never combine values. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Pasted secret for child/script: `value`. Never from an old thread.',
@@ -359,6 +373,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ScheduleTaskTool,
   ListScheduledTasksTool,
   DeleteScheduledTaskTool,
+  SendSecretTool,
   RequestSecretTool,
   CreateThreadsTool,
   ThreadListTool,

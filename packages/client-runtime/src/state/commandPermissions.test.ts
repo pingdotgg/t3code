@@ -68,6 +68,33 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect(
+    "requires operate access on the originating environment for secret delivery reads and deletion",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          for (const method of [WS_METHODS.secretsReadDelivery, WS_METHODS.secretsDeleteDelivery]) {
+            const command = createCommandPermissions(runtime, method);
+            registry.set(
+              sessions(env),
+              AsyncResult.success({
+                ...grant(false),
+                scopes: [AuthOrchestrationReadScope],
+                permissions: [AuthOrchestrationReadScope],
+              }),
+            );
+            expect(registry.get(command.permissionAtom(env))).toBe(false);
+            expect((yield* command.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+              "EnvironmentAuthorizationError",
+            );
+            registry.set(sessions(env), AsyncResult.success(grant(true)));
+            expect(registry.get(command.permissionAtom(env))).toBe(true);
+            yield* command.authorize(registry, env);
+          }
+        }),
+      ),
+  );
   it.effect("requires the destination read grant to refresh providers", () =>
     Effect.scoped(
       Effect.gen(function* () {
