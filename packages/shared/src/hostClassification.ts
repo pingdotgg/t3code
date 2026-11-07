@@ -99,6 +99,7 @@ export const isPrivateNetworkHost = (host: string): boolean => {
     isLocalLoopbackHost(normalized) ||
     normalized.endsWith(".localhost") ||
     normalized.endsWith(".local") ||
+    normalized.endsWith(".localdomain") ||
     normalized === "home.arpa" ||
     normalized.endsWith(".home.arpa") ||
     (!normalized.includes(".") && !normalized.includes(":"))
