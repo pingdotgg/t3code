@@ -14,7 +14,11 @@ import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
+import {
+  absoluteFilePathMatches,
+  isWindowsDrivePathHref,
+  normalizeMarkdownLinkDestination,
+} from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
@@ -205,6 +209,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
   remarkKeepAutolinkSuffixes,
+  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
@@ -217,6 +222,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
   remarkKeepAutolinkSuffixes,
+  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
@@ -411,6 +417,32 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
         }
         if (child) visit(child);
       }
+    };
+    visit(tree);
+  };
+}
+
+function remarkLinkAbsoluteFilePaths(): Transformer<Root> {
+  return (tree) => {
+    const visit = (node: Root | RootContent) => {
+      if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
+      node.children = node.children.flatMap((child): typeof node.children => {
+        if (child.type !== "text") {
+          visit(child);
+          return [child];
+        }
+        const parts: PhrasingContent[] = [];
+        let offset = 0;
+        for (const { index, path } of absoluteFilePathMatches(child.value)) {
+          if (index > offset) parts.push({ type: "text", value: child.value.slice(offset, index) });
+          parts.push({ type: "link", url: path, children: [{ type: "text", value: path }] });
+          offset = index + path.length;
+        }
+        if (offset === 0) return [child];
+        if (offset < child.value.length)
+          parts.push({ type: "text", value: child.value.slice(offset) });
+        return parts;
+      });
     };
     visit(tree);
   };
