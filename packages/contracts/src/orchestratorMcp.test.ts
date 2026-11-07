@@ -69,18 +69,15 @@ describe("orchestrator MCP contracts", () => {
     ).toThrow();
   });
 
-  it("decodes pull request list filters and rejects an empty pullRequest identity", () => {
+  it("decodes the pullRequest list filter string", () => {
     expect(
       decodeThreadListInput({
         allProjects: true,
-        pullRequestStates: ["open"],
-        pullRequest: { number: 22889, repository: "acme/app" },
+        pullRequest: "open",
       }),
     ).toMatchObject({
       allProjects: true,
-      pullRequestStates: ["open"],
-      pullRequest: { number: 22889, repository: "acme/app" },
+      pullRequest: "open",
     });
-    expect(() => decodeThreadListInput({ pullRequest: { repository: "acme/app" } })).toThrow();
   });
 });

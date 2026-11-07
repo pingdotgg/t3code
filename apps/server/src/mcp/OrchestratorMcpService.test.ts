@@ -3653,39 +3653,30 @@ describe("OrchestratorMcpService.listThreads pull request filters", () => {
     ),
   );
 
-  it.effect("filters by open state, presence, and exact PR identity", () =>
+  it.effect("filters by open state and exact PR identity", () =>
     Effect.gen(function* () {
       const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
       const open = yield* mcp.listThreads(client, {
         projectId: ProjectId.make("project:mcp-test"),
-        pullRequestStates: ["open"],
+        pullRequest: "open",
       });
       assert.deepStrictEqual(
         open.threads.map((thread) => thread.threadId),
         ["thread:open", "thread:other-repo"],
       );
 
-      const withPr = yield* mcp.listThreads(client, {
-        projectId: ProjectId.make("project:mcp-test"),
-        hasPullRequest: true,
-      });
-      assert.deepStrictEqual(
-        withPr.threads.map((thread) => thread.threadId),
-        ["thread:open", "thread:merged", "thread:unsynced", "thread:other-repo"],
-      );
-
       const byNumber = yield* mcp.listThreads(client, {
         projectId: ProjectId.make("project:mcp-test"),
-        pullRequest: { number: 10, repository: "acme/app" },
+        pullRequest: "10",
       });
       assert.deepStrictEqual(
         byNumber.threads.map((thread) => thread.threadId),
-        ["thread:open"],
+        ["thread:open", "thread:other-repo"],
       );
 
       const byUrl = yield* mcp.listThreads(client, {
         projectId: ProjectId.make("project:mcp-test"),
-        pullRequest: { url: "https://github.com/acme/app/pull/11/files" },
+        pullRequest: "https://github.com/acme/app/pull/11/files",
       });
       assert.deepStrictEqual(
         byUrl.threads.map((thread) => thread.threadId),

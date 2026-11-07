@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isPullRequestIdentityQuery,
   matchThreadSearchPullRequest,
+  parseThreadListPullRequestFilter,
   threadMatchesPullRequestListFilters,
   threadPullRequestMatchesIdentity,
 } from "./threadPullRequests.ts";
@@ -39,16 +40,10 @@ function link(
 }
 
 describe("threadPullRequestMatchesIdentity", () => {
-  it("matches number, repository, and URL prefixes without cutting a longer number", () => {
+  it("matches number and URL prefixes without cutting a longer number", () => {
     const pr = link(22889);
     expect(threadPullRequestMatchesIdentity(pr, { number: 22889 })).toBe(true);
     expect(threadPullRequestMatchesIdentity(pr, { number: 2288 })).toBe(false);
-    expect(threadPullRequestMatchesIdentity(pr, { number: 22889, repository: "Acme/App" })).toBe(
-      true,
-    );
-    expect(threadPullRequestMatchesIdentity(pr, { number: 22889, repository: "other/app" })).toBe(
-      false,
-    );
     expect(
       threadPullRequestMatchesIdentity(pr, {
         url: "https://github.com/acme/app/pull/22889/files",
@@ -63,16 +58,10 @@ describe("threadPullRequestMatchesIdentity", () => {
 });
 
 describe("threadMatchesPullRequestListFilters", () => {
-  it("filters by presence, state, and identity; unsynced state never matches states", () => {
+  it("filters by state and identity; unsynced state never matches states", () => {
     const open = link(1, { snapshot: snapshot({ state: "open" }) });
     const merged = link(2, { snapshot: snapshot({ state: "merged" }) });
     const unsynced = link(3, { snapshot: null });
-    const dismissed = link(4, { source: "stack-dismissed", snapshot: snapshot({ state: "open" }) });
-
-    expect(threadMatchesPullRequestListFilters([open], { hasPullRequest: true })).toBe(true);
-    expect(threadMatchesPullRequestListFilters([], { hasPullRequest: true })).toBe(false);
-    expect(threadMatchesPullRequestListFilters([dismissed], { hasPullRequest: true })).toBe(false);
-    expect(threadMatchesPullRequestListFilters([], { hasPullRequest: false })).toBe(true);
 
     expect(
       threadMatchesPullRequestListFilters([open, merged], { pullRequestStates: ["open"] }),
@@ -88,6 +77,24 @@ describe("threadMatchesPullRequestListFilters", () => {
       threadMatchesPullRequestListFilters([open, merged], { pullRequest: { number: 2 } }),
     ).toBe(true);
     expect(threadMatchesPullRequestListFilters([open], { pullRequest: { number: 2 } })).toBe(false);
+  });
+});
+
+describe("parseThreadListPullRequestFilter", () => {
+  it("parses open, numbers, and pull URLs", () => {
+    expect(parseThreadListPullRequestFilter("open")).toEqual({ pullRequestStates: ["open"] });
+    expect(parseThreadListPullRequestFilter("#22889")).toEqual({
+      pullRequest: { number: 22889 },
+    });
+    expect(parseThreadListPullRequestFilter("22889")).toEqual({
+      pullRequest: { number: 22889 },
+    });
+    expect(
+      parseThreadListPullRequestFilter("https://github.com/acme/app/pull/22889/files"),
+    ).toEqual({
+      pullRequest: { url: "https://github.com/acme/app/pull/22889/files" },
+    });
+    expect(parseThreadListPullRequestFilter("open auth")).toBeNull();
   });
 });
 

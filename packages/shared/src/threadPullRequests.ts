@@ -13,8 +13,23 @@ export function visibleThreadPullRequests(
 
 export interface ThreadPullRequestIdentityFilter {
   readonly number?: number | undefined;
-  readonly repository?: string | undefined;
   readonly url?: string | undefined;
+}
+
+const LIST_PULL_REQUEST_NUMBER = /^#?(\d+)$/;
+const LIST_PULL_REQUEST_URL = /^\S*\/pulls?\/\d+(?:[/?#]\S*)?$/i;
+
+/** Parses `t3_thread_list`'s `pullRequest` string: `open`, `#n` / `n`, or a pull URL. */
+export function parseThreadListPullRequestFilter(value: string): {
+  readonly pullRequestStates?: ReadonlyArray<PullRequestState>;
+  readonly pullRequest?: ThreadPullRequestIdentityFilter;
+} | null {
+  const trimmed = value.trim();
+  if (trimmed.toLowerCase() === "open") return { pullRequestStates: ["open"] };
+  const numberMatch = LIST_PULL_REQUEST_NUMBER.exec(trimmed);
+  if (numberMatch !== null) return { pullRequest: { number: Number(numberMatch[1]) } };
+  if (LIST_PULL_REQUEST_URL.test(trimmed)) return { pullRequest: { url: trimmed } };
+  return null;
 }
 
 const DIGIT = /\d/;
@@ -33,16 +48,10 @@ function pullRequestUrlMatches(query: string, url: string): boolean {
 
 /** Whether a visible link matches an MCP list pullRequest identity filter. */
 export function threadPullRequestMatchesIdentity(
-  link: Pick<ThreadPullRequestLink, "number" | "repository" | "url">,
+  link: Pick<ThreadPullRequestLink, "number" | "url">,
   filter: ThreadPullRequestIdentityFilter,
 ): boolean {
   if (filter.number !== undefined && link.number !== filter.number) return false;
-  if (
-    filter.repository !== undefined &&
-    link.repository.toLowerCase() !== filter.repository.toLowerCase()
-  ) {
-    return false;
-  }
   if (filter.url !== undefined && !pullRequestUrlMatches(filter.url, link.url)) return false;
   return filter.number !== undefined || filter.url !== undefined;
 }
@@ -50,14 +59,11 @@ export function threadPullRequestMatchesIdentity(
 export function threadMatchesPullRequestListFilters(
   links: ReadonlyArray<ThreadPullRequestLink> | undefined,
   filters: {
-    readonly hasPullRequest?: boolean | undefined;
     readonly pullRequestStates?: ReadonlyArray<PullRequestState> | undefined;
     readonly pullRequest?: ThreadPullRequestIdentityFilter | undefined;
   },
 ): boolean {
   const visible = visibleThreadPullRequests(links ?? []);
-  if (filters.hasPullRequest === true && visible.length === 0) return false;
-  if (filters.hasPullRequest === false && visible.length > 0) return false;
   if (filters.pullRequestStates !== undefined && filters.pullRequestStates.length > 0) {
     const states = new Set(filters.pullRequestStates);
     if (!visible.some((link) => link.snapshot?.state != null && states.has(link.snapshot.state))) {

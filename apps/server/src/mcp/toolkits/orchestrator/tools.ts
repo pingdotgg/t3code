@@ -223,8 +223,7 @@ const CreateThreadsTool = Tool.make("create_threads", {
   .annotate(Tool.OpenWorld, true);
 
 const ThreadListTool = Tool.make("t3_thread_list", {
-  description:
-    "List threads newest first, in one project or with `allProjects`. Filters: `pullRequestStates` (['open']), `pullRequest` ({number|url}), `hasPullRequest`, status, settled, snoozed, title. Prefer over search for PR/status questions. Page with `cursor`.",
+  description: "Newest threads. Project or `allProjects`. `cursor`.",
   parameters: OrchestratorMcpThreadListInput,
   success: OrchestratorMcpThreadListResult,
   failure: OrchestratorMcpFailure,
