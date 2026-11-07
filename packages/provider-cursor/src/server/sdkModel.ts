@@ -1,6 +1,14 @@
-import type { ModelSelection as CursorSdkModelSelection, ModelParameterValue } from "@cursor/sdk";
+import type {
+  ModelSelection as CursorSdkModelSelection,
+  ModelParameterValue,
+  ModelVariant,
+  SDKModel,
+} from "@cursor/sdk";
 import type { ModelSelection, ServerProviderModel } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+
+/** Composer option id for optional Cursor max mode; not an SDK model parameter. */
+export const CURSOR_SDK_MAX_MODE_OPTION_ID = "maxMode";
 
 const CURSOR_SDK_PARAMETER_TO_PROVIDER_OPTION: Readonly<Record<string, string>> = {
   context: "contextWindow",
@@ -55,16 +63,105 @@ export function cursorContextWindowTokens(
   return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : undefined;
 }
 
-export function cursorSdkModelSelection(modelSelection: ModelSelection): CursorSdkModelSelection {
+function variantMatchesParams(
+  variant: ModelVariant,
+  params: ReadonlyArray<ModelParameterValue> | undefined,
+): boolean {
+  if (params === undefined || params.length === 0) {
+    return variant.isDefault === true || variant.params.length === 0;
+  }
+  return params.every((param) =>
+    variant.params.some((entry) => entry.id === param.id && entry.value === param.value),
+  );
+}
+
+function defaultVariantParams(
+  model: Pick<SDKModel, "variants">,
+): ReadonlyArray<ModelParameterValue> | undefined {
+  return (model.variants ?? []).find((variant) => variant.isDefault === true)?.params;
+}
+
+function effectiveVariantParams(
+  model: Pick<SDKModel, "variants">,
+  params: ReadonlyArray<ModelParameterValue> | undefined,
+): ReadonlyArray<ModelParameterValue> | undefined {
+  return params !== undefined && params.length > 0 ? params : defaultVariantParams(model);
+}
+
+export function cursorSdkMaxModeForParams(
+  model: Pick<SDKModel, "variants">,
+  params: ReadonlyArray<ModelParameterValue> | undefined,
+): boolean {
+  const variants = model.variants ?? [];
+  const matching = variants.filter((variant) =>
+    variantMatchesParams(variant, effectiveVariantParams(model, params)),
+  );
+  return matching.length > 0 && matching.every((variant) => variant.isMaxMode === true);
+}
+
+function cursorSdkParamsAdmitMaxMode(
+  model: Pick<SDKModel, "variants">,
+  params: ReadonlyArray<ModelParameterValue> | undefined,
+): boolean {
+  const effective = effectiveVariantParams(model, params);
+  return (model.variants ?? []).some(
+    (variant) => variantMatchesParams(variant, effective) && variant.isMaxMode === true,
+  );
+}
+
+export function cursorSdkModelOffersOptionalMaxMode(model: Pick<SDKModel, "variants">): boolean {
+  const variants = model.variants ?? [];
+  if (
+    !variants.some((variant) => variant.isMaxMode === true) ||
+    !variants.some((variant) => variant.isMaxMode !== true)
+  ) {
+    return false;
+  }
+
+  const candidateParams: Array<ReadonlyArray<ModelParameterValue> | undefined> = [undefined];
+  for (const variant of variants) {
+    candidateParams.push(variant.params);
+  }
+
+  for (const params of candidateParams) {
+    const matching = variants.filter((variant) => variantMatchesParams(variant, params));
+    if (
+      matching.some((variant) => variant.isMaxMode === true) &&
+      matching.some((variant) => variant.isMaxMode !== true)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function cursorSdkModelSelection(
+  modelSelection: ModelSelection,
+  sdkModels?: ReadonlyArray<Pick<SDKModel, "id" | "variants">>,
+): CursorSdkModelSelection {
+  const id = modelSelection.model === "auto" ? "default" : modelSelection.model;
+  const options = modelSelection.options ?? [];
+  const userRequestedMaxMode = options.some(
+    (option) => option.id === CURSOR_SDK_MAX_MODE_OPTION_ID && option.value === true,
+  );
+  const sdkOptions = options.filter((option) => option.id !== CURSOR_SDK_MAX_MODE_OPTION_ID);
+  const params =
+    sdkOptions.length === 0
+      ? undefined
+      : sdkOptions.map((option): ModelParameterValue => ({
+          id: cursorSdkParameterId(option.id),
+          value: String(option.value),
+        }));
+  const catalogModel = sdkModels?.find((model) => model.id === id);
+  const forcedMaxMode =
+    catalogModel !== undefined && cursorSdkMaxModeForParams(catalogModel, params);
+  const optionalMaxMode =
+    userRequestedMaxMode &&
+    (catalogModel === undefined || cursorSdkParamsAdmitMaxMode(catalogModel, params));
+  const maxMode = forcedMaxMode || optionalMaxMode;
   return {
-    id: modelSelection.model === "auto" ? "default" : modelSelection.model,
-    ...(modelSelection.options === undefined || modelSelection.options.length === 0
-      ? {}
-      : {
-          params: modelSelection.options.map((option): ModelParameterValue => ({
-            id: cursorSdkParameterId(option.id),
-            value: String(option.value),
-          })),
-        }),
+    id,
+    ...(params === undefined ? {} : { params }),
+    ...(maxMode ? { maxMode: true } : {}),
   };
 }
