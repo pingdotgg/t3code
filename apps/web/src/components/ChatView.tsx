@@ -263,6 +263,8 @@ import {
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
+import { DraftDashboard } from "./chat/DraftDashboard";
+import { ChatBackgroundLayer } from "./chatBackground/ChatBackgroundLayer";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
   BranchRestoreConfirmHost,
@@ -3318,8 +3320,16 @@ export default function ChatView(props: ChatViewProps) {
   const content = (
     <div
       ref={setWorkspaceLayoutElement}
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
+      {embedded || (settings.chatBackgroundScope === "empty" && !isDraftHeroState) ? null : (
+        <ChatBackgroundLayer
+          effect={settings.chatBackgroundEffect}
+          light={resolvedTheme === "light"}
+          opacity={settings.chatBackgroundOpacity}
+          empty={isDraftHeroState}
+        />
+      )}
       {embedded ? null : (
         <DeviceSetupDialogHost
           threadKey={activeThreadKey}
@@ -3342,7 +3352,7 @@ export default function ChatView(props: ChatViewProps) {
             ref={threadPanelPopoverAnchorRef}
             data-chat-header
             className={cn(
-              "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
+              "relative [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
               isElectron
                 ? cn(
                     "drag-region flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
@@ -3420,10 +3430,7 @@ export default function ChatView(props: ChatViewProps) {
               setThreadError={setThreadError}
               setThreadErrorBannerDismissTick={setThreadErrorBannerDismissTick}
             />
-            <div
-              {...conversationArea}
-              className="relative flex min-h-0 flex-1 flex-col bg-background"
-            >
+            <div {...conversationArea} className="relative flex min-h-0 flex-1 flex-col">
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
                   pendingApprovals={pendingApprovals}
@@ -3542,11 +3549,13 @@ export default function ChatView(props: ChatViewProps) {
               }}
               inert={isRevertingCheckpoint}
               data-chat-composer-overlay="true"
-              className={
+              className={cn(
+                // The gutter only takes effect on the scrolling hero overlay.
+                "pointer-events-none absolute z-20 scrollbar-gutter-both",
                 isDraftHeroState
-                  ? "pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"
-                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
-              }
+                  ? "inset-0 flex items-center [@media(max-height:34rem)]:items-end md:block md:overflow-y-auto md:pt-40"
+                  : "inset-x-0 bottom-0 pt-1.5 sm:pt-2",
+              )}
             >
               <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">
                 <div
@@ -3868,6 +3877,13 @@ export default function ChatView(props: ChatViewProps) {
                   </div>
                 </div>
               </div>
+              {isDraftHeroState && !embedded && composerBannerItems.length === 0 ? (
+                <div className="chat-composer-lane pointer-events-auto hidden w-full md:block">
+                  <div className="mx-auto w-full max-w-(--chat-content-max-width)">
+                    <DraftDashboard />
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             {canOperatePreview && activeThreadRef && activeEnvironmentServerBrowser && !embedded ? (

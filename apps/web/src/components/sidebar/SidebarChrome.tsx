@@ -1,7 +1,13 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartNoAxesColumnIcon,
+  SettingsIcon,
+  StickyNoteIcon,
+  ZapIcon,
+} from "lucide-react";
 import { memo } from "react";
-import { Link, useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
@@ -72,22 +78,18 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         />
       </div>
       <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
-        <div className="flex shrink-0 items-center gap-1">
-          <SidebarBrand onBackdrop={backdropVariant !== null} />
-          {isElectron ? (
-            <div className="hidden items-center md:flex">
-              <HistoryNavigationButton direction="back" onBackdrop={backdropVariant !== null} />
-              <HistoryNavigationButton direction="forward" onBackdrop={backdropVariant !== null} />
-            </div>
-          ) : null}
-        </div>
         {pillLabel ? (
-          <div className="ml-1 flex h-7 items-center">
+          <div className="ml-[var(--workspace-titlebar-content-left)] flex h-7 items-center">
             <Badge data-environment-identification="pill" size="sm" variant="secondary">
               {pillLabel}
             </Badge>
           </div>
         ) : null}
+        {/* As in monocode, history sits at the rail's top-right, beside the window controls row. */}
+        <div className="ml-auto hidden items-center md:flex">
+          <HistoryNavigationButton direction="back" onBackdrop={backdropVariant !== null} />
+          <HistoryNavigationButton direction="forward" onBackdrop={backdropVariant !== null} />
+        </div>
       </div>
     </div>
   );
@@ -162,21 +164,6 @@ function HistoryNavigationButton({
   );
 }
 
-function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
-  return (
-    <Link
-      aria-label="T3 Code home"
-      className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
-        onBackdrop ? "text-white" : "text-foreground",
-      )}
-      to="/"
-    >
-      <SidebarBrandMark onBackdrop={onBackdrop} />
-    </Link>
-  );
-}
-
 function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
   return (
     <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
@@ -193,28 +180,66 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
   );
 }
 
-function SidebarUtilityItem({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
+export function SidebarPrimaryNavItems() {
+  const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const pullRequestsSupported = usePullRequestsSupported();
+  const go = (open: () => void) => {
+    if (isMobile) setOpenMobile(false);
+    open();
+  };
+
   return (
-    <SidebarMenuItem className="shrink-0">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
-              {icon}
-            </SidebarMenuButton>
-          }
-        />
-        <TooltipPopup side="top">{label}</TooltipPopup>
-      </Tooltip>
-    </SidebarMenuItem>
+    <>
+      {pullRequestsSupported ? (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            type="button"
+            isActive={pathname.startsWith("/pull-requests")}
+            onClick={() =>
+              go(
+                () =>
+                  void navigate({ to: "/pull-requests", search: readPullRequestListPreferences() }),
+              )
+            }
+          >
+            <PullRequestGlyph.pullRequest />
+            <span>Pull requests</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ) : null}
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          type="button"
+          isActive={pathname.startsWith("/usage")}
+          onClick={() => go(() => void navigate({ to: "/usage" }))}
+        >
+          <ChartNoAxesColumnIcon />
+          <span>Usage</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          type="button"
+          isActive={pathname.startsWith("/notes")}
+          onClick={() => go(() => void navigate({ to: "/notes" }))}
+        >
+          <StickyNoteIcon />
+          <span>Notes</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          type="button"
+          isActive={pathname.startsWith("/settings/scheduled-tasks")}
+          onClick={() => go(() => void navigate({ to: "/settings/scheduled-tasks" }))}
+        >
+          <ZapIcon />
+          <span>Automations</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </>
   );
 }
 
@@ -225,29 +250,14 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
-  const pullRequestsSupported = usePullRequestsSupported();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
     }
   };
-  const handlePullRequestsClick = () => {
-    closeMobileSidebar();
-    void navigate({
-      to: "/pull-requests",
-      search: readPullRequestListPreferences(),
-    });
-  };
   const handleSettingsClick = () => {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
-  };
-
-  const handleUsageClick = () => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    void navigate({ to: "/usage" });
   };
 
   const handleBackClick = () => {
@@ -257,34 +267,19 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 
   return (
     <SidebarMenu className="flex-row items-center">
-      {isOnUtilityPage ? (
-        <SidebarMenuItem className="min-w-0 flex-1">
+      <SidebarMenuItem className="min-w-0 flex-1">
+        {isOnUtilityPage ? (
           <SidebarMenuButton onClick={handleBackClick}>
             <ArrowLeftIcon />
             <span>Back</span>
           </SidebarMenuButton>
-        </SidebarMenuItem>
-      ) : (
-        <>
-          <SidebarUtilityItem
-            icon={<SettingsIcon />}
-            label="Settings"
-            onClick={handleSettingsClick}
-          />
-          {pullRequestsSupported ? (
-            <SidebarUtilityItem
-              icon={<PullRequestGlyph.pullRequest />}
-              label="Pull requests"
-              onClick={handlePullRequestsClick}
-            />
-          ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
-        </>
-      )}
+        ) : (
+          <SidebarMenuButton onClick={handleSettingsClick}>
+            <SettingsIcon />
+            <span>Settings</span>
+          </SidebarMenuButton>
+        )}
+      </SidebarMenuItem>
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
     </SidebarMenu>

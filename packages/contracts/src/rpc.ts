@@ -405,6 +405,13 @@ import {
   SourceControlSignInResult,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  NotesError,
+  NotesListInput,
+  NotesListResult,
+  NotesReadInput,
+  NotesReadResult,
+} from "./notes.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
@@ -423,6 +430,8 @@ export const WS_METHODS = {
 
   filesystemBrowse: "filesystem.browse",
   filesystemGetMetadata: "filesystem.getMetadata",
+  notesList: "notes.list",
+  notesRead: "notes.read",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
@@ -656,6 +665,8 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
      * refresh, at most one TTL later.
      */
     workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
+    /** A user asked for current limits: skip cached usage probes instead of serving them. */
+    refreshUsageLimits: Schema.optional(Schema.Boolean),
     /** As on `subscribeServerConfig`: add /usage-limits to the replied snapshot. */
     usageLimitsCommand: Schema.optional(Schema.Boolean),
     /** As on `subscribeServerConfig`: a failed cwd scan replies with the machine catalog as a pending snapshot. */
@@ -1377,6 +1388,18 @@ const WsFilesystemGetMetadataRpc = Rpc.make(WS_METHODS.filesystemGetMetadata, {
   payload: FilesystemGetMetadataInput,
   success: FilesystemGetMetadataResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsNotesListRpc = Rpc.make(WS_METHODS.notesList, {
+  payload: NotesListInput,
+  success: NotesListResult,
+  error: Schema.Union([NotesError, EnvironmentAuthorizationError]),
+});
+
+const WsNotesReadRpc = Rpc.make(WS_METHODS.notesRead, {
+  payload: NotesReadInput,
+  success: NotesReadResult,
+  error: Schema.Union([NotesError, EnvironmentAuthorizationError]),
 });
 
 const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
@@ -2137,6 +2160,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,
+  WsNotesListRpc,
+  WsNotesReadRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,

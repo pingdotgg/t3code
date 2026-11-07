@@ -2573,3 +2573,40 @@ code {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
+
+/* Over the artwork the composer turns to monocode's thin glass. */
+:where(:has(> [data-chat-background-active])) [data-chat-composer-stack] {
+  --glass-opacity: 45%;
+  --glass-blur: 24px;
+}
+
+/*
+ * Text over the artwork needs 4.5:1 (WCAG 1.4.3). Threads get a soft vignette behind the
+ * messages and the header a fading band; both paint above the artwork (-z-10) and below text.
+ */
+:where(:has(> [data-chat-background-active="thread"]))
+  [data-workspace-area="conversation"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse min(calc(var(--chat-content-max-width) * 0.9), 70%) 85% at 50% 35%,
+    color-mix(in srgb, var(--background) 70%, transparent),
+    transparent
+  );
+}
+
+:where(:has(> [data-chat-background-active])) [data-chat-header]::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -1.5rem;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--background) 85%, transparent),
+    transparent
+  );
+}

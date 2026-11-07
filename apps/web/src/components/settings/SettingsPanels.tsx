@@ -502,6 +502,11 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(!Equal.equals(settings.snoozePresets, DEFAULT_UNIFIED_SETTINGS.snoozePresets)
       ? ["Snooze options"]
       : []),
+    ...(settings.chatBackgroundEffect !== DEFAULT_UNIFIED_SETTINGS.chatBackgroundEffect ||
+    settings.chatBackgroundScope !== DEFAULT_UNIFIED_SETTINGS.chatBackgroundScope ||
+    settings.chatBackgroundOpacity !== DEFAULT_UNIFIED_SETTINGS.chatBackgroundOpacity
+      ? ["Chat background"]
+      : []),
     ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
     ...(settings.persistComposerContextStrip !==
     DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
@@ -554,6 +559,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.ghqCloneLayout !== DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout
       ? ["Clone into host folders"]
+      : []),
+    ...(settings.notesVaultPath !== DEFAULT_UNIFIED_SETTINGS.notesVaultPath
+      ? ["Notes vault folder"]
       : []),
     ...(settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin
       ? ["Unpin confirmation"]
@@ -632,6 +640,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
+      chatBackgroundEffect: DEFAULT_UNIFIED_SETTINGS.chatBackgroundEffect,
+      chatBackgroundScope: DEFAULT_UNIFIED_SETTINGS.chatBackgroundScope,
+      chatBackgroundOpacity: DEFAULT_UNIFIED_SETTINGS.chatBackgroundOpacity,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -669,6 +680,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       ghqCloneLayout: DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout,
+      notesVaultPath: DEFAULT_UNIFIED_SETTINGS.notesVaultPath,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
@@ -788,6 +800,7 @@ export function GeneralSettingsPanel() {
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
+  const mixedNotesVaultPath = useScopedSettingsMixed(["notesVaultPath"]);
 
   return (
     <SettingsPageContainer>
@@ -1069,6 +1082,37 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection id="notes" title="Notes">
+        <SettingsRow
+          serverScoped
+          settingKeys={["notesVaultPath"]}
+          {...searchableSetting("notes-vault-folder")}
+          description="An Obsidian vault or any folder of Markdown notes on this environment's machine. Leave empty to turn Notes off."
+          resetAction={
+            settings.notesVaultPath !== DEFAULT_UNIFIED_SETTINGS.notesVaultPath ? (
+              <SettingResetButton
+                label="notes vault folder"
+                onClick={() =>
+                  updateSettings({ notesVaultPath: DEFAULT_UNIFIED_SETTINGS.notesVaultPath })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              size="sm"
+              className="w-full sm:w-72"
+              value={mixedNotesVaultPath ? "" : settings.notesVaultPath}
+              onCommit={(next) => updateSettings({ notesVaultPath: next })}
+              normalizeDraft={resolvePastedPath}
+              placeholder={mixedNotesVaultPath ? "Mixed" : "~/Obsidian/Vault"}
+              spellCheck={false}
+              aria-label="Notes vault folder"
+            />
           }
         />
       </SettingsSection>

@@ -351,6 +351,30 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["reasoning effort thinking bars graph word label level composer"],
   },
   {
+    id: "chat-background-image",
+    title: "Chat background",
+    to: "/settings/appearance",
+    searchTerms: ["wallpaper image picture artwork backdrop custom photo"],
+  },
+  {
+    id: "chat-background-effect",
+    title: "Background effect",
+    to: "/settings/appearance",
+    searchTerms: ["dither halftone ascii scanlines wallpaper pixel retro"],
+  },
+  {
+    id: "chat-background-scope",
+    title: "Show background on",
+    to: "/settings/appearance",
+    searchTerms: ["wallpaper new thread empty all threads"],
+  },
+  {
+    id: "chat-background-opacity",
+    title: "Background visibility",
+    to: "/settings/appearance",
+    searchTerms: ["wallpaper opacity strength fade"],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",
@@ -761,6 +785,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     scope: "environment-defaults",
     searchTerms: ["base directory folder browser path home"],
+  },
+  {
+    id: "notes-vault-folder",
+    title: "Notes vault folder",
+    to: "/settings/general",
+    scope: "environment",
+    searchTerms: ["obsidian vault markdown notes folder path"],
   },
   {
     id: "ghq-clone-layout",

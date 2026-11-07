@@ -10,6 +10,18 @@
     {
       "bundles": ["desktop", "web"],
       "license": "MIT",
+      "name": "monocode chat background effects",
+      "sourceUrl": "https://github.com/hardbeat920/monocode",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2026 Nick"]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop", "web"],
+      "license": "MIT",
       "name": "Ionic keyboard assist",
       "sourceUrl": "https://github.com/ionic-team/ionic-framework/blob/main/core/src/utils/keyboard/keyboard.ts",
       "generatedNotices": [

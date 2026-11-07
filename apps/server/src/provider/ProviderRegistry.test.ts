@@ -1719,6 +1719,84 @@ it.layer(
         }),
     );
 
+    it.effect("an explicit usage refresh re-reads usage instead of serving the cached probe", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const provider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+        const record = (call: string) => Ref.update(calls, (all) => [...all, call]);
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "claude:instance" },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(provider),
+            refresh: record("refresh").pipe(Effect.as(provider)),
+            refreshUsage: record("refreshUsage"),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          snapshotForCwd: () => Effect.succeed(provider),
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(requestedId === instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-usage-refresh-",
+              }),
+            ),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          yield* Ref.set(calls, []);
+          yield* registry.refreshUsage();
+          assert.deepStrictEqual(yield* Ref.get(calls), ["refreshUsage"]);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     it.effect("publishes workspace skills while machine health is in error", () =>
       Effect.gen(function* () {
         const driver = ProviderDriverKind.make("codex");

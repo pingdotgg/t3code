@@ -145,6 +145,22 @@ export const GlassOpacity = Schema.Int.check(
 export type GlassOpacity = typeof GlassOpacity.Type;
 const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 
+export const ChatBackgroundEffect = Schema.Literals([
+  "none",
+  "dither",
+  "halftone",
+  "ascii",
+  "scanlines",
+]);
+export type ChatBackgroundEffect = typeof ChatBackgroundEffect.Type;
+export const ChatBackgroundScope = Schema.Literals(["empty", "all"]);
+export type ChatBackgroundScope = typeof ChatBackgroundScope.Type;
+export const MIN_CHAT_BACKGROUND_OPACITY = 5;
+export const MAX_CHAT_BACKGROUND_OPACITY = 100;
+export const ChatBackgroundOpacity = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_CHAT_BACKGROUND_OPACITY, maximum: MAX_CHAT_BACKGROUND_OPACITY }),
+);
+
 export const MIN_APPEARANCE_CONTRAST = 50;
 export const MAX_APPEARANCE_CONTRAST = 200;
 export const AppearanceContrast = Schema.Int.check(
@@ -161,7 +177,7 @@ export const PanelAnimationDurationMs = Schema.Int.check(
   }),
 );
 export type PanelAnimationDurationMs = typeof PanelAnimationDurationMs.Type;
-const DEFAULT_PANEL_ANIMATION_DURATION_MS: PanelAnimationDurationMs = 0;
+const DEFAULT_PANEL_ANIMATION_DURATION_MS: PanelAnimationDurationMs = 200;
 
 export const MIN_INTERFACE_FONT_SIZE = 12;
 export const MAX_INTERFACE_FONT_SIZE = 20;
@@ -205,7 +221,7 @@ export const EnvironmentIdentificationMode = Schema.Literals([
   "none",
 ]);
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
-export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
+export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "none";
 
 export const SnapShotKeyChord = KeybindingShortcut.check(
   Schema.makeFilter(
@@ -577,6 +593,14 @@ export const ClientSettingsSchema = Schema.Struct({
   // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
   // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // The image itself lives in IndexedDB (chatBackground/imageStore); it is too large for these settings.
+  chatBackgroundEffect: ChatBackgroundEffect.pipe(
+    Schema.withDecodingDefault(Effect.succeed("dither" as const)),
+  ),
+  chatBackgroundScope: ChatBackgroundScope.pipe(
+    Schema.withDecodingDefault(Effect.succeed("all" as const)),
+  ),
+  chatBackgroundOpacity: ChatBackgroundOpacity.pipe(Schema.withDecodingDefault(Effect.succeed(60))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1395,6 +1419,8 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Obsidian vault folder on this environment's machine; empty turns Notes off. */
+  notesVaultPath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Clones default to `<addProjectBaseDirectory>/<host>/<owner>/<repo>`, like ghq. */
   ghqCloneLayout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   textGenerationModelSelection: ModelSelection.pipe(
@@ -1766,6 +1792,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  notesVaultPath: Schema.optionalKey(TrimmedString),
   ghqCloneLayout: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
@@ -1942,5 +1969,8 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
   mathRenderingEnabled: Schema.optionalKey(Schema.Boolean),
+  chatBackgroundEffect: Schema.optionalKey(ChatBackgroundEffect),
+  chatBackgroundScope: Schema.optionalKey(ChatBackgroundScope),
+  chatBackgroundOpacity: Schema.optionalKey(ChatBackgroundOpacity),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

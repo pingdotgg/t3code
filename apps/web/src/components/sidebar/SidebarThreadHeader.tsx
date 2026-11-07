@@ -1,21 +1,22 @@
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import { SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
-  type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject,
 } from "react";
 
-import { cn } from "~/lib/utils";
+import { openCommandPalette } from "../../commandPaletteBus";
+import { shortcutLabelForCommand } from "../../keybindings";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import { Button } from "../ui/button";
-import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
+import { SidebarInput, SidebarMenu } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SidebarPrimaryNavItems } from "./SidebarChrome";
 
 export interface SidebarThreadHeaderProps {
-  hasProjects: boolean;
-  projectScope: ReactNode;
-  onNewProject: () => void;
+  projectSwitcher: ReactNode;
   onNewThread: (event: ReactMouseEvent) => void;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
@@ -31,10 +32,45 @@ export interface SidebarThreadHeaderProps {
   onClearSearch: () => void;
 }
 
+const HEADER_ICON_BUTTON_CLASS =
+  "relative grid size-7 shrink-0 place-items-center rounded-md text-sidebar-muted-foreground outline-hidden hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-3.5";
+
+function HeaderIconButton({
+  label,
+  tooltip = label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  tooltip?: ReactNode;
+  disabled?: boolean;
+  onClick: (event: ReactMouseEvent) => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            disabled={disabled}
+            onClick={onClick}
+            className={HEADER_ICON_BUTTON_CLASS}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">{tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** Monocode's rail head: workspace switcher, quick actions, search, then navigation. */
 export function SidebarThreadHeader({
-  hasProjects,
-  projectScope,
-  onNewProject,
+  projectSwitcher,
   onNewThread,
   newThreadDisabled,
   newThreadShortcutLabel,
@@ -49,6 +85,8 @@ export function SidebarThreadHeader({
   activeSearchResultIndex,
   onClearSearch,
 }: SidebarThreadHeaderProps) {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const paletteShortcut = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   const resultsVisible = isSearching && searchResultCount > 0;
   // Shrinking results can remove the active option; never leave aria-activedescendant pointing at it.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
@@ -57,9 +95,39 @@ export function SidebarThreadHeader({
     : "New thread";
 
   return (
-    <div className="flex items-center gap-1">
-      <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-within:bg-sidebar-row-hover focus-within:text-sidebar-foreground focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring/70">
-        <SearchIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />
+    <div className="flex flex-col gap-2">
+      <div className="flex h-8 min-w-0 items-center gap-1">
+        <div className="flex min-w-0 flex-1">{projectSwitcher}</div>
+        <HeaderIconButton
+          label="Search everything"
+          tooltip={paletteShortcut ? `Search everything (${paletteShortcut})` : "Search everything"}
+          onClick={() => openCommandPalette()}
+        >
+          <SearchIcon />
+        </HeaderIconButton>
+        <HeaderIconButton
+          label="New thread"
+          tooltip={
+            showNewThreadInProjectHint ? (
+              <span className="flex flex-col gap-0.5">
+                <span>{newThreadLabel}</span>
+                <span className="text-muted-foreground">
+                  New thread in current project: Shift+click
+                  {newThreadInProjectShortcutLabel ? ` (${newThreadInProjectShortcutLabel})` : ""}
+                </span>
+              </span>
+            ) : (
+              newThreadLabel
+            )
+          }
+          disabled={newThreadDisabled}
+          onClick={onNewThread}
+        >
+          <SquarePenIcon />
+        </HeaderIconButton>
+      </div>
+      <div className="flex h-8 min-w-0 items-center gap-2 rounded-md border border-sidebar-border px-1.5 text-sm font-medium text-sidebar-muted-foreground shadow-xs/5 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-within:text-sidebar-foreground focus-within:ring-1 focus-within:ring-ring/70 focus-within:ring-inset">
+        <SearchIcon className="size-4 shrink-0 opacity-70" />
         <SidebarInput
           ref={searchInputRef}
           nativeInput
@@ -96,75 +164,9 @@ export function SidebarThreadHeader({
           </Button>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center">
-        {hasProjects ? (
-          <>
-            {projectScope}
-            <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
-              <FolderPlusIcon />
-            </SidebarHeaderIconButton>
-          </>
-        ) : null}
-        <SidebarHeaderIconButton
-          label="New thread"
-          tooltip={
-            showNewThreadInProjectHint ? (
-              <span className="flex flex-col gap-0.5">
-                <span>{newThreadLabel}</span>
-                <span className="text-muted-foreground">
-                  New thread in current project: Shift+click
-                  {newThreadInProjectShortcutLabel ? ` (${newThreadInProjectShortcutLabel})` : ""}
-                </span>
-              </span>
-            ) : (
-              newThreadLabel
-            )
-          }
-          disabled={newThreadDisabled}
-          onClick={onNewThread}
-        >
-          <SquarePenIcon />
-        </SidebarHeaderIconButton>
-      </div>
+      <SidebarMenu>
+        <SidebarPrimaryNavItems />
+      </SidebarMenu>
     </div>
-  );
-}
-
-export function SidebarHeaderIconButton({
-  label,
-  tooltip = label,
-  className,
-  children,
-  ...rest
-}: {
-  label: string;
-  tooltip?: ReactNode;
-  className?: string | undefined;
-  children?: ReactNode;
-} & Omit<
-  ComponentProps<typeof SidebarMenuButton>,
-  "children" | "className" | "tooltip" | "isActive" | "aria-label"
->) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <SidebarMenuButton
-            size="icon"
-            type="button"
-            aria-label={label}
-            {...rest}
-            className={cn("relative size-7 shrink-0", className)}
-          />
-        }
-      >
-        {children}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
-        />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
-    </Tooltip>
   );
 }

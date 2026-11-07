@@ -154,5 +154,15 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       // would show folders as they were. Keep it only long enough for a prefetch to land.
       idleTtlMs: BROWSE_IDLE_TTL_MS,
     }),
+    listNotes: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:filesystem:list-notes",
+      tag: WS_METHODS.notesList,
+      staleTimeMs: 15_000,
+    }),
+    readNote: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:filesystem:read-note",
+      tag: WS_METHODS.notesRead,
+      staleTimeMs: 15_000,
+    }),
   };
 }

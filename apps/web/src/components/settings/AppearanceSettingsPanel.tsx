@@ -33,6 +33,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { ChatBackgroundSettings } from "./ChatBackgroundSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
@@ -161,6 +162,8 @@ export function AppearanceSettingsPanel() {
           />
         </div>
       </SettingsSection>
+
+      <ChatBackgroundSettings />
 
       <SettingsSection id="appearance-interface" title="Interface">
         <SettingsRow
