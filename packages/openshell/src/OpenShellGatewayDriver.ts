@@ -290,7 +290,10 @@ const drainTimeoutMsOf = (defaults: OpenShellWorkerDefaults | undefined): number
 
 const drainIdOf = (environmentId: EnvironmentId): string => `drain:${environmentId}:1`;
 
-/** The next drain run's id: a timed-out run keeps writing under the old one. */
+/** The next drain run's id: a timed-out run keeps writing under the old one.
+ * Abandoned generation directories stay on disk on purpose: only complete,
+ * read-back-verified files exist there, and sweeping a directory a lagging
+ * generation may still be writing would reopen the race this fencing closes. */
 const nextGeneration = (drainId: string, environmentId: EnvironmentId): string => {
   const generation = Number.parseInt(drainId.slice(drainId.lastIndexOf(":") + 1), 10);
   return `drain:${environmentId}:${Number.isFinite(generation) ? generation + 1 : 1}`;
