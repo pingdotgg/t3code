@@ -390,6 +390,55 @@ function WorkspaceAudioPreview(props: {
   );
 }
 
+function WorkspaceDocumentPreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly draft: boolean;
+  readonly document: boolean;
+  readonly absolutePath: string;
+  readonly workspaceRoot: string;
+  readonly name: string;
+  readonly workspaceMutationId: string | null;
+  readonly refreshRevision: number;
+}) {
+  const resource =
+    props.draft && props.document
+      ? {
+          _tag: "draft-workspace-file" as const,
+          cwd: props.workspaceRoot,
+          path: props.absolutePath,
+        }
+      : {
+          _tag: "media-file" as const,
+          threadId: props.threadRef.threadId,
+          path: props.absolutePath,
+          ...(props.document ? {} : { disposition: "attachment" as const }),
+        };
+  // Drafts have no server file revision, so they reload on every workspace mutation.
+  const revisioned = resource._tag === "media-file";
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    revisioned ? resource : null,
+    props.workspaceMutationId ?? undefined,
+  );
+  // Waiting on the revision first keeps the preview from mounting twice when it opens.
+  if (revisioned && assetUrl._tag === "Loading") return <FileSurfaceLoading />;
+  const revision =
+    assetUrl._tag === "Success"
+      ? (assetUrl.fileRevision ?? props.workspaceMutationId)
+      : props.workspaceMutationId;
+  return (
+    <AttachmentFilePreview
+      key={`${revision}:${props.refreshRevision}`}
+      name={props.name}
+      mimeType="application/octet-stream"
+      sizeBytes={0}
+      asset={{ environmentId: props.environmentId, resource }}
+      origin="File"
+    />
+  );
+}
+
 function clampFileLine(contents: string, requestedLine: number): number {
   let lineCount = 1;
   for (let index = 0; index < contents.length; index += 1) {
@@ -1436,24 +1485,17 @@ export default function FilePreviewPanel({
           ) : relativePath &&
             absolutePath &&
             (isDocument || file.readError?.failure === "binary_file") ? (
-            <AttachmentFilePreview
-              key={`${environmentId}:${absolutePath}:${workspaceMutationId}:${fileRefreshRevision}`}
+            <WorkspaceDocumentPreview
+              key={`${environmentId}:${absolutePath}`}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              draft={draft}
+              document={isDocument}
+              absolutePath={absolutePath}
+              workspaceRoot={cwd}
               name={relativePath.split(/[\\/]/).at(-1) || relativePath}
-              mimeType="application/octet-stream"
-              sizeBytes={0}
-              asset={{
-                environmentId,
-                resource:
-                  draft && isDocument
-                    ? { _tag: "draft-workspace-file", cwd, path: absolutePath }
-                    : {
-                        _tag: "media-file",
-                        threadId: threadRef.threadId,
-                        path: absolutePath,
-                        ...(isDocument ? {} : { disposition: "attachment" as const }),
-                      },
-              }}
-              origin="File"
+              workspaceMutationId={workspaceMutationId}
+              refreshRevision={fileRefreshRevision}
             />
           ) : relativePath && file.error && file.data === null ? (
             <div
