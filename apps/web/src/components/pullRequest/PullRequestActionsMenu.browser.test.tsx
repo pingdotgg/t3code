@@ -1,6 +1,6 @@
 import "~/index.css";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { PULL_REQUEST_TERMINOLOGY } from "@t3tools/client-runtime/source-control-clients";
 import { Cause } from "effect";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
@@ -74,7 +74,7 @@ function setup() {
       reference={reference}
       pullRequestKey="owner/repo/7"
       detail={detail}
-      terminology={sourceControlClients.get("github").changeRequest}
+      terminology={PULL_REQUEST_TERMINOLOGY}
       linkThreadRef={null}
       onThreadPickerOpenChange={() => {}}
       refreshing={false}

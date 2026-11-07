@@ -176,7 +176,9 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 Where you can edit a description, you can also tick its checkboxes from the Summary tab
 (the Overview tab on mobile).
-GitLab calls these merge requests.
+GitLab calls these merge requests. To say "merge request" instead of "pull request", turn on
+**Use merge request terminology** in **Settings → Source control** on web, desktop, or mobile.
+The setting is saved separately on each client and applies to every host.
 
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
 to read its description, activity, commits, and changed files. Line comments stay as drafts

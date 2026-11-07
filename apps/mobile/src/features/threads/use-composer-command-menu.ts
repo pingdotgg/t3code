@@ -1,3 +1,7 @@
+import {
+  currentChangeRequestTerms,
+  capitalizeTerm,
+} from "@t3tools/client-runtime/source-control-clients";
 import * as Dialog from "../../components/ui/Dialog";
 import type {
   EnvironmentId,
@@ -662,7 +666,7 @@ export function useComposerCommandMenu({
     error:
       trigger?.kind === "pull-request"
         ? pullRequestProjectId === null || pullRequestRepository === null
-          ? "Pull requests are unavailable for this project."
+          ? `${capitalizeTerm(currentChangeRequestTerms().plural)} are unavailable for this project.`
           : pullRequestSearch.error
         : null,
     onSelect,

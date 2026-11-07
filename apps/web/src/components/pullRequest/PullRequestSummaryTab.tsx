@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -455,7 +456,7 @@ export function PullRequestSummaryTab({
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
-  const terminology = sourceControlClients.get(detail.provider).changeRequest;
+  const terminology = useChangeRequestTerms();
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
   const shownConversations = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   const [commentFilter, setCommentFilter] = useLocalStorage(

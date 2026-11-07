@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../../state/change-request-terminology";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -20,9 +21,9 @@ import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WORKSPACE_TOOLBAR, type WorkspaceTab } from "./workspace-tabs-state";
 import { PullRequestGlyph } from "../../pull-requests/pullRequestGlyphs";
 
-const TABS: ReadonlyArray<{ id: WorkspaceTab; label: string; icon: AppSymbolName }> = [
-  { id: "threads", label: "Threads", icon: "text.bubble" },
-  { id: "pullRequests", label: "PRs", icon: PullRequestGlyph.pullRequest },
+const TABS: ReadonlyArray<{ id: WorkspaceTab; icon: AppSymbolName }> = [
+  { id: "threads", icon: "text.bubble" },
+  { id: "pullRequests", icon: PullRequestGlyph.pullRequest },
 ];
 
 function ToolbarButton(props: {
@@ -51,6 +52,7 @@ export function WorkspaceToolbar(props: {
   readonly onNewTask: () => void;
 }) {
   const workspace = useWorkspaceTabs();
+  const terms = useChangeRequestTerms();
   const input = useRef<TextInputInstance>(null);
   const [focusRequest, setFocusRequest] = useState(0);
   const insets = useSafeAreaInsets();
@@ -113,7 +115,7 @@ export function WorkspaceToolbar(props: {
           <View className="flex-row items-center" style={{ gap }}>
             {!keyboardVisible && !expanded ? (
               <ToolbarButton
-                label={`Show tabs, ${activeTab.label} selected`}
+                label={`Show tabs, ${activeTab.id === "pullRequests" ? `${terms.shortLabel}s` : "Threads"} selected`}
                 icon={activeTab.icon}
                 size={48}
                 onPress={() => dispatch({ type: "expand" })}

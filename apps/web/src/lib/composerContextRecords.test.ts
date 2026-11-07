@@ -392,13 +392,13 @@ describe("pullRequestContextKindLabel", () => {
     },
   });
 
-  it("names the change request the way its host does", () => {
+  it("uses the default terminology regardless of host", () => {
     expect(pullRequestContextKindLabel(comment("https://github.com/acme/app/pull/7", false))).toBe(
       "Open pull request",
     );
     expect(
       pullRequestContextKindLabel(comment("https://gitlab.com/acme/app/-/merge_requests/7", true)),
-    ).toBe("Draft merge request");
+    ).toBe("Draft pull request");
   });
 });
 

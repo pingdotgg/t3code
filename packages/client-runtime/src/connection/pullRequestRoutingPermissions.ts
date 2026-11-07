@@ -1,3 +1,7 @@
+import {
+  currentChangeRequestTerms,
+  capitalizeTerm,
+} from "@t3tools/client-runtime/source-control-clients";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -101,7 +105,7 @@ export class PullRequestRoutingPermissions extends Context.Reference<{
       Effect.fail(
         new ConnectionBlockedError({
           reason: "unsupported",
-          detail: "Pull request routing preferences are unavailable on this client.",
+          detail: `${capitalizeTerm(currentChangeRequestTerms().singular)} routing preferences are unavailable on this client.`,
         }),
       ),
     forget: () => Effect.void,

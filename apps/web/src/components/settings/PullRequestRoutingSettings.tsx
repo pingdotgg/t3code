@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { useAtomValue } from "@effect/atom-react";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import {
@@ -6,6 +7,7 @@ import {
   type PullRequestRoutingPermission,
 } from "@t3tools/client-runtime/connection";
 import { useState } from "react";
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 
 import { environmentCatalog } from "~/connection/catalog";
 import type { EnvironmentPresentation } from "~/state/environments";
@@ -44,6 +46,11 @@ export function PullRequestRoutingSettings({
 }: {
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
+  const requestTerms = useChangeRequestTerms();
+  const routingOptions = options.map((option) => ({
+    ...option,
+    label: formatChangeRequestText(option.label, requestTerms),
+  }));
   const permissions = useAtomValue(environmentCatalog.pullRequestRoutingPermissionsValueAtom);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const update = useAtomCommand(environmentCatalog.setPullRequestRoutingPermission);
@@ -51,24 +58,25 @@ export function PullRequestRoutingSettings({
 
   if (environments.length < 2) return null;
 
-  const { id, title } = searchableSetting("pull-request-routing");
+  const { id, title } = searchableSetting("pull-request-routing", requestTerms);
   return (
     <FoldedSettingsSection
       id={id}
       title={title}
-      summary={
+      summary={formatChangeRequestText(
         summarizePullRequestRouting(
           environments.map((environment) => ({
             label: environment.label,
             permission: pullRequestRoutingPermissionFor(environment.entry, permissions),
           })),
-        ) ?? "Off"
-      }
+        ) ?? "Off",
+        requestTerms,
+      )}
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        Machines you trust here can read PR data through each other's source control access. Enable
-        both machines. Read and act may use broader permissions than the machine that owns them.
-        This applies only to this device.
+        Machines you trust here can read {requestTerms.shortLabel} data through each other's source
+        control access. Enable both machines. Read and act may use broader permissions than the
+        machine that owns them. This applies only to this device.
       </p>
       {environments.map((environment) => (
         <EnvironmentRow
@@ -78,7 +86,7 @@ export function PullRequestRoutingSettings({
           subtitle={<EnvironmentTransportLabel environment={environment} />}
         >
           <Select
-            items={options}
+            items={routingOptions}
             value={pullRequestRoutingPermissionFor(environment.entry, permissions)}
             disabled={
               !catalog.isReady ||
@@ -94,7 +102,7 @@ export function PullRequestRoutingSettings({
                   if (result._tag === "Failure")
                     toastManager.add({
                       type: "error",
-                      title: "Could not save pull request routing permission",
+                      title: `Could not save ${requestTerms.singular} routing permission`,
                     });
                 },
               );
@@ -103,12 +111,12 @@ export function PullRequestRoutingSettings({
             <SelectTrigger
               size="xs"
               className="w-32"
-              aria-label={`${environment.label} pull request routing`}
+              aria-label={`${environment.label} ${requestTerms.singular} routing`}
             >
               <SelectValue />
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              {options.map(({ value, label }) => (
+              {routingOptions.map(({ value, label }) => (
                 <SelectItem key={value} value={value}>
                   {label}
                 </SelectItem>

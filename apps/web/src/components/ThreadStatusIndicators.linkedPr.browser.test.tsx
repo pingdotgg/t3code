@@ -1,7 +1,12 @@
-import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  EnvironmentId,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
+import { __setClientSettingsForTests, persistClientSettingsPatch } from "../hooks/useSettings";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { makeThreadFixture } from "../test-fixtures";
 import { ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
@@ -18,6 +23,12 @@ vi.mock(import("../state/entities"), async (original) => ({
 }));
 
 it("updates palette PR status from linked snapshots without a legacy link or branch PR", async () => {
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  using _settingsCleanup = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
   const link: ThreadPullRequestLink = {
     host: "github.com",
     repository: "example/repo",
@@ -51,6 +62,14 @@ it("updates palette PR status from linked snapshots without a legacy link or bra
   await using screen = await render(row(link));
   await expect.element(screen.getByLabelText("PR #7 - Merged: Linked change")).toBeVisible();
   await expect.element(screen.getByLabelText("PR #7, status pending")).not.toBeInTheDocument();
+
+  await act(() => persistClientSettingsPatch({ mergeRequestTerminology: true }, async () => {}));
+  await expect.element(screen.getByLabelText("MR #7 - Merged: Linked change")).toBeVisible();
+  await expect
+    .element(screen.getByLabelText("PR #7 - Merged: Linked change"))
+    .not.toBeInTheDocument();
+  await act(() => persistClientSettingsPatch({ mergeRequestTerminology: false }, async () => {}));
+  await expect.element(screen.getByLabelText("PR #7 - Merged: Linked change")).toBeVisible();
 
   await screen.rerender(row({ ...link, snapshot: null }));
   await expect.element(screen.getByLabelText("PR #7, status pending")).toBeVisible();

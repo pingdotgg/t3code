@@ -1,5 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { PULL_REQUEST_TERMINOLOGY } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestOperationError, type PullRequestDiffResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -55,7 +55,7 @@ function setup() {
         repository: "repo",
         number: 1,
       },
-      sourceControlClients.get("github").changeRequest,
+      PULL_REQUEST_TERMINOLOGY,
     );
     useLayoutEffect(() => {
       current = result;

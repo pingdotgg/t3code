@@ -1,3 +1,5 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -40,6 +42,7 @@ function PullRequestHostVideo({
   fetchUrl: string;
   repository: string | undefined;
 }) {
+  const requestTerms = useChangeRequestTerms();
   const resource: AssetResource = {
     _tag: SOURCE_CONTROL_MEDIA_ASSET,
     cwd,
@@ -54,7 +57,7 @@ function PullRequestHostVideo({
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
       originalUrl={url}
-      label="Pull request video"
+      label={`${capitalizeTerm(requestTerms.singular)} video`}
       className="w-full"
       videoClassName="rounded-lg border border-border/60"
       onRetry={refreshAssetUrl}
@@ -77,6 +80,7 @@ function PullRequestBodySegmentView({
   lineBreaks: boolean;
   onTaskListChange: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
 }) {
+  const requestTerms = useChangeRequestTerms();
   const context = useContext(PullRequestMarkdownContext);
   const repository = context?.repository ?? undefined;
   if (segment.kind === "table") {
@@ -156,7 +160,7 @@ function PullRequestBodySegmentView({
         key={`${segment.id}:${segment.url}`}
         src={segment.url}
         originalUrl={segment.url}
-        label="Pull request video"
+        label={`${capitalizeTerm(requestTerms.singular)} video`}
         className="w-full"
         videoClassName="rounded-lg border border-border/60"
       />

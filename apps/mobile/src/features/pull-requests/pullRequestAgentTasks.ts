@@ -1,6 +1,6 @@
 import {
-  sourceControlClients,
   type ChangeRequestTerminology,
+  currentChangeRequestTerms,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestDetail, PullRequestLinkedThreadsResult } from "@t3tools/contracts";
 
@@ -34,7 +34,7 @@ export function pullRequestAgentPrompt(
 }
 
 export function pullRequestAgentActions(pr: PullRequestDetail, canWatch: boolean) {
-  const { shortLabel } = sourceControlClients.get(pr.provider).changeRequest;
+  const { shortLabel } = currentChangeRequestTerms();
   return [
     {
       task: "ask",

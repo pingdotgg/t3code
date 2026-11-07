@@ -26,6 +26,14 @@ vi.mock("../lib/runtime", async () => {
 });
 
 import { createMobilePreferencesState } from "./preferences";
+import {
+  createChangeRequestTermsAtom,
+  installChangeRequestTerminologyRuntime,
+} from "./change-request-terminology";
+import {
+  currentChangeRequestTerms,
+  setMergeRequestTerms,
+} from "@t3tools/client-runtime/source-control-clients";
 import * as MobilePreferences from "../persistence/mobile-preferences";
 
 function deferred<A>() {
@@ -71,15 +79,20 @@ describe("mobile preferences state", () => {
         savePatch,
       });
       const registry = AtomRegistry.make();
+      const termsAtom = createChangeRequestTermsAtom(state.preferencesAtom);
+      const unmountTerms = registry.mount(termsAtom);
+      expect(registry.get(termsAtom).shortLabel).toBe("PR");
       const unmountPreferences = registry.mount(state.preferencesAtom);
       const unmountUpdate = registry.mount(state.updatePreferencesAtom);
 
       registry.set(state.updatePreferencesAtom, {
         collapsedProjectGroups: ["project:new"],
+        mergeRequestTerminology: true,
       });
       pendingLoad.resolve({
         baseFontSize: 18,
         collapsedProjectGroups: ["project:old"],
+        mergeRequestTerminology: false,
       });
 
       const preferences = yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
@@ -88,15 +101,63 @@ describe("mobile preferences state", () => {
       expect(preferences).toEqual({
         baseFontSize: 18,
         collapsedProjectGroups: ["project:new"],
+        mergeRequestTerminology: true,
       });
       expect(savePatch).toHaveBeenCalledWith({
         collapsedProjectGroups: ["project:new"],
+        mergeRequestTerminology: true,
       });
+      expect(registry.get(termsAtom).shortLabel).toBe("MR");
+
+      registry.set(state.updatePreferencesAtom, { mergeRequestTerminology: false });
+      yield* AtomRegistry.getResult(registry, state.updatePreferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      expect(registry.get(termsAtom).shortLabel).toBe("PR");
       expect(AsyncResult.isFailure(registry.get(state.updatePreferencesAtom))).toBe(false);
 
       unmountUpdate();
       unmountPreferences();
+      unmountTerms();
       registry.dispose();
+    }),
+  );
+
+  it.effect("restores saved terminology and rolls back a failed change", () =>
+    Effect.gen(function* () {
+      const pendingSave = deferred<void>();
+      const state = makePreferencesState({
+        load: Effect.succeed({ mergeRequestTerminology: true }),
+        savePatch: () =>
+          Effect.promise(() => pendingSave.promise).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new MobilePreferences.MobilePreferencesSaveError({
+                  cause: new Error("storage unavailable"),
+                }),
+              ),
+            ),
+          ),
+      });
+      const registry = AtomRegistry.make();
+      const termsAtom = createChangeRequestTermsAtom(state.preferencesAtom);
+      const stopTerminology = installChangeRequestTerminologyRuntime(registry, termsAtom);
+      try {
+        yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+        expect(registry.get(termsAtom).shortLabel).toBe("MR");
+        registry.set(state.updatePreferencesAtom, { mergeRequestTerminology: false });
+        expect(registry.get(termsAtom).shortLabel).toBe("PR");
+        pendingSave.resolve();
+        yield* AtomRegistry.getResult(registry, state.updatePreferencesAtom, {
+          suspendOnWaiting: true,
+        }).pipe(Effect.exit);
+        expect(registry.get(termsAtom).shortLabel).toBe("MR");
+        expect(currentChangeRequestTerms().shortLabel).toBe("MR");
+      } finally {
+        stopTerminology();
+        registry.dispose();
+        setMergeRequestTerms(false);
+      }
     }),
   );
 

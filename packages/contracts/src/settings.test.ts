@@ -312,6 +312,15 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings merge request terminology", () => {
+  it("says pull request until turned on", () => {
+    expect(decodeClientSettings({}).mergeRequestTerminology).toBe(false);
+    expect(decodeClientSettings({ mergeRequestTerminology: true }).mergeRequestTerminology).toBe(
+      true,
+    );
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

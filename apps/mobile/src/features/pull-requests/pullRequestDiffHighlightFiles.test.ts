@@ -8,7 +8,7 @@ import { highlightNativeReviewDiffVisibleRows } from "../diffs/nativeReviewDiffH
 import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
 import type { ReviewParsedDiff, ReviewRenderableFile } from "../review/reviewModel";
 import { combinePullRequestDiffPages } from "./pullRequestDiffPages";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { PULL_REQUEST_TERMINOLOGY } from "@t3tools/client-runtime/source-control-clients";
 import {
   createPullRequestDiffHighlightCache,
   createPullRequestDiffHighlightFiles,
@@ -346,7 +346,7 @@ function loadPatch(patch: string, truncated = false) {
     [{ cursor: null, result: { patch, truncated, nextCursor: null } }],
     new WeakMap(),
     "complete-source",
-    sourceControlClients.get("github").changeRequest,
+    PULL_REQUEST_TERMINOLOGY,
   );
   if (parsed.kind !== "files") throw new Error("Expected parsed files");
   const files = parsed.files.map((file) => ({

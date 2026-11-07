@@ -36,6 +36,8 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { cn } from "../../lib/utils";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import {
@@ -129,6 +131,7 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+  const terms = useChangeRequestTerms();
   const navArea = workspaceAreaProps("settings-nav", 0, "Settings sections");
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
@@ -357,7 +360,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           {item.title}
                         </span>
                         <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
-                          {SETTINGS_SECTION_LABELS[item.to]}
+                          {formatChangeRequestText(SETTINGS_SECTION_LABELS[item.to], terms)}
                         </span>
                       </span>
                     </SidebarMenuButton>
@@ -422,7 +425,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                 <span
                                   className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
                                 >
-                                  {SETTINGS_SECTION_LABELS[to]}
+                                  {formatChangeRequestText(SETTINGS_SECTION_LABELS[to], terms)}
                                 </span>
                               </SidebarMenuButton>
                             </SidebarMenuItem>

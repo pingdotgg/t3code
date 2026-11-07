@@ -1,5 +1,5 @@
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
-import { WORKSPACE_TAB_LABELS, useEnabledNavigationTabs } from "./navigation-tabs";
+import { useWorkspaceTabLabels, useEnabledNavigationTabs } from "./navigation-tabs";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { WorkspaceSettingsList } from "../../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
@@ -39,8 +39,6 @@ import {
 } from "./useSystemWorkspaceTabBar";
 import { openSettings } from "../../settings/settings-navigation";
 
-const TAB_TITLES = WORKSPACE_TAB_LABELS;
-
 function WorkspaceRootTitle(props: {
   readonly columnWidth: number;
   readonly onOpenEnvironments: () => void;
@@ -48,10 +46,11 @@ function WorkspaceRootTitle(props: {
   const { state, settingsOpen } = useWorkspaceTabs()!;
   const maxWidth = Math.max(0, props.columnWidth - (use(HeaderItemsWidthContext) ?? 160));
   const enabled = useEnabledNavigationTabs();
+  const tabLabels = useWorkspaceTabLabels();
   const tabTitle = settingsOpen
     ? "Settings"
     : enabled.length
-      ? TAB_TITLES[state.selectedTab]
+      ? tabLabels[state.selectedTab]
       : "Navigation";
   return (
     <View style={{ width: maxWidth, minHeight: 32, justifyContent: "center" }}>
@@ -65,6 +64,7 @@ function WorkspaceRootTitle(props: {
 }
 
 function WorkspaceRootContent() {
+  const tabLabels = useWorkspaceTabLabels();
   const navigation = useNavigation();
   const { width: windowWidth } = useWindowDimensions();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
@@ -128,7 +128,7 @@ function WorkspaceRootContent() {
             title: settingsOpen
               ? "Settings"
               : enabled.length
-                ? TAB_TITLES[state.selectedTab]
+                ? tabLabels[state.selectedTab]
                 : "Navigation",
             headerShown: true,
             headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,

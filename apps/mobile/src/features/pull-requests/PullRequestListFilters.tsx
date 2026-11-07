@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { useAtomValue } from "@effect/atom-react";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
@@ -12,7 +13,7 @@ import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThrea
 import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
 
 const STATES = { open: "Open", closed: "Closed", merged: "Merged", all: "All states" } as const;
-const INVOLVEMENT = { all: "All PRs", reviewing: "Your review", authored: "By you" } as const;
+const INVOLVEMENT = { reviewing: "Your review", authored: "By you" } as const;
 const DRAFTS = { all: "All drafts", only: "Drafts only", hide: "Hide drafts" } as const;
 const REVIEWS = {
   all: "All reviews",
@@ -106,6 +107,8 @@ export function usePullRequestListFilters(props: {
   /** Opens a picker that searches the host, for a label or author no loaded row carries. */
   readonly onSearch: (kind: "labels" | "authors") => void;
 }) {
+  const terms = useChangeRequestTerms();
+  const involvement = { ...INVOLVEMENT, all: `All ${terms.shortLabel}s` };
   const { value } = props;
   const projects = useProjectsInSidebarOrder(props.projects);
   const selectedLabels = value.filters.labels?.flat() ?? [];
@@ -280,7 +283,7 @@ export function usePullRequestListFilters(props: {
     props.environmentId ?? "",
   );
   const stateActions = choices("state", STATES, value.state);
-  const involvementActions = choices("involvement", INVOLVEMENT, value.involvement);
+  const involvementActions = choices("involvement", involvement, value.involvement);
   const labelActions: MenuProps["actions"] = [
     { id: id("search", "labels"), title: "Search labels…", image: "magnifyingglass" },
     { id: id("labels", ""), title: "All labels", state: selectedLabels.length ? "off" : "on" },
@@ -352,6 +355,8 @@ export function PullRequestListFilters(props: {
   readonly sidebar?: boolean;
   readonly filters: ReturnType<typeof usePullRequestListFilters>;
 }) {
+  const terms = useChangeRequestTerms();
+  const involvement = { ...INVOLVEMENT, all: `All ${terms.shortLabel}s` };
   const { count, more, reset, select, author, selectedLabelCount } = props.filters;
   return (
     <ScrollView
@@ -379,7 +384,7 @@ export function PullRequestListFilters(props: {
       {props.filters.environmentLabel !== null ? (
         <ListFilterMenu
           label={props.filters.environmentLabel}
-          accessibilityLabel="Choose pull request environment"
+          accessibilityLabel={`Choose ${terms.singular} environment`}
           actions={props.filters.environmentActions}
           onSelect={select}
         />
@@ -392,7 +397,7 @@ export function PullRequestListFilters(props: {
         onSelect={select}
       />
       <ListFilterMenu
-        label={INVOLVEMENT[props.filters.involvement]}
+        label={involvement[props.filters.involvement]}
         active={props.filters.involvement !== "all"}
         accessibilityLabel="Filter by involvement"
         actions={props.filters.involvementActions}

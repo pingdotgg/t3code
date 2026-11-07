@@ -577,6 +577,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    mergeRequestTerminology?: boolean;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -4370,6 +4371,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         Effect.map((error) => error.message),
       );
       expect(errorMessage).toContain("detached HEAD");
+      for (const mergeRequestTerminology of [false, true]) {
+        const error = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+          mergeRequestTerminology,
+        }).pipe(Effect.flip);
+        expect(error.message).toContain(
+          `Cannot create a ${mergeRequestTerminology ? "merge" : "pull"} request from detached HEAD.`,
+        );
+      }
     }),
   );
 
@@ -5931,6 +5942,60 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           label: "Creating pull request...",
         }),
       ]);
+    }),
+  );
+
+  it.effect("says merge request on any host when merge request terminology is on", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/generic-terms"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "terms.txt"), "terms\n");
+      yield* runGit(repoDir, ["add", "terms.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Generic terms"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/generic-terms"]);
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          kind: "github",
+          prListSequence: [
+            [],
+            [
+              {
+                number: 12,
+                title: "Generic terms",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/12",
+                baseRefName: "main",
+                headRefName: "feature/generic-terms",
+                state: "open",
+                isCrossRepository: false,
+              },
+            ],
+          ],
+        },
+      });
+      const labels: string[] = [];
+
+      const result = yield* runStackedAction(
+        manager,
+        { cwd: repoDir, action: "create_pr", mergeRequestTerminology: true },
+        {
+          progressReporter: {
+            publish: (event) =>
+              Effect.sync(() => {
+                if (event.kind === "phase_started") labels.push(event.label);
+              }),
+          },
+        },
+      );
+
+      expect(labels).toEqual([
+        "Preparing MR...",
+        "Generating MR content...",
+        "Creating merge request...",
+      ]);
+      expect(result.toast.title).toBe("Created MR #12");
     }),
   );
 });

@@ -1,3 +1,7 @@
+import {
+  currentChangeRequestTerms,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
@@ -255,11 +259,15 @@ function compactWorkEntryText(value: string): string {
   return truncate(value.replace(/\s+/gu, " "), WORK_LOG_LABEL_MAX_LENGTH);
 }
 
-export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
+export function workEntryRowLabel(
+  entry: WorkLogPresentationEntry,
+  expanded = false,
+  terms = currentChangeRequestTerms(),
+): string {
   if (entry.itemType === "fork") return entry.label;
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
-  const presentation = resolveWorkEntryToolPresentation(entry);
+  const presentation = resolveWorkEntryToolPresentation(entry, undefined, terms);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
   const action = toolGroupAction(entry);
@@ -318,6 +326,7 @@ const failedActivityGroupsCache = new WeakMap<
 const presentedActivityGroupsCache = new WeakMap<
   ThreadFeedActivityGroup,
   {
+    readonly terms: ChangeRequestTerminology;
     readonly activeRunId: RunId | null;
     readonly isWorking: boolean;
     readonly activeTail: boolean;
@@ -1278,6 +1287,7 @@ function settleSupersededReasoning(
 }
 
 interface ThreadFeedPresentationBuild {
+  readonly terms: ChangeRequestTerminology;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly expandedRunIds: ReadonlySet<RunId>;
@@ -1500,8 +1510,9 @@ export function deriveThreadFeedPresentation(
   runlessWorkActive = false,
   cache?: ThreadFeedCache,
   display: ThreadFeedDisplay = DEFAULT_THREAD_FEED_DISPLAY,
+  terms = currentChangeRequestTerms(),
 ): ThreadFeedEntry[] {
-  const previous = cache?.presentation ?? null;
+  const previous = cache?.presentation?.terms === terms ? cache.presentation : null;
   const restart = presentationRestart(
     previous,
     feed,
@@ -1676,6 +1687,7 @@ export function deriveThreadFeedPresentation(
         activeRunId,
         isWorking,
         isActiveTailGroup,
+        terms,
       );
     }
   }
@@ -1763,6 +1775,7 @@ export function deriveThreadFeedPresentation(
   });
   if (cache) {
     cache.presentation = {
+      terms,
       feed,
       latestRun,
       expandedRunIds,
@@ -1823,6 +1836,7 @@ function appendPresentedFeedEntry(
   activeRunId: RunId | null,
   isWorking: boolean,
   activeTail: boolean,
+  terms: ChangeRequestTerminology,
 ): void {
   if (entry.type !== "activity-group") {
     result.push(entry);
@@ -1841,6 +1855,7 @@ function appendPresentedFeedEntry(
   let cached = presentedActivityGroupsCache.get(entry);
   if (
     !cached ||
+    cached.terms !== terms ||
     cached.activeRunId !== activeRunId ||
     cached.isWorking !== isWorking ||
     cached.activeTail !== activeTail ||
@@ -1850,7 +1865,7 @@ function appendPresentedFeedEntry(
   ) {
     const rows: ThreadFeedEntry[] = [];
     appendActivityGroupRows(rows, entry, expandedWorkGroupIds, activeRunId, isWorking, activeTail);
-    cached = { activeRunId, isWorking, activeTail, rows };
+    cached = { terms, activeRunId, isWorking, activeTail, rows };
     presentedActivityGroupsCache.set(entry, cached);
   }
   for (const row of cached.rows) {

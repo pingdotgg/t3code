@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
 import type { ReviewParsedDiff } from "../review/reviewModel";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
+} from "@t3tools/client-runtime/source-control-clients";
 import * as reviewModel from "../review/reviewModel";
 import {
   combinePullRequestDiffPages,
@@ -9,7 +12,7 @@ import {
   retainPullRequestDiffPage,
 } from "./pullRequestDiffPages";
 
-const GITHUB = sourceControlClients.get("github").changeRequest;
+const GITHUB = PULL_REQUEST_TERMINOLOGY;
 
 function diff(path: string): PullRequestDiffResult {
   return {
@@ -39,11 +42,7 @@ describe("paged mobile pull request diffs", () => {
       "first",
       GITHUB,
     );
-    const otherProvider = getCachedPullRequestDiffPages(
-      pages,
-      "first",
-      sourceControlClients.get("gitlab").changeRequest,
-    );
+    const otherProvider = getCachedPullRequestDiffPages(pages, "first", MERGE_REQUEST_TERMINOLOGY);
     expect(otherScope).not.toBe(first);
     expect(otherCursor).not.toBe(first);
     expect(otherProvider).not.toBe(first);
@@ -115,7 +114,7 @@ describe("paged mobile pull request diffs", () => {
       [{ cursor: null, result: withheldDiff() }],
       new WeakMap(),
       "mr",
-      sourceControlClients.get("gitlab").changeRequest,
+      MERGE_REQUEST_TERMINOLOGY,
     );
     expect(parsed.kind === "files" ? parsed.notice : null).toBe(
       "Some file contents are unavailable. Open the merge request on its provider to see the full changes.",

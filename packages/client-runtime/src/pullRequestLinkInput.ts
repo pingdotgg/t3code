@@ -1,7 +1,11 @@
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 
-import { sourceControlClients, type ChangeRequestTerminology } from "./sourceControlClients.ts";
+import {
+  type ChangeRequestTerminology,
+  currentChangeRequestTerms,
+  sourceControlClients,
+} from "./sourceControlClients.ts";
 
 const PULL_REQUEST_NUMBER_PATTERN = /^#?(\d+)$/;
 
@@ -47,7 +51,7 @@ export function pullRequestLinkProject(identity: RepositoryIdentity | null | und
   return {
     host,
     repository,
-    terminology: definition.changeRequest,
+    terminology: currentChangeRequestTerms(),
     webUrl: (number: number) =>
       definition.changeRequestUrl({
         host,
@@ -99,8 +103,7 @@ export function resolveLinkPullRequestInput(input: {
   if (!Number.isSafeInteger(number) || number < 1) return null;
   if (input.project === null) {
     return {
-      error:
-        "Paste the full pull request URL; this thread has no repository to resolve the number against.",
+      error: `Paste the full ${currentChangeRequestTerms().singular} URL; this thread has no repository to resolve the number against.`,
     };
   }
   const webUrl = input.project.webUrl(number);

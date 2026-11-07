@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { Spinner } from "~/components/ui/spinner";
 import type {
   EnvironmentId,
@@ -105,6 +106,7 @@ export function PullRequestSearchInput({
   onSubmit: (value: string) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const terms = useChangeRequestTerms();
   return (
     <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
       <InputGroupAddon>
@@ -127,8 +129,8 @@ export function PullRequestSearchInput({
             onSubmit(event.currentTarget.value);
           }
         }}
-        placeholder="Search pull requests, or label:bug"
-        aria-label="Search pull requests"
+        placeholder={`Search ${terms.plural}, or label:bug`}
+        aria-label={`Search ${terms.plural}`}
       />
     </InputGroup>
   );

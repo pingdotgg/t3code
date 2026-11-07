@@ -1,4 +1,7 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
+} from "@t3tools/client-runtime/source-control-clients";
 import { describe, expect, it } from "vite-plus/test";
 import {
   allowedMergeMethods,
@@ -7,8 +10,8 @@ import {
   pullRequestActionLabel,
 } from "./pullRequestActions";
 
-const GITHUB = sourceControlClients.get("github").changeRequest;
-const GITLAB = sourceControlClients.get("gitlab").changeRequest;
+const GITHUB = PULL_REQUEST_TERMINOLOGY;
+const GITLAB = MERGE_REQUEST_TERMINOLOGY;
 
 import type { PullRequestAction } from "@t3tools/contracts";
 

@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../../state/change-request-terminology";
 import type { Ref } from "react";
 import { Keyboard, Pressable, TextInput, View, type TextInputInstance } from "react-native";
 import { useResolveClassNames } from "uniwind";
@@ -18,9 +19,10 @@ export function WorkspaceSearchField({
   readonly onBlur?: () => void;
   readonly onClear: () => void;
 }) {
+  const terms = useChangeRequestTerms();
   const inputStyle = useResolveClassNames("text-foreground font-sans text-base");
   const placeholderStyle = useResolveClassNames("text-foreground-muted");
-  const label = props.tab === "pullRequests" ? "Search pull requests" : "Search threads";
+  const label = props.tab === "pullRequests" ? `Search ${terms.plural}` : "Search threads";
   return (
     <GlassSurface
       className="min-w-0 flex-1"

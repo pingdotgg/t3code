@@ -1,3 +1,4 @@
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
 
 export interface T3ToolSummaryCall {
@@ -93,9 +94,9 @@ function pullRequestQuantity(
     if (typeof reported === "number") count += reported;
     else if (call.input?.url !== undefined || call.input?.number !== undefined) count += 1;
     // A batch result too large to compact loses its count, so the label drops the number.
-    else return "pull requests";
+    else return currentChangeRequestTerms().plural;
   }
-  return quantity(count, "pull request");
+  return quantity(count, currentChangeRequestTerms().singular);
 }
 
 export function summarizeT3ToolCalls(
@@ -414,20 +415,24 @@ export function summarizeT3ToolCalls(
       label = phrase("Unlinked", "unlink", pullRequestQuantity(selected, "unlinkedCount"));
       break;
     case "watch-pr":
-      label = phrase("Watching", "watch", quantity(selected.length, "pull request"));
+      label = phrase(
+        "Watching",
+        "watch",
+        quantity(selected.length, currentChangeRequestTerms().singular),
+      );
       break;
     case "unwatch-pr":
       label = phrase(
         "Stopped watching",
         "stop watching",
-        quantity(selected.length, "pull request"),
+        quantity(selected.length, currentChangeRequestTerms().singular),
       );
       break;
     case "list-prs":
       label = phrase(
         "Checked",
         "check",
-        `linked pull requests${selected.length === 1 ? "" : ` ${times}`}`,
+        `linked ${currentChangeRequestTerms().plural}${selected.length === 1 ? "" : ` ${times}`}`,
       );
       break;
     case "write-pr-guides": {

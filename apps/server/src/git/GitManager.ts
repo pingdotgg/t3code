@@ -57,7 +57,7 @@ import {
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   type ChangeRequestTerminology,
-  UNKNOWN_SOURCE_CONTROL_CLIENT,
+  changeRequestTerms,
 } from "@t3tools/source-control-core/shared/definition";
 import {
   normalizeThreadPullRequestKey,
@@ -665,14 +665,6 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
-  const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
-    cwd: string,
-  ) {
-    return yield* sourceControlProvider(cwd).pipe(
-      Effect.map((provider) => sourceControlDefinitions.get(provider.kind).changeRequest),
-      Effect.orElseSucceed(() => UNKNOWN_SOURCE_CONTROL_CLIENT.changeRequest),
-    );
-  });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -1934,8 +1926,8 @@ export const make = Effect.gen(function* () {
   const buildCompletionToast = Effect.fn("buildCompletionToast")(function* (
     cwd: string,
     result: Pick<GitRunStackedActionResult, "action" | "branch" | "commit" | "push" | "pr">,
+    terms: ChangeRequestTerminology,
   ) {
-    const terms = yield* changeRequestTermsFor(cwd);
     const summary = summarizeGitActionResult(result, terms);
     let latestOpenPr: PullRequestInfo | null = null;
     let currentBranchIsDefault = false;
@@ -2278,23 +2270,23 @@ export const make = Effect.gen(function* () {
     fallbackBranch: string | null,
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
+    terms: ChangeRequestTerminology,
   ) {
     const provider = yield* sourceControlProvider(cwd);
-    const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
       return yield* new GitManagerError({
         operation: "runPrStep",
         cwd,
-        detail: "Cannot create a pull request from detached HEAD.",
+        detail: `Cannot create a ${terms.singular} from detached HEAD.`,
       });
     }
     if (!details.hasUpstream) {
       return yield* new GitManagerError({
         operation: "runPrStep",
         cwd,
-        detail: "Current branch has not been pushed. Push before creating a PR.",
+        detail: `Current branch has not been pushed. Push before creating ${terms.shortLabelWithArticle}.`,
       });
     }
 
@@ -2360,7 +2352,7 @@ export const make = Effect.gen(function* () {
           new GitManagerError({
             operation: "runPrStep",
             cwd,
-            detail: "Failed to write pull request body temp file.",
+            detail: `Failed to write ${terms.singular} body temp file.`,
             cause,
           }),
       ),
@@ -3140,6 +3132,7 @@ export const make = Effect.gen(function* () {
         GitRunStackedActionResult,
         GitManagerServiceError
       > {
+        const terms = changeRequestTerms(input.mergeRequestTerminology === true);
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
         const wantsPush =
@@ -3169,18 +3162,18 @@ export const make = Effect.gen(function* () {
           phases,
         });
 
+        if (!input.featureBranch && wantsPr && !initialStatus.branch) {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: `Cannot create a ${terms.singular} from detached HEAD.`,
+          });
+        }
         if (!input.featureBranch && wantsPush && !initialStatus.branch) {
           return yield* new GitManagerError({
             operation: "runStackedAction",
             cwd: input.cwd,
             detail: "Cannot push from detached HEAD.",
-          });
-        }
-        if (!input.featureBranch && wantsPr && !initialStatus.branch) {
-          return yield* new GitManagerError({
-            operation: "runStackedAction",
-            cwd: input.cwd,
-            detail: "Cannot create a pull request from detached HEAD.",
           });
         }
 
@@ -3240,7 +3233,6 @@ export const make = Effect.gen(function* () {
 
         const currentBranch = branchStep.name ?? initialStatus.branch;
         const commitAction = isCommitAction(input.action) ? input.action : null;
-        const changeRequestTerms = wantsPr ? yield* changeRequestTermsFor(input.cwd) : null;
 
         const commit = commitAction
           ? yield* Ref.set(currentPhase, Option.some("commit")).pipe(
@@ -3278,7 +3270,7 @@ export const make = Effect.gen(function* () {
               .emit({
                 kind: "phase_started",
                 phase: "pr",
-                label: `Preparing ${changeRequestTerms?.shortLabel ?? "PR"}...`,
+                label: `Preparing ${terms.shortLabel}...`,
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
@@ -3289,18 +3281,17 @@ export const make = Effect.gen(function* () {
                     currentBranch,
                     input.threadId,
                     progress.emit,
+                    terms,
                   ),
                 ),
               )
           : { status: "skipped_not_requested" as const };
 
-        const toast = yield* buildCompletionToast(input.cwd, {
-          action: input.action,
-          branch: branchStep,
-          commit,
-          push,
-          pr,
-        });
+        const toast = yield* buildCompletionToast(
+          input.cwd,
+          { action: input.action, branch: branchStep, commit, push, pr },
+          terms,
+        );
 
         const result = {
           action: input.action,

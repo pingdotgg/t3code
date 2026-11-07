@@ -18,7 +18,12 @@ import {
 } from "@t3tools/shared/t3McpToolPresentation";
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  type ChangeRequestTerminology,
+  currentChangeRequestTerms,
+  formatChangeRequestText,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { classifyToolActivity } from "@t3tools/shared/toolActivity";
@@ -168,7 +173,8 @@ function workEntryToolOutput(
 function resolveT3McpToolPresentation(
   definition: T3McpToolDefinition | null,
   status: string | undefined,
-  data?: unknown,
+  data: unknown,
+  terms: ChangeRequestTerminology,
 ) {
   if (!definition) return null;
   const [action, running, completed, detail] = definition.labels;
@@ -199,8 +205,7 @@ function resolveT3McpToolPresentation(
   const urlTarget =
     typeof input?.url === "string" ? sourceControlClients.parseChangeRequestUrl(input.url) : null;
   const number = urlTarget?.link.number ?? input?.number;
-  const { shortLabel } = (urlTarget?.definition ?? sourceControlClients.get(undefined))
-    .changeRequest;
+  const { shortLabel } = terms;
   const target =
     actionKind !== undefined &&
     actionKind !== "list-prs" &&
@@ -208,7 +213,7 @@ function resolveT3McpToolPresentation(
     Number.isSafeInteger(number) &&
     number > 0
       ? `${shortLabel} #${number}`
-      : detail;
+      : formatChangeRequestText(detail, terms);
   return {
     displayName: `${verb} ${target}`,
     icon: definition.icon,
@@ -230,6 +235,7 @@ export function resolveWorkEntryToolPresentation(
     "label" | "toolTitle" | "toolData" | "toolLifecycleStatus" | "structuredPayload"
   >,
   fallbackStatus?: "inProgress" | "completed",
+  terms = currentChangeRequestTerms(),
 ) {
   const definition = resolveT3McpToolDefinition(
     workEntryToolName(entry),
@@ -240,6 +246,7 @@ export function resolveWorkEntryToolPresentation(
     definition,
     definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
     entry.toolData,
+    terms,
   );
 }
 
@@ -461,19 +468,21 @@ function toolGroupActionCount(
 }
 
 function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
+  const terms = currentChangeRequestTerms();
+  const requests = count === 1 ? terms.singular : terms.plural;
   switch (action) {
     case "link-pr":
-      return `Linked ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Linked ${count} ${requests}`;
     case "unlink-pr":
-      return `Unlinked ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Unlinked ${count} ${requests}`;
     case "watch-pr":
-      return `Watching ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Watching ${count} ${requests}`;
     case "unwatch-pr":
-      return `Stopped watching ${count} ${count === 1 ? "pull request" : "pull requests"}`;
+      return `Stopped watching ${count} ${requests}`;
     case "list-prs":
       return count === 1
-        ? "Checked linked pull requests"
-        : `Checked linked pull requests ${count} times`;
+        ? `Checked linked ${terms.plural}`
+        : `Checked linked ${terms.plural} ${count} times`;
     case "read":
       return `Read ${count} ${count === 1 ? "file" : "files"}`;
     case "edit":

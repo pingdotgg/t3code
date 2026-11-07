@@ -5,9 +5,12 @@ import {
   pullRequestAgentThread,
 } from "./pullRequestAgentTasks";
 import { IsoDateTime, ProjectId, ThreadId } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
+} from "@t3tools/client-runtime/source-control-clients";
 
-const GITHUB = sourceControlClients.get("github").changeRequest;
+const GITHUB = PULL_REQUEST_TERMINOLOGY;
 
 describe("PR agent tasks", () => {
   it("continues a single linked thread, but keeps an explicit new-thread choice separate", () => {
@@ -55,9 +58,7 @@ describe("PR agent tasks", () => {
     expect(pullRequestAgentPrompt("conflicts", GITHUB)).toContain(
       "Resolve this pull request's conflicts with its base branch. First confirm this thread is on the PR's branch; if it isn't, prepare the PR in its own worktree.",
     );
-    expect(
-      pullRequestAgentPrompt("conflicts", sourceControlClients.get("gitlab").changeRequest),
-    ).toContain(
+    expect(pullRequestAgentPrompt("conflicts", MERGE_REQUEST_TERMINOLOGY)).toContain(
       "Resolve this merge request's conflicts with its base branch. First confirm this thread is on the MR's branch; if it isn't, prepare the MR in its own worktree.",
     );
   });

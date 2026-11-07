@@ -1,3 +1,7 @@
+import {
+  capitalizeTerm,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
@@ -96,6 +100,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   resolvedTheme: "light" | "dark";
   isLoading: boolean;
   triggerKind: ComposerTriggerKind | null;
+  pullRequestTerms: ChangeRequestTerminology;
   emptyStateText?: string;
   activeItemId: string | null;
   onHighlightedItemChange: (itemId: string | null) => void;
@@ -130,7 +135,13 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length > 0 ? (
           <CommandList
             id={props.listId}
-            aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
+            aria-label={
+              props.triggerKind === "pull-request"
+                ? capitalizeTerm(props.pullRequestTerms.plural)
+                : props.triggerKind
+                  ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]
+                  : undefined
+            }
             className="max-h-72 min-h-0 scroll-pb-6"
           >
             <CommandGroup>
@@ -155,7 +166,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                 ? props.triggerKind === "skill" || props.triggerKind === "slash-command"
                   ? "Searching workspace skills..."
                   : props.triggerKind === "pull-request"
-                    ? "Finding pull request..."
+                    ? `Finding ${props.pullRequestTerms.singular}...`
                     : "Searching workspace files..."
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
@@ -258,9 +269,8 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
   return `${listId}-${encodeURIComponent(JSON.stringify(itemId))}`;
 }
 
-const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
+const LISTBOX_LABEL_BY_TRIGGER: Record<Exclude<ComposerTriggerKind, "pull-request">, string> = {
   path: "Files and folders",
-  "pull-request": "Pull requests",
   "slash-command": "Commands",
   skill: "Skills",
 };

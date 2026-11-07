@@ -1,7 +1,10 @@
 import { builtInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
 import {
+  type ChangeRequestTerminology,
   HostCredentialSettings,
   readSourceControlHostSettings,
+  changeRequestTerms,
+  PULL_REQUEST_TERMINOLOGY,
   type SourceControlAppSignIn,
   type SourceControlDefinition,
 } from "@t3tools/source-control-core/shared/definition";
@@ -9,7 +12,10 @@ import type { ServerSettings, SourceControlAppAccessInput } from "@t3tools/contr
 import { parseGitRemoteRepository } from "@t3tools/shared/git";
 
 export {
+  changeRequestTerms,
   isMonochromeSourceControlIcon,
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
   type ChangeRequestLink,
   type ChangeRequestTerminology,
@@ -25,6 +31,40 @@ export {
 
 export const sourceControlClients = builtInSourceControlDefinitions;
 
+// Mirrors the client's `mergeRequestTerminology` setting, so plain functions can read it.
+let mergeRequestTerms = false;
+
+export function mergeRequestTermsEnabled(): boolean {
+  return mergeRequestTerms;
+}
+
+export function setMergeRequestTerms(enabled: boolean): void {
+  mergeRequestTerms = enabled;
+}
+
+/** "Pull request" or "merge request" for every host, as the user's setting picks. */
+export function currentChangeRequestTerms(): ChangeRequestTerminology {
+  return changeRequestTerms(mergeRequestTerms);
+}
+
+export function formatChangeRequestText(text: string, terms = currentChangeRequestTerms()): string {
+  if (terms === PULL_REQUEST_TERMINOLOGY) return text;
+  return text.replace(
+    /https?:\/\/[^\s<>"`]+|\ba PR\b|\bPRs?\b|\b[Pp]ull [Rr]equests?\b/gu,
+    (match) => {
+      if (match.startsWith("http")) return match;
+      if (match === "a PR") return terms.shortLabelWithArticle;
+      if (match === "PR") return terms.shortLabel;
+      if (match === "PRs") return `${terms.shortLabel}s`;
+      const label = match.endsWith("s") ? terms.plural : terms.singular;
+      if (match.startsWith("pull")) return label;
+      return match.includes("Request")
+        ? label.split(" ").map(capitalizeTerm).join(" ")
+        : capitalizeTerm(label);
+    },
+  );
+}
+
 /** The saved per-hostname accounts and tokens of a host whose definition has `credentials`. */
 export function readHostCredentialSettings(
   settings: Pick<ServerSettings, "sourceControlHosts">,
@@ -33,7 +73,7 @@ export function readHostCredentialSettings(
   return readSourceControlHostSettings(HostCredentialSettings, settings.sourceControlHosts[kind]);
 }
 
-/** A host's change request term where it opens a sentence: "Merge request merged". */
+/** A change request term where it opens a sentence: "Merge request merged". */
 export function capitalizeTerm(term: string): string {
   return term.charAt(0).toUpperCase() + term.slice(1);
 }

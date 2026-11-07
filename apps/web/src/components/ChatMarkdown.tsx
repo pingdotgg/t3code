@@ -175,7 +175,10 @@ import {
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  currentChangeRequestTerms,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -1252,10 +1255,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
                   toastManager.add(
                     stackedThreadToast({
                       type: "error",
-                      title:
-                        operation === "link-pull-request-to-thread"
-                          ? "Unable to link pull request"
-                          : "Unable to unlink pull request",
+                      title: `Unable to ${
+                        operation === "link-pull-request-to-thread" ? "link" : "unlink"
+                      } ${currentChangeRequestTerms().singular}`,
                       description: cause instanceof Error ? cause.message : "The request failed.",
                     }),
                   );

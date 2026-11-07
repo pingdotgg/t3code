@@ -1,3 +1,5 @@
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
+import { useChangeRequestTerms } from "../../../state/change-request-terminology";
 import { useAndroidFloatingTabs } from "../../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
@@ -32,6 +34,7 @@ export function WorkspaceRootScreen() {
 }
 
 function WorkspaceRoot() {
+  const terms = useChangeRequestTerms();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const { layout, startNewTask, workspacePageWidth } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs()!;
@@ -88,7 +91,7 @@ function WorkspaceRoot() {
                   ) : layout.usesSplitView ? (
                     <>
                       <NativeStackScreenOptions options={{ headerShown: false }} />
-                      <AppBar embedded title="Pull requests" />
+                      <AppBar embedded title={capitalizeTerm(terms.plural)} />
                       <WorkspaceEmptyDetail tab="pullRequests" />
                     </>
                   ) : (

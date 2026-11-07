@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Platform, Pressable, View } from "react-native";
 
@@ -13,6 +14,7 @@ export function WorkspaceEmptyDetail(props: {
   readonly onStartNewTask?: () => void;
   readonly onAddConnection?: () => void;
 }) {
+  const terms = useChangeRequestTerms();
   const pullRequests = props.tab === "pullRequests";
   const settings = props.tab === "settings";
   if (props.tab === "usage") return <View className="flex-1 bg-screen" />;
@@ -54,14 +56,14 @@ export function WorkspaceEmptyDetail(props: {
               {settings
                 ? "Select a setting"
                 : pullRequests
-                  ? "Select a pull request"
+                  ? `Select a ${terms.singular}`
                   : "Select a thread"}
             </Text>
             <Text className="text-center text-base text-foreground-muted">
               {settings
                 ? "Choose a page from the sidebar."
                 : pullRequests
-                  ? "Choose a pull request from the sidebar to review it."
+                  ? `Choose a ${terms.singular} from the sidebar to review it.`
                   : Platform.OS === "android"
                     ? "Choose a thread from the sidebar or start a new thread."
                     : "Choose a thread from the sidebar or start a new task."}

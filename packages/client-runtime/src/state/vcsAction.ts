@@ -26,6 +26,7 @@ import {
   type AtomCommand,
   type AtomCommandResult,
 } from "./runtime.ts";
+import { mergeRequestTermsEnabled } from "../sourceControlClients.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
@@ -474,6 +475,7 @@ export function createVcsActionManager<R, E>(
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
           ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+          ...(mergeRequestTermsEnabled() ? { mergeRequestTerminology: true } : {}),
         };
         const clearOwnedState = Effect.sync(() => {
           const current = registry.get(stateAtom);

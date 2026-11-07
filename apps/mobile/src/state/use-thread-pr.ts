@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useChangeRequestTerms } from "./change-request-terminology";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   createLinkedPullRequestSummaryAtomFamily,
@@ -78,6 +79,7 @@ export function withKnownPullRequestSummary<
 }
 
 export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentation | null {
+  const terminology = useChangeRequestTerms();
   const demand = use(ThreadPrDemandContext);
   const supportsLinks = useAtomValue(
     serverEnvironment.configValueAtom(thread.environmentId),
@@ -92,8 +94,15 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
           branchPullRequest: thread.branchPullRequest,
         },
         supportsLinks,
+        terminology,
       ),
-    [thread.pullRequests, thread.linkedPullRequest, thread.branchPullRequest, supportsLinks],
+    [
+      thread.pullRequests,
+      thread.linkedPullRequest,
+      thread.branchPullRequest,
+      supportsLinks,
+      terminology,
+    ],
   );
   const key = pullRequestRef === null ? null : snapshotKey(thread.environmentId, pullRequestRef);
   // Select this row's entry so answers for other pull requests do not re-render it.
@@ -117,10 +126,6 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
   const summaryPresentation =
     summary === undefined
       ? null
-      : presentThreadPr(pullRequestDetailToVcsStatus(summary), {
-          kind: summary.provider,
-          name: summary.provider,
-          baseUrl: "",
-        });
+      : presentThreadPr(pullRequestDetailToVcsStatus(summary), terminology);
   return linkedPresentation ?? summaryPresentation;
 }

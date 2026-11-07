@@ -1,4 +1,8 @@
 import {
+  capitalizeTerm,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
+import {
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
@@ -74,6 +78,7 @@ export function useComposerMenuItems({
   showSkillsInSlashMenu,
   workspaceSkillsScanning,
   questionAttachmentTarget,
+  pullRequestTerms,
 }: {
   readonly composerTrigger: ComposerTrigger | null;
   readonly environmentId: EnvironmentId;
@@ -82,6 +87,7 @@ export function useComposerMenuItems({
   readonly activeThreadId: ThreadId | null;
   readonly pullRequestProjectId: ProjectId | null;
   readonly pullRequestRepository: string | null;
+  readonly pullRequestTerms: ChangeRequestTerminology;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly planModeUiEnabled: boolean;
   readonly sideChatAvailable: boolean;
@@ -406,17 +412,17 @@ export function useComposerMenuItems({
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {
-        return "Pull requests are not available for this project.";
+        return `${capitalizeTerm(pullRequestTerms.plural)} are not available for this project.`;
       }
       if (
         pullRequestLookup.error !== null ||
         pullRequestLookup.data?.errors.some((error) => error.projectId === pullRequestProjectId)
       ) {
-        return "Pull requests could not be read for this project.";
+        return `${capitalizeTerm(pullRequestTerms.plural)} could not be read for this project.`;
       }
       return composerTrigger?.query
-        ? `No pull request matches ${composerTrigger.query}.`
-        : "No pull requests found in this repository.";
+        ? `No ${pullRequestTerms.singular} matches ${composerTrigger.query}.`
+        : `No ${pullRequestTerms.plural} found in this repository.`;
     }
     return composerTriggerKind === "path"
       ? "No matching files or folders."

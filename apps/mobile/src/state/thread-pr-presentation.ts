@@ -6,8 +6,9 @@ import type {
   VcsStatusResult,
 } from "@t3tools/contracts";
 import {
-  sourceControlClients,
   type ChangeRequestTerminology,
+  currentChangeRequestTerms,
+  sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 
 import {
@@ -41,9 +42,8 @@ const PR_STATE_TEXT_CLASS: Record<ThreadPr["state"], string> = {
 
 export function presentThreadPr(
   pr: ThreadPr,
-  provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+  changeRequest = currentChangeRequestTerms(),
 ): ThreadPrPresentation {
-  const { changeRequest } = sourceControlClients.get(provider?.kind);
   const isDraft = pr.state === "open" && pr.isDraft === true;
   return {
     kind: "pull-request",
@@ -62,12 +62,11 @@ export function presentThreadPr(
 
 export function presentThreadLinkedPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
+  changeRequest = currentChangeRequestTerms(),
 ): ThreadPrPresentation | null {
   const link = resolveThreadCurrentPullRequestLink(links);
   const badge = resolveThreadPullRequestBadge(links);
   if (link === null || badge === null) return null;
-  const { changeRequest } =
-    sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined);
   const snapshot = link.snapshot;
   const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
   const isMultiple = badge.kind === "stack" || linkedCount !== null;
@@ -114,9 +113,10 @@ export function resolveThreadPrSource(
   thread: Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">,
   /** False until the server config loads; the stored references serve until then. */
   supportsSnapshots: boolean,
+  terminology = currentChangeRequestTerms(),
 ) {
   const linkedPresentation = supportsSnapshots
-    ? presentThreadLinkedPullRequests(thread.pullRequests)
+    ? presentThreadLinkedPullRequests(thread.pullRequests, terminology)
     : null;
   const pullRequestRef =
     linkedPresentation !== null

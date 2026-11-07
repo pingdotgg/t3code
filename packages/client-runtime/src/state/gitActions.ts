@@ -3,7 +3,10 @@ import type {
   GitStackedAction,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { type ChangeRequestTerminology, sourceControlClients } from "../sourceControlClients.ts";
+import {
+  type ChangeRequestTerminology,
+  currentChangeRequestTerms,
+} from "../sourceControlClients.ts";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -43,19 +46,13 @@ export type GitActionRequestInput = Pick<
   "action" | "commitMessage" | "featureBranch" | "filePaths"
 >;
 
-export function changeRequestTerminologyFor(
-  gitStatus: VcsStatusResult | null,
-): ChangeRequestTerminology {
-  return sourceControlClients.get(gitStatus?.sourceControlProvider?.kind).changeRequest;
-}
-
 export function buildMenuItems(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
   hasOriginRemote = true,
+  terminology = currentChangeRequestTerms(),
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
-  const terminology = changeRequestTerminologyFor(gitStatus);
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -120,6 +117,7 @@ export function resolveQuickAction(
   isBusy: boolean,
   isDefaultBranch = false,
   hasOriginRemote = true,
+  terminology = currentChangeRequestTerms(),
 ): GitQuickAction {
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
@@ -140,7 +138,6 @@ export function resolveQuickAction(
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
-  const terminology = changeRequestTerminologyFor(gitStatus);
 
   if (!hasBranch) {
     return {
@@ -256,6 +253,7 @@ export function getGitActionDisabledReason(input: {
   gitStatus: VcsStatusResult | null;
   isBusy: boolean;
   hasOriginRemote: boolean;
+  terminology?: ChangeRequestTerminology;
 }): string | null {
   const { item, gitStatus, isBusy, hasOriginRemote } = input;
   if (!item.disabled) return null;
@@ -267,7 +265,7 @@ export function getGitActionDisabledReason(input: {
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
-  const terminology = changeRequestTerminologyFor(gitStatus);
+  const terminology = input.terminology ?? currentChangeRequestTerms();
 
   if (item.id === "commit") {
     if (!hasChanges) {

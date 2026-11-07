@@ -1,4 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { setMergeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import {
   GitCommandError,
@@ -362,7 +363,7 @@ describe("pull request timeline", () => {
     expect(events.some((event) => event.id === "closed")).toBe(false);
   });
 
-  it("names the change request in its host's own term", () => {
+  it("names the change request using the terminology setting on every host", () => {
     const titles = (provider: string) =>
       buildPullRequestTimeline({
         ...TIMELINE_SOURCE,
@@ -372,7 +373,15 @@ describe("pull request timeline", () => {
         .filter((event) => event.kind === "opened" || event.kind === "closed")
         .map((event) => event.title);
     expect(titles("github")).toEqual(["Pull request closed", "opened this pull request"]);
-    expect(titles("gitlab")).toEqual(["Merge request closed", "opened this merge request"]);
+    expect(titles("gitlab")).toEqual(["Pull request closed", "opened this pull request"]);
+    setMergeRequestTerms(true);
+    try {
+      for (const provider of ["github", "gitlab"]) {
+        expect(titles(provider)).toEqual(["Merge request closed", "opened this merge request"]);
+      }
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 
   it("groups conversation sections without crossing commits or PR updates", () => {
@@ -710,18 +719,23 @@ describe("fix findings handoff", () => {
     expect(handoff.prompt).toContain("6 further findings were omitted");
   });
 
-  it("names a GitLab merge request as one", () => {
-    const handoff = buildFixFindingsHandoff({
-      ...base,
-      title: "Add the page",
-      url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-      reviewThreads: [],
-      checks: [],
-    });
-    expect(handoff.prompt).toContain("Fix the actionable findings on MR #42");
-    expect(handoff.prompt).toContain("The MR branch is `feat/page`");
-    expect(handoff.prompt).toContain("inspect the merge request and its failing checks");
-    expect(handoff.prompt).not.toMatch(/\bPR\b|pull request/u);
+  it("uses merge request terms for handoffs when enabled", () => {
+    setMergeRequestTerms(true);
+    try {
+      const handoff = buildFixFindingsHandoff({
+        ...base,
+        title: "Add the page",
+        url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
+        reviewThreads: [],
+        checks: [],
+      });
+      expect(handoff.prompt).toContain("Fix the actionable findings on MR #42");
+      expect(handoff.prompt).toContain("The MR branch is `feat/page`");
+      expect(handoff.prompt).toContain("inspect the merge request and its failing checks");
+      expect(handoff.prompt).not.toMatch(/\bPR\b|pull request/u);
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 });
 
@@ -992,21 +1006,26 @@ describe("asking about a change rather than working on it", () => {
     ]);
   });
 
-  it("explains a GitLab merge request in its own term", () => {
-    const handoff = buildExplainPullRequestHandoff({
-      ...base,
-      title: "Add the page",
-      url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-    });
-    expect(handoff.prompt).toBe("Explain this merge request.");
-    expect(handoff.reviewComments[0]?.text).toContain("The merge request is #42");
-    expect(handoff.reviewComments[0]?.text).not.toContain("pull request");
-    expect(
-      buildResolveConflictsPrompt({
+  it("explains merge requests when the setting is enabled", () => {
+    setMergeRequestTerms(true);
+    try {
+      const handoff = buildExplainPullRequestHandoff({
         ...base,
+        title: "Add the page",
         url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-      }),
-    ).toMatch(/^MR #42 /u);
+      });
+      expect(handoff.prompt).toBe("Explain this merge request.");
+      expect(handoff.reviewComments[0]?.text).toContain("The merge request is #42");
+      expect(handoff.reviewComments[0]?.text).not.toContain("pull request");
+      expect(
+        buildResolveConflictsPrompt({
+          ...base,
+          url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
+        }),
+      ).toMatch(/^MR #42 /u);
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 });
 

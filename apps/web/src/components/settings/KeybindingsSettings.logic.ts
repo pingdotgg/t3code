@@ -1,4 +1,8 @@
 import {
+  currentChangeRequestTerms,
+  formatChangeRequestText,
+} from "@t3tools/client-runtime/source-control-clients";
+import {
   STATIC_KEYBINDING_COMMANDS,
   type KeybindingCommand,
   type KeybindingShortcut,
@@ -45,6 +49,7 @@ export type KeybindingSource = "Default" | "Custom" | "Project";
 export interface KeybindingRow {
   readonly id: string;
   readonly command: KeybindingCommand;
+  readonly label: string;
   readonly key: string;
   readonly when: string;
   readonly source: KeybindingSource;
@@ -55,7 +60,10 @@ export interface KeybindingRow {
 }
 
 export type WhenVariableOption = string;
-export type KeybindingCommandOption = KeybindingCommand;
+export interface KeybindingCommandOption {
+  readonly command: KeybindingCommand;
+  readonly label: string;
+}
 
 const CORE_WHEN_VARIABLES = [
   "terminalFocus",
@@ -195,7 +203,7 @@ export function keybindingConflictLabels(
       shortcutConflictKey(candidate.binding.shortcut, platform) === conflictKey &&
       conflictsWithWhen(candidate.when, input.when)
     ) {
-      conflicts.push(commandLabel(candidate.command));
+      conflicts.push(candidate.label);
     }
   }
   return [...new Set(conflicts)].toSorted();
@@ -249,6 +257,7 @@ export function groupKeybindingRows(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
+  terms = currentChangeRequestTerms(),
 ): ReadonlyArray<KeybindingRow> {
   const rowsById = new Map<string, KeybindingRow>();
   for (const binding of keybindings) {
@@ -259,6 +268,7 @@ export function buildKeybindingRows(
     rowsById.set(id, {
       id,
       command: binding.command,
+      label: commandLabel(binding.command, terms),
       key,
       when,
       source: sourceForBinding(binding),
@@ -303,7 +313,7 @@ export function filterKeybindingRows(
   return rows.filter((row) => {
     return (
       row.command.toLowerCase().includes(normalizedQuery) ||
-      commandLabel(row.command).toLowerCase().includes(normalizedQuery) ||
+      row.label.toLowerCase().includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
       row.when.toLowerCase().includes(normalizedQuery) ||
       row.source.toLowerCase().includes(normalizedQuery)
@@ -359,15 +369,23 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
+  terms = currentChangeRequestTerms(),
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
   for (const binding of keybindings) {
     commands.add(binding.command);
   }
-  return [...commands].toSorted((left, right) => compareCommands(left, right, commandLabel));
+  return [...commands]
+    .toSorted((left, right) =>
+      compareCommands(left, right, (command) => commandLabel(command, terms)),
+    )
+    .map((command) => ({ command, label: commandLabel(command, terms) }));
 }
 
-export function commandLabel(command: KeybindingCommand): string {
+export function commandLabel(
+  command: KeybindingCommand,
+  terms = currentChangeRequestTerms(),
+): string {
   if (command === "workspace.focusNext") return "Focus Next Workspace Area";
   if (command === "workspace.focusPrevious") return "Focus Previous Workspace Area";
   if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
@@ -376,7 +394,8 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "composer.dictation") return "Composer: Start or Finish Dictation";
   if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
   if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
-  if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";
+  if (command === "thread.copyReference")
+    return formatChangeRequestText("Pull Request: Copy Link or Thread", terms);
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
   if (usageMetric) return `Usage: ${usageMetric.label}`;
   const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);
@@ -387,7 +406,7 @@ export function commandLabel(command: KeybindingCommand): string {
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
     return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
   }
-  return raw.split(".").map(titleCaseCommandSegment).join(": ");
+  return formatChangeRequestText(raw.split(".").map(titleCaseCommandSegment).join(": "), terms);
 }
 
 function titleCaseCommandSegment(segment: string): string {

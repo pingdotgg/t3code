@@ -1,3 +1,4 @@
+import { setMergeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import {
   MessageId,
   CheckpointId,
@@ -1344,6 +1345,58 @@ describe("buildThreadFeed", () => {
 });
 
 describe("retained v2 feed presentation", () => {
+  it("refreshes retained tool summaries after terminology changes", () => {
+    setMergeRequestTerms(false);
+    using _terms = {
+      [Symbol.dispose]() {
+        setMergeRequestTerms(false);
+      },
+    };
+    const cache = createThreadFeedCache();
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(
+        {
+          ...base("link", "2026-06-20T00:00:02.000Z", 1),
+          type: "dynamic_tool",
+          toolName: "t3-code.link_pull_request",
+          input: { url: "https://github.com/acme/web/pull/7" },
+          output: {},
+        },
+        1,
+      ),
+      projected(
+        {
+          ...base("list", "2026-06-20T00:00:03.000Z", 2),
+          type: "dynamic_tool",
+          toolName: "t3-code.list_thread_pull_requests",
+          input: {},
+          output: {},
+        },
+        2,
+      ),
+      projected(
+        { ...userMessage(), id: TurnItemId.make("next-user"), runId: RunId.make("next-run") },
+        3,
+      ),
+    ]);
+    const summary = () =>
+      deriveThreadFeedPresentation(
+        feed,
+        null,
+        new Set([runId]),
+        new Set(),
+        null,
+        false,
+        cache,
+      ).find((entry) => entry.type === "work-toggle");
+    expect(summary()).toMatchObject({ summary: expect.stringContaining("pull request") });
+    setMergeRequestTerms(true);
+    expect(summary()).toMatchObject({ summary: expect.stringContaining("merge request") });
+    setMergeRequestTerms(false);
+    expect(summary()).toMatchObject({ summary: expect.stringContaining("pull request") });
+  });
+
   it("retains unchanged rows while the assistant streams", () => {
     const rows = [
       projected(userMessage(), 0),

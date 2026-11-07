@@ -60,12 +60,6 @@ export const definition = defineSourceControl({
   pickerLabel: "Forgejo / Gitea",
   icon,
   searchKeywords: ["gitea", "tea", "codeberg"],
-  changeRequest: {
-    shortLabel: "PR",
-    shortLabelWithArticle: "a PR",
-    singular: "pull request",
-    plural: "pull requests",
-  },
   repositoryPathHint: "owner/repo",
   // Codeberg is the public Forgejo; any other server is self-hosted.
   publicHost: "codeberg.org",

@@ -6,6 +6,8 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   sourceControlClients,
+  formatChangeRequestText,
+  currentChangeRequestTerms,
   type SourceControlDefinition,
 } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -1113,6 +1115,12 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   ...sourceControlHostSearchItems(sourceControlClients.definitions),
   {
+    id: "merge-request-terminology",
+    title: "Use merge request terminology",
+    to: "/settings/source-control",
+    searchTerms: ["terminology wording merge request mr pull request pr gitlab"],
+  },
+  {
     id: "source-control-writing-style",
     title: "Source control writing style",
     to: "/settings/source-control",
@@ -1432,12 +1440,15 @@ export function isSettingsSearchScopeAvailable(
   }
 }
 
-export function searchableSetting(id: SettingsSearchItemId): {
+export function searchableSetting(
+  id: SettingsSearchItemId,
+  terms = currentChangeRequestTerms(),
+): {
   readonly id: string;
   readonly title: string;
 } {
   const { id: anchorId, title } = SEARCH_ITEMS_BY_ID.get(id)!;
-  return { id: anchorId, title };
+  return { id: anchorId, title: formatChangeRequestText(title, terms) };
 }
 
 export function filterAvailableSettingsSearchItems(
@@ -1483,11 +1494,12 @@ export function searchSettings(
   const queryTokens = normalizedQuery.split(" ");
 
   return settingsForThisPlatform(items)
+    .map((item) => ({ ...item, title: formatChangeRequestText(item.title) }))
     .flatMap((item, index) => {
       const title = normalizeSearchText(item.title);
       const fields = [
         title,
-        normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+        normalizeSearchText(formatChangeRequestText(SETTINGS_SECTION_LABELS[item.to])),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];

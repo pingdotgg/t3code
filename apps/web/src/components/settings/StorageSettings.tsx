@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import type {
   StorageCleanupReport,
   StorageCleanupSettings,
@@ -459,6 +460,7 @@ function StorageCleanupScopeNotice() {
 }
 
 export function WorktreeCleanupSection() {
+  const requestTerms = useChangeRequestTerms();
   const { scope, environments, connectedEnvironments, targets, target } = useSettingsScope();
   const scopedSettings = useScopedSettings();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -582,7 +584,7 @@ export function WorktreeCleanupSection() {
               title="Delete merged worktrees"
               status={ruleStatus("worktreeOnMerge")}
               managedPaths={lockablePath("worktreeOnMerge")}
-              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
+              description={`Remove worktrees whose ${requestTerms.singular} is merged and whose commits are included in the default branch.`}
               serverScoped={!isProjectScope}
               control={
                 <Switch

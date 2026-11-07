@@ -1,3 +1,4 @@
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -572,7 +573,12 @@ export function presentPendingBackgroundWork(
   const waiting = backgroundWorkHoldsCompletion(tasks);
   const items = tasks
     .map((task): PendingBackgroundWorkItem => {
-      const description = task.description?.trim();
+      const description =
+        task.description === undefined
+          ? undefined
+          : task.taskId.startsWith("pull-request-watch:")
+            ? formatChangeRequestText(task.description.trim())
+            : task.description.trim();
       const label =
         description === undefined
           ? undefined

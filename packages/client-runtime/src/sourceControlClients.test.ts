@@ -1,7 +1,15 @@
 import { ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { appSignInTargetForRemote, sourceControlClients } from "./sourceControlClients.ts";
+import {
+  appSignInTargetForRemote,
+  currentChangeRequestTerms,
+  formatChangeRequestText,
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
+  setMergeRequestTerms,
+  sourceControlClients,
+} from "./sourceControlClients.ts";
 import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
 const parse = (url: string) => {
@@ -389,5 +397,32 @@ describe("appSignInTargetForRemote", () => {
   it("skips hosts the app is not registered on", () => {
     expect(appSignInTargetForRemote("https://ghe.acme.test/acme/web.git")).toBeNull();
     expect(appSignInTargetForRemote("https://gitlab.com/acme/web.git")).toBeNull();
+  });
+});
+
+describe("currentChangeRequestTerms", () => {
+  it("formats shared labels without changing identifiers or URLs", () => {
+    const text =
+      "Pull Request / Pull requests / pull request / pull requests / a PR / PRs / PR #42 / https://host/pull/42 / https://host/PR/42?q=PR / pullRequest";
+    expect(formatChangeRequestText(text, PULL_REQUEST_TERMINOLOGY)).toBe(text);
+    expect(formatChangeRequestText(text, MERGE_REQUEST_TERMINOLOGY)).toBe(
+      "Merge Request / Merge requests / merge request / merge requests / an MR / MRs / MR #42 / https://host/pull/42 / https://host/PR/42?q=PR / pullRequest",
+    );
+  });
+
+  it("says pull request for every host until merge request terms are on", () => {
+    expect(currentChangeRequestTerms()).toBe(PULL_REQUEST_TERMINOLOGY);
+    setMergeRequestTerms(true);
+    try {
+      expect(currentChangeRequestTerms()).toEqual({
+        shortLabel: "MR",
+        shortLabelWithArticle: "an MR",
+        singular: "merge request",
+        plural: "merge requests",
+      });
+    } finally {
+      setMergeRequestTerms(false);
+    }
+    expect(currentChangeRequestTerms()).toBe(PULL_REQUEST_TERMINOLOGY);
   });
 });
