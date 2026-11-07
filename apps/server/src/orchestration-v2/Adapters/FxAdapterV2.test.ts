@@ -277,12 +277,53 @@ describe("FxAdapterV2", () => {
           runtimeMode: "auto",
           frames: [
             ...initialize,
-            outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+            outbound("session/new", {
+              cwd: "<workspace>",
+              mcpServers: "<any>",
+              _meta: { fx: { profileMcpServers: true } },
+            }),
             answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes })),
             ...setConfig(
               "mode",
               written,
               fxConfig({ model: FX_DEFAULT_MODEL, modes, mode: written }),
+            ),
+          ],
+        }),
+      { discard: true },
+    ).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  // fx only exposes ~/.fx/mcp.json servers when the client opts in on session setup.
+  it.effect("asks fx for the user's profile MCP servers on new and loaded sessions", () =>
+    Effect.forEach(
+      [
+        { scenario: "profile-mcp-new", method: "session/new", load: {}, sessionId: {} },
+        {
+          scenario: "profile-mcp-load",
+          method: "session/load",
+          load: { loadSessionId: SESSION_ID },
+          sessionId: { sessionId: SESSION_ID },
+        },
+      ],
+      ({ scenario, method, load, sessionId }) =>
+        openFxSession({
+          scenario,
+          runtimeMode: "approval-required",
+          ...load,
+          frames: [
+            ...initialize,
+            outbound(method, {
+              ...sessionId,
+              cwd: "<workspace>",
+              mcpServers: "<any>",
+              _meta: { fx: { profileMcpServers: true } },
+            }),
+            answer(method, fxSession({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
+            ...setConfig(
+              "mode",
+              "ask",
+              fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
             ),
           ],
         }),
