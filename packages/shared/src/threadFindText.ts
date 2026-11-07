@@ -164,7 +164,10 @@ function markdownThreadFindText(
         const label = labelText(node);
         if (node.tagName === "a" && candidate && !isMarkdownFileLinkLabel(label, candidate))
           text += `${label} `;
-        text += fileLinkLabel(splitFilePathPosition(target), parentSuffixes);
+        text +=
+          node.tagName === "code"
+            ? label.trim()
+            : fileLinkLabel(splitFilePathPosition(target), parentSuffixes);
         return;
       }
     }

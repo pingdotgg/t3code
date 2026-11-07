@@ -10,8 +10,9 @@ import {
   markdownWithHtml,
 } from "./markdownDocument";
 
+const EVERY_FILE_EXISTS = { pattern: ENRICHED_INLINE_FILE_LINK_REGEX, exists: () => true };
 const rewrite = (markdown: string) =>
-  markdownWithInlineFileLinks(markdown, ENRICHED_INLINE_FILE_LINK_REGEX);
+  markdownWithInlineFileLinks(markdown, EVERY_FILE_EXISTS).markdown;
 
 describe("inline code that names a file", () => {
   it.each([
@@ -61,7 +62,7 @@ describe("inline code that names a file", () => {
           previousFileLinks(markdownWithHtml(prefix), ENRICHED_INLINE_FILE_LINK_REGEX),
         );
         expect(
-          markdownForNativeRendering(prefix, ENRICHED_INLINE_FILE_LINK_REGEX),
+          markdownForNativeRendering(prefix, EVERY_FILE_EXISTS).markdown,
           JSON.stringify(prefix),
         ).toBe(expected);
       }
@@ -74,6 +75,28 @@ describe("inline code that names a file", () => {
     );
   });
 
+  it("stays code unless the file exists", () => {
+    const exists = (path: string) => path === "src/a.ts";
+    expect(
+      markdownWithInlineFileLinks("See `avatars/u1.webp` and `src/a.ts`.", {
+        pattern: ENRICHED_INLINE_FILE_LINK_REGEX,
+        exists,
+      }).markdown,
+    ).toBe("See `avatars/u1.webp` and [src/a.ts](<src/a.ts>).");
+  });
+
+  it("reports only inline code hrefs, leaving an authored link's URL to that link", () => {
+    expect(
+      markdownWithInlineFileLinks(
+        "[the file](src/a.ts) `src/a.ts` `` src/b.ts ``\n\n```\n`src/c.ts`\n```",
+        EVERY_FILE_EXISTS,
+      ),
+    ).toEqual({
+      markdown: "[the file](src/a.ts) `src/a.ts` [src/b.ts](<src/b.ts>)\n\n```\n`src/c.ts`\n```",
+      inlineFileHrefs: new Set(["src/b.ts"]),
+    });
+  });
+
   it("keeps commands, identifiers and URLs as code", () => {
     const markdown = "Run `vp test run`, call `useMemo`, open `https://example.com/a.ts`.";
     expect(rewrite(markdown)).toBe(markdown);
@@ -84,8 +107,14 @@ describe("inline code that names a file", () => {
     expect(rewrite(markdown)).toBe(markdown);
   });
 
-  it("links to the exact path when it holds backslashes or ampersands", () => {
-    for (const path of ["C:\\repo\\_private\\file.ts", "./src/a&copy;.ts", "./src/[id].ts"]) {
+  it("keeps the exact path as link text and destination", () => {
+    for (const path of [
+      "C:\\repo\\_private\\file.ts",
+      "./src/a&copy;.ts",
+      "./src/[id].ts",
+      "./src/__tests__/main.ts",
+      "./src/**name**_~~test~~.ts",
+    ]) {
       const paragraph = parser.parse(rewrite(`\`${path}\``)).children[0];
       const link = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
       expect(link?.type === "link" && link.url).toBe(path);

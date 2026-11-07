@@ -29,7 +29,13 @@ import {
 import { createProject, deleteProject, updateProject } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createFileMetadataAtoms } from "./fileMetadata.ts";
+import { createWorkspaceFileExistenceAtom } from "./workspaceFileExistence.ts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
+
+export type {
+  WorkspaceFileCandidate,
+  WorkspaceFileExistenceTarget,
+} from "./workspaceFileExistence.ts";
 
 export type {
   CreateProjectInput,
@@ -79,6 +85,16 @@ export function createProjectEnvironmentAtoms<R, E>(
   },
 ) {
   const fileMetadata = createFileMetadataAtoms(runtime);
+  const searchEntries = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:projects:search-entries",
+    tag: WS_METHODS.projectsSearchEntries,
+    staleTimeMs: 15_000,
+    execute: (input) =>
+      fileMetadata.seedAfterRead(
+        request(WS_METHODS.projectsSearchEntries, input),
+        (result, isCurrent) => fileMetadata.rememberEntries(input.cwd, result.entries, isCurrent),
+      ),
+  });
   const projectScheduler = createAtomCommandScheduler();
   const fileScheduler = createAtomCommandScheduler();
   const optimisticFileFamily = Atom.family((key: string) =>
@@ -107,16 +123,8 @@ export function createProjectEnvironmentAtoms<R, E>(
             ),
         ),
     }),
-    searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:projects:search-entries",
-      tag: WS_METHODS.projectsSearchEntries,
-      staleTimeMs: 15_000,
-      execute: (input) =>
-        fileMetadata.seedAfterRead(
-          request(WS_METHODS.projectsSearchEntries, input),
-          (result, isCurrent) => fileMetadata.rememberEntries(input.cwd, result.entries, isCurrent),
-        ),
-    }),
+    searchEntries,
+    existingFiles: createWorkspaceFileExistenceAtom(fileMetadata.metadata, searchEntries),
     listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:list-entries",
       tag: WS_METHODS.projectsListEntries,

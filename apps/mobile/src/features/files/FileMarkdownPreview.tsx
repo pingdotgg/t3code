@@ -249,6 +249,11 @@ export function FileMarkdownPreview(props: {
               false,
             )
           }
+          inlineFileScope={{
+            environmentId: props.environmentId,
+            workspaceRoot: markdownDirectory,
+            searchBasenames: false,
+          }}
           onLinkPress={onLinkPress}
           renderImage={renderImage}
           resolveImageSource={resolveImageSource}
