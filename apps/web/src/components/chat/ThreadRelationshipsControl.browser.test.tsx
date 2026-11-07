@@ -427,6 +427,7 @@ it("nests a subagent's own subagents under it", async () => {
 
   await expect.element(screen.getByRole("button", { name: /Camera/ })).toBeVisible();
   await expect.element(screen.getByRole("button", { name: /Research lighting/ })).toBeVisible();
+  await expect.element(screen.getByText("Lineage · 2 running")).toBeVisible();
   await expect
     .element(screen.getByRole("listitem").filter({ hasText: "Research lighting" }))
     .toHaveClass("ms-4");

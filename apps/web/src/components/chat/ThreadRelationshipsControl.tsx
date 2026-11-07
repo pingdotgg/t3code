@@ -572,10 +572,29 @@ export function ThreadRelationshipsPanel(props: {
       expanded: false,
     },
   ];
+  // A subagent's own subagents nest one level under it.
+  const nestedSubagentRows = (row: ThreadRelationshipWalkRow) =>
+    row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
+      ? orderWebThreadLineageRows({
+          graph,
+          rows: immediateThreadRelationships(graph, row.threadId).filter(
+            (child) =>
+              child.edge.kind === "subagent" &&
+              child.edge.sourceThreadId === row.threadId &&
+              !isHiddenRelation(child.threadId),
+          ),
+          currentThreadId: row.threadId,
+          mergeTargetThreadId: null,
+        })
+      : [];
   const runningCount =
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+    ).length ?? 0) +
+    active.filter(({ edge }) => edge.status === "running").length +
+    [...active, ...previous]
+      .flatMap(nestedSubagentRows)
+      .filter((row) => threadRelationshipRowStatus(graph, row) === "running").length;
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
@@ -941,23 +960,10 @@ export function ThreadRelationshipsPanel(props: {
     );
   };
 
-  // A subagent's own subagents nest one level under it.
   const renderRelationshipTree = (row: ThreadRelationshipWalkRow) => (
     <Fragment key={row.threadId}>
       {renderRelationshipRow(row)}
-      {row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
-        ? orderWebThreadLineageRows({
-            graph,
-            rows: immediateThreadRelationships(graph, row.threadId).filter(
-              (child) =>
-                child.edge.kind === "subagent" &&
-                child.edge.sourceThreadId === row.threadId &&
-                !isHiddenRelation(child.threadId),
-            ),
-            currentThreadId: row.threadId,
-            mergeTargetThreadId: null,
-          }).map(renderRelationshipRow)
-        : null}
+      {nestedSubagentRows(row).map(renderRelationshipRow)}
     </Fragment>
   );
 
