@@ -3,6 +3,7 @@ import {
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthSessionId,
+  DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
@@ -24,6 +25,8 @@ const fixture = (
   fail = false,
   authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
   upstream?: DeviceHost.DeviceHostReady["upstream"],
+  screenshot: DeviceService.DeviceService["Service"]["screenshot"] = () =>
+    Effect.die(new Error("unexpected screenshot")),
 ) => {
   let finalized = 0;
   const requests: string[] = [];
@@ -65,6 +68,7 @@ const fixture = (
               hub: { origin: "http://hub.test" },
               ...(upstream ? { upstream } : {}),
             }),
+          screenshot,
         } as DeviceService.DeviceService["Service"]),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
@@ -202,7 +206,7 @@ describe("device hub proxy", () => {
       undefined,
       (hubPath, search) =>
         Effect.succeed(
-          hubPath === "/vendor/serve-sim/api"
+          hubPath === "/vendor/serve-sim/api" || hubPath === "/vendor/serve-sim/api/screenshot"
             ? {
                 url: `https://session.test${hubPath.slice("/vendor/serve-sim".length)}?${search}`,
                 headers: { authorization: "Bearer session-token" },
@@ -221,11 +225,42 @@ describe("device hub proxy", () => {
     await routed.text();
     expect(requests).toEqual(["https://session.test/api?device=udid-1"]);
     expect(headers[0]?.authorization).toBe("Bearer session-token");
+    const screenshot = await handler(
+      new Request(
+        "http://t3.test/api/device-hub/vendor/serve-sim/api/screenshot?device=udid-1&hostId=eas",
+        { method: "POST" },
+      ),
+    );
+    expect(screenshot.status).toBe(200);
+    await screenshot.text();
+    expect(requests).toEqual([
+      "https://session.test/api?device=udid-1",
+      "https://session.test/api/screenshot?device=udid-1",
+    ]);
     const unrouted = await handler(
       new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/udid-2/stream.mjpeg"),
     );
     expect(unrouted.status).toBe(404);
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+  });
+
+  it("keeps simctl diagnostics out of a failed iOS screenshot response", async () => {
+    const { handler } = fixture([AuthOrchestrationReadScope], false, undefined, undefined, () =>
+      Effect.fail(
+        new DeviceOperationError({
+          operation: "screenshot",
+          reason: "command_failed",
+          cause: "simctl failed",
+        }),
+      ),
+    );
+    const failed = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/api/screenshot?device=udid-2", {
+        method: "POST",
+      }),
+    );
+    expect(failed.status).toBe(502);
+    expect(await failed.text()).not.toContain("simctl failed");
   });
 
   it("never forwards the vendor shell endpoint", async () => {

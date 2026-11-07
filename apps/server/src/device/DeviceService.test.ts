@@ -47,35 +47,68 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
-it.effect.each([400, 500])(
-  "distinguishes screenshot HTTP rejection (%s) from transport failure",
-  (status) =>
-    Effect.gen(function* () {
-      const operations = makeDeviceHubOperations({
-        hostId: LOCAL_DEVICE_HOST_ID,
-        origin: "http://device.test",
-        http: HttpClient.make((request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(request, new Response("private hub output", { status })),
-          ),
+const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+
+it.effect.each([
+  {
+    name: "keeps the hub's rejection for Android",
+    platform: "android" as const,
+    expected: { failure: { _tag: "DeviceOperationError", reason: "hub_rejected" } },
+  },
+  {
+    name: "keeps the hub's rejection on iOS 27 runtimes, which can have several displays",
+    version: "iOS 27.2.iPhone19.4",
+    expected: { failure: { _tag: "DeviceOperationError", reason: "hub_rejected" } },
+  },
+  {
+    name: "captures the default display with simctl when the hub rejects an iOS screenshot",
+    capture: { code: 0, stdout: `${Buffer.from(PNG).toString("base64")}\n`, stderr: "" },
+    expected: { success: PNG },
+  },
+  {
+    name: "reports simctl's own failure when the iOS fallback fails",
+    capture: { code: 1, stdout: "", stderr: "Error: Device is not booted" },
+    expected: {
+      failure: {
+        _tag: "DeviceOperationError",
+        reason: "command_failed",
+        exitCode: 1,
+        cause: "Error: Device is not booted",
+      },
+    },
+  },
+])("screenshot $name", ({ platform = "ios" as const, version, capture, expected }) =>
+  Effect.gen(function* () {
+    const operations = makeDeviceHubOperations({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      origin: "http://device.test",
+      http: HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response("private hub output", { status: 500 })),
         ),
-        run: () => Effect.die("Screenshot does not run a command"),
-        platformAvailable: () => Effect.succeed(false),
-      });
-      const result = yield* operations
-        .screenshot({
-          id: "phone",
-          name: "Phone",
-          version: "iOS 26.3",
-          platform: "ios",
-          booted: true,
-          physical: false,
-        })
-        .pipe(Effect.result);
-      expect(result).toMatchObject({
-        failure: { _tag: "DeviceOperationError", reason: "hub_rejected" },
-      });
-    }),
+      ),
+      run: (command, args) =>
+        command === "sh" && args.at(-1) === "phone" && capture
+          ? Effect.sync(() => {
+              expect(args[1]).toContain('simctl io "$1" screenshot ');
+              expect(args[1]).not.toContain("--display");
+              return capture;
+            })
+          : Effect.die(`Unexpected command: ${command} ${args.join(" ")}`),
+      platformAvailable: () => Effect.succeed(false),
+    });
+    const result = yield* operations
+      .screenshot({
+        id: "phone",
+        name: "Phone",
+        version: version ?? (platform === "ios" ? "iOS 26.2" : "Android 15"),
+        platform,
+        booted: true,
+        physical: false,
+      })
+      .pipe(Effect.result);
+    expect(result).toMatchObject(expected);
+  }),
 );
 
 const fixture = Effect.fn("fixture")(function* (
