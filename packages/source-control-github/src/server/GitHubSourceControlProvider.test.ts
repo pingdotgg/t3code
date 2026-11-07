@@ -1198,12 +1198,28 @@ it.effect.each([
   },
 );
 
-it.effect("says a GH_REPO naming an unparseable host targets no remote rather than failing", () => {
-  const { layer } = harness({
+it.effect.each([
+  {
+    name: "a GH_REPO naming an unparseable host falls back to the remotes rather than failing",
     remotes: remotesOutput(["upstream", "git@github.com:acme/web.git"]),
-    resolved: "",
-    api: {},
-  });
+    remoteName: "upstream",
+    repository: "acme/web",
+    environment: { GH_REPO: "bad host/acme/web" },
+    expected: true,
+  },
+  {
+    name: "a fork origin is not targeted when gh ranks upstream first",
+    remotes: remotesOutput(
+      ["origin", "git@github.com:me/web.git"],
+      ["upstream", "git@github.com:acme/web.git"],
+    ),
+    remoteName: "origin",
+    repository: "me/web",
+    environment: {},
+    expected: false,
+  },
+])("says $name", ({ remotes, remoteName, repository, environment, expected }) => {
+  const { layer } = harness({ remotes, resolved: "", api: {} });
   return Effect.gen(function* () {
     const provider = yield* GitHubSourceControlProvider.make;
     const targets = yield* provider.createsChangeRequestsIn!({
@@ -1214,14 +1230,11 @@ it.effect("says a GH_REPO naming an unparseable host targets no remote rather th
           name: "GitHub",
           baseUrl: "https://github.com",
         },
-        remoteName: "upstream",
-        remoteUrl: "git@github.com:acme/web.git",
+        remoteName,
+        remoteUrl: `git@github.com:${repository}.git`,
       },
-      repository: "acme/web",
+      repository,
     });
-    assert.isFalse(targets);
-  }).pipe(
-    Effect.provide(layer),
-    Effect.provideService(HostProcess.Environment, { GH_REPO: "bad host/acme/web" }),
-  );
+    assert.strictEqual(targets, expected);
+  }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, environment));
 });

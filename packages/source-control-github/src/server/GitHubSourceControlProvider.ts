@@ -887,8 +887,8 @@ export const make = Effect.gen(function* () {
       },
     ),
     // `createChangeRequest` targets what `resolveRepository` picks: GH_REPO when it parses, else
-    // the remote `gh repo set-default` marked (`gh-resolved`). An HTTPS remote keeps a
-    // non-default port in the context's host, and the mark is then ignored.
+    // the remote `gh repo set-default` marked (`gh-resolved`), else gh's ranking of every remote.
+    // An HTTPS remote keeps a non-default port in the context's host, and the mark is then ignored.
     createsChangeRequestsIn: Effect.fn("GitHubSourceControlProvider.createsChangeRequestsIn")(
       function* ({ cwd, context, repository }) {
         const host = URL.canParse(context.provider.baseUrl)
@@ -908,12 +908,16 @@ export const make = Effect.gen(function* () {
             `${owner}/${name}`.toLowerCase() === target
           );
         }
-        const mark = yield* git
-          .readConfigValue(cwd, `remote.${context.remoteName}.gh-resolved`)
-          .pipe(Effect.orElseSucceed(() => null));
+        const [remotes, resolved] = yield* Effect.all([
+          gitRead(cwd, ["remote", "-v"]),
+          gitRead(cwd, ["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"]),
+        ]).pipe(Effect.orElseSucceed(() => [null, null] as const));
         const { locator } = resolveGitHubRepository({
-          remotes: `${context.remoteName}\t${context.remoteUrl} (fetch)`,
-          resolved: mark === null ? "" : `remote.${context.remoteName}.gh-resolved ${mark}`,
+          remotes:
+            remotes?.exitCode === 0
+              ? remotes.stdout
+              : `${context.remoteName}\t${context.remoteUrl} (fetch)`,
+          resolved: resolved?.exitCode === 0 ? resolved.stdout : "",
           hostHint: host ?? undefined,
           defaultHost: host ?? "github.com",
         });

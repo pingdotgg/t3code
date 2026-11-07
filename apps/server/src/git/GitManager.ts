@@ -1462,9 +1462,9 @@ export const make = Effect.gen(function* () {
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
 
-  // Whether the remote's host creates change requests in the only remote. A host's tools can let
-  // configuration outside the remotes name another repository; the remote itself otherwise.
-  const targetsOnlyRemote = Effect.fn("targetsOnlyRemote")(function* (
+  // Whether the remote's host creates change requests in that remote's repository. A host's tools
+  // can let configuration or other remotes name another repository; the remote itself otherwise.
+  const targetsRemote = Effect.fn("targetsRemote")(function* (
     cwd: string,
     remoteName: string,
     remote: { readonly remoteUrl: string | null; readonly repositoryNameWithOwner: string | null },
@@ -1599,7 +1599,7 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => 0),
         )) === 1 &&
-      (yield* targetsOnlyRemote(cwd, remoteName, remoteRepository));
+      (yield* targetsRemote(cwd, remoteName, remoteRepository));
     const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
 
     const isCrossRepository =
@@ -2350,6 +2350,20 @@ export const make = Effect.gen(function* () {
       modelSelection: settings.modelSelection,
     });
 
+    // A fork branch can live on origin while the host creates the change request in another
+    // repository, such as gh targeting upstream; the bare branch would then name upstream's.
+    const headSelector =
+      !headContext.isCrossRepository &&
+      headContext.remoteName !== null &&
+      headContext.headRepositoryOwnerLogin !== null &&
+      !(yield* targetsRemote(
+        cwd,
+        headContext.remoteName,
+        yield* resolveRemoteRepositoryContext(cwd, headContext.remoteName),
+      ))
+        ? `${headContext.headRepositoryOwnerLogin}:${headContext.headBranch}`
+        : headContext.preferredHeadSelector;
+
     const bodyFile = path.join(
       tempDir,
       `t3code-pr-body-${process.pid}-${yield* randomUUIDv4(cwd)}.md`,
@@ -2374,7 +2388,7 @@ export const make = Effect.gen(function* () {
       .createChangeRequest({
         cwd,
         baseRefName: baseBranch,
-        headSelector: headContext.preferredHeadSelector,
+        headSelector,
         title: generated.title,
         bodyFile,
       })
