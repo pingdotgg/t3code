@@ -37,6 +37,7 @@ import {
   resolveAttachmentPathById,
   sweepStalePendingAttachments,
 } from "../attachmentStore.ts";
+import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts";
 import * as ServerConfig from "../config.ts";
@@ -445,6 +446,10 @@ const writeItem = (
     | Pick<
         Extract<OrchestrationV2TurnItem, { type: "file_change" }>,
         "type" | "status" | "fileName" | "diffStr" | "oldStr" | "newStr"
+      >
+    | Pick<
+        Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>,
+        "type" | "status" | "toolName" | "input" | "output"
       >,
 ) =>
   Effect.gen(function* () {
@@ -532,6 +537,80 @@ it.effect("gives the guest a command's detail and output, but no file diffs", ()
     for (const request of refused) {
       assert.isTrue(Exit.isFailure(yield* Effect.exit(request)));
     }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("gives a fork's guest the commands the fork shows from its source thread", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares } = yield* shareThread;
+    const command = yield* writeItem("item:command", {
+      type: "command_execution",
+      status: "completed",
+      input: "ls /work/src",
+      output: "/work/src/auth.ts\n",
+    });
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const page = createAttachmentId(threadId, "html")!;
+    yield* (yield* FileSystem.FileSystem).writeFileString(
+      resolveAttachmentRelativePath({ attachmentsDir, relativePath: `${page}.html` })!,
+      "<p>Plan</p>",
+    );
+    const render = yield* writeItem("item:render", {
+      type: "dynamic_tool",
+      status: "completed",
+      toolName: "mcp__t3-code__html_render",
+      input: {},
+      output: [
+        {
+          type: "text",
+          text: JSON.stringify({ htmlRender: { attachmentId: page, title: "Plan", height: 300 } }),
+        },
+      ],
+    });
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const run = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:run-done"),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          providerInstanceId: instanceId,
+          occurredAt: now,
+          payload: { ...run, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    const forkId = ThreadId.make("thread:guest-share-fork");
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork"),
+      sourceThreadId: threadId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "run", runId: run.id },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const { url } = yield* guestShares.create({ threadId: forkId });
+    const { token: session } = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Sam",
+    });
+
+    const detail = (yield* guestShares.item(session, command)).item;
+    assert.deepInclude(detail, { input: "ls /work/src", output: "/work/src/auth.ts\n" });
+    const frames = Array.from(
+      yield* Stream.runCollect(yield* guestShares.commandOutput(session, command)),
+    );
+    assert.deepEqual(frames, [
+      { kind: "replace", text: "/work/src/auth.ts\n", truncated: false, running: false },
+    ]);
+    assert.deepEqual(yield* guestShares.render(session, render), {
+      path: resolveAttachmentPathById({ attachmentsDir, attachmentId: page })!,
+      title: "Plan",
+    });
   }).pipe(Effect.provide(layerTest)),
 );
 

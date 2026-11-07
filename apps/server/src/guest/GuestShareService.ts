@@ -631,17 +631,24 @@ const make = Effect.gen(function* () {
     itemId: string,
   ) {
     const { thread } = yield* authorize(session, "session");
-    const item = yield* orchestrator
-      .getTurnItem({ threadId: thread.id, itemId: TurnItemId.make(itemId) })
-      .pipe(Effect.mapError(() => unavailable));
+    const id = TurnItemId.make(itemId);
+    const item =
+      (yield* orchestrator
+        .getTurnItem({ threadId: thread.id, itemId: id })
+        .pipe(Effect.mapError(() => unavailable))) ??
+      // A fork shows its source's earlier items, which stay in the source thread.
+      (yield* orchestrator.getTimelinePage(thread.id, { itemId: id, limit: 1 }).pipe(
+        Effect.map((page) => page.items[0]?.item ?? null),
+        Effect.mapError(() => unavailable),
+      ));
     return item === null ? yield* unavailable : { thread, item };
   });
 
   const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
-    const { thread, item } = yield* threadItem(session, itemId);
+    const { item } = yield* threadItem(session, itemId);
     if (item.type !== "dynamic_tool") return yield* unavailable;
     const reference = htmlRenderFromToolItem(item);
-    const [attachmentId] = threadHtmlRenderAttachmentIds(thread.id, [item]);
+    const [attachmentId] = threadHtmlRenderAttachmentIds(item.threadId, [item]);
     const path =
       attachmentId === undefined
         ? null
@@ -677,9 +684,9 @@ const make = Effect.gen(function* () {
     session: string,
     itemId: string,
   ) {
-    const { thread, item } = yield* threadItem(session, itemId);
+    const { item } = yield* threadItem(session, itemId);
     if (item.type !== "command_execution") return yield* unavailable;
-    return commandOutputs.subscribe({ threadId: thread.id, itemId: item.id }).pipe(
+    return commandOutputs.subscribe({ threadId: item.threadId, itemId: item.id }).pipe(
       // A lost hub stream ends the output; the row reloads it when reopened.
       Stream.catchCause(() => Stream.empty),
       Stream.interruptWhen(untilRevoked(session)),
