@@ -10,6 +10,7 @@ import {
   type LimitPace,
   limitsNotice,
   paceOf,
+  paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import type { ReactNode } from "react";
@@ -154,6 +155,7 @@ function LimitRow({
       label={window.label}
       fill={left}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
+      tick={paceRemainingPercent(window, now)}
       value={`${left}%`}
       ariaValue={`${left}% left`}
       tooltip={
