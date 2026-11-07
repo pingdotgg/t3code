@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
+  formatDateTimeShort,
   formatDayShort,
   formatHourShort,
   formatRelativeHourShort,
@@ -436,7 +437,9 @@ export function UsageProviderChart({
     cn("transition-opacity", loading && "opacity-40 delay-150");
   const format = metric === "tokens" ? formatTokens : formatUsd;
   const formatPeriod = (period: string) =>
-    resolution === "hour" ? formatHourShort(period, timeZone, hour12) : formatDayShort(period);
+    resolution === "hour"
+      ? (periods.length > 24 ? formatDateTimeShort : formatHourShort)(period, timeZone, hour12)
+      : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
     resolution === "hour" && referenceTime !== undefined
       ? formatRelativeHourShort(period, referenceTime, timeZone, hour12)

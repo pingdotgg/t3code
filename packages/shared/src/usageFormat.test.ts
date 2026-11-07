@@ -2,7 +2,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { UsageSource } from "@t3tools/contracts";
 
-import { formatHourShort, makeWindow, usageSourceMessages } from "./usageFormat.ts";
+import {
+  formatDateTimeShort,
+  formatHourShort,
+  makeWindow,
+  resolutionForWindow,
+  usageSourceMessages,
+} from "./usageFormat.ts";
 
 function malformedSource(count: number, overrides: Partial<UsageSource> = {}): UsageSource {
   return {
@@ -175,5 +181,22 @@ describe("hourly usage formatting", () => {
     } finally {
       resolvedOptions.mockRestore();
     }
+  });
+  it("disambiguates repeated hours in date-plus-hour labels", () => {
+    expect(formatDateTimeShort("2026-11-01T05:37:00.000Z", "America/New_York")).toBe(
+      "Nov 1, 1 AM EDT",
+    );
+    expect(formatDateTimeShort("2026-11-01T06:37:00.000Z", "America/New_York")).toBe(
+      "Nov 1, 1 AM EST",
+    );
+  });
+
+  it("spans the whole week when a 7-day window is hourly", () => {
+    const window = makeWindow(7, new Date("2026-08-11T12:37:42.123Z"), resolutionForWindow(7));
+
+    expect(window.resolution).toBe("hour");
+    expect(window.sinceTime).toBe("2026-08-04T12:37:00.000Z");
+    expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
+    expect(resolutionForWindow(30)).toBe("day");
   });
 });
