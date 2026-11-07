@@ -126,6 +126,18 @@ describe("deriveComposerSendState", () => {
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
   });
+
+  it("treats an attached thread context as sendable without extra text", () => {
+    const state = deriveComposerSendState({
+      prompt: "[Old title](t3-context://v1/thread/thread_abc) ",
+      imageCount: 0,
+      terminalContexts: [],
+      threadContextCount: 1,
+    });
+
+    expect(state.trimmedPrompt).toBe("");
+    expect(state.hasSendableContent).toBe(true);
+  });
 });
 
 describe("buildExpiredTerminalContextToastCopy", () => {
