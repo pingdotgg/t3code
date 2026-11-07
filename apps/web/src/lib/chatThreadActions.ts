@@ -43,6 +43,22 @@ export function resolveNewDraftStartFromOrigin(input: {
   return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
 }
 
+/**
+ * A checkout's branch is not a worktree base, so leaving it for a new worktree starts from the
+ * configured base. A null base means settings have not loaded, so the branch is left to fill.
+ */
+export function shouldResetBranchForNewWorktree(input: {
+  currentEnvMode: DraftThreadEnvMode | undefined;
+  nextEnvMode: DraftThreadEnvMode;
+  worktreeBaseBranch: string | null;
+}): boolean {
+  return (
+    input.currentEnvMode === "local" &&
+    input.nextEnvMode === "worktree" &&
+    input.worktreeBaseBranch !== ""
+  );
+}
+
 export function resolveNewThreadModelSelectionOverride(input: {
   readonly projectDefaultSelection: ModelSelection | null;
   readonly carrySelection: ModelSelection | null;
