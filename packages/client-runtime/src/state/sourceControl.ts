@@ -65,7 +65,9 @@ export function createSourceControlEnvironmentAtoms<R, E>(
       for (const { environmentId, repositoryIdentity } of projects) {
         if (!repositoryIdentity) continue;
         const key = repositoryGroupingKeyOf(repositoryIdentity);
-        checkouts.set(key, [...(checkouts.get(key) ?? []), environmentId]);
+        const environmentIds = checkouts.get(key);
+        if (environmentIds) environmentIds.push(environmentId);
+        else checkouts.set(key, [environmentId]);
       }
       const environmentIds = [...checkouts.values()].filter((ids) => ids.length > 1).flat();
       return accountsFamily(JSON.stringify([...new Set(environmentIds)].sort()));

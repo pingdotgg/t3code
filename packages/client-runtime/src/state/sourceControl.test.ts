@@ -34,6 +34,15 @@ describe("verifiedSourceControlAccounts", () => {
           host: Option.some("gitlab.com"),
           detail: Option.none(),
         }),
+        provider({
+          status: "unauthenticated",
+          account: Option.none(),
+          host: Option.some("github.com"),
+          detail: Option.none(),
+          accounts: [
+            { host: "github.com", account: "personal", active: true, authenticated: true },
+          ],
+        }),
       ],
     });
     expect(accounts).toEqual([{ host: "github.com", account: "EtanHey" }]);
