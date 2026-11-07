@@ -8,6 +8,7 @@ import { VcsProcessExitError } from "@t3tools/contracts";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCli from "./GitLabCli.ts";
+import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const mockedRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 const layer = it.layer(
@@ -195,29 +196,43 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  it.effect("keeps non-merge-request not-found failures generic", () =>
-    Effect.gen(function* () {
-      const cause = new VcsProcessExitError({
-        operation: "GitLabCli.execute",
-        command: "glab",
-        cwd: "/repo",
-        exitCode: 1,
-        detail: "GET 404 project not found",
-        failureKind: "not-found",
-      });
-      mockedRun.mockReturnValueOnce(Effect.fail(cause));
-
-      const error = yield* Effect.gen(function* () {
-        const glab = yield* GitLabCli.GitLabCli;
-        return yield* glab.getRepositoryCloneUrls({
+  it.effect.each(["not-found", "command-failed"] as const)(
+    "exposes fixed repository lookup details only for not-found (%s)",
+    (failureKind) =>
+      Effect.gen(function* () {
+        const cause = new VcsProcessExitError({
+          operation: "GitLabCli.execute",
+          command: "glab",
           cwd: "/repo",
-          repository: "missing/project",
+          exitCode: 1,
+          detail: "GET 404 project not found",
+          failureKind,
         });
-      }).pipe(Effect.flip);
+        mockedRun.mockReturnValueOnce(Effect.fail(cause));
 
-      assert.strictEqual(error._tag, "GitLabCliCommandError");
-      assert.strictEqual(error.cause, cause);
-    }),
+        const error = yield* Effect.gen(function* () {
+          const glab = yield* GitLabCli.GitLabCli;
+          return yield* glab.getRepositoryCloneUrls({
+            cwd: "/repo",
+            repository: "missing/\tproject",
+          });
+        }).pipe(Effect.flip);
+
+        assert.strictEqual(error._tag, "GitLabCliCommandError");
+        assert.strictEqual(error.cause, cause);
+        assert.strictEqual(
+          userFacingSourceControlDetail(error),
+          failureKind === "not-found"
+            ? "Repository missing/ project was not found. Check the owner and name and try again."
+            : undefined,
+        );
+        mockedRun.mockReturnValueOnce(Effect.fail(cause));
+        const glab = yield* GitLabCli.GitLabCli;
+        const other = yield* glab
+          .execute({ cwd: "/repo", args: ["api", "projects"] })
+          .pipe(Effect.flip);
+        assert.strictEqual(userFacingSourceControlDetail(other), undefined);
+      }),
   );
 
   it.effect("preserves rate-limit failures as a distinct error", () =>

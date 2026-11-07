@@ -30,6 +30,7 @@ export class GitCafeApiError extends Schema.TaggedError<GitCafeApiError>()("GitC
   status: Schema.NullOr(Schema.Int),
   reason: GitCafeApiFailure,
   detail: Schema.String,
+  userFacingDetail: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {

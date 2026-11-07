@@ -24,6 +24,7 @@ export class ForgejoCliError extends Schema.TaggedError<ForgejoCliError>()("Forg
   command: Schema.Literals(["fj", "tea"]),
   cwd: Schema.String,
   detail: Schema.String,
+  userFacingDetail: Schema.optional(Schema.String),
   reason: Schema.optional(
     Schema.Literals([
       "missing-cli",
