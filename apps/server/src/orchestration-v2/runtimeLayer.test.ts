@@ -8138,6 +8138,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
   it.effect.each([
     "resume",
     "resume-started",
+    "resume-untagged",
     "queued-resume",
     "rearm",
     "snooze-race",
@@ -8616,7 +8617,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* orchestrator.dispatch(resume);
       }
       const after = yield* orchestrator.getThreadProjection(threadId);
-      if (scenario === "resume" || scenario === "resume-started") {
+      if (
+        scenario === "resume" ||
+        scenario === "resume-started" ||
+        scenario === "resume-untagged"
+      ) {
         assert.deepInclude(after.messages.at(-1), {
           text: "Continue where you left off.",
           createdBy: "agent",
@@ -8639,6 +8644,22 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             ],
           });
         }
+        if (scenario === "resume-untagged") {
+          // A server older than the run tag stored the resume run without it.
+          const { usageLimitContinuationOfRunId: _, ...untagged } = continuation;
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make("recovery:continuation-untagged"),
+                type: "run.updated",
+                threadId,
+                runId: continuation.id,
+                occurredAt: yield* DateTime.now,
+                payload: untagged,
+              },
+            ],
+          });
+        }
         yield* (yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService).reconcile(
           "startup",
         );
@@ -8650,40 +8671,43 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           true,
           DateTime.toEpochMillis(yield* DateTime.now),
         );
-        if (scenario === "resume-started") {
-          assert.isNull(retry);
+        if (scenario === "resume-started") assert.isNull(retry);
+        else assert(retry?.type === "message.dispatch");
+        if (scenario === "resume") {
+          assert.notEqual(retry!.commandId, resume!.commandId);
+        } else {
           assert.equal(
             restartedShell.limitRecovery?.requestId,
             after.thread.limitRecovery?.requestId,
           );
-        } else {
-          assert(retry?.type === "message.dispatch");
-          assert.notEqual(retry.commandId, resume!.commandId);
-          yield* orchestrator.dispatch(retry);
-          yield* orchestrator.dispatch(retry);
-          const resumed = yield* orchestrator.getThreadProjection(threadId);
-          assert.deepEqual(
-            resumed.runs.map((row) => row.status),
-            ["failed", "cancelled", "starting"],
-          );
-          const visible = createOrchestrationV2TurnItemVisibility({
-            runs: resumed.runs,
-            attempts: resumed.attempts,
-            items: resumed.turnItems,
-          });
-          assert.deepEqual(
-            resumed.turnItems.flatMap((item) =>
-              item.type === "user_message" && visible(item) ? [item.runId] : [],
-            ),
-            [run.id, resumed.runs[2]!.id],
-          );
         }
+        if (retry !== null) {
+          yield* orchestrator.dispatch(retry);
+          yield* orchestrator.dispatch(retry);
+        }
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        const visible = createOrchestrationV2TurnItemVisibility({
+          runs: resumed.runs,
+          attempts: resumed.attempts,
+          items: resumed.turnItems,
+        });
+        assert.deepEqual(
+          resumed.turnItems.flatMap((item) =>
+            item.type === "user_message" && visible(item) ? [item.runId] : [],
+          ),
+          [run.id, resumed.runs.at(-1)!.id],
+        );
+        assert.deepEqual(
+          resumed.runs.map((row) => row.status),
+          scenario === "resume" ? ["failed", "cancelled", "starting"] : ["failed", "cancelled"],
+        );
       }
       assert.lengthOf(
         after.runs,
         before.runs.length +
           (scenario === "resume" ||
           scenario === "resume-started" ||
+          scenario === "resume-untagged" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
@@ -8696,6 +8720,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         before.messages.length +
           (scenario === "resume" ||
           scenario === "resume-started" ||
+          scenario === "resume-untagged" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||

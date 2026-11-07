@@ -442,10 +442,13 @@ export const make = Effect.gen(function* () {
           },
         });
       }
+      const unsentResumeRunIds = runs.flatMap((run) =>
+        run.startedAt === null && run.usageLimitContinuationOfRunId !== undefined ? [run.id] : [],
+      );
       const limitRecovery = projection.thread.limitRecovery;
-      // Cancelling a never-started run leaves the thread limited by the same run, so a resume sent
-      // before the restart spent the worker's request id. A fresh id lets the worker send it again.
-      if (limitRecovery?.autoResume === true && runs.some((run) => run.startedAt === null)) {
+      // The unsent resume spent the worker's request id, so a fresh one lets it send again. An
+      // untagged resume from an older server stays cancelled: its copy couldn't be hidden.
+      if (limitRecovery?.autoResume === true && unsentResumeRunIds.length > 0) {
         events.push({
           id: yield* allocateEventId(),
           type: "thread.metadata-updated",
@@ -460,9 +463,6 @@ export const make = Effect.gen(function* () {
       }
       // The worker sends the auto-resume again, so the unsent copy leaves the transcript the way
       // cancelled queued input does.
-      const unsentResumeRunIds = runs.flatMap((run) =>
-        run.startedAt === null && run.usageLimitContinuationOfRunId !== undefined ? [run.id] : [],
-      );
       const unsentResumePrompts =
         unsentResumeRunIds.length === 0
           ? []
