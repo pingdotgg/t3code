@@ -2091,6 +2091,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const resolved = yield* options.resolveNamed(name);
       if (resolved === null) continue;
       if (resolved.comparisonRef === `refs/heads/${refName}`) continue;
+      if (
+        resolved.comparisonRef.startsWith("refs/remotes/") &&
+        resolved.comparisonRef.endsWith(`/${refName}`)
+      ) {
+        continue;
+      }
       const branchName = resolved.comparisonRef.startsWith("refs/heads/")
         ? resolved.comparisonRef.slice("refs/heads/".length)
         : resolved.baseRef.includes("/")
@@ -2125,6 +2131,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           const tipDistance = Number.parseInt(tipDistanceText ?? "", 10);
           const ahead = Number.parseInt(aheadText ?? "", 10);
           if (!Number.isFinite(tipDistance) || !Number.isFinite(ahead)) return null;
+          // A candidate that contains HEAD plus more commits is a descendant, not a parent.
+          if (ahead === 0 && tipDistance > 0) return null;
           return { candidate, ahead, tipDistance } satisfies ScoredParent;
         }),
       { concurrency: 8 },
