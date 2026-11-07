@@ -60,6 +60,7 @@ import {
   useEnvironmentScope,
 } from "~/state/session";
 import { environmentIdsKey } from "~/state/environmentAtomList";
+import { resolveDiffThemeNames, type DiffThemeNames } from "~/lib/diffRendering";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
@@ -420,6 +421,10 @@ export function useBoringSidebarEnabled(): boolean {
   return useClientSettings(
     (settings) => settings.boringSidebarEnabled || settings.legacySidebarEnabled,
   );
+}
+
+export function useDiffThemeNames(): DiffThemeNames {
+  return useClientSettings(resolveDiffThemeNames);
 }
 
 export async function prepareModelPreferencesPatch(

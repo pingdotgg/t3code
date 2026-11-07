@@ -36,6 +36,8 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { CodeFontPreview } from "./SettingsFontPreviews";
+import { CODE_THEME_OPTIONS } from "../../lib/diffRendering";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -83,6 +85,77 @@ const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   label: "Word",
   bars: "Bars",
 };
+
+function CodeThemeSettingsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const halves = [
+    { appearance: "light", label: "Light", value: settings.codeThemeLight },
+    { appearance: "dark", label: "Dark", value: settings.codeThemeDark },
+  ] as const;
+  const isDefault =
+    settings.codeThemeLight === DEFAULT_UNIFIED_SETTINGS.codeThemeLight &&
+    settings.codeThemeDark === DEFAULT_UNIFIED_SETTINGS.codeThemeDark;
+  return (
+    <SettingsRow
+      {...searchableSetting("code-theme")}
+      description="Syntax colors for code in chat, files, and diffs."
+      resetAction={
+        isDefault ? null : (
+          <SettingResetButton
+            label="code theme"
+            onClick={() =>
+              updateSettings({
+                codeThemeLight: DEFAULT_UNIFIED_SETTINGS.codeThemeLight,
+                codeThemeDark: DEFAULT_UNIFIED_SETTINGS.codeThemeDark,
+              })
+            }
+          />
+        )
+      }
+      control={
+        <div className="flex w-full gap-2 sm:w-auto">
+          {halves.map(({ appearance, label, value }) => {
+            const selected = CODE_THEME_OPTIONS[appearance].find((option) => option.id === value);
+            return (
+              <Select
+                key={appearance}
+                value={selected?.id ?? ""}
+                onValueChange={(next) => {
+                  const codeTheme = next ?? "";
+                  updateSettings(
+                    appearance === "light"
+                      ? { codeThemeLight: codeTheme }
+                      : { codeThemeDark: codeTheme },
+                  );
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full min-w-0 sm:w-40"
+                  aria-label={`${label} code theme`}
+                >
+                  <span className="text-muted-foreground">{label}</span>
+                  <SelectValue>{selected?.label ?? "Default"}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="">Default</SelectItem>
+                  {CODE_THEME_OPTIONS[appearance].map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            );
+          })}
+        </div>
+      }
+    >
+      <CodeFontPreview />
+    </SettingsRow>
+  );
+}
 
 export function AppearanceSettingsPanel() {
   const {
@@ -256,6 +329,8 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+
+        <CodeThemeSettingsRow />
 
         <SettingsRow
           {...searchableSetting("chat-width")}

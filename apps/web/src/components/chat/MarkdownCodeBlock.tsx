@@ -4,7 +4,7 @@ import { toHtml } from "hast-util-to-html";
 import React, { use, useEffect, useState, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { getClientSettings } from "../../hooks/useSettings";
+import { getClientSettings, useDiffThemeNames } from "../../hooks/useSettings";
 import type { DiffThemeName } from "../../lib/diffRendering";
 import {
   createIncrementalHighlightedDocument,
@@ -327,7 +327,8 @@ function UncachedShikiCodeBlock({
   isStreaming,
   preserveLines,
 }: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
+  const themeNames = useDiffThemeNames();
+  const highlighter = use(getSyntaxHighlighterPromise(language, themeNames));
   const incrementalHighlight = preserveLines
     ? createIncrementalHighlightedDocument(highlighter, language, themeName)
     : null;

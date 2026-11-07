@@ -333,6 +333,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["red green blue orange additions deletions changes counts palette colorblind"],
   },
   {
+    id: "code-theme",
+    title: "Code theme",
+    to: "/settings/appearance",
+    searchTerms: ["syntax highlighting colors palette poimandres github vscode dracula nord"],
+  },
+  {
     id: "chat-width",
     title: "Chat width",
     to: "/settings/appearance",
