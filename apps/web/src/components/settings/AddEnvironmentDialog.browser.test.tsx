@@ -97,6 +97,24 @@ describe("AddEnvironmentDialog", () => {
     await expectDefaultModeAfterReopen();
   });
 
+  it("drops an SSH error when switching to Remote link", async () => {
+    using _bridge = setup();
+    await using _screen = await render(<Owner />);
+
+    mocks.connectSshEnvironment.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("ssh: connection refused"))),
+    );
+    await openDialogOnSsh();
+    await userEvent.type(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
+    await userEvent.click(
+      page.getByRole("dialog").getByRole("button", { name: "Add environment" }),
+    );
+    await expect.element(page.getByText(/connection refused/)).toBeInTheDocument();
+
+    await userEvent.click(remoteCard());
+    await expect.element(page.getByText(/connection refused/)).not.toBeInTheDocument();
+  });
+
   it("clears the form after dismissing it on SSH", async () => {
     using _bridge = setup();
     await using _screen = await render(<Owner />);
