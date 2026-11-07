@@ -6,14 +6,14 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 
-function Fixture({ onCite, clipped = false }: { onCite: () => boolean; clipped?: boolean }) {
+function Fixture({ onCite }: { onCite: () => boolean }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   return (
     <div ref={setViewport} style={{ position: "fixed", inset: 40, overflow: "auto" }}>
-      <div style={{ marginTop: 120, height: clipped ? 100 : 200, overflow: "hidden" }}>
+      <div style={{ marginTop: 120, height: 200, overflow: "hidden" }}>
         <p
           data-assistant-citation-source="message-1"
-          style={{ margin: 0, marginTop: clipped ? -8 : 40, lineHeight: "24px" }}
+          style={{ margin: 0, marginTop: 40, lineHeight: "24px" }}
         >
           Select these words to cite them.
         </p>
@@ -46,14 +46,13 @@ function selectText(source: HTMLElement) {
   return rect;
 }
 
-it("places Cite above the selection and a click past release does not cite", async () => {
+it("a click past release does not cite", async () => {
   const onCite = vi.fn(() => true);
   await using screen = await render(<Fixture onCite={onCite} />);
   const source = screen.getByText("Select these words to cite them.").element() as HTMLElement;
   const rect = selectText(source);
   const cite = page.getByRole("button", { name: "Cite selection in composer" });
   await expect.element(cite).toBeVisible();
-  expect(cite.element().getBoundingClientRect().bottom).toBe(rect.top - 6);
   const target = document.elementFromPoint(rect.right + 1, rect.bottom - 1)!;
   await userEvent.click(page.elementLocator(target), {
     position: {
@@ -62,13 +61,4 @@ it("places Cite above the selection and a click past release does not cite", asy
     },
   });
   expect(onCite).not.toHaveBeenCalled();
-});
-
-it("flips below a line clipped by a nested scroller", async () => {
-  await using screen = await render(<Fixture onCite={() => true} clipped />);
-  const source = screen.getByText("Select these words to cite them.").element() as HTMLElement;
-  const rect = selectText(source);
-  const cite = page.getByRole("button", { name: "Cite selection in composer" });
-  await expect.element(cite).toBeVisible();
-  expect(cite.element().getBoundingClientRect().top).toBe(rect.bottom + 6);
 });

@@ -31,28 +31,46 @@ type SelectionRect = { left: number; top: number; right: number; bottom: number 
 export function resolveChatSelectionActionPosition({
   selectionRect,
   bounds,
+  outerBounds = bounds,
+  pointer = null,
   actionSize,
   viewport,
 }: {
   selectionRect: SelectionRect;
   bounds: SelectionRect;
+  outerBounds?: SelectionRect;
+  pointer?: SelectionActionPoint | null;
   actionSize: { width: number; height: number };
   viewport: { width: number; height: number };
 }): SelectionActionPoint {
   const above = selectionRect.top - actionSize.height - 6;
   const below = selectionRect.bottom + 6;
-  const top = Math.max(8, bounds.top);
-  const bottom = Math.min(viewport.height - 8, bounds.bottom);
-  const y = above >= top ? above : below + actionSize.height <= bottom ? below : top + 8;
-  return {
-    x: Math.max(
-      8,
-      Math.min(
-        (selectionRect.left + selectionRect.right - actionSize.width) / 2,
-        viewport.width - actionSize.width - 8,
-      ),
+  const x = Math.max(
+    8,
+    Math.min(
+      (selectionRect.left + selectionRect.right - actionSize.width) / 2,
+      viewport.width - actionSize.width - 8,
     ),
-    y: Math.max(8, Math.min(y, viewport.height - actionSize.height - 8)),
+  );
+  for (const clip of [bounds, outerBounds]) {
+    const top = Math.max(8, clip.top);
+    const bottom = Math.min(viewport.height - 8, clip.bottom);
+    for (const y of [above, below]) {
+      const nearRelease =
+        pointer !== null &&
+        pointer.x >= x - 8 &&
+        pointer.x <= x + actionSize.width + 8 &&
+        pointer.y >= y - 8 &&
+        pointer.y <= y + actionSize.height + 8;
+      if (y >= top && y + actionSize.height <= bottom && !nearRelease) return { x, y };
+    }
+  }
+  return {
+    x,
+    y: Math.max(
+      8,
+      Math.min(Math.max(8, outerBounds.top) + 8, viewport.height - actionSize.height - 8),
+    ),
   };
 }
 

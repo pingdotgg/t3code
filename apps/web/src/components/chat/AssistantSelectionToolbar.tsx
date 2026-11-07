@@ -15,6 +15,7 @@ import {
   isSelectionRectVisible,
   observeSelectionActions,
   resolveChatSelectionActionPosition,
+  type SelectionActionPoint,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -29,6 +30,7 @@ export function AssistantSelectionToolbar({
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
 }) {
   const [selection, setSelection] = useState<{
+    pointer: SelectionActionPoint | null;
     citation: AssistantCitation;
     rect: { left: number; top: number; right: number; bottom: number };
     bounds: { left: number; top: number; right: number; bottom: number };
@@ -46,6 +48,8 @@ export function AssistantSelectionToolbar({
     const position = resolveChatSelectionActionPosition({
       selectionRect: selection.rect,
       bounds: selection.bounds,
+      outerBounds: viewport.getBoundingClientRect(),
+      pointer: selection.pointer,
       actionSize: rect,
       viewport: { width: window.innerWidth, height: window.innerHeight },
     });
@@ -57,7 +61,7 @@ export function AssistantSelectionToolbar({
   useEffect(() => {
     if (!viewport) return;
     const clear = () => setSelection(null);
-    const update = () => {
+    const update = (pointer: SelectionActionPoint | null) => {
       const nativeSelection = window.getSelection();
       const captured = captureAssistantTextSelection(viewport, nativeSelection);
       const messageId = captured?.source.dataset.assistantCitationSource;
@@ -141,6 +145,7 @@ export function AssistantSelectionToolbar({
         line.bottom > last.bottom ? line : last,
       );
       setSelection({
+        pointer,
         bounds: {
           left: viewportRect.left,
           right: viewportRect.right,
