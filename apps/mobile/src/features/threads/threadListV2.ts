@@ -113,7 +113,7 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
 }
 
 export function resolveThreadListV2SwipeActions(input: {
-  readonly variant: "card" | "slim";
+  readonly settled: boolean;
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
@@ -125,11 +125,7 @@ export function resolveThreadListV2SwipeActions(input: {
   if (input.snoozed === true) {
     return { primary: "unsnooze", secondary: null };
   }
-  const primary = input.settlementSupported
-    ? input.variant === "slim"
-      ? "unsettle"
-      : "settle"
-    : "archive";
+  const primary = input.settlementSupported ? (input.settled ? "unsettle" : "settle") : "archive";
   return {
     primary,
     secondary: input.snoozeSupported && input.snoozable ? "snooze" : null,
@@ -241,6 +237,19 @@ export function threadHasUnseenCompletion(
   const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAtMs)) return true;
   return completedAtMs > lastVisitedAtMs;
+}
+
+export function resolveThreadListMessagePreview(
+  thread: Pick<EnvironmentThreadShell, "source">,
+): { readonly speaker: "you" | "agent"; readonly text: string } | null {
+  const message = thread.source.latestVisibleMessage;
+  if (message == null) return null;
+  const text = message.text.replace(/\s+/g, " ").trim();
+  if (text.length === 0) return null;
+  return {
+    speaker: message.role === "user" ? "you" : "agent",
+    text,
+  };
 }
 
 export function resolveThreadListV2WokeAt(
@@ -502,17 +511,12 @@ function resolveThreadListV2ItemTimeLabel(
   item: ThreadListV2Item,
   showSnoozeWakeLabel: boolean,
 ): string {
-  const { thread, variant, snoozed } = item;
+  const { thread, snoozed } = item;
   if (showSnoozeWakeLabel) return "";
-  if (
-    variant === "card" &&
-    (resolveThreadListV2Status(thread) !== "ready" ||
-      item.wokeAt !== null ||
-      threadHasUnseenCompletion(thread))
-  )
-    return "";
+  // Status badges and Woke own the trailing slot; unread-ready rows still keep a date.
+  if (resolveThreadListV2Status(thread) !== "ready" || item.wokeAt !== null) return "";
   const settledTimestamp =
-    variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
+    !snoozed && thread.settledOverride === "settled" ? resolveSettledThreadTimestamp(thread) : null;
   return relativeTime(
     settledTimestamp ?? resolveThreadActivityTimestamp(thread) ?? thread.createdAt,
   );
@@ -551,7 +555,7 @@ export function buildThreadListV2ListItems(input: {
         ? input.snoozeLabelNow
         : undefined;
     const move =
-      item.variant === "card"
+      !item.snoozed && item.thread.settledOverride !== "settled"
         ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
         : undefined;
     return {
@@ -763,7 +767,7 @@ export function buildThreadListV2Items(input: {
     // Searching lists every match by rank across shelves, as the palette and
     // the web sidebar do, then threads listed for their messages in the
     // server's order. Each row keeps its shelf's look.
-    const slim = new Set([...snoozed, ...settled]);
+    const shelfThreads = new Set([...snoozed, ...settled]);
     const snoozedThreads = new Set(snoozed);
     const pinnedThreads = new Set(pinned);
     const threadByKey = new Map(
@@ -780,10 +784,10 @@ export function buildThreadListV2Items(input: {
     return {
       items: results.map((thread, index) => ({
         thread,
-        variant: slim.has(thread) ? "slim" : "card",
+        variant: "card" as const,
         snoozed: snoozedThreads.has(thread),
         pinned: pinnedThreads.has(thread),
-        wokeAt: slim.has(thread) ? null : resolveThreadListV2WokeAt(thread, { now }),
+        wokeAt: shelfThreads.has(thread) ? null : resolveThreadListV2WokeAt(thread, { now }),
         isLast: index === results.length - 1,
       })),
       hiddenSettledCount: 0,
@@ -885,7 +889,7 @@ export function buildThreadListV2Items(input: {
   for (const thread of visibleSnoozed) {
     items.push({
       thread,
-      variant: "slim",
+      variant: "card",
       snoozed: true,
       pinned: false,
       wokeAt: null,
@@ -896,7 +900,7 @@ export function buildThreadListV2Items(input: {
   for (const thread of visibleSettled) {
     items.push({
       thread,
-      variant: "slim",
+      variant: "card",
       snoozed: false,
       pinned: false,
       wokeAt: null,

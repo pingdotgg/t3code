@@ -138,7 +138,7 @@ interface HomeScreenProps {
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
 }
 
-const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
+const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 112;
 // Rows away from the viewport skip their swipe actions (see
 // swipe-row-activation), so render further ahead: a fast fling then reaches
 // rows that are already built instead of rows still being rebuilt.
