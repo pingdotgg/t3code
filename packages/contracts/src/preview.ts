@@ -148,6 +148,12 @@ export const PreviewStreamHostSetup = Schema.Struct({
 export type PreviewStreamHostSetup = typeof PreviewStreamHostSetup.Type;
 export const PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE = 4503;
 
+export type PreviewStreamNavigationInput =
+  | { readonly type: "navigate"; readonly url: string }
+  | { readonly type: "history"; readonly delta: -1 | 1 }
+  | { readonly type: "reload"; readonly ignoreCache?: boolean }
+  | { readonly type: "stopLoading" };
+
 export const PreviewSessionSnapshot = Schema.Struct({
   threadId: TrimmedNonEmptyString,
   tabId: PreviewTabId,

@@ -3,6 +3,7 @@ import { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts
 import {
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   type PreviewStreamHostSetup,
+  type PreviewStreamNavigationInput,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 
@@ -87,9 +88,7 @@ export type PreviewStreamInput =
     }
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "resize"; readonly width: number; readonly height: number }
-  | { readonly type: "navigate"; readonly url: string }
-  | { readonly type: "history"; readonly delta: -1 | 1 }
-  | { readonly type: "reload"; readonly ignoreCache?: boolean }
+  | PreviewStreamNavigationInput
   | { readonly type: "probe"; readonly x: number; readonly y: number };
 
 export interface PreviewStreamDownload {

@@ -581,6 +581,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
   const tabLifecycleGenerations = new Map<string, number>();
+  const stopGenerations = new WeakMap<Electron.WebContents, number>();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -2009,8 +2010,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
-    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
-      wc.loadURL(url),
+    const stopGeneration = stopGenerations.get(wc) ?? 0;
+    yield* attemptPromise(
+      { operation: "navigate.loadURL", tabId, webContentsId: wc.id },
+      async () => {
+        try {
+          await wc.loadURL(url);
+        } catch (cause) {
+          if (
+            (stopGenerations.get(wc) ?? 0) !== stopGeneration &&
+            typeof cause === "object" &&
+            cause !== null &&
+            (("code" in cause && cause.code === "ERR_ABORTED") ||
+              ("errno" in cause && cause.errno === -3))
+          )
+            return;
+          throw cause;
+        }
+      },
     );
   });
 
@@ -2032,6 +2049,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
     });
   const refresh = (tabId: string) => withWebContents("refresh", tabId, (wc) => wc.reload());
+  const stopLoading = (tabId: string) =>
+    withWebContents("stopLoading", tabId, (wc) => {
+      stopGenerations.set(wc, (stopGenerations.get(wc) ?? 0) + 1);
+      wc.stop();
+    });
   const hardReload = (tabId: string) =>
     withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
 
@@ -3374,6 +3396,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     prepareWebview,
     reapplyZoom,
     refresh,
+    stopLoading,
     registerWebview,
     resetZoom: (tabId: string) => applyZoom(tabId, () => DEFAULT_ZOOM_FACTOR),
     setZoomFactor: (tabId: string, zoomFactor: number) =>
@@ -3572,6 +3595,7 @@ export class PreviewManager extends Context.Service<
     readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly goForward: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly refresh: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly stopLoading: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly zoomIn: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly zoomOut: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly resetZoom: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -3726,6 +3750,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     goBack: operations.goBack,
     goForward: operations.goForward,
     refresh: operations.refresh,
+    stopLoading: operations.stopLoading,
     zoomIn: operations.zoomIn,
     zoomOut: operations.zoomOut,
     resetZoom: operations.resetZoom,

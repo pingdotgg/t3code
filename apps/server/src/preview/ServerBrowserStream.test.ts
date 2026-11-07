@@ -57,6 +57,7 @@ const mutations = [
   { type: "navigate", url: "https://example.com" },
   { type: "history", delta: -1 },
   { type: "reload" },
+  { type: "stopLoading" },
   { type: "probe", x: 10, y: 10 },
   { type: "takeControl" },
   { type: "releaseControl" },

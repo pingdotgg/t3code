@@ -331,7 +331,9 @@ interface ServerTab {
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
+  pendingInitialRequestUrl: string | null;
   navigationGeneration: number;
+  stoppedGeneration: number | null;
 
   abortedNavigation: {
     readonly url: string;
@@ -891,7 +893,9 @@ const make = Effect.gen(function* () {
       recording: null,
       recordingStart: null,
       initialNavigation: null,
+      pendingInitialRequestUrl: null,
       navigationGeneration: 0,
+      stoppedGeneration: null,
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
@@ -920,9 +924,19 @@ const make = Effect.gen(function* () {
     const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
       if (!isMainNavigation(request)) return;
+      // Playwright can deliver the first request after Stop has already settled its navigation.
+      const stoppedInitialRequest =
+        request.url() === tab.pendingInitialRequestUrl &&
+        tab.stoppedGeneration === tab.navigationGeneration;
+      tab.pendingInitialRequestUrl = null;
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
       tab.loading = true;
+      if (stoppedInitialRequest) {
+        tab.stoppedGeneration = tab.navigationGeneration;
+        settleStoppedNavigation(tab, tab.navigationGeneration);
+        return;
+      }
       report(tab, {
         _tag: "Loading",
         url: ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048),
@@ -930,6 +944,7 @@ const make = Effect.gen(function* () {
       });
     });
     page.on("load", () => {
+      tab.pendingInitialRequestUrl = null;
       tab.loading = false;
       void reportLoaded(tab);
     });
@@ -962,6 +977,10 @@ const make = Effect.gen(function* () {
       if (generation !== tab.navigationGeneration) return;
       // An aborted navigation is usually a download; its `download` event settles the status.
       if (errorText.includes("ERR_ABORTED")) {
+        if (tab.stoppedGeneration === generation) {
+          settleStoppedNavigation(tab, generation);
+          return;
+        }
         const url = request.url();
         const navigationGeneration = tab.navigationGeneration;
         clearAbortedNavigation(tab);
@@ -1027,6 +1046,10 @@ const make = Effect.gen(function* () {
       snapshot.navStatus._tag === "Loading" &&
       ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
     ) {
+      tab.loading = true;
+      const initialUrl = new URL(snapshot.navStatus.url);
+      initialUrl.hash = "";
+      tab.pendingInitialRequestUrl = initialUrl.href;
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
         (desktop || adopted) && page.url() === snapshot.navStatus.url
@@ -1062,6 +1085,14 @@ const make = Effect.gen(function* () {
   const clearAbortedNavigation = (tab: ServerTab) => {
     if (tab.abortedNavigation !== null) clearTimeout(tab.abortedNavigation.timer);
     tab.abortedNavigation = null;
+  };
+
+  const settleStoppedNavigation = (tab: ServerTab, generation: number) => {
+    if (tab.navigationGeneration !== generation || !tab.loading) return;
+    clearAbortedNavigation(tab);
+    tab.loading = false;
+    if (tab.page.url() === "about:blank") report(tab, { _tag: "Idle" });
+    else void reportLoaded(tab);
   };
 
   const settleAbortedNavigation = (
@@ -1678,6 +1709,7 @@ const make = Effect.gen(function* () {
     readiness: "load" | "domContentLoaded" | "none",
     timeout: number,
   ) => {
+    tab.pendingInitialRequestUrl = null;
     const navigation = tab.page.goto(url, {
       timeout,
       waitUntil:
@@ -2354,7 +2386,10 @@ const make = Effect.gen(function* () {
             const request = event.request;
             if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
             if (request?.clear === "cache") await tab.cdp.send("Network.clearBrowserCache");
-            if (request?.hardReload) await tab.cdp.send("Page.reload", { ignoreCache: true });
+            if (request?.hardReload) {
+              tab.pendingInitialRequestUrl = null;
+              await tab.cdp.send("Page.reload", { ignoreCache: true });
+            }
           })
           .catch((cause: unknown) =>
             runFork(Effect.logWarning("server preview could not apply a tab setting", { cause })),
@@ -2488,17 +2523,28 @@ const make = Effect.gen(function* () {
       case "navigate":
         if (typeof message.url === "string") {
           const url = normalizePreviewUrl(message.url);
+          tab.pendingInitialRequestUrl = null;
           tab.control.trackUntilHandoff(tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS));
         }
         return;
       case "history":
+        tab.pendingInitialRequestUrl = null;
         tab.control.trackUntilHandoff(
           num(message.delta) < 0
             ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
             : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
         );
         return;
+      case "stopLoading": {
+        const generation = tab.navigationGeneration;
+        tab.stoppedGeneration = generation;
+        await session.send("Page.stopLoading");
+        // Stopping a committed document need not emit Playwright's load or requestfailed events.
+        settleStoppedNavigation(tab, generation);
+        return;
+      }
       case "reload":
+        tab.pendingInitialRequestUrl = null;
         if (message.ignoreCache === true) {
           await session.send("Page.reload", { ignoreCache: true });
           return;
