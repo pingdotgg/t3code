@@ -4184,12 +4184,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                        AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
                      ORDER BY ordinal DESC LIMIT 1
                     ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
-                    AND NOT EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_context_transfers
-                    WHERE source_thread_id = child.thread_id
-                      AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
-                      AND type = 'subagent_result'
-                  )))
+                    AND (NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_context_transfers
+                      WHERE source_thread_id = child.thread_id
+                        AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                        AND type = 'subagent_result'
+                    ) OR EXISTS (
+                      -- A published result whose task row stayed open.
+                      SELECT 1 FROM orchestration_v2_projection_subagents AS task
+                      WHERE task.subagent_id = json_extract(child.payload_json, '$.forkedFrom.nodeId')
+                        AND task.child_thread_id = child.thread_id
+                        AND task.status IN ('pending', 'running', 'waiting')
+                    ))))
               `;
             case "restart-continuations":
               return sql`

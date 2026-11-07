@@ -11448,9 +11448,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const run = projection.runs.find((candidate) => candidate.id === command.runId);
     const subagent = projection.subagents.find((candidate) => candidate.id === command.subagentId);
     // User Stop cancels app-owned tasks with no bound child run unless they are the child's
-    // original task, regardless of other child work. Bound runs keep their settlement path
-    // because results may still arrive; the client's next child stop interrupts the run.
-    // Rewrite ended tasks so clients with stale copies see them end.
+    // original task. A bound run keeps its settlement path, which Stop runs if it ended
+    // unsettled; the client's next child stop interrupts a live one. Rewrite ended tasks so
+    // clients with stale copies see them end.
     if (
       subagent?.origin === "app_owned" &&
       subagent.childThreadId !== null &&
@@ -11471,7 +11471,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           child.thread.forkedFrom.nodeId === subagent.id) ||
           child.runs.some((run) => run.delegatedTaskId === subagent.id))
       )
-        return;
+        // Dispatch holds the parent lock the finalizer needs; it writes its own events.
+        return yield* Effect.gen(function* () {
+          const childControls = yield* projectionStore.getThreadRecords(
+            childThreadId,
+            ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
+            { messageRoles: ["user"] },
+          );
+          const progress = delegatedTaskProgress(childControls);
+          yield* finalizeAppOwnedSubagentTask(childControls, {
+            task: subagent,
+            disposeDelivery: true,
+            ...(progress.state === "result_available" && progress.resultRun !== undefined
+              ? { resultRun: progress.resultRun }
+              : {}),
+          });
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Stop could not settle an ended delegated task", {
+              threadId: command.threadId,
+              subagentId: subagent.id,
+              cause,
+            }),
+          ),
+        );
       const records = yield* loadProjectionForCommand(command, ["nodes", "turnItems"], {
         turnItemTypes: ["subagent"],
         turnItemRunIds: [subagent.runId],
@@ -12709,6 +12732,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly syncRunId?: RunId;
         readonly task: OrchestrationV2Subagent;
         readonly resultRun?: OrchestrationV2Run;
+        /** Stop settles the task without waking its parent. */
+        readonly disposeDelivery?: true;
       },
     ) {
       const childThreadId = childControls.thread.id;
@@ -12843,7 +12868,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (transfer.sourcePoint.runId === childRun.id ||
             (options.task.id === forkedFrom.nodeId && transfer.sourcePoint.runId === undefined)),
       );
-      if (existingResultTransfer !== undefined) {
+      // A published result whose task row stayed open settles that row without publishing again.
+      const published = existingResultTransfer !== undefined;
+      if (published && !isOrchestrationV2WorkActive(task.status)) {
         return;
       }
 
@@ -12864,6 +12891,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         result: result.text,
         completedAt: now,
         updatedAt: now,
+        ...(options.disposeDelivery === true ||
+        (published &&
+          task.completionDelivery?.state !== "acknowledged" &&
+          task.completionDelivery?.state !== "delivered")
+          ? { completionDelivery: { state: "disposed" as const, observedByRunId: null } }
+          : {}),
       };
       const completionPlan = yield* planDelegatedCompletionDelivery({
         parentProjection,
@@ -12872,33 +12905,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedTask,
         now,
       });
-      const resultTransferId = yield* idAllocator.allocate.contextTransfer({
-        sourceThreadId: childThreadId,
-        targetThreadId: parentThreadId,
-        type: "subagent_result",
-      });
-      const resultTransfer: OrchestrationV2ContextTransfer = {
-        id: resultTransferId,
-        type: "subagent_result",
-        sourceThreadId: childThreadId,
-        targetThreadId: parentThreadId,
-        sourcePoint: {
-          ...contextSourcePointForRun(childProjection, childRun),
-          ...(result.turnItemId === null ? {} : { turnItemId: result.turnItemId }),
-        },
-        basePoint: null,
-        sourceProviderInstanceId: childRun.providerInstanceId,
-        targetProviderInstanceId:
-          parentRun?.providerInstanceId ?? parentProjection.thread.providerInstanceId,
-        targetRunId: parentRun?.id ?? null,
-        status: "consumed",
-        resolution: null,
-        createdBy: "system",
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-        consumedAt: now,
-      };
+      const resultTransfer: OrchestrationV2ContextTransfer | undefined = published
+        ? undefined
+        : {
+            id: yield* idAllocator.allocate.contextTransfer({
+              sourceThreadId: childThreadId,
+              targetThreadId: parentThreadId,
+              type: "subagent_result",
+            }),
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: {
+              ...contextSourcePointForRun(childProjection, childRun),
+              ...(result.turnItemId === null ? {} : { turnItemId: result.turnItemId }),
+            },
+            basePoint: null,
+            sourceProviderInstanceId: childRun.providerInstanceId,
+            targetProviderInstanceId:
+              parentRun?.providerInstanceId ?? parentProjection.thread.providerInstanceId,
+            targetRunId: parentRun?.id ?? null,
+            status: "consumed",
+            resolution: null,
+            createdBy: "system",
+            error: null,
+            createdAt: now,
+            updatedAt: now,
+            consumedAt: now,
+          };
 
       const completionEvents: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> = [
         {
@@ -12981,14 +13015,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 },
               },
             ]),
-        {
-          type: "context-transfer.created",
-          threadId: parentThreadId,
-          ...(parentRun === undefined ? {} : { runId: parentRun.id }),
-          providerInstanceId: childRun.providerInstanceId,
-          occurredAt: now,
-          payload: resultTransfer,
-        },
+        ...(resultTransfer === undefined
+          ? []
+          : [
+              {
+                type: "context-transfer.created" as const,
+                threadId: parentThreadId,
+                ...(parentRun === undefined ? {} : { runId: parentRun.id }),
+                providerInstanceId: childRun.providerInstanceId,
+                occurredAt: now,
+                payload: resultTransfer,
+              },
+            ]),
       ];
       yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
 

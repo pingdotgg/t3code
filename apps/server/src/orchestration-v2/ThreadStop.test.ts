@@ -312,6 +312,29 @@ it.effect.each([
         (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]?.delegatedTaskId,
         childState === "correlated" || childState === "bound" ? taskId : undefined,
       );
+      if (childState === "correlated") {
+        const resultMessageId = MessageId.make("message:correlated-child-result");
+        yield* apply({
+          type: "message.updated",
+          threadId: childThreadId,
+          runId: runAtStart.id,
+          occurredAt: now,
+          payload: {
+            id: resultMessageId,
+            threadId: childThreadId,
+            runId: runAtStart.id,
+            nodeId: null,
+            role: "assistant",
+            text: "Child verdict",
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+            createdBy: "agent",
+            creationSource: "provider",
+          },
+        });
+      }
       if (childState === "provider-active" || childState === "roster") {
         yield* apply({
           type: "provider-thread.updated",
@@ -444,13 +467,16 @@ it.effect.each([
         (after.thread.pullRequests ?? []).filter((link) => link.watch !== undefined),
         type === "subagent.stop" ? 1 : 0,
       );
-      // A task with a bound run, live or ended, keeps its settlement path.
+      // A live bound run keeps its settlement path. Its own Stop settles an ended one that
+      // missed it with that run's result, which an earlier task's transfer already carries.
       const expected =
-        childState === "bound" || childState === "correlated"
+        childState === "bound" || (childState === "correlated" && type !== "subagent.stop")
           ? "running"
-          : type === "subagent.stop" || childState === "idle" || childState === "archived"
-            ? "cancelled"
-            : "running";
+          : childState === "correlated"
+            ? "completed"
+            : type === "subagent.stop" || childState === "idle" || childState === "archived"
+              ? "cancelled"
+              : "running";
       assert.equal(after.subagents.find((task) => task.id === taskId)?.status, expected);
       assert.equal(after.nodes.find((node) => node.id === taskId)?.status, expected);
       assert.equal(after.turnItems.find((item) => item.id === itemId)?.status, expected);
@@ -463,6 +489,29 @@ it.effect.each([
         "Original result",
       );
       assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childBeforeStop);
+      if (childState === "correlated") {
+        // Recovery settles what the parent's Stop left running.
+        if (expected === "running") yield* orchestrator.recoverDelegatedTasks;
+        const settled = yield* orchestrator.getThreadProjection(parentThreadId);
+        assert.deepEqual(
+          [
+            settled.subagents.find((task) => task.id === taskId),
+            settled.turnItems.find((item) => item.type === "subagent" && item.id === itemId),
+          ].map((row) => row && { status: row.status, result: "result" in row && row.result }),
+          [
+            { status: "completed", result: "Child verdict" },
+            { status: "completed", result: "Child verdict" },
+          ],
+        );
+        assert.equal(settled.nodes.find((node) => node.id === taskId)?.status, "completed");
+        assert.deepEqual(settled.contextTransfers, after.contextTransfers);
+        assert.lengthOf(
+          (
+            (yield* orchestrator.getThreadShell(parentThreadId))?.pendingBackgroundTasks ?? []
+          ).filter((task) => task.kind === "subagent"),
+          0,
+        );
+      }
       if (expected === "cancelled") {
         assert.lengthOf(
           (
@@ -503,6 +552,120 @@ it.effect.each([
           );
         }
       }
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  ["missed", "subagent.stop"],
+  ["published", "recovery"],
+] as const)(
+  "an original task left running after its child finished settles with the child's result (%s, %s)",
+  ([finalizer, repair]) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThreadId = ThreadId.make(`thread:stranded-parent:${finalizer}`);
+      yield* createWatchingThread(parentThreadId, 1);
+      yield* send(parentThreadId, "parent", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, `stranded task ${finalizer}`);
+      const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+      const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+      const task = parent.subagents[0]!;
+      const now = yield* DateTime.now;
+      let sequence = 0;
+      const apply = (event: Omit<OrchestrationV2DomainEvent, "id">) =>
+        projections.apply({
+          ...event,
+          id: EventId.make(`event:stranded:${finalizer}:${sequence++}`),
+        } as OrchestrationV2DomainEvent);
+      yield* apply({
+        type: "message.updated",
+        threadId: childThreadId,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make(`message:stranded-result:${finalizer}`),
+          threadId: childThreadId,
+          runId: childRun.id,
+          nodeId: null,
+          role: "assistant",
+          text: "Child verdict",
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+          createdBy: "agent",
+          creationSource: "provider",
+        },
+      });
+      yield* apply({
+        type: "run.updated",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: { ...childRun, status: "completed", completedAt: now },
+      });
+      if (finalizer === "published") {
+        yield* apply({
+          type: "context-transfer.created",
+          threadId: parentThreadId,
+          occurredAt: now,
+          payload: {
+            ...(yield* orchestrator.getThreadProjection(childThreadId)).contextTransfers[0]!,
+            id: ContextTransferId.make("transfer:stranded-result"),
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: { threadId: childThreadId, runId: childRun.id },
+            targetRunId: parent.runs[0]!.id,
+          },
+        });
+      }
+      yield* apply({
+        type: "run.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: { ...parent.runs[0]!, status: "completed", completedAt: now },
+      });
+      if (repair === "recovery") yield* orchestrator.recoverDelegatedTasks;
+      else
+        yield* orchestrator.dispatch({
+          type: "subagent.stop",
+          commandId: CommandId.make(`stop-stranded:${finalizer}`),
+          threadId: parentThreadId,
+          runId: task.runId!,
+          subagentId: task.id,
+        });
+      const after = yield* orchestrator.getThreadProjection(parentThreadId);
+      const settled = after.subagents.find((row) => row.id === task.id);
+      const item = after.turnItems.find(
+        (row) => row.type === "subagent" && row.subagentId === task.id,
+      );
+      assert.deepEqual(
+        [settled, item].map(
+          (row) => row && { status: row.status, result: "result" in row && row.result },
+        ),
+        [
+          { status: "completed", result: "Child verdict" },
+          { status: "completed", result: "Child verdict" },
+        ],
+      );
+      assert.equal(after.nodes.find((node) => node.id === task.id)?.status, "completed");
+      // Stop does not wake the parent, and a published result is not published again.
+      assert.equal(settled?.completionDelivery?.state, "disposed");
+      assert.deepEqual(
+        after.runs.map((run) => run.id),
+        parent.runs.map((run) => run.id),
+      );
+      assert.lengthOf(
+        after.contextTransfers.filter((transfer) => transfer.type === "subagent_result"),
+        1,
+      );
+      assert.lengthOf(
+        ((yield* orchestrator.getThreadShell(parentThreadId))?.pendingBackgroundTasks ?? []).filter(
+          (pending) => pending.kind === "subagent",
+        ),
+        0,
+      );
     }).pipe(Effect.provide(layerTest)),
 );
 
