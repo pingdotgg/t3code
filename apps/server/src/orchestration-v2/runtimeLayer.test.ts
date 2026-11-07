@@ -8150,6 +8150,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "independent-patches",
     "expired-snooze",
     "wake",
+    "wake-after-arm",
     "stop",
     "stop-before-arm",
     "stop-before-arm-mismatched-recovery",
@@ -8364,6 +8365,59 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         : arm;
       if (stopBeforeArm) yield* orchestrator.dispatch(armCommand);
       else yield* orchestrator.autoArmLimitRecovery(automaticArm);
+      if (scenario === "wake-after-arm") {
+        // #32286: a notification-only run after arming must not hide the failed source.
+        const wakeRunId = RunId.make("recovery:armed-notification-wake:run");
+        const wakeNodeId = NodeId.make("recovery:armed-notification-wake:root");
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:armed-notification-wake:created"),
+              type: "run.created",
+              threadId,
+              runId: wakeRunId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                ...run,
+                id: wakeRunId,
+                ordinal: run.ordinal + 1,
+                rootNodeId: wakeNodeId,
+                userMessageId: MessageId.make("recovery:armed-notification-wake:message"),
+                status: "completed",
+                startedAt: now,
+                completedAt: now,
+              },
+            },
+            {
+              id: EventId.make("recovery:armed-notification-wake:notification"),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("recovery:armed-notification-wake:item"),
+                type: "notification",
+                threadId,
+                runId: wakeRunId,
+                nodeId: wakeNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: null,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                source: { kind: "delegated_task", taskIds: [] },
+                outcome: "failed",
+                summary: "Background subagent failed",
+              },
+            },
+          ],
+        });
+      }
       let armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
       )!;
@@ -8374,6 +8428,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         snooze,
         requestId: armCommand.commandId,
       });
+      if (scenario === "wake-after-arm") {
+        assert.equal(armedShell.latestRunId, run.id);
+        assert.equal(armedShell.status, "failed");
+        assert.equal(armedShell.lastErrorClass, "usage_limit");
+      }
       if (snooze)
         assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
       if (scenario === "cancel-resume-keep-snooze") {
@@ -8488,9 +8547,19 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       });
       assert.lengthOf(
         (yield* orchestrator.getThreadProjection(threadId)).runs,
-        scenario === "queued-resume" ? 2 : 1,
+        scenario === "queued-resume" || scenario === "wake-after-arm" ? 2 : 1,
       );
       yield* TestClock.adjust("1 minute");
+      if (scenario === "wake-after-arm") {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const candidate = (yield* store.getLimitRecoveryCandidates({
+          now: yield* DateTime.now,
+          autoResume: true,
+          snooze: false,
+        })).find((entry) => entry.id === threadId);
+        assert.equal(candidate?.latestRunId, run.id);
+        assert.deepInclude(candidate?.limitRecovery, { runId: run.id, autoResume: true });
+      }
       const resume = limitRecoveryCommand(
         armedShell,
         true,
@@ -8708,6 +8777,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           (scenario === "resume" ||
           scenario === "resume-started" ||
           scenario === "resume-untagged" ||
+          scenario === "wake-after-arm" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
@@ -8721,6 +8791,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           (scenario === "resume" ||
           scenario === "resume-started" ||
           scenario === "resume-untagged" ||
+          scenario === "wake-after-arm" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
