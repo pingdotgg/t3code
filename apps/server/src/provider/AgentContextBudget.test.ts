@@ -124,7 +124,7 @@ it.effect("only request_secret asks Claude Code to load it up front", () =>
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );
 
-// CI rejects a PR that raises any value above main's agentContextBudget.json, so growth
+// CI rejects a PR that raises any value above the PR base's agentContextBudget.json, so growth
 // needs the agent-context-increase label. Lower the values when the text shrinks.
 it.effect("agent context matches the committed budget", () =>
   Effect.gen(function* () {
