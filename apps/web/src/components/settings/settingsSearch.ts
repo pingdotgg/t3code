@@ -458,9 +458,17 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "boring-sidebar",
-    title: "Boring sidebar (group by project)",
+    title: "Boring sidebar (project folders)",
     to: "/settings/labs",
     searchTerms: ["beta folders project tree classic sidebar"],
+  },
+  {
+    id: "sidebar-sections-by-project",
+    title: "Sections by project",
+    to: "/settings/labs",
+    searchTerms: [
+      "beta sidebar group organize threads project labels working snoozed settled sections",
+    ],
   },
   {
     id: "boring-sidebar-multiline",

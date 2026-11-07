@@ -19,6 +19,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
+        <SectionsByProjectRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -40,7 +41,7 @@ function BoringSidebarRow() {
         <Switch
           checked={settings.boringSidebarEnabled}
           onCheckedChange={(checked) => updateSettings({ boringSidebarEnabled: Boolean(checked) })}
-          aria-label="Boring sidebar (group by project)"
+          aria-label="Boring sidebar (project folders)"
         />
       }
     >
@@ -50,6 +51,26 @@ function BoringSidebarRow() {
         </div>
       ) : null}
     </SettingsRow>
+  );
+}
+
+function SectionsByProjectRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("sidebar-sections-by-project")}
+      description="List each sidebar section's threads under their project, in folder order. In the boring sidebar, Snoozed and Settled list theirs that way too."
+      control={
+        <Switch
+          checked={settings.sidebarSectionsByProject}
+          onCheckedChange={(checked) =>
+            updateSettings({ sidebarSectionsByProject: Boolean(checked) })
+          }
+          aria-label="Sections by project"
+        />
+      }
+    />
   );
 }
 

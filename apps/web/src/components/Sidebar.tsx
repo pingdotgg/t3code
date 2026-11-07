@@ -180,6 +180,7 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
+  groupSidebarSectionByProject,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
@@ -264,6 +265,7 @@ import {
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import {
   SidebarProjectFolderHeader,
+  SidebarSectionProjectLabel,
   sidebarFolderRowId,
 } from "./sidebar/SidebarProjectFolderHeader";
 import {
@@ -421,6 +423,8 @@ function useSidebarThreads(input: {
   readonly routeRowThreadKey: string | null;
   // Set in boring mode: the project groups to fold active threads into, in order.
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
+  // Set when sections list threads by project: the groups whose labels order each section.
+  readonly labelGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
   readonly keepEmptyFolders: (group: SidebarProjectSnapshot) => boolean;
 }) {
@@ -434,6 +438,7 @@ function useSidebarThreads(input: {
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups,
+    labelGroups,
     keepEmptyFolders: keepEmpty,
   } = input;
   // Folders already separate the work, so boring mode has no Working shelf.
@@ -511,15 +516,25 @@ function useSidebarThreads(input: {
     }
     return visible.length === settledThreads.length ? settledThreads : visible;
   })();
+  // Labels key each project's first row; a closed shelf shows only the open thread, unlabeled.
+  const sectionLabels = new Map<string, SidebarProjectSnapshot | null>();
+  const labeled = (rows: readonly EnvironmentThreadShell[]) => {
+    if (labelGroups === null) return rows;
+    const groups = groupSidebarSectionByProject(labelGroups, rows);
+    for (const entry of groups) sectionLabels.set(threadShellKey(entry.threads[0]!), entry.group);
+    return groups.flatMap((entry) => entry.threads);
+  };
   const renderedSettledThreads = settledShelfExpanded
-    ? visibleSettledThreads
+    ? labeled(visibleSettledThreads)
     : routeThreadOnly(visibleSettledThreads, routeRowThreadKey);
   const visibleSnoozedThreads = snoozedShelfExpanded
-    ? snoozedThreads
+    ? labeled(snoozedThreads)
     : routeThreadOnly(snoozedThreads, routeRowThreadKey);
   const visibleWorkingThreads = workingShelfExpanded
-    ? workingThreads
+    ? labeled(workingThreads)
     : routeThreadOnly(workingThreads, routeRowThreadKey);
+  // Boring folders already group the active threads.
+  const renderedActiveThreads = folderGroups === null ? labeled(activeThreads) : activeThreads;
   const projectFolders =
     folderGroups === null
       ? null
@@ -543,7 +558,7 @@ function useSidebarThreads(input: {
   const orderedThreads = [
     ...pinnedThreads,
     ...(projectFolders === null
-      ? activeThreads
+      ? renderedActiveThreads
       : projectFolders.flatMap((folder) => folder.threads)),
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
@@ -563,6 +578,8 @@ function useSidebarThreads(input: {
     ...partition,
     threads,
     workingShelfEnabled,
+    sectionLabels,
+    renderedActiveThreads,
     searchableThreads: [
       ...pinnedThreads,
       ...activeThreads,
@@ -991,6 +1008,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
+  const sectionsByProject = useClientSettings((settings) => settings.sidebarSectionsByProject);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
@@ -1291,8 +1309,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
+  // Folder and label order. An archived project keeps its place for its threads, below the rest.
+  const projectOrderGroups =
+    scopedProjectGroups.length === 0
+      ? [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
+      : scopedProjectGroups;
   const {
     workingShelfEnabled,
+    sectionLabels,
+    renderedActiveThreads,
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
@@ -1336,12 +1361,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threads,
     delegatedUnderParent,
     routeRowThreadKey,
-    folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0
-        ? // An archived project keeps a folder for its active threads, below the rest.
-          [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
-        : scopedProjectGroups
-      : null,
+    folderGroups: boringSidebarEnabled ? projectOrderGroups : null,
+    labelGroups: sectionsByProject ? projectOrderGroups : null,
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
@@ -1709,9 +1730,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     };
   };
 
-  // Folder rows only drag out to the composer; folders own their order, so nothing drops in the list.
+  // Folder and labeled rows only drag out to the composer: folders and labels own their order,
+  // so nothing drops in the list.
   const isContextDrag =
     projectFolders !== null ||
+    sectionsByProject ||
     dragState?.contextDrag === true ||
     dragState?.activeSection === "working";
   const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
@@ -1945,7 +1968,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(activeThreads, "active");
+    const activeRows = rowsOf(renderedActiveThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
     if (workingThreads.length > 0) {
@@ -2078,7 +2101,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     );
   })();
   const handleThreadDragEnd = (event: DragEndEvent) => {
-    if (projectFolders !== null) return;
+    if (projectFolders !== null || sectionsByProject) return;
     const activeKey = String(event.active.id);
     const activeSection = sectionByThreadKey.get(activeKey);
     const target =
@@ -3343,13 +3366,29 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                         const isCard =
                           section === "active" || section === "pinned" || section === "working";
+                        // A closed shelf's open thread has no label above it.
+                        const underProjectLabel =
+                          sectionsByProject &&
+                          !folderRow &&
+                          (section === "active"
+                            ? projectFolders === null
+                            : section === "working"
+                              ? workingShelfExpanded
+                              : section === "snoozed"
+                                ? snoozedShelfExpanded
+                                : section === "settled" && settledShelfExpanded);
+                        // Parked rows under a project label drop their favicon, like folder rows.
+                        const parkedUnderLabel =
+                          underProjectLabel && (section === "snoozed" || section === "settled");
                         const rowVariant = folderRow
                           ? folderRowsMultiline
                             ? "folder-multiline"
                             : "folder"
-                          : isCard
-                            ? "card"
-                            : "slim";
+                          : parkedUnderLabel
+                            ? "folder"
+                            : isCard
+                              ? "card"
+                              : "slim";
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -3426,6 +3465,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 `${thread.environmentId}:${thread.projectId}`,
                               ) ?? null
                             }
+                            underProjectLabel={underProjectLabel}
                             providerEntryByInstanceId={
                               providerEntriesByEnvironment.get(thread.environmentId) ??
                               EMPTY_PROVIDER_ENTRIES
@@ -3467,6 +3507,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         if (item.kind === "thread") {
                           // Folders draw active rows in their own place below.
                           if (projectFolders !== null && item.section === "active") continue;
+                          if (sectionLabels.has(item.key)) {
+                            const group = sectionLabels.get(item.key) ?? null;
+                            items.push(
+                              <SidebarSectionProjectLabel
+                                key={`label:${item.section}:${group?.projectKey ?? "other"}`}
+                                group={group}
+                              />,
+                            );
+                          }
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
                           continue;
                         }

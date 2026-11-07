@@ -31,6 +31,30 @@ export function sidebarFolderRowId(projectKey: string) {
 }
 
 /**
+ * Names the project of the section rows below it when sections list threads by
+ * project. It is not a row: rows carry their project in their own labels.
+ */
+export const SidebarSectionProjectLabel = memo(function SidebarSectionProjectLabel(props: {
+  group: SidebarProjectSnapshot | null;
+}) {
+  const { group } = props;
+  return (
+    <li
+      aria-hidden
+      data-testid="sidebar-section-project-label"
+      className="mt-1 flex h-6 list-none items-center gap-2.5 px-(--sidebar-row-content-inset) text-xs font-medium text-sidebar-muted-foreground"
+    >
+      {group ? (
+        <ProjectFavicon project={group} className="size-4 shrink-0" />
+      ) : (
+        <span className="size-4 shrink-0" />
+      )}
+      <span className="min-w-0 truncate">{group?.displayName ?? "Other"}</span>
+    </li>
+  );
+});
+
+/**
  * A project folder in the boring sidebar. It reads like a shelf header: a trailing
  * count and chevron, with the count and a status dot only while it is closed, so a
  * closed folder still says when a hidden thread needs you.

@@ -31,6 +31,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  groupSidebarSectionByProject,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
@@ -1579,6 +1580,57 @@ describe("groupSidebarThreadsByProject", () => {
     expect(summarize((group) => group.projectKey === "fleet")).toEqual([
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
+    ]);
+  });
+});
+
+describe("groupSidebarSectionByProject", () => {
+  it("lists a section's rows under project labels in folder order, keeping unknown projects", () => {
+    const otherEnvironmentId = EnvironmentId.make("environment-remote");
+    const web = ProjectId.make("web");
+    const webRemote = ProjectId.make("web-remote");
+    const api = ProjectId.make("api");
+    const groups = [
+      {
+        projectKey: "web",
+        memberProjectRefs: [
+          { environmentId: localEnvironmentId, projectId: web },
+          { environmentId: otherEnvironmentId, projectId: webRemote },
+        ],
+      },
+      {
+        projectKey: "api",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: api }],
+      },
+      {
+        projectKey: "docs",
+        memberProjectRefs: [
+          { environmentId: localEnvironmentId, projectId: ProjectId.make("docs") },
+        ],
+      },
+    ];
+    const thread = (id: string, projectId: ProjectId, environmentId = localEnvironmentId) => ({
+      id,
+      environmentId,
+      projectId,
+    });
+    const section = [
+      thread("api-1", api),
+      thread("web-1", web),
+      thread("orphan", ProjectId.make("deleted")),
+      thread("web-2", webRemote, otherEnvironmentId),
+      thread("api-2", api),
+    ];
+
+    expect(
+      groupSidebarSectionByProject(groups, section).map((entry) => ({
+        label: entry.group?.projectKey ?? null,
+        threads: entry.threads.map((row) => row.id),
+      })),
+    ).toEqual([
+      { label: "web", threads: ["web-1", "web-2"] },
+      { label: "api", threads: ["api-1", "api-2"] },
+      { label: null, threads: ["orphan"] },
     ]);
   });
 });

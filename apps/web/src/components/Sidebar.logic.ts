@@ -935,35 +935,70 @@ export function sidebarFolderExpansionKeys(group: {
   ];
 }
 
+type ProjectGroupMembers = {
+  readonly memberProjectRefs: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly projectId: string;
+  }>;
+};
+type ProjectThread = Pick<SidebarThreadSummary, "environmentId" | "projectId">;
+
+/** One bucket per group, in `groups` order, and the threads whose project is in no group. */
+function bucketThreadsByProjectGroup<TThread extends ProjectThread>(
+  groups: readonly ProjectGroupMembers[],
+  threads: readonly TThread[],
+): { buckets: TThread[][]; ungrouped: TThread[] } {
+  const indexByProject = new Map<string, number>();
+  for (const [index, group] of groups.entries()) {
+    for (const ref of group.memberProjectRefs) {
+      indexByProject.set(`${ref.environmentId}:${ref.projectId}`, index);
+    }
+  }
+  const buckets = groups.map((): TThread[] => []);
+  const ungrouped: TThread[] = [];
+  for (const thread of threads) {
+    const index = indexByProject.get(`${thread.environmentId}:${thread.projectId}`);
+    (index === undefined ? ungrouped : buckets[index]!).push(thread);
+  }
+  return { buckets, ungrouped };
+}
+
 /**
  * Boring sidebar folders. Folders follow `groups` order and threads keep their
  * input order. A project with no threads gets a folder only when `keepEmpty` says so.
  * A thread whose project is in no group has no folder and is left out.
  */
 export function groupSidebarThreadsByProject<
-  TGroup extends {
-    readonly memberProjectRefs: ReadonlyArray<{
-      readonly environmentId: EnvironmentId;
-      readonly projectId: string;
-    }>;
-  },
-  TThread extends Pick<SidebarThreadSummary, "environmentId" | "projectId">,
+  TGroup extends ProjectGroupMembers,
+  TThread extends ProjectThread,
 >(
   groups: readonly TGroup[],
   threads: readonly TThread[],
   keepEmpty: (group: TGroup) => boolean,
 ): Array<{ group: TGroup; threads: TThread[] }> {
-  const folders = groups.map((group) => ({ group, threads: [] as TThread[] }));
-  const folderByProject = new Map<string, (typeof folders)[number]>();
-  for (const folder of folders) {
-    for (const ref of folder.group.memberProjectRefs) {
-      folderByProject.set(`${ref.environmentId}:${ref.projectId}`, folder);
-    }
-  }
-  for (const thread of threads) {
-    folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
-  }
-  return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
+  const { buckets } = bucketThreadsByProjectGroup(groups, threads);
+  return groups
+    .map((group, index) => ({ group, threads: buckets[index]! }))
+    .filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
+}
+
+/**
+ * A section's rows under project labels. Labels follow `groups` order and rows keep
+ * the section's order inside each. Rows whose project is in no group come last, under
+ * a `null` group, so a section never drops a thread.
+ */
+export function groupSidebarSectionByProject<
+  TGroup extends ProjectGroupMembers,
+  TThread extends ProjectThread,
+>(
+  groups: readonly TGroup[],
+  threads: readonly TThread[],
+): Array<{ group: TGroup | null; threads: TThread[] }> {
+  const { buckets, ungrouped } = bucketThreadsByProjectGroup(groups, threads);
+  const labeled: Array<{ group: TGroup | null; threads: TThread[] }> = groups.flatMap(
+    (group, index) => (buckets[index]!.length > 0 ? [{ group, threads: buckets[index]! }] : []),
+  );
+  return ungrouped.length > 0 ? [...labeled, { group: null, threads: ungrouped }] : labeled;
 }
 
 export type SidebarV2TopStatusKind =
