@@ -1,4 +1,4 @@
-import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { normalizeGitRemoteUrl, parseGitRemoteEntries } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { definition } from "../shared/definition.ts";
@@ -13,12 +13,9 @@ export interface GitHubRepositoryLocator {
 export function parseFetchRemotes(
   remotes: string,
 ): ReadonlyArray<{ readonly name: string; readonly url: string }> {
-  // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-  return remotes
-    .split("\n")
-    .map((line) => /^(\S+)\s+(\S+)\s+\(fetch\)(?:\s+\[[^\]]+\])?$/u.exec(line.trim()))
-    .filter((match): match is RegExpExecArray => match !== null)
-    .map((match) => ({ name: match[1]!, url: match[2]! }));
+  return parseGitRemoteEntries(remotes).flatMap(({ name, url, direction }) =>
+    direction === "fetch" ? [{ name, url }] : [],
+  );
 }
 
 /** gh priority: marked default, upstream/github/origin, sole remote. Null if ambiguous. */

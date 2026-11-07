@@ -1,5 +1,6 @@
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
+import { parseGitRemoteEntries } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -49,25 +50,13 @@ function isLocalRemoteUrl(url: string): boolean {
 }
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
-  const remotes = new Map<string, string>();
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(trimmed);
-    if (!match) continue;
-    const [, remoteName = "", remoteUrl = "", direction = ""] = match;
-    if (
-      direction !== "fetch" ||
-      remoteName.length === 0 ||
-      remoteUrl.length === 0 ||
-      isLocalRemoteUrl(remoteUrl)
-    ) {
-      continue;
-    }
-    remotes.set(remoteName, remoteUrl);
-  }
-  return remotes;
+  return new Map(
+    parseGitRemoteEntries(stdout).flatMap((remote) =>
+      remote.direction === "fetch" && !isLocalRemoteUrl(remote.url)
+        ? [[remote.name, remote.url] as const]
+        : [],
+    ),
+  );
 }
 
 function pickPrimaryRemote(
