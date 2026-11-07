@@ -15,6 +15,7 @@ import {
   isModelCostUnknown,
   type DailyTotals,
   type MergedUsage,
+  type ModelTotals,
 } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -66,7 +67,7 @@ const WINDOW_OPTIONS = [
   { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
 ] as const;
 
-const CHART_HEIGHT = 180;
+const CHART_HEIGHT = 120;
 const WIDE_CHART_HEIGHT = 260;
 // Below this the page keeps the phone's single column.
 const WIDE_WIDTH = 600;
@@ -100,6 +101,7 @@ function UsageScreen(props: {
   // A workspace pane knows its width in the render that resizes it; measuring lags a frame.
   const width = useWorkspaceSettledContentWidth() ?? measuredWidth;
   const wide = width >= WIDE_WIDTH;
+  const sectionGap = wide ? "gap-6" : "gap-4";
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -229,7 +231,11 @@ function UsageScreen(props: {
 
   return (
     <SettingsScreen
-      title="Usage"
+      title={
+        showingLimits
+          ? "Usage · Limits"
+          : `Usage · ${metric === "cost" ? "Cost" : "Tokens"} · ${windowDays === 1 ? "24h" : `${windowDays}d`}`
+      }
       menus={showEnvironmentFilter ? [environmentMenu] : undefined}
       workspaceRoot={props.workspace}
     >
@@ -249,7 +255,10 @@ function UsageScreen(props: {
           ) : undefined
         }
       >
-        <View className="w-full gap-6 self-center" style={{ maxWidth: MAX_CONTENT_WIDTH }}>
+        <View
+          className={cn("w-full self-center", sectionGap)}
+          style={{ maxWidth: MAX_CONTENT_WIDTH }}
+        >
           {wide ? (
             <View className="flex-row items-center gap-3">
               {showingLimits ? (
@@ -273,17 +282,28 @@ function UsageScreen(props: {
               />
             </View>
           ) : (
-            <SegmentedControl
-              options={VIEW_OPTIONS}
-              selected={view}
-              onSelect={setView}
-              role="tab"
-            />
+            <View className="gap-2">
+              <SegmentedControl
+                options={VIEW_OPTIONS}
+                selected={view}
+                onSelect={setView}
+                size="large"
+                role="tab"
+              />
+              {showingLimits ? null : (
+                <SegmentedControl
+                  options={WINDOW_OPTIONS}
+                  selected={windowDays}
+                  onSelect={selectWindow}
+                  size="large"
+                />
+              )}
+            </View>
           )}
           <Animated.View
             key={showingLimits ? "limits" : "usage"}
             entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
-            className="gap-6"
+            className={sectionGap}
           >
             {showingLimits ? (
               <UsageLimitsSection
@@ -302,14 +322,6 @@ function UsageScreen(props: {
               />
             ) : (
               <>
-                {wide ? null : (
-                  <SegmentedControl
-                    options={WINDOW_OPTIONS}
-                    selected={windowDays}
-                    onSelect={selectWindow}
-                    size="compact"
-                  />
-                )}
                 <ChatGptUsageSummary selectedEnvironmentIds={selectedEnvironmentIds} />
                 {merged.duplicateSources.length > 0 ? (
                   <Text className="text-sm text-foreground-muted">
@@ -346,11 +358,15 @@ function UsageScreen(props: {
                         {message}
                       </Text>
                     ))}
-                    <UsageUpdating dimmed={progress.dimmed} label={progress.label}>
+                    <UsageUpdating
+                      dimmed={progress.dimmed}
+                      label={progress.label}
+                      className={sectionGap}
+                    >
                       {wide ? (
                         <View className="flex-row gap-6">
                           <View className="w-72 gap-6">
-                            <View className="rounded-[24px] border-continuous bg-grouped-card p-4">
+                            <View className="rounded-[24px] border-continuous bg-grouped-card px-4 py-3">
                               <UsageSummary merged={merged} metric={metric} />
                             </View>
                             {providers}
@@ -370,13 +386,13 @@ function UsageScreen(props: {
                           {providers}
                         </>
                       )}
+                      <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
                       <TotalsSection
                         merged={merged}
                         isPast24Hours={isPast24Hours}
                         columns={width >= 900 ? 6 : wide ? 3 : 2}
                       />
                       <CostSection merged={merged} wide={wide} />
-                      <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
                     </UsageUpdating>
                   </>
                 )}
@@ -392,10 +408,12 @@ function UsageScreen(props: {
 function UsageUpdating({
   dimmed,
   label,
+  className,
   children,
 }: {
   readonly dimmed: boolean;
   readonly label: string | null;
+  readonly className: string;
   readonly children: ReactNode;
 }) {
   const reduceMotion = useReduceMotionEnabled();
@@ -409,7 +427,7 @@ function UsageUpdating({
 
   return (
     <View>
-      <Animated.View style={dimStyle} className="gap-6" accessibilityState={{ busy: dimmed }}>
+      <Animated.View style={dimStyle} className={className} accessibilityState={{ busy: dimmed }}>
         {children}
       </Animated.View>
       {label !== null ? (
@@ -482,13 +500,13 @@ function CursorEnableRow({
   return (
     <View
       className={cn(
-        "flex-row items-center justify-between gap-3 p-4",
+        "flex-row items-center justify-between gap-3 px-4 py-2.5",
         bordered && "border-t border-border-subtle",
       )}
     >
       <View className="min-w-0 flex-1 flex-row items-center gap-2">
         <View className="size-2.5 rounded-full" style={{ backgroundColor: colors.cursor }} />
-        <Text className="shrink text-lg text-foreground">
+        <Text className="shrink text-base text-foreground">
           Cursor{showEnvironment ? ` · ${label}` : ""}
         </Text>
       </View>
@@ -558,7 +576,10 @@ function ChartCard(props: {
 
   return (
     <View
-      className={`gap-4 rounded-[24px] border-continuous bg-grouped-card p-4${props.fill ? " flex-1" : ""}`}
+      className={cn(
+        "gap-3 rounded-[24px] border-continuous bg-grouped-card px-4 py-3",
+        props.fill && "flex-1",
+      )}
     >
       {props.title ? (
         <Text className="text-sm font-t3-medium text-foreground">{props.title}</Text>
@@ -579,7 +600,7 @@ function ChartCard(props: {
         chart
       )}
 
-      <View className="gap-2">
+      <View className="gap-1.5">
         <View className="flex-row items-center justify-between">
           <Text className="text-xs text-foreground-tertiary">
             {props.isPast24Hours
@@ -592,7 +613,7 @@ function ChartCard(props: {
               : formatDayShort(props.untilDay)}
           </Text>
         </View>
-        <View className="flex-row flex-wrap items-center gap-x-4 gap-y-1">
+        <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
           {merged.providers.map((provider) => (
             <View key={provider.provider} className="flex-row items-center gap-1.5">
               <View
@@ -617,10 +638,10 @@ function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: Us
       <Text className="text-sm text-foreground-muted">
         {metric === "cost" ? "Raw token cost" : "Processed tokens"}
       </Text>
-      <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
+      <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
         {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
       </Text>
-      <Text className="text-sm text-foreground-muted">
+      <Text className="text-xs text-foreground-muted">
         {metric === "cost"
           ? "* if billed at full API rate"
           : `Across ${formatCount(merged.sessions)} sessions`}
@@ -682,54 +703,21 @@ function ProviderSection(props: {
         const provider = row.provider;
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
         return (
-          <View
+          <ShareRow
             key={provider.provider}
-            className={cn(
-              props.compact ? "gap-0.5 px-4 py-3" : "gap-2 p-4",
-              index > 0 && "border-t border-border-subtle",
-            )}
-          >
-            <View className="flex-row items-baseline justify-between gap-3">
-              <View className="flex-row items-center gap-2">
-                <View
-                  className="size-2.5 rounded-full"
-                  style={{ backgroundColor: colors[provider.provider] }}
-                />
-                <Text
-                  className={
-                    props.compact ? "text-base text-foreground" : "text-lg text-foreground"
-                  }
-                >
-                  {PROVIDER_LABEL[provider.provider]}
-                </Text>
-              </View>
-              <Text
-                className={
-                  props.compact
-                    ? "text-base tabular-nums text-foreground"
-                    : "text-lg tabular-nums text-foreground"
-                }
-              >
-                {metric === "cost"
-                  ? formatUsd(provider.costUsd)
-                  : formatTokens(provider.totalTokens)}
-              </Text>
-            </View>
-            {props.compact ? null : (
-              <View className="h-1 flex-row overflow-hidden rounded-full bg-subtle">
-                <View
-                  className="h-full rounded-full"
-                  style={{ flex: share, backgroundColor: colors[provider.provider] }}
-                />
-                <View style={{ flex: 1 - share }} />
-              </View>
-            )}
-            <Text className="text-sm text-foreground-muted">
-              {metric === "cost"
+            color={colors[provider.provider]}
+            label={PROVIDER_LABEL[provider.provider]}
+            value={
+              metric === "cost" ? formatUsd(provider.costUsd) : formatTokens(provider.totalTokens)
+            }
+            detail={
+              metric === "cost"
                 ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
-            </Text>
-          </View>
+                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`
+            }
+            share={props.compact ? null : share}
+            className={index > 0 ? "border-t border-border-subtle" : undefined}
+          />
         );
       })}
     </SettingsSection>
@@ -855,7 +843,7 @@ function ShareBar(props: {
   if (visible.length === 0) return null;
 
   return (
-    <View className="gap-3 p-4">
+    <View className="gap-2 px-4 py-3">
       <View className="flex-row items-baseline justify-between gap-3">
         <Text className="text-sm text-foreground-muted">{props.label}</Text>
         {props.aside ? (
@@ -871,7 +859,7 @@ function ShareBar(props: {
           />
         ))}
       </View>
-      <View className="flex-row flex-wrap gap-x-4 gap-y-1.5">
+      <View className="flex-row flex-wrap gap-x-3 gap-y-1">
         {visible.map((segment) => (
           <View key={segment.label} className="flex-row items-center gap-1.5">
             <View className="size-2 rounded-sm" style={{ backgroundColor: segment.color }} />
@@ -891,12 +879,40 @@ function MetricCell(props: {
   readonly columns: number;
 }) {
   return (
-    <View className="gap-0.5 p-4" style={{ width: `${100 / props.columns}%` }}>
+    <View className="gap-0.5 px-4 py-2.5" style={{ width: `${100 / props.columns}%` }}>
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
-      <Text className="text-xl font-t3-medium tabular-nums text-foreground">{props.value}</Text>
+      <Text className="text-lg font-t3-medium tabular-nums text-foreground">{props.value}</Text>
       <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
     </View>
   );
+}
+
+function breakdownFigures(row: ModelTotals, metric: UsageChartMetric) {
+  const unknown = isModelCostUnknown(row);
+  const partial = !unknown && row.unpricedRecords > 0 ? " · some unpriced" : "";
+  if (metric === "tokens") {
+    return {
+      value: formatTokens(row.totalTokens),
+      valueMuted: false,
+      share: row.tokenShare,
+      detail: `${formatPercent(row.tokenShare)} of tokens · ${
+        unknown ? "no known rates" : formatUsd(row.costUsd)
+      }${partial}`,
+    };
+  }
+  return unknown
+    ? {
+        value: "Unpriced",
+        valueMuted: true,
+        share: 0,
+        detail: `no known rates · ${formatTokens(row.totalTokens)} tokens`,
+      }
+    : {
+        value: formatUsd(row.costUsd),
+        valueMuted: false,
+        share: row.costShare,
+        detail: `${formatPercent(row.costShare)} of cost · ${formatTokens(row.totalTokens)} tokens${partial}`,
+      };
 }
 
 function ModelsSection(props: {
@@ -904,59 +920,105 @@ function ModelsSection(props: {
   readonly metric: UsageChartMetric;
   readonly columns: 1 | 2;
 }) {
-  const { merged, metric } = props;
+  const { merged, metric, columns } = props;
   const colors = useProviderColors();
   if (merged.models.length === 0) return null;
-
   // Hermes lacks toSorted.
   const ordered = [...merged.models].sort((a, b) =>
     metric === "cost"
       ? b.costUsd - a.costUsd || b.totalTokens - a.totalTokens
       : b.totalTokens - a.totalTokens || b.costUsd - a.costUsd,
   );
-
+  const hasPartialCost = merged.models.some(
+    (row) => !isModelCostUnknown(row) && row.unpricedRecords > 0,
+  );
   return (
-    <SettingsSection title="By model">
+    <SettingsSection
+      title="By model"
+      footer={
+        hasPartialCost
+          ? "Rows marked some unpriced exclude records with no price from cost; their tokens are included."
+          : undefined
+      }
+    >
       <View className="flex-row flex-wrap">
         {ordered.map((model, index) => (
-          <View
+          <ShareRow
             key={`${model.provider}:${model.model}`}
             className={cn(
-              "flex-row items-center gap-3 p-4",
-              index >= props.columns && "border-t border-border-subtle",
-              index % props.columns === 1 && "border-l border-border-subtle",
+              index >= columns && "border-t border-border-subtle",
+              index % columns === 1 && "border-l border-border-subtle",
             )}
-            style={{ width: `${100 / props.columns}%` }}
-          >
-            <View
-              className="size-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: colors[model.provider] }}
-            />
-            <View className="min-w-0 flex-1 gap-0.5">
-              <Text className="text-base text-foreground" numberOfLines={1}>
-                {model.model}
-              </Text>
-              <Text className="text-sm text-foreground-muted">
-                {metric === "tokens"
-                  ? `${formatPercent(model.tokenShare)} of tokens · ${
-                      isModelCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
-                    }`
-                  : isModelCostUnknown(model)
-                    ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
-                    : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
-              </Text>
-            </View>
-            <Text className="text-base tabular-nums text-foreground">
-              {metric === "tokens"
-                ? formatTokens(model.totalTokens)
-                : isModelCostUnknown(model)
-                  ? "Unpriced"
-                  : formatUsd(model.costUsd)}
-            </Text>
-          </View>
+            width={`${100 / columns}%`}
+            {...breakdownFigures(model, metric)}
+            color={colors[model.provider]}
+            label={model.model}
+            labelLines={1}
+          />
         ))}
       </View>
     </SettingsSection>
+  );
+}
+
+/** Identity and figure, then the row's share as a bar beside one secondary line. */
+function ShareRow(props: {
+  /** Provider colour for the dot and bar; `null` for rows that span providers. */
+  readonly color: string | null;
+  readonly label: string;
+  readonly labelLines?: number;
+  readonly value: string;
+  readonly valueMuted?: boolean;
+  readonly detail: string;
+  /** `null` drops the bar where the row has no room for it. */
+  readonly share: number | null;
+  readonly className?: string;
+  readonly width?: `${number}%`;
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${props.label}, ${props.value}, ${props.detail}`}
+      className={cn("flex-row items-center gap-3 px-4 py-2.5", props.className)}
+      style={props.width === undefined ? undefined : { width: props.width }}
+    >
+      {props.color === null ? null : (
+        <View className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: props.color }} />
+      )}
+      <View className="min-w-0 flex-1 gap-0.5">
+        <View className="flex-row items-baseline gap-3">
+          <Text
+            className="min-w-0 flex-1 text-base text-foreground"
+            numberOfLines={props.labelLines}
+          >
+            {props.label}
+          </Text>
+          <Text
+            className={cn(
+              "text-base font-t3-medium tabular-nums",
+              props.valueMuted ? "text-foreground-muted" : "text-foreground",
+            )}
+          >
+            {props.value}
+          </Text>
+        </View>
+        <View className="flex-row items-center gap-2">
+          {props.share === null ? null : (
+            <View className="h-1.5 w-14 shrink-0 flex-row overflow-hidden rounded-full bg-foreground/10">
+              <View
+                className={cn("h-full rounded-full", props.color === null && "bg-primary")}
+                style={[
+                  { flex: props.share },
+                  props.color ? { backgroundColor: props.color } : null,
+                ]}
+              />
+              <View style={{ flex: 1 - props.share }} />
+            </View>
+          )}
+          <Text className="shrink text-sm text-foreground-muted">{props.detail}</Text>
+        </View>
+      </View>
+    </View>
   );
 }
 

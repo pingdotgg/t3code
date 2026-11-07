@@ -13,7 +13,7 @@ from your connected environments. It shows token use, cache savings, model break
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
-Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
+On web and desktop, select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.

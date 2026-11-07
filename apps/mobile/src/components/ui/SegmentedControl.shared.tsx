@@ -39,7 +39,14 @@ export function SegmentedControl<Value extends string | number>(
     Platform.OS,
     themeId,
   );
-  const minHeight = props.size === "compact" ? 32 : Platform.OS === "android" ? 40 : 36;
+  const minHeight =
+    props.size === "large"
+      ? 50
+      : props.size === "compact"
+        ? 32
+        : Platform.OS === "android"
+          ? 40
+          : 36;
 
   return (
     <View collapsable={false} className={props.className}>

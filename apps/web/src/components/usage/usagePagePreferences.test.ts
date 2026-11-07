@@ -24,9 +24,15 @@ afterEach(() => {
 });
 
 describe("Usage page preferences", () => {
-  it("round-trips hidden providers and reads older saves without them", () => {
-    saveUsagePagePreferences({ metric: "cost", windowDays: 7, hiddenProviders: ["codex"] });
+  it("round-trips selections and reads older saves without optional preferences", () => {
+    saveUsagePagePreferences({
+      metric: "cost",
+      windowDays: 7,
+      hiddenProviders: ["codex"],
+      breakdown: "time",
+    });
     expect(readUsagePagePreferences().hiddenProviders).toEqual(["codex"]);
+    expect(readUsagePagePreferences().breakdown).toBe("time");
 
     values.set(key, '{"metric":"tokens","windowDays":30}');
     expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 30 });

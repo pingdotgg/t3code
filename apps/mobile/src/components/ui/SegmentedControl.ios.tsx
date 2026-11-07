@@ -48,7 +48,7 @@ export function SegmentedControl<Value extends string | number>(
           const option = props.options[nativeEvent.index];
           if (option) props.onSelect(option.value);
         }}
-        style={{ height: props.size === "compact" ? 32 : 36 }}
+        style={{ height: props.size === "large" ? 44 : props.size === "compact" ? 32 : 36 }}
       />
     </View>
   );
