@@ -1,3 +1,5 @@
+import { isListedThreadLineage, type OrchestrationV2AppThreadLineage } from "@t3tools/contracts";
+
 // Shared across hook instances so sidebar, header and menu actions invalidate each other.
 const currentActions = new Map<string, symbol>();
 const listeners = new Set<() => void>();
@@ -49,6 +51,7 @@ export function planThreadUndo(
     readonly pinnedAt?: string | null;
     readonly pinOrderKey?: string | null;
     readonly snoozedUntil?: string | null;
+    readonly lineage?: OrchestrationV2AppThreadLineage;
   } | null,
 ): ThreadUndoPlan {
   if (action === "snooze") return [{ action: "unsnooze" }];
@@ -62,7 +65,11 @@ export function planThreadUndo(
       ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
       : [];
   if (action === "unpin") return [pin, ...snooze];
-  return [{ action: "unsettle" }, ...(thread?.pinnedAt != null ? [pin] : []), ...snooze];
+  // The server refuses to pin subagents and side chats, so a pin from before that rule stays cleared.
+  const repin =
+    thread?.pinnedAt != null &&
+    (thread.lineage === undefined || isListedThreadLineage(thread.lineage));
+  return [{ action: "unsettle" }, ...(repin ? [pin] : []), ...snooze];
 }
 
 export async function executeThreadUndo<Result>(

@@ -12,6 +12,7 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
+  isListedThreadLineage,
   type ScopedThreadRef,
   ThreadId,
   sessionGrantsScope,
@@ -730,7 +731,9 @@ export function useThreadActions() {
       environmentId: target.environmentId,
       input: { threadId: target.threadId },
     });
-    if (result._tag === "Success" && action.isCurrent()) {
+    // The server refuses to re-pin a subagent or side chat, so its unpin offers no Undo.
+    const canUndo = thread == null || isListedThreadLineage(thread.lineage);
+    if (result._tag === "Success" && canUndo && action.isCurrent()) {
       showThreadUndoNotice({
         action: "Unpinned",
         claim: action,

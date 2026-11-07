@@ -64,6 +64,7 @@ import {
   orchestrationV2WorktreePending,
   ProviderInstanceId,
   ProviderInteractionMode,
+  isListedThreadLineage,
   isRuntimeModeAbove,
   resolveProviderInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
@@ -3397,6 +3398,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is archived.`,
+      });
+    }
+    // Unpin stays allowed so threads pinned before this check still have a way out.
+    if (command.type === "thread.pin" && !isListedThreadLineage(thread.lineage)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is a subagent or side chat, which thread lists do not show; it cannot be pinned.`,
       });
     }
     // Reject reorder after unpin so a raced request cannot restore a cleared pin.

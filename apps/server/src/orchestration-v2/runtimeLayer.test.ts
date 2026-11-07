@@ -2800,6 +2800,77 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each([
+    { kind: "subagent", relationshipToParent: "subagent", sideChat: undefined },
+    { kind: "side chat", relationshipToParent: "fork", sideChat: true },
+  ] as const)(
+    "refuses to pin a $kind thread, which no thread list shows, but still unpins it",
+    ({ kind, relationshipToParent, sideChat }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const slug = kind.replace(" ", "-");
+        const parentThreadId = ThreadId.make(`runtime-layer-pin-${slug}-parent`);
+        const childThreadId = ThreadId.make(`runtime-layer-pin-${slug}-child`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-pin-${slug}-create-parent`),
+          threadId: parentThreadId,
+          projectId: ProjectId.make(`runtime-layer-pin-${slug}-project`),
+          title: "Parent",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`runtime-layer-pin-${slug}-child-created`),
+              type: "thread.created",
+              threadId: childThreadId,
+              occurredAt: now,
+              payload: {
+                ...parent.thread,
+                id: childThreadId,
+                title: `Child ${kind}`,
+                lineage: {
+                  parentThreadId,
+                  rootThreadId: parentThreadId,
+                  relationshipToParent,
+                  ...(sideChat === undefined ? {} : { sideChat }),
+                },
+              },
+            },
+          ],
+        });
+
+        const accepted = yield* orchestrator
+          .dispatch({
+            type: "thread.pin",
+            commandId: CommandId.make(`runtime-layer-pin-${slug}-pin`),
+            threadId: childThreadId,
+          })
+          .pipe(
+            Effect.as(true),
+            Effect.catchTags({ OrchestratorDispatchError: () => Effect.succeed(false) }),
+          );
+        assert.isFalse(accepted, `thread.pin was accepted for a ${kind} thread`);
+        assert.notExists((yield* orchestrator.getThreadProjection(childThreadId)).thread.pinnedAt);
+
+        yield* orchestrator.dispatch({
+          type: "thread.unpin",
+          commandId: CommandId.make(`runtime-layer-pin-${slug}-unpin`),
+          threadId: childThreadId,
+        });
+      }),
+  );
+
   it.effect("keeps the branch pull request when linking another pull request", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
