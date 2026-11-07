@@ -55,7 +55,12 @@ const withFakeSystemd = <A, E>(
   {
     oomPolicy = true,
     stopFails = false,
-  }: { readonly oomPolicy?: boolean; readonly stopFails?: boolean } = {},
+    memoryPolicy,
+  }: {
+    readonly oomPolicy?: boolean;
+    readonly stopFails?: boolean;
+    readonly memoryPolicy?: string;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
@@ -105,7 +110,11 @@ const withFakeSystemd = <A, E>(
     const scope = yield* make.pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
+      Effect.provideService(HostProcess.Environment, {
+        PATH: bin,
+        XDG_RUNTIME_DIR: "/run/user/1",
+        ...(memoryPolicy === undefined ? {} : { T3CODE_AGENT_SLICE_MEMORY_POLICY: memoryPolicy }),
+      }),
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
         readFileString: (path, encoding) =>
@@ -172,6 +181,48 @@ const launchCodex = (scope: Effect.Success<typeof make>, threadId: string) =>
   );
 
 describe("AgentScope service", () => {
+  it.effect.each([undefined, "automatic", "host-managed", "invalid"])(
+    "preserves scopes and OOM handling with memory policy %s",
+    (memoryPolicy) =>
+      withFakeSystemd(
+        ({ scope, units, calls, stateDir }) =>
+          Effect.gen(function* () {
+            const first = yield* scope.wrap({
+              command: "agent",
+              args: [],
+              name: "agent",
+              threadId: "a",
+            });
+            expect(first.args).toContain(`--slice=${ownedAgentSlice(stateDir)}`);
+            expect(first.args).toContain("--property=OOMPolicy=stop");
+            yield* scope.wrap({ command: "agent", args: [], name: "agent", threadId: "b" });
+            const properties = calls.filter((args) => args.includes("set-property"));
+            const limits = properties.filter((args) => args.includes("app-t3code-agents.slice"));
+            expect(properties).toHaveLength(memoryPolicy === "host-managed" ? 1 : 2);
+            expect(limits).toHaveLength(memoryPolicy === "host-managed" ? 0 : 1);
+            expect(properties).toContainEqual([
+              "--user",
+              "set-property",
+              "--runtime",
+              "app-t3code.slice",
+              "CPUWeight=10",
+              "IOWeight=10",
+              "TasksMax=25%",
+            ]);
+            if (memoryPolicy !== "host-managed") {
+              expect(limits[0]).toContain("app-t3code-agents.slice");
+              expect(limits[0]?.some((arg) => arg.startsWith("MemoryHigh="))).toBe(true);
+              expect(limits[0]?.some((arg) => arg.startsWith("MemoryMax="))).toBe(true);
+            }
+            units.set(unitOf(first), { activeState: "failed", result: "oom-kill" });
+            expect(yield* scope.oomKilled("a")).toBe(true);
+            yield* scope.clear("a");
+            expect(yield* scope.oomKilled("a")).toBe(false);
+          }),
+        memoryPolicy === undefined ? {} : { memoryPolicy },
+      ),
+  );
+
   it.effect("labels a thread from its newest scope until its next session clears it", () =>
     withFakeSystemd(({ scope, units }) =>
       Effect.gen(function* () {

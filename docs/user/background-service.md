@@ -98,6 +98,22 @@ enabled, or keep `t3 serve` running in a terminal. Minimize the desktop app rath
 than closing its last window, which stops its local server. Linking T3 Connect
 does not configure automatic startup at Windows sign-in.
 
+### Host-managed agent memory on Linux
+
+By default, T3 Code applies automatic memory limits to the systemd user slice
+`app-t3code-agents.slice`. If you manage that slice's memory budget yourself, set
+`T3CODE_AGENT_SLICE_MEMORY_POLICY=host-managed` in the server's environment (or
+its `service.env`) and restart the server. T3 Code then leaves `MemoryHigh` and
+`MemoryMax` untouched while keeping per-thread scopes, cleanup and OOM reporting.
+Unset the variable or set it to `automatic` to restore automatic limits on restart.
+
+The slice is shared by T3 servers running as the same OS user, so configure all
+of them consistently. This option does not remove runtime overrides written by
+earlier starts. Apply your intended limits with `systemctl --user set-property
+--runtime app-t3code-agents.slice MemoryHigh=… MemoryMax=…`. Restarting the server
+or user manager does not clear those runtime configuration files; they can remain
+until the next reboot.
+
 `t3 up` installs the service when you set up T3 Connect, but the two are managed
 separately. Signing out of T3 Connect does not stop or uninstall the service.
 

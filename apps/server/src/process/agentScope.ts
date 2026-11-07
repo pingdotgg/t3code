@@ -198,11 +198,23 @@ export const make = Effect.gen(function* () {
           });
         }
       });
-      const limits = agentSliceMemoryLimits(NodeOS.totalmem());
-      yield* setProperties(AGENT_SLICE, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
+      const memoryPolicy = hostEnvironment.T3CODE_AGENT_SLICE_MEMORY_POLICY;
+      if (
+        memoryPolicy !== undefined &&
+        memoryPolicy !== "automatic" &&
+        memoryPolicy !== "host-managed"
+      ) {
+        yield* Effect.logWarning("Unknown agent slice memory policy; using automatic limits");
+      }
+      const limits =
+        memoryPolicy === "host-managed" ? undefined : agentSliceMemoryLimits(NodeOS.totalmem());
+      if (limits !== undefined) {
+        yield* setProperties(AGENT_SLICE, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
+      }
       yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
+        memoryPolicy: limits === undefined ? "host-managed" : "automatic",
         ...limits,
         oomPolicy: supportsOomPolicy,
       });
