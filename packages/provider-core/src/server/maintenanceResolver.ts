@@ -463,6 +463,32 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+// npm names the tarball `${name}-${version}.tgz`, dropping a scope's `@` and its `/`.
+function parseNpmPackVersion(stdout: string, packageName: string): string | null {
+  const prefix = `${packageName.replace(/^@/, "").replace("/", "-")}-`;
+  const filename = stdout.trim();
+  if (!filename.startsWith(prefix) || !filename.endsWith(".tgz")) return null;
+  const version = filename.slice(prefix.length, -".tgz".length);
+  return version && !/\s/.test(version) ? version : null;
+}
+
+// `vp i -g` installs through npm, whose min-release-age and `before` `npm view` ignores;
+// pack resolves `@latest` the way install does. `--json=false` keeps its output to the tarball name.
+const resolveNpmInstallableLatestVersion = Effect.fn("resolveNpmInstallableLatestVersion")(
+  function* (packageName: string, env: NodeJS.ProcessEnv) {
+    const npmPath = yield* resolveCommandPath("npm", {
+      env: { ...(yield* HostProcess.Environment), ...env },
+    });
+    if (!npmPath) return null;
+    const packed = yield* runProbe(
+      npmPath,
+      ["pack", "--dry-run", "--json=false", "--global", `${packageName}@latest`],
+      env,
+    );
+    return packed ? parseNpmPackVersion(packed, packageName) : null;
+  },
+);
+
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
@@ -550,6 +576,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       ? manual
       : native;
   if (commandPaths.some(isVitePlusGlobalCommandPath)) {
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -557,6 +584,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateArgs: ["i", "-g", packageName],
       updateLockKey: "vite-plus-global",
       env: context.env,
+      lookupLatestVersion: resolveNpmInstallableLatestVersion(packageName, context.env).pipe(
+        Effect.provideContext(services),
+      ),
     });
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {

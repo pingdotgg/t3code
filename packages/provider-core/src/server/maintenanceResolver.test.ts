@@ -300,6 +300,64 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  it.effect(
+    "does not offer a Vite+ update npm's release-age policy will not install",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-release-age");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        const npmPath = NodePath.join(npmBinDir, "npm");
+        writeExecutable(npmPath);
+        const binaryPath = NodePath.join(tempDir, ".vite-plus/bin/package-tool");
+        writeExecutable(binaryPath);
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath,
+            env: { PATH: npmBinDir },
+          },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            // `npm view` ignores min-release-age; install-time resolution honours it.
+            stdoutSpawner(
+              (command, args) => {
+                if (command !== npmPath) return "";
+                if (args[0] === "view") return '"1.2.0"';
+                return args[0] === "pack" && args.includes("--dry-run")
+                  ? "example-package-tool-1.1.0.tgz\n"
+                  : "";
+              },
+              (args) => (["view", "pack"].includes(args[0] ?? "") ? 0 : 1),
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          { ...installedPackageToolProvider, version: "1.1.0" },
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() =>
+              Effect.die("a configured npm lookup must not fall back to public npm"),
+            ),
+          ),
+        );
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "current",
+          currentVersion: "1.1.0",
+          latestVersion: "1.1.0",
+        });
+      }),
+    { skip: windowsHost },
+  );
+
   it("pins the advertised stable version in a pnpm-global update command", () => {
     const advisoryFor = (
       maintenanceCapabilities: ReturnType<typeof makeProviderMaintenanceCapabilities>,
