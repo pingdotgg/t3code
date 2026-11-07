@@ -11,7 +11,10 @@ const { createView, decodeOnMain } = vi.hoisted(() => ({
 }));
 vi.mock("electron", () => ({
   WebContentsView: class {
-    webContents = createView();
+    webContents;
+    constructor(options: Electron.WebContentsViewConstructorOptions) {
+      this.webContents = createView(options);
+    }
   },
   nativeImage: { createFromBuffer: decodeOnMain },
 }));
@@ -40,6 +43,14 @@ it("waits for PNG processing in a renderer without decoding on the main process"
   expect(result).toBeInstanceOf(Promise);
   await sent.promise;
   expect(decodeOnMain).not.toHaveBeenCalled();
+  expect(createView).toHaveBeenCalledWith({
+    webPreferences: {
+      preload: expect.stringContaining("LinuxCaptureResizePreload.cjs"),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
   expect(contents.send).toHaveBeenCalledWith("t3:linux-capture", png);
   const resized = new Uint8Array([1, 2, 3]);
   contents.emit("ipc-message", {}, "t3:linux-capture", resized);
