@@ -4,27 +4,52 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  type OrchestrationV2ArchivedShellSnapshot,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { EMPTY_SHELL_STATE, type EnvironmentShellState } from "./shell.ts";
 import { isThreadWorking } from "./threadInbox.ts";
 import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
+const emptyArchive: OrchestrationV2ArchivedShellSnapshot = {
+  schemaVersion: 1,
+  snapshotSequence: 0,
+  projects: [],
+  threads: [],
+};
 
 function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
+  );
+  type ArchiveResult = AsyncResult.AsyncResult<OrchestrationV2ArchivedShellSnapshot, string>;
+  const archiveRefreshes: Array<EnvironmentId> = [];
+  const archivedSnapshotAtom = Atom.family((archiveEnvironmentId: EnvironmentId) =>
+    Atom.writable(
+      (get): ArchiveResult =>
+        Option.getOrElse(get.self<ArchiveResult>(), () => AsyncResult.success(emptyArchive)),
+      (ctx, value: ArchiveResult) => ctx.setSelf(value),
+      () => {
+        archiveRefreshes.push(archiveEnvironmentId);
+      },
+    ),
+  );
+  const shellStateAtom = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<AsyncResult.AsyncResult<EnvironmentShellState, string>>(
+      AsyncResult.success(EMPTY_SHELL_STATE),
+    ),
   );
   const catalogValueAtom = Atom.make({
     isReady: true,
@@ -47,11 +72,16 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
   return {
     registry: AtomRegistry.make(),
     snapshotAtom,
+    archivedSnapshotAtom,
+    archiveRefreshes,
+    shellStateAtom,
     catalogValueAtom,
     threads: createEnvironmentThreadShellAtoms({
       catalogValueAtom,
       snapshotAtom,
       hiddenThreadTagsAtom: () => Atom.make(null),
+      archivedSnapshotAtom,
+      shellStateAtom,
     }),
   };
 }
@@ -314,10 +344,15 @@ describe("v2 thread shell lists", () => {
   });
 
   it("lists a task a linked environment runs for a listed thread under that thread", () => {
-    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness([
-      environmentId,
-      remoteEnvironmentId,
-    ]);
+    const {
+      registry,
+      threads,
+      snapshotAtom,
+      archivedSnapshotAtom,
+      archiveRefreshes,
+      shellStateAtom,
+      catalogValueAtom,
+    } = makeHarness([environmentId, remoteEnvironmentId]);
     const parent = v2ThreadShell;
     const task = {
       ...v2ThreadShell,
@@ -380,16 +415,65 @@ describe("v2 thread shell lists", () => {
     expect(registry.get(threads.threadShellAtom(parentRef))?.pendingSubagentRequest).toBeNull();
     expect(registry.get(inputs).map((thread) => thread.id)).toEqual([helper.id]);
 
+    const archive = (
+      snapshotSequence: number,
+      archived: ReadonlyArray<OrchestrationV2ThreadShell>,
+    ) =>
+      registry.set(
+        archivedSnapshotAtom(environmentId),
+        AsyncResult.success({ ...emptyArchive, snapshotSequence, threads: archived }),
+      );
     // A task whose parent is gone there is listed on its own, as is one whose
-    // parent's environment is switched off.
+    // parent's environment is switched off. An archive request made before the parent went
+    // missing may predate its archive, so the archive is read again first.
+    registry.set(archivedSnapshotAtom(environmentId), AsyncResult.initial(true));
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
+    expect(listed()).toEqual([]);
+    expect(archiveRefreshes).toEqual([environmentId]);
+    archive(0, []);
     expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
-    // Archiving the parent here leaves the task there unarchived, so it is listed on its own.
+    // Archiving the parent removes it from the live snapshot. Its task stays under it, as a
+    // local subagent does, while the archive is older than the removal or still loading.
+    archive(10, []);
+    registry.set(
+      snapshotAtom(environmentId),
+      applyShellStreamEvent(
+        { ...v2ShellSnapshot, snapshotSequence: 10, threads: [parent] },
+        { kind: "thread.removed", location: "active", sequence: 11, threadId: parent.id },
+      ),
+    );
+    registry.set(
+      shellStateAtom(environmentId),
+      AsyncResult.success({ ...EMPTY_SHELL_STATE, removedAt: new Map([[parent.id, 11]]) }),
+    );
+    expect(listed()).toEqual([]);
+    expect(archiveRefreshes).toHaveLength(2);
+    registry.set(archivedSnapshotAtom(environmentId), AsyncResult.initial(true));
+    expect(listed()).toEqual([]);
+    archive(12, [{ ...parent, archivedAt: v2Now }]);
+    expect(listed()).toEqual([]);
+    // Another client archived the parent after this archive was read, and a reconnect's snapshot
+    // then cleared the removal. The task stays under the parent while the archive is read again.
+    archive(10, []);
+    registry.set(
+      shellStateAtom(environmentId),
+      AsyncResult.success({ ...EMPTY_SHELL_STATE, generation: 1 }),
+    );
+    expect(listed()).toEqual([]);
+    expect(archiveRefreshes).toHaveLength(3);
+    archive(13, [{ ...parent, archivedAt: v2Now }]);
+    expect(listed()).toEqual([]);
+    // A current archive without the parent means it was deleted, and an unreadable archive
+    // cannot vouch for it, so the task is listed either way.
+    archive(12, []);
+    expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
+    registry.set(archivedSnapshotAtom(environmentId), AsyncResult.fail("unavailable"));
+    expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
-      threads: [{ ...parent, archivedAt: v2Now }],
+      threads: [{ ...parent, settledOverride: "settled" as const, settledAt: v2Now }],
     });
-    expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
+    expect(listed()).toEqual([`${environmentId}/${parent.id}`]);
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [parent] });
     expect(listed()).toEqual([`${environmentId}/${parent.id}`]);
     const catalog = registry.get(catalogValueAtom);
