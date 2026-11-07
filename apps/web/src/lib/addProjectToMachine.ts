@@ -4,12 +4,14 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentId,
-  ProjectCloneSnapshot,
-  ProjectId,
-  ScopedProjectRef,
+import {
+  type EnvironmentId,
+  type ProjectCloneSnapshot,
+  type ProjectId,
+  ProjectReadFileError,
+  type ScopedProjectRef,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -39,10 +41,16 @@ export interface AddProjectToMachineInput {
   readonly remoteUrl: string;
   readonly destinationPath: string;
   readonly files: ReadonlyArray<string>;
+  /** Both servers take base64 file contents, so binary files copy byte for byte. */
+  readonly base64: boolean;
 }
+
+const isProjectReadFileError = Schema.is(ProjectReadFileError);
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(result);
+  if (isProjectReadFileError(error) && error.failure === "binary_file")
+    return "Binary files need T3 Code updated on both machines.";
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
@@ -103,6 +111,8 @@ export function dismissProjectFileCopy(ref: ScopedProjectRef) {
  * project, whose composer shows the clone and copy progress, so nothing toasts.
  */
 export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<void> {
+  // Sent only when both servers take it; older ones would ignore it and corrupt the copy.
+  const encoding = input.base64 ? { encoding: "base64" as const } : {};
   // Read first, so the copy reflects the files as they were when the user asked.
   const reads = await Promise.all(
     input.files.map(async (relativePath) => {
@@ -110,7 +120,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         appAtomRegistry,
         projectEnvironment.readFile({
           environmentId: input.source.environmentId,
-          input: { cwd: input.source.cwd, relativePath },
+          input: { cwd: input.source.cwd, relativePath, ...encoding },
         }),
         { label: "Read file to copy", reportFailure: false, refresh: true },
       );
@@ -170,6 +180,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
               ? `${input.subdirectory}/${read.relativePath}`
               : read.relativePath,
             contents: read.contents,
+            ...encoding,
           },
         },
         { label: "Copy file to machine", reportFailure: false },
