@@ -256,6 +256,15 @@ function resolveHeadRepositoryNameWithOwner(pullRequest: PullRequestHeadRemoteIn
   return normalizeOptionalString(pullRequest.headRepositoryNameWithOwner);
 }
 
+const PULL_REQUEST_WORKTREE_BRANCH_PREFIX = "t3code/pr-";
+const PULL_REQUEST_WORKTREE_BRANCH_PATTERN = new RegExp(
+  `^${PULL_REQUEST_WORKTREE_BRANCH_PREFIX}\\d+/`,
+);
+
+function isPullRequestWorktreeLocalBranchName(branch: string): boolean {
+  return PULL_REQUEST_WORKTREE_BRANCH_PATTERN.test(branch);
+}
+
 function resolvePullRequestWorktreeLocalBranchName(
   pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
 ): string {
@@ -265,7 +274,7 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `t3code/pr-${pullRequest.number}/${suffix}`;
+  return `${PULL_REQUEST_WORKTREE_BRANCH_PREFIX}${pullRequest.number}/${suffix}`;
 }
 
 export function parseRepositoryNameWithOwnerFromRemoteUrl(
@@ -1274,6 +1283,7 @@ export const make = Effect.gen(function* () {
     readonly headBranch: string;
     readonly remoteName: string | null;
     readonly headRemoteUrlKey: string | null;
+    readonly targetRemoteUrlKey: string | null;
   }
   const lastKnownPrByBranchKey = new Map<string, LastKnownPr>();
   const rememberLastKnownPr = (branchKey: string, entry: LastKnownPr) => {
@@ -1290,11 +1300,21 @@ export const make = Effect.gen(function* () {
   };
   const resolveLastKnownPr = (
     branchKey: string,
-    current: Pick<LastKnownPr, "upstreamRef" | "headBranch" | "remoteName" | "headRemoteUrlKey">,
+    current: Pick<
+      LastKnownPr,
+      "upstreamRef" | "headBranch" | "remoteName" | "headRemoteUrlKey" | "targetRemoteUrlKey"
+    >,
   ): LastKnownPr | null => {
     const lastKnown = lastKnownPrByBranchKey.get(branchKey);
     if (!lastKnown) return null;
     if (lastKnown.headBranch !== current.headBranch) {
+      return null;
+    }
+    if (
+      lastKnown.targetRemoteUrlKey !== null &&
+      current.targetRemoteUrlKey !== null &&
+      lastKnown.targetRemoteUrlKey !== current.targetRemoteUrlKey
+    ) {
       return null;
     }
 
@@ -1352,6 +1372,7 @@ export const make = Effect.gen(function* () {
             headBranch: headContext.headBranch,
             remoteName: headContext.remoteName,
             headRemoteUrlKey: headContext.headRemoteUrlKey,
+            targetRemoteUrlKey: headContext.targetRemoteUrlKey,
           }),
         ),
       ),
@@ -1365,6 +1386,7 @@ export const make = Effect.gen(function* () {
                   headBranch: headContext.headBranch,
                   remoteName: headContext.remoteName,
                   headRemoteUrlKey: headContext.headRemoteUrlKey,
+                  targetRemoteUrlKey: headContext.targetRemoteUrlKey,
                 }),
               ),
             )
@@ -1468,16 +1490,17 @@ export const make = Effect.gen(function* () {
     cwd: string,
     remoteName: string,
     remote: { readonly remoteUrl: string | null; readonly repositoryNameWithOwner: string | null },
+    fallback = true,
   ) {
     const provider =
       remote.remoteUrl === null ? null : sourceControlDefinitions.recognizeRemote(remote.remoteUrl);
-    if (remote.remoteUrl === null || provider === null) return true;
+    if (remote.remoteUrl === null || provider === null) return fallback;
     const context = { provider, remoteName, remoteUrl: remote.remoteUrl };
     const handle = yield* sourceControlProviders
       .resolveHandle({ cwd, context })
       .pipe(Effect.orElseSucceed(() => null));
     const createsChangeRequestsIn = handle?.provider.createsChangeRequestsIn;
-    if (createsChangeRequestsIn === undefined) return true;
+    if (createsChangeRequestsIn === undefined) return fallback;
     return yield* createsChangeRequestsIn({
       cwd,
       context: handle?.context ?? context,
@@ -1506,6 +1529,26 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.orElseSucceed(() => null));
     return handle?.context?.provider ?? provider;
+  });
+
+  const resolveGhBaseRemoteName = Effect.fn("resolveGhBaseRemoteName")(function* (cwd: string) {
+    const result = yield* gitCore
+      .execute({
+        operation: "GitManager.resolveGhBaseRemoteName",
+        cwd,
+        args: ["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"],
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 4 * 1024,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (result === null || result.exitCode !== 0) return null;
+
+    const matches = result.stdout.split(/\r?\n/).flatMap((line) => {
+      const match = /^remote\.(.+)\.gh-resolved\s+base$/.exec(line);
+      return match?.[1] ? [match[1]] : [];
+    });
+    return matches.length === 1 ? matches[0]! : null;
   });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
@@ -1545,18 +1588,46 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  const resolveHeadAndOriginContexts = (cwd: string, remoteName: string | null) =>
-    remoteName === "origin"
-      ? resolveRemoteRepositoryContext(cwd, "origin").pipe(
-          Effect.map((origin) => [origin, origin] as const),
-        )
-      : Effect.all(
-          [
-            resolveRemoteRepositoryContext(cwd, remoteName),
-            resolveRemoteRepositoryContext(cwd, "origin"),
-          ],
+  const resolveChangeRequestTargetRemoteName = Effect.fn("resolveChangeRequestTargetRemoteName")(
+    function* (cwd: string) {
+      const provider = yield* sourceControlProvider(cwd).pipe(Effect.orElseSucceed(() => null));
+      if (provider === null) return "origin";
+      if (provider.createsChangeRequestsIn === undefined && provider.kind !== "github") {
+        return "origin";
+      }
+
+      if (provider.createsChangeRequestsIn !== undefined) {
+        const result = yield* gitCore
+          .execute({
+            operation: "GitManager.resolveChangeRequestTargetRemoteName.remotes",
+            cwd,
+            args: ["remote"],
+            allowNonZeroExit: true,
+            timeoutMs: 5_000,
+          })
+          .pipe(Effect.orElseSucceed(() => null));
+        const remoteNames =
+          result === null || result.exitCode !== 0
+            ? []
+            : result.stdout
+                .split("\n")
+                .map((name) => name.trim())
+                .filter((name) => name.length > 0);
+        const matches = yield* Effect.filter(
+          remoteNames,
+          (remoteName) =>
+            Effect.gen(function* () {
+              const remote = yield* resolveRemoteRepositoryContext(cwd, remoteName);
+              return yield* targetsOnlyRemote(cwd, remoteName, remote, false);
+            }).pipe(Effect.orElseSucceed(() => false)),
           { concurrency: "unbounded" },
         );
+        if (matches.length === 1) return matches[0]!;
+      }
+
+      return (yield* resolveGhBaseRemoteName(cwd)) ?? "origin";
+    },
+  );
 
   const resolveBranchHeadContext = Effect.fn("resolveBranchHeadContext")(function* (
     cwd: string,
@@ -1574,18 +1645,22 @@ export const make = Effect.gen(function* () {
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
-    const [remoteRepository, originRepository] = yield* resolveHeadAndOriginContexts(
-      cwd,
-      remoteName,
+    const baseRemoteName = yield* resolveChangeRequestTargetRemoteName(cwd);
+    const [remoteRepository, baseRepository] = yield* Effect.all(
+      [
+        resolveRemoteRepositoryContext(cwd, remoteName),
+        resolveRemoteRepositoryContext(cwd, baseRemoteName),
+      ],
+      { concurrency: "unbounded" },
     );
 
-    // With no origin to compare against, the only remote is the repository change requests
+    // With no base remote to compare against, the only remote is the repository change requests
     // are created in unless the host's own configuration names another, so a branch on it is
     // not a fork. With several remotes, or with that other target, it may still be a fork.
     const isOnlyRemote =
       remoteName !== null &&
-      remoteName !== "origin" &&
-      originRepository.remoteUrlKey === null &&
+      remoteName !== baseRemoteName &&
+      baseRepository.remoteUrlKey === null &&
       (yield* gitCore
         .execute({
           operation: "GitManager.resolveBranchHeadContext.remotes",
@@ -1600,13 +1675,13 @@ export const make = Effect.gen(function* () {
           Effect.orElseSucceed(() => 0),
         )) === 1 &&
       (yield* targetsOnlyRemote(cwd, remoteName, remoteRepository));
-    const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
+    const isForeignRemote = remoteName !== null && remoteName !== baseRemoteName && !isOnlyRemote;
 
     const isCrossRepository =
       remoteRepository.repositoryNameWithOwner !== null &&
-      originRepository.repositoryNameWithOwner !== null
+      baseRepository.repositoryNameWithOwner !== null
         ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-          originRepository.repositoryNameWithOwner.toLowerCase()
+          baseRepository.repositoryNameWithOwner.toLowerCase()
         : isForeignRemote && remoteRepository.repositoryNameWithOwner !== null;
 
     const ownerHeadSelector =
@@ -1645,9 +1720,8 @@ export const make = Effect.gen(function* () {
         ownerHeadSelector && isCrossRepository ? ownerHeadSelector : headBranch,
       remoteName,
       headRemoteUrlKey:
-        remoteRepository.remoteUrlKey ??
-        (remoteName === null ? originRepository.remoteUrlKey : null),
-      targetRemoteUrlKey: originRepository.remoteUrlKey,
+        remoteRepository.remoteUrlKey ?? (remoteName === null ? baseRepository.remoteUrlKey : null),
+      targetRemoteUrlKey: baseRepository.remoteUrlKey,
       headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
       headRepositoryOwnerLogin: remoteRepository.ownerLogin,
       isCrossRepository,
@@ -1805,7 +1879,8 @@ export const make = Effect.gen(function* () {
     if (
       headContext.headBranch === details.branch ||
       !upstreamHeadIsDefault ||
-      headContext.isCrossRepository
+      headContext.isCrossRepository ||
+      isPullRequestWorktreeLocalBranchName(details.branch)
     ) {
       return { headContext, lookup: true };
     }
@@ -2504,10 +2579,11 @@ export const make = Effect.gen(function* () {
       const remoteName = publishedRemoteName(
         remoteNameOverride ?? (yield* readConfig(`branch.${branch}.remote`)),
       );
+      const baseRemoteName = yield* resolveChangeRequestTargetRemoteName(cwd);
       const [headRemoteUrlKey, targetRemoteUrlKey] =
-        remoteName === "origin"
-          ? yield* readRemoteUrlKey("origin").pipe(Effect.map((key) => [key, key] as const))
-          : yield* Effect.all([readRemoteUrlKey(remoteName), readRemoteUrlKey("origin")], {
+        remoteName === baseRemoteName
+          ? yield* readRemoteUrlKey(baseRemoteName).pipe(Effect.map((key) => [key, key] as const))
+          : yield* Effect.all([readRemoteUrlKey(remoteName), readRemoteUrlKey(baseRemoteName)], {
               concurrency: "unbounded",
             });
       return {
