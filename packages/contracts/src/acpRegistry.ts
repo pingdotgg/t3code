@@ -48,9 +48,10 @@ export const AcpRegistryIntegrity = Schema.Literals(["sha256", "registry"]);
 export type AcpRegistryIntegrity = typeof AcpRegistryIntegrity.Type;
 
 export const ACP_REGISTRY_MAX_AGENTS = 512;
+export const ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH = 120;
 
 export const AcpRegistrySearchInput = Schema.Struct({
-  query: TrimmedString.check(Schema.isMaxLength(120)),
+  query: TrimmedString.check(Schema.isMaxLength(ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH)),
   limit: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: ACP_REGISTRY_MAX_AGENTS })),
   ),
