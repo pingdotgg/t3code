@@ -4982,22 +4982,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("keeps generated worktree folders short without changing long branch names", () =>
+    it.effect("keeps generated worktree folders short and valid on Windows", () =>
       Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
         const pathService = yield* Path.Path;
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         const worktreesDirectory = yield* makeTmpDir("custom-worktrees-");
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const folders = new Set<string>();
+        const unchanged = ["z".repeat(40), "fix-a-b", "console"];
         const branches = [
+          ...unchanged,
           `feature/${"a".repeat(90)}/${"b".repeat(90)}/${"c".repeat(90)}`,
           `feature/${"a".repeat(90)}/${"b".repeat(90)}/${"d".repeat(90)}`,
           `feature/${"a".repeat(40)}/5fac`,
           `feature/${"a".repeat(40)}/18828`,
           `${"a".repeat(22)}😀/${"b".repeat(30)}`,
-          "z".repeat(40),
           "z".repeat(41),
+          // The files ref backend cannot create or lock these branch names on Windows.
+          ...(platform === "win32"
+            ? []
+            : [
+                "fix/a<b",
+                "fix/a>b",
+                "fix/a|b",
+                "con",
+                "aux.c",
+                "lpt0",
+                "COM¹",
+                "COM².txt",
+                "LPT³",
+                `nul.${"n".repeat(40)}`,
+              ]),
         ];
         for (const branch of branches) {
           const created = yield* driver.createWorktree(
@@ -5006,7 +5023,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           );
           const folder = pathService.basename(created.worktree.path);
           assert.isAtMost(folder.length, 40);
-          if (branch.length <= 40) assert.equal(folder, branch);
+          if (unchanged.includes(branch)) assert.equal(folder, branch);
+          assert.notMatch(folder, /[<>"|]|^(con|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\.|$)/i);
           assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), branch);
           assert.include(
             yield* git(cwd, ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"]),
