@@ -51,7 +51,7 @@ export function AssistantSelectionToolbar({
   useEffect(() => {
     if (!viewport) return;
     const clear = () => setSelection(null);
-    const update = (pointer: SelectionActionPoint | null) => {
+    const update = () => {
       const nativeSelection = window.getSelection();
       const captured = captureAssistantTextSelection(viewport, nativeSelection);
       const messageId = captured?.source.dataset.assistantCitationSource;
@@ -112,15 +112,6 @@ export function AssistantSelectionToolbar({
         return;
       }
       const rects = captured.range.getClientRects();
-      const pointerOnText =
-        pointer !== null &&
-        Array.from(rects).some(
-          (line) =>
-            pointer.x >= line.left - 8 &&
-            pointer.x <= line.right + 8 &&
-            pointer.y >= line.top - 8 &&
-            pointer.y <= line.bottom + 8,
-        );
       setSelection({
         sourceAnchor: { source: captured.source, range: captured.range, viewport },
         citation: {
@@ -132,7 +123,7 @@ export function AssistantSelectionToolbar({
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
           selectionRect: rects.item(rects.length - 1) ?? rect,
-          pointer: pointerOnText ? pointer : null,
+          pointer: null,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),
       });
