@@ -1,7 +1,7 @@
 import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
@@ -93,24 +93,41 @@ export function UsageProviderSettings({
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
             return (
-              <SettingsRow
-                key={id}
-                title={label}
-                description={
-                  <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
-                    {label !== source.url ? ` · ${source.url}` : ""}
-                  </span>
-                }
-                control={
-                  !readOnly ? (
-                    <RemoveUsageProviderButton
-                      label={label}
-                      onConfirm={() => updateSettings({ usageLimitSources: { [id]: null } })}
+              <Fragment key={id}>
+                <SettingsRow
+                  title={label}
+                  description={
+                    <span className="break-all">
+                      CLI Proxy{source.enabled ? "" : " · Disabled"}
+                      {label !== source.url ? ` · ${source.url}` : ""}
+                    </span>
+                  }
+                  control={
+                    !readOnly ? (
+                      <RemoveUsageProviderButton
+                        label={label}
+                        onConfirm={() => updateSettings({ usageLimitSources: { [id]: null } })}
+                      />
+                    ) : null
+                  }
+                />
+                <SettingsRow
+                  title="Thread accounts"
+                  description="Show the limits of the hub account each thread uses. T3 reads the hub's usage queue, which removes those records for anything else reading it. The hub needs usage statistics and session affinity turned on."
+                  control={
+                    <Switch
+                      aria-label={`Thread accounts for ${label}`}
+                      checked={source.threadAccounts === true}
+                      disabled={readOnly}
+                      onCheckedChange={(threadAccounts) =>
+                        updateSettings({
+                          usageLimitSources: { [id]: { ...source, threadAccounts } },
+                        })
+                      }
                     />
-                  ) : null
-                }
-              />
+                  }
+                />
+              </Fragment>
             );
           })
         )}

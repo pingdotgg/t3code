@@ -59,6 +59,21 @@ Reset times are minute offsets from `n0`.
 
 6. Edit `state.json` and press Refresh limits to switch scenarios.
 
+## Thread accounts
+
+To check the card picks the account a hub routed a thread to, add `routes` to `state.json`, each entry
+mapping a thread's provider session id to an account id from the scenario:
+
+```json
+{
+  "scenario": "A",
+  "n0": 1792515540000,
+  "routes": [{ "session_id": "<native id>", "auth_index": "a2" }]
+}
+```
+
+Turn on **Thread accounts** for the hub. The server reads the routes every 30 seconds.
+
 ## Not from the fixture
 
 - **"Codex: Could not read limits."** That banner comes from the local Codex install, which is unauthenticated with an empty `CODEX_HOME`.
