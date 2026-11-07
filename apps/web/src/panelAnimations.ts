@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type PanelAnimationDurationMs } from "@t3tools/contracts/settings";
 
 import { useMediaQuery } from "./hooks/useMediaQuery";
@@ -46,12 +46,12 @@ export function usePanelPresence<T>(
   durationMs: PanelAnimationDurationMs,
 ): { present: boolean; value: T | null } {
   const [present, setPresent] = useState(open);
-  const [retained, setRetained] = useState<{ scopeKey: string | null; value: T | null } | null>(
-    open ? { scopeKey, value } : null,
-  );
-  if (open && (retained?.scopeKey !== scopeKey || retained.value !== value)) {
-    setRetained({ scopeKey, value });
-  }
+  const retained = useRef<{ scopeKey: string | null; value: T | null } | null>(null);
+  // Exit animations retain the last committed open value. Fresh caller objects
+  // must not schedule another render, and abandoned renders must not replace it.
+  useLayoutEffect(() => {
+    if (open) retained.current = { scopeKey, value };
+  }, [open, scopeKey, value]);
 
   if (open && !present) setPresent(true);
   if (!open && !animated && present) setPresent(false);
@@ -63,7 +63,9 @@ export function usePanelPresence<T>(
     return () => window.clearTimeout(timeout);
   }, [animated, durationMs, open]);
 
-  const retainedValue = retained?.scopeKey === scopeKey ? retained.value : null;
-  const visible = open || (animated && present && retained?.scopeKey === scopeKey);
+  /* oxlint-disable react/refs -- Closing renders display the last committed open panel during its exit animation. */
+  const retainedValue = retained.current?.scopeKey === scopeKey ? retained.current.value : null;
+  const visible = open || (animated && present && retained.current?.scopeKey === scopeKey);
   return { present: visible, value: open ? value : visible ? retainedValue : null };
+  /* oxlint-enable react/refs */
 }
