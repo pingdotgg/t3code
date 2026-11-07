@@ -91,6 +91,8 @@ type ViewWindow = {
 type TurnCostEstimate = {
   readonly costUsd: number;
   readonly costSource: UsageCostSource;
+  /** True when some measurable turns are missing from this sum (unpriced or mixed model). */
+  readonly incomplete: boolean;
 };
 
 function priceItemsForRows(
@@ -104,18 +106,33 @@ function priceItemsForRows(
   });
 }
 
+function measurableTurnCount(rows: readonly ThreadTurnTokenUsageRow[]): number {
+  let count = 0;
+  for (const row of rows) {
+    if (threadTurnTokenUsageTotals(row.usage) !== null) count += 1;
+  }
+  return count;
+}
+
 function costByRunId(
   items: readonly UsagePriceItemResult[] | null,
 ): ReadonlyMap<string, TurnCostEstimate> {
   const map = new Map<string, TurnCostEstimate>();
   for (const item of items ?? []) {
-    map.set(item.id, { costUsd: item.costUsd, costSource: item.costSource });
+    map.set(item.id, {
+      costUsd: item.costUsd,
+      costSource: item.costSource,
+      incomplete: false,
+    });
   }
   return map;
 }
 
 /** Sum priced turns only; all-unpriced stays unknown so we never show a fake $0. */
-function threadCostEstimate(costs: ReadonlyMap<string, TurnCostEstimate>): TurnCostEstimate | null {
+function threadCostEstimate(
+  costs: ReadonlyMap<string, TurnCostEstimate>,
+  measurableTurns: number,
+): TurnCostEstimate | null {
   let costUsd = 0;
   let priced = 0;
   for (const cost of costs.values()) {
@@ -124,12 +141,16 @@ function threadCostEstimate(costs: ReadonlyMap<string, TurnCostEstimate>): TurnC
     priced += 1;
   }
   if (priced === 0) return null;
-  return { costUsd, costSource: "modelPriced" };
+  return {
+    costUsd,
+    costSource: "modelPriced",
+    incomplete: priced < measurableTurns,
+  };
 }
 
 function formatCostEstimate(cost: TurnCostEstimate | null | undefined): string | null {
   if (cost === null || cost === undefined || cost.costSource === "unpriced") return null;
-  return formatUsd(cost.costUsd);
+  return cost.incomplete ? `${formatUsd(cost.costUsd)} · partial` : formatUsd(cost.costUsd);
 }
 
 /** Right-panel Insights: zoomable flame-chart overview with turn boundaries and drill-down. */
@@ -171,7 +192,7 @@ export function InsightsPanel({
         }),
   );
   const costs = costByRunId(priced.data?.items ?? null);
-  const threadCost = threadCostEstimate(costs);
+  const threadCost = threadCostEstimate(costs, measurableTurnCount(turnRows));
   const costLabel = formatCostEstimate(threadCost);
   const headerBits = [
     trace !== null ? formatDuration(trace.totalMs) : null,
@@ -575,6 +596,11 @@ function TokenUsageSummary({
       {usage.usageStatus === "partial" ? (
         <p className="text-2xs text-muted-foreground">
           Some turns are still running or missing counts; totals may grow.
+        </p>
+      ) : null}
+      {cost?.incomplete === true ? (
+        <p className="text-2xs text-muted-foreground">
+          Cost covers priced turns only; mixed or unpriced models are left out.
         </p>
       ) : null}
       {cost === null &&
