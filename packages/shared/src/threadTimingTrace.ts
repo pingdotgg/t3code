@@ -43,7 +43,10 @@ export type ThreadTimingTurn = {
 export type ThreadTimingTrace = {
   readonly originMs: number;
   readonly endMs: number;
+  /** Wall-clock span from first request to last turn end (includes idle between turns). */
   readonly totalMs: number;
+  /** Queue + wait + work only; excludes idle gaps between turns. */
+  readonly activeMs: number;
   readonly queueWaitMs: number;
   readonly waitMs: number;
   readonly workMs: number;
@@ -645,6 +648,7 @@ export function deriveThreadTimingTrace(input: {
     originMs,
     endMs,
     totalMs,
+    activeMs: queueWaitMs + waitMs + workMs,
     queueWaitMs,
     waitMs,
     workMs,

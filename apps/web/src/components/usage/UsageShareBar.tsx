@@ -33,14 +33,14 @@ export function UsageShareBar({
       <div
         role="img"
         aria-label={`${label}: ${visible.map((segment) => `${segment.label} ${format(segment.value)}`).join(", ")}`}
-        className="flex h-2 gap-0.5"
+        className="flex h-2 overflow-hidden rounded-full"
       >
         {visible.map((segment) => (
           <Tooltip key={segment.label}>
             <TooltipTrigger
               render={
                 <div
-                  className="h-full min-w-1 rounded-xs first:rounded-l-full last:rounded-r-full"
+                  className="h-full min-w-1"
                   style={{ flex: `${segment.value} 1 0`, backgroundColor: segment.color }}
                 />
               }
