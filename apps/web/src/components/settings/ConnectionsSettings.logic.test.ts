@@ -6,6 +6,7 @@ import {
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
   togglePairingScopeSelection,
+  parseManualDesktopSshTarget,
 } from "./ConnectionsSettings.logic";
 
 describe("togglePairingScopeSelection", () => {
@@ -40,6 +41,20 @@ describe("togglePairingScopeSelection", () => {
     },
   ] as const)("$label", ({ current, scope, checked, expected }) => {
     expect(togglePairingScopeSelection(current, scope, checked)).toEqual(expected);
+  });
+});
+
+describe("parseManualDesktopSshTarget", () => {
+  it.each(["22.5", "1e3", "2222garbage"])("rejects explicit port %j", (port) => {
+    expect(() => parseManualDesktopSshTarget({ host: "devbox", username: "", port })).toThrow(
+      "SSH port must be between 1 and 65535.",
+    );
+  });
+
+  it("accepts a padded explicit port", () => {
+    expect(parseManualDesktopSshTarget({ host: "devbox", username: "", port: " 2222 " }).port).toBe(
+      2222,
+    );
   });
 });
 
