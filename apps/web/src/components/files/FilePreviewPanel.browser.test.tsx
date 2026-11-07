@@ -219,6 +219,18 @@ describe("workspace document previews", () => {
     expect(screen.container.contains(loaded), "a reconnect remounted the document").toBe(true);
   });
 
+  it("reloads the document when its URL can no longer be minted", async () => {
+    using _settings = setup();
+    await using screen = await render(documentPreview("mutation-1", "revision-1"));
+    const preview = screen.getByTestId("office-preview");
+    await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=1");
+
+    state.assetUrl = { _tag: "Failure" };
+    await screen.rerender(filePreview("report.docx", "mutation-2"));
+
+    await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=2");
+  });
+
   it("loads the new bytes when the document itself changes", async () => {
     using _settings = setup();
     await using screen = await render(documentPreview("mutation-1", "revision-1"));

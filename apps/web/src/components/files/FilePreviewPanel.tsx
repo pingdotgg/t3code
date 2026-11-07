@@ -423,10 +423,15 @@ function WorkspaceDocumentPreview(props: {
   );
   const resolved =
     assetUrl._tag === "Success" ? (assetUrl.fileRevision ?? props.workspaceMutationId) : undefined;
-  // A reconnect or a failed re-mint keeps the last revision, so the open file stays loaded.
+  // A reconnect reports Loading and keeps the last revision, so the open file stays loaded;
+  // a failure (say the file was deleted) remounts so the preview shows its error.
   const [shown, setShown] = useState(resolved);
   if (resolved !== undefined && resolved !== shown) setShown(resolved);
-  const revision = revisioned ? (resolved ?? shown) : props.workspaceMutationId;
+  const revision = !revisioned
+    ? props.workspaceMutationId
+    : assetUrl._tag === "Failure"
+      ? `failure:${props.workspaceMutationId}`
+      : (resolved ?? shown);
   // Waiting on the first revision keeps the preview from mounting twice when it opens.
   if (revisioned && revision === undefined && assetUrl._tag === "Loading") {
     return <FileSurfaceLoading />;
