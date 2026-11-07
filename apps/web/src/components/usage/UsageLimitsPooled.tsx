@@ -6,6 +6,7 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
+  formatPaceHeadroom,
   formatResetsIn,
   type LimitAccount,
   type LimitPool,
@@ -38,9 +39,9 @@ import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
-  PaceIcon,
   ResetCreditDialog,
   barColor,
   usePaceMark,
@@ -546,18 +547,35 @@ function PoolWindowCard({
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
         <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
-        <span className="flex items-baseline gap-2">
+        <span className="flex flex-wrap items-baseline gap-x-2">
           <span className="text-3xl font-semibold text-foreground tabular-nums">
             {pool.remainingPercent}%
           </span>
-          <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <span>left</span>
-            {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
-          </span>
+          <span className="text-sm text-muted-foreground">left</span>
+          {nextRefill ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    tabIndex={0}
+                    className="rounded-sm text-xs text-muted-foreground tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  />
+                }
+              >
+                ↻ +{nextRefill.restoresPercent}%
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {pool.columns.length > 1 ? "Pooled usage" : "Usage"} +{nextRefill.restoresPercent}%{" "}
+                {formatResetsIn(nextRefill.member.window, now)
+                  ?.replace("resets in ", "in ")
+                  .replace("resets now", "now")}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
         </span>
-        {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
+        {pool.paceHeadroomPercent !== null ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {formatPaceHeadroom(pool.paceHeadroomPercent)}
           </span>
         ) : null}
       </div>

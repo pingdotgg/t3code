@@ -428,7 +428,12 @@ export interface LimitPoolWindow {
   >;
   readonly remainingPercent: number;
   readonly usedPercent: number;
-  readonly pace: LimitPace | null;
+  /**
+   * Points between what is left and what even spending would leave by now:
+   * positive is quota to spare, negative is spending faster than the clock.
+   * Null unless every member reports a window length and reset.
+   */
+  readonly paceHeadroomPercent: number | null;
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
@@ -575,14 +580,17 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
-    // Judge pace only for windows with reset clocks; others add spend without elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
       return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
     });
     const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
     const meanElapsed =
-      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+      timed.length === members.length
+        ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length
+        : null;
+    // Headroom is taken between rounded figures so it agrees with the bar's pace marks.
+    const paceRemaining = meanElapsed === null ? null : Math.round(100 - meanElapsed * 100);
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -607,7 +615,8 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       ),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
-      pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
+      paceHeadroomPercent:
+        paceRemaining === null ? null : Math.round(100 - timedUsed) - paceRemaining,
       resets,
     };
   });
@@ -663,6 +672,11 @@ function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
   if (gap > 5) return "ahead";
   if (gap < -5) return "under";
   return "on";
+}
+
+export function formatPaceHeadroom(headroomPercent: number): string {
+  if (Math.abs(headroomPercent) <= 3) return "On pace";
+  return `${Math.abs(headroomPercent)}% ${headroomPercent > 0 ? "behind" : "ahead of"} pace`;
 }
 
 export function formatDuration(ms: number): string {
