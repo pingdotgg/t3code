@@ -83,6 +83,32 @@ describe("PreviewPanelShell focus", () => {
     await expect.element(screen.getByRole("textbox", { name: "Message New thread" })).toHaveFocus();
   });
 
+  it("falls back to the toggle without scrolling when the origin has scrolled out of view", async () => {
+    const layout = (open: boolean) => (
+      <div>
+        <div data-testid="timeline" style={{ height: 100, overflowY: "auto" }}>
+          <button type="button">Copy message</button>
+          <div style={{ height: 2000 }} />
+        </div>
+        <button type="button" aria-label="Toggle right panel" data-right-panel-toggle />
+        <PreviewPanelShell mode="inline" open={open}>
+          <div role="region" aria-label="Open a surface" tabIndex={-1} />
+        </PreviewPanelShell>
+      </div>
+    );
+    await using screen = await render(layout(false));
+    await userEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    await screen.rerender(layout(true));
+    await act(() => screen.getByRole("region", { name: "Open a surface" }).element().focus());
+    const timeline = screen.getByTestId("timeline").element();
+    timeline.scrollTop = 1500;
+
+    await screen.rerender(layout(false));
+
+    await expect.element(screen.getByRole("button", { name: "Toggle right panel" })).toHaveFocus();
+    expect(timeline.scrollTop).toBe(1500);
+  });
+
   it("returns focus to the toggle when a panel opened from it collapses", async () => {
     await using screen = await render(<Workspace open={false} />);
     await userEvent.click(screen.getByRole("textbox", { name: "Message New thread" }));

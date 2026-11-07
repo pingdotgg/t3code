@@ -11,7 +11,7 @@ import {
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
 import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
-import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { isInScrollView, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
@@ -53,8 +53,9 @@ function ResizablePreviewPanelShell(props: PreviewPanelShellProps) {
 function returnFocus(host: HTMLElement, origin: HTMLElement | null) {
   const { ownerDocument } = host;
   // focus() is a no-op on an inert, disabled or hidden origin, so activeElement says whether it took.
-  if (origin?.isConnected && !host.contains(origin)) {
-    origin.focus();
+  // An origin scrolled out of view is skipped: scrolling the timeline back would stop it following a turn.
+  if (origin?.isConnected && !host.contains(origin) && isInScrollView(origin)) {
+    origin.focus({ preventScroll: true });
     if (ownerDocument.activeElement === origin) return true;
   }
   const toggle = ownerDocument.querySelector<HTMLButtonElement>("[data-right-panel-toggle]");
