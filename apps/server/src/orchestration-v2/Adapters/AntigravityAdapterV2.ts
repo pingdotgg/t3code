@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderFailure,
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -13,6 +14,7 @@ import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -33,7 +35,10 @@ import {
   describeAntigravitySubagentLaunches,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
-import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
+import {
+  antigravityConnectionLostFailure,
+  watchAntigravityPromptOutcome,
+} from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
@@ -134,6 +139,8 @@ export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
+  // Keyed by native session: the next turn resumes it on a fresh runtime.
+  const lostConnections = new Map<string, OrchestrationV2ProviderFailure>();
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
@@ -182,9 +189,11 @@ export function makeAntigravityAcpAdapterFlavor(
           Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
-          return runtime.handleSessionUpdate((notification) =>
-            updates.withPermit(handler(reads.repair(notification))),
-          );
+          return runtime.handleSessionUpdate((notification) => {
+            const lost = antigravityConnectionLostFailure(notification.update);
+            if (lost === undefined) return updates.withPermit(handler(reads.repair(notification)));
+            return Effect.sync(() => lostConnections.set(notification.sessionId, lost));
+          });
         },
         start: () =>
           runtime
@@ -278,12 +287,22 @@ export function makeAntigravityAcpAdapterFlavor(
     // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
-    ...(profileDirectory === undefined
-      ? {}
-      : {
-          watchPromptOutcome: (sessionId: string) =>
-            watchAntigravityPromptOutcome(profileDirectory, sessionId),
-        }),
+    watchPromptOutcome: Effect.fn("AntigravityAdapterV2.watchPromptOutcome")(function* (
+      sessionId: string,
+    ) {
+      lostConnections.delete(sessionId);
+      const checkSessionLog =
+        profileDirectory === undefined
+          ? undefined
+          : yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+      return (result: EffectAcpSchema.PromptResponse) =>
+        Effect.suspend(() => {
+          const lost = lostConnections.get(sessionId);
+          lostConnections.delete(sessionId);
+          if (lost !== undefined) return Effect.succeed(lost);
+          return checkSessionLog?.(result) ?? Effect.undefined;
+        });
+    }),
   };
 }
 
