@@ -1594,6 +1594,29 @@ it.effect("queues a goal clear without stopping work when no goal drives it", ()
   ),
 );
 
+// regression: #32606 a slash command steered into a running turn replaced the task
+it.effect("queues a slash command sent into a running turn instead of steering it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { steered, layer, startFirstTurn, send, read } = yield* goalHarness("slash-steer");
+      yield* Effect.gen(function* () {
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* send("context", "/context", "auto");
+        yield* send("context-all", "/context all", "auto");
+        yield* worker.drain();
+
+        assert.deepEqual(steered, []);
+        assert.deepEqual(yield* read(threadId), {
+          queue: ["/context", "/context all"],
+          started: ["first"],
+          stopRequested: false,
+        });
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("promotes a queued goal by stopping the running turn", () =>
   Effect.scoped(
     Effect.gen(function* () {
