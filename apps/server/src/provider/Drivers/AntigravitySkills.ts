@@ -37,6 +37,8 @@ export function antigravityUserSkillDirectories(
 const MAX_SKILL_BYTES = 1_000_000;
 const MAX_SCAN_BYTES = 8_000_000;
 const MAX_SCAN_ENTRIES = 10_000;
+// Typical frontmatter fits in one read, and the entry limit binds before the byte budget does.
+const SKILL_READ_CHUNK_BYTES = 1024;
 
 const SkillFrontmatter = Schema.Struct({
   name: Schema.optional(Schema.NullOr(Schema.String)),
@@ -106,7 +108,29 @@ function skillPathSortKey(entry: string) {
   );
 }
 
-const readSkill = Effect.fn("readAntigravitySkill")(function* (
+const DASH = 0x2d;
+
+/** Finds the byte offset after the second `---`, as parseSkillFrontmatter's indexOf calls do. */
+function makeFrontmatterEndFinder() {
+  let bytesSeen = 0;
+  let dashes = 0;
+  let markers = 0;
+  return (chunk: Uint8Array) => {
+    for (const byte of chunk) {
+      bytesSeen += 1;
+      dashes = byte === DASH ? dashes + 1 : 0;
+      if (dashes === 3) {
+        dashes = 0;
+        markers += 1;
+        if (markers === 2) return bytesSeen;
+      }
+    }
+    return undefined;
+  };
+}
+
+/** Reads through the frontmatter only, so skill bodies do not spend the scan budget. */
+const readSkillFrontmatter = Effect.fn("readAntigravitySkill")(function* (
   skillPath: string,
   budget: ScanBudget,
 ) {
@@ -115,26 +139,27 @@ const readSkill = Effect.fn("readAntigravitySkill")(function* (
   if (info?.type !== "File") return undefined;
 
   const byteLimit = Math.min(MAX_SKILL_BYTES, budget.remainingBytes);
-  if (info.size > BigInt(byteLimit)) {
-    return yield* new AntigravitySkillsProbeError({
-      reason: "scan-budget-exhausted",
-      path: skillPath,
-    });
-  }
+  const findFrontmatterEnd = makeFrontmatterEndFinder();
+  let frontmatterEnd: number | undefined;
   const chunks = yield* readIfPresent(
-    fileSystem.stream(skillPath, { bytesToRead: byteLimit + 1 }).pipe(Stream.runCollect),
+    fileSystem
+      .stream(skillPath, { bytesToRead: byteLimit + 1, chunkSize: SKILL_READ_CHUNK_BYTES })
+      .pipe(
+        Stream.takeUntil((chunk) => (frontmatterEnd = findFrontmatterEnd(chunk)) !== undefined),
+        Stream.runCollect,
+      ),
     skillPath,
   );
   if (chunks === undefined) return undefined;
   const bytes = Buffer.concat(chunks);
-  if (bytes.byteLength > byteLimit) {
+  budget.remainingBytes -= bytes.byteLength;
+  if ((frontmatterEnd ?? bytes.byteLength) > byteLimit) {
     return yield* new AntigravitySkillsProbeError({
       reason: "scan-budget-exhausted",
       path: skillPath,
     });
   }
-  budget.remainingBytes -= bytes.byteLength;
-  return bytes.toString("utf8");
+  return bytes.toString("utf8", 0, frontmatterEnd);
 });
 
 /** Keep read errors typed so workspace snapshots cannot cache partial results. */
@@ -187,7 +212,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     if (skillFileName !== undefined) {
       if (!skillFileName.endsWith(".md")) return;
       const skillPath = path.join(directory, skillFileName);
-      const contents = yield* readSkill(skillPath, budget);
+      const contents = yield* readSkillFrontmatter(skillPath, budget);
       if (contents === undefined) return;
       const skill = parseSkillFrontmatter(contents, skillFileName);
       if (!skill || skillsByName.has(skill.name)) return;
