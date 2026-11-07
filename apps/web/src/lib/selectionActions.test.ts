@@ -50,6 +50,12 @@ describe("selection action positioning", () => {
       expected: { x: 260, y: 108 },
     },
     {
+      name: "pinned fallback moves away from the release point",
+      rect: { left: 200, right: 400, top: 102, bottom: 498 },
+      pointer: { x: 300, y: 115 },
+      expected: { x: 260, y: 464 },
+    },
+    {
       name: "short nested clip uses outer above placement",
       rect: { left: 200, right: 400, top: 200, bottom: 224 },
       bounds: { ...bounds, top: 188, bottom: 236 },

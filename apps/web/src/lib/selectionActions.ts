@@ -52,26 +52,23 @@ export function resolveChatSelectionActionPosition({
       viewport.width - actionSize.width - 8,
     ),
   );
+  const nearRelease = (y: number) =>
+    pointer !== null &&
+    pointer.x >= x - 8 &&
+    pointer.x <= x + actionSize.width + 8 &&
+    pointer.y >= y - 8 &&
+    pointer.y <= y + actionSize.height + 8;
   for (const clip of [bounds, outerBounds]) {
     const top = Math.max(8, clip.top);
     const bottom = Math.min(viewport.height - 8, clip.bottom);
     for (const y of [above, below]) {
-      const nearRelease =
-        pointer !== null &&
-        pointer.x >= x - 8 &&
-        pointer.x <= x + actionSize.width + 8 &&
-        pointer.y >= y - 8 &&
-        pointer.y <= y + actionSize.height + 8;
-      if (y >= top && y + actionSize.height <= bottom && !nearRelease) return { x, y };
+      if (y >= top && y + actionSize.height <= bottom && !nearRelease(y)) return { x, y };
     }
   }
-  return {
-    x,
-    y: Math.max(
-      8,
-      Math.min(Math.max(8, outerBounds.top) + 8, viewport.height - actionSize.height - 8),
-    ),
-  };
+  const maxY = viewport.height - actionSize.height - 8;
+  const pinTop = Math.max(8, Math.min(Math.max(8, outerBounds.top) + 8, maxY));
+  const pinBottom = Math.max(8, Math.min(outerBounds.bottom - actionSize.height - 8, maxY));
+  return { x, y: nearRelease(pinTop) ? pinBottom : pinTop };
 }
 
 export function isSelectionRectVisible(rect: SelectionRect, clips: readonly SelectionRect[]) {
