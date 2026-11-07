@@ -114,7 +114,11 @@ export function ProjectActionsSettings() {
         settingKeys={["defaultProjectScripts"]}
         mixed={mixed}
         title="Actions"
-        description="Commands that run in this project's checkout or its worktree, with optional shortcuts."
+        description={
+          isProjectScope
+            ? "Commands that run in this project's checkout or its worktree, with optional shortcuts."
+            : "Default commands for every project without its own actions, with optional shortcuts."
+        }
         onResetOverride={() => void persist(() => null)}
         control={
           <div className="flex flex-wrap items-center gap-1.5">
