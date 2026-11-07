@@ -123,14 +123,20 @@ export function appendGuestPendingMessages(
 }
 
 export function appendPendingThreadMessages(
-  presentedFeed: ReadonlyArray<ThreadFeedEntry>,
-  feed: ReadonlyArray<ThreadFeedEntry>,
+  presentedFeed: ReadonlyArray<PendingThreadFeedEntry>,
+  feed: ReadonlyArray<PendingThreadFeedEntry>,
   queuedMessages: ReadonlyArray<QueuedThreadMessage>,
   queuedRuns: ReadonlyArray<QueuedThreadRun> = [],
 ): ReadonlyArray<PendingThreadFeedEntry> {
   if (queuedMessages.length === 0 && queuedRuns.length === 0) return presentedFeed;
+  const serverIds = new Set<string>(queuedRuns.map(({ messageId }) => messageId));
+  // An acknowledged row the server holds as queued takes the server row's place in queue order.
+  const isQueuedAcknowledgment = (entry: PendingThreadFeedEntry) =>
+    entry.acknowledged === true && serverIds.has(entry.id);
   const deliveredIds = new Set(
-    feed.flatMap((entry) => (entry.type === "message" ? [entry.message.id] : [])),
+    feed.flatMap((entry) =>
+      entry.type === "message" && !isQueuedAcknowledgment(entry) ? [entry.message.id] : [],
+    ),
   );
   const pendingEntries = queuedMessages
     .filter((message) => !deliveredIds.has(message.messageId))
@@ -154,13 +160,13 @@ export function appendPendingThreadMessages(
       },
     }));
   const pendingById = new Map(pendingEntries.map((entry) => [entry.id, entry]));
-  const serverIds = new Set<string>(queuedRuns.map(({ messageId }) => messageId));
   return [
-    ...presentedFeed.map((entry): PendingThreadFeedEntry => {
+    ...presentedFeed.flatMap((entry): ReadonlyArray<PendingThreadFeedEntry> => {
+      if (isQueuedAcknowledgment(entry)) return [];
       const pendingMessage = queuedMessages.find(
         (message) => message.creation !== undefined && message.messageId === entry.id,
       );
-      return pendingMessage ? { ...entry, pendingMessage, acknowledged: false } : entry;
+      return [pendingMessage ? { ...entry, pendingMessage, acknowledged: false } : entry];
     }),
     ...queuedRuns
       .filter(({ messageId }) => !deliveredIds.has(messageId))

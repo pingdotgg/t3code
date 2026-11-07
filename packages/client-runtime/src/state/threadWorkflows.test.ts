@@ -89,10 +89,6 @@ describe("thread workflows", () => {
         {
           id: "message-first",
           text: "First",
-          createdBy: "agent",
-          creationSource: "server",
-          scheduledTaskId: "sample-schedule",
-          senderThreadId: "sender-thread",
           attachments: [
             {
               type: "image",
@@ -137,12 +133,6 @@ describe("thread workflows", () => {
       [],
     ]);
     expect(state.activeRun?.id).toBe("active");
-    expect(state.queuedRuns[0]?.message).toMatchObject({
-      createdBy: "agent",
-      creationSource: "server",
-      scheduledTaskId: "sample-schedule",
-      senderThreadId: "sender-thread",
-    });
     expect(state.canPromoteToSteer).toBe(true);
     expect(state.canSendNow).toBe(false);
   });

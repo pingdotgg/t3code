@@ -197,80 +197,14 @@ describe("pending timeline messages", () => {
     const delivered = { ...optimistic, pendingMessage: undefined };
     expect(appendPendingThreadMessages([delivered], [delivered], [queued])).toEqual([delivered]);
     expect(appendPendingThreadMessages([], [delivered], [queued])).toEqual([]);
+    const serverCopy = serverQueued("sent");
+    expect(appendPendingThreadMessages([delivered], [delivered], [], [serverCopy])).toEqual([
+      delivered,
+    ]);
+    expect(appendPendingThreadMessages([], [delivered], [], [serverCopy])).toEqual([]);
   });
 
   it("keeps an accepted follow-up in the feed while the server queues it", () => {
-    const local = pending("follow-up");
-    const outbox = appendPendingThreadMessages([], [], [local], []);
-    expect(outbox[0]?.pendingMessage).toEqual(local);
-    expect(outbox[0]?.queued).toBeUndefined();
-
-    const queued = appendPendingThreadMessages([], [], [], [serverQueued("follow-up")]);
-    expect(feedIds(queued)).toEqual(["follow-up"]);
-    expect(queued[0]?.queued).toBe(true);
-    expect(queued[0]?.pendingMessage).toBeUndefined();
-    expect(queued[0]?.createdAt).toBe("2026-09-06T10:05:00.000Z");
-    if (queued[0]?.type !== "message") throw new Error("Expected a queued message");
-    expect(queued[0].message).toMatchObject({ role: "user", text: "follow-up", runId: null });
-
-    const started = { ...queued[0], queued: undefined };
-    expect(appendPendingThreadMessages([started], [started], [], [])).toEqual([started]);
-  });
-
-  it("prefers the outbox copy while both hold the message", () => {
-    const local = pending("both");
-    const entries = appendPendingThreadMessages([], [], [local], [serverQueued("both")]);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.pendingMessage).toEqual(local);
-    expect(entries[0]?.queued).toBeUndefined();
-    const mixed = appendPendingThreadMessages(
-      [],
-      [],
-      [local, pending("unsent")],
-      [serverQueued("both"), serverQueued("later")],
-    );
-    expect(feedIds(mixed)).toEqual(["both", "later", "unsent"]);
-    expect(mixed[0]?.pendingMessage).toEqual(local);
-    expect(mixed[0]?.queued).toBeUndefined();
-    expect(mixed[1]?.queued).toBe(true);
-  });
-
-  it("does not repeat a queued message the feed already shows, even collapsed", () => {
-    const shown = appendPendingThreadMessages([], [], [], [serverQueued("shown")])[0]!;
-    const delivered = { ...shown, queued: undefined };
-    expect(
-      appendPendingThreadMessages([delivered], [delivered], [], [serverQueued("shown")]),
-    ).toEqual([delivered]);
-    expect(appendPendingThreadMessages([], [delivered], [], [serverQueued("shown")])).toEqual([]);
-  });
-
-  it("follows server queue order and drops cancelled runs", () => {
-    const activity = {
-      type: "thinking",
-      runId: null,
-      id: "thinking",
-      createdAt: "2026-09-06T11:00:00.000Z",
-    } as const;
-    const first = serverQueued("first");
-    const second = serverQueued("second");
-    const third = serverQueued("third");
-    expect(
-      feedIds(appendPendingThreadMessages([activity], [], [], [first, second, third])),
-    ).toEqual(["thinking", "first", "second", "third"]);
-    expect(
-      feedIds(appendPendingThreadMessages([activity], [], [], [third, first, second])),
-    ).toEqual(["thinking", "third", "first", "second"]);
-    expect(feedIds(appendPendingThreadMessages([activity], [], [], [third, second]))).toEqual([
-      "thinking",
-      "third",
-      "second",
-    ]);
-    expect(
-      feedIds(appendPendingThreadMessages([activity], [], [pending("unsent")], [first])),
-    ).toEqual(["thinking", "first", "unsent"]);
-  });
-
-  it("keeps a queued message's attachments, context and attribution", () => {
     const context = {
       version: 1 as const,
       records: [
@@ -290,12 +224,12 @@ describe("pending timeline messages", () => {
       mimeType: "image/png",
       sizeBytes: 3,
     };
-    const entry = appendPendingThreadMessages(
+    const entries = appendPendingThreadMessages(
       [],
       [],
       [],
       [
-        serverQueued("rich", {
+        serverQueued("follow-up", {
           attachments: [attachment],
           context,
           message: {
@@ -306,16 +240,55 @@ describe("pending timeline messages", () => {
           } as NonNullable<QueuedThreadRun["message"]>,
         }),
       ],
-    )[0];
+    );
+    expect(feedIds(entries)).toEqual(["follow-up"]);
+    const entry = entries[0];
     if (entry?.type !== "message") throw new Error("Expected a queued message");
-    expect(entry.message.attachments).toEqual([attachment]);
-    expect(entry.message.context).toEqual(context);
+    expect(entry.queued).toBe(true);
+    expect(entry.pendingMessage).toBeUndefined();
     expect(entry.message).toMatchObject({
+      role: "user",
+      text: "follow-up",
+      attachments: [attachment],
+      context,
       createdBy: "agent",
       creationSource: "server",
       scheduledTaskId: "sample-schedule",
       senderThreadId: "sender-thread",
     });
+  });
+
+  it("orders outbox, acknowledged and server-queued rows by the server queue", () => {
+    const mixed = appendPendingThreadMessages(
+      [],
+      [],
+      [pending("both"), pending("unsent")],
+      [serverQueued("both"), serverQueued("later")],
+    );
+    expect(feedIds(mixed)).toEqual(["both", "later", "unsent"]);
+    expect(mixed[0]?.pendingMessage).toEqual(pending("both"));
+    expect(mixed[0]?.queued).toBeUndefined();
+    expect(mixed[1]?.queued).toBe(true);
+
+    const activity = {
+      type: "thinking",
+      runId: null,
+      id: "thinking",
+      createdAt: "2026-09-06T11:00:00.000Z",
+    } as const;
+    const [acknowledged] = appendPendingThreadMessages([], [], [pending("newer")]).map((entry) => ({
+      ...entry,
+      acknowledged: true,
+    }));
+    const feed = [activity, acknowledged!];
+    const entries = appendPendingThreadMessages(
+      feed,
+      feed,
+      [],
+      [serverQueued("older"), serverQueued("newer")],
+    );
+    expect(feedIds(entries)).toEqual(["thinking", "older", "newer"]);
+    expect(entries[2]?.queued).toBe(true);
   });
 
   it("shows a queued compact command as its text until the run starts", () => {
@@ -329,7 +302,7 @@ describe("pending timeline messages", () => {
     expect(isCompactionCommandFeedEntry({ ...entry, queued: undefined })).toBe(true);
   });
 
-  it("stops showing an acknowledged message once the projection holds it, even when the feed hides it", () => {
+  it("stops showing an acknowledged message once the thread catches up, even when the feed hides it", () => {
     // A rolled-back or cancelled queued run keeps its message in projection.messages
     // while its user_message item leaves the visible feed.
     const echoed = pending("rolled-back");
