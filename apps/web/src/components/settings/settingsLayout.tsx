@@ -176,6 +176,8 @@ export function useSettingsSearchTarget<T extends HTMLElement>(id: string | unde
 
 export function SettingsSearchTarget({
   children,
+  // `searchableSetting` names the target for search; as an HTML title it shows a native tooltip.
+  title: _searchTitle,
   ...targetProps
 }: ComponentPropsWithoutRef<"div">) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(targetProps.id);
@@ -505,7 +507,7 @@ export function SettingsRow({
         className,
       )}
     >
-      <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
+      <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_auto] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium text-foreground">{title}</h3>
@@ -527,7 +529,7 @@ export function SettingsRow({
             </span>
           </div>
           {description ? (
-            <p className="max-w-2xl text-balance text-xs leading-normal text-muted-foreground">
+            <p className="max-w-2xl text-pretty text-xs leading-normal text-muted-foreground">
               {description}
             </p>
           ) : null}
@@ -536,7 +538,7 @@ export function SettingsRow({
           ) : null}
         </div>
         {renderedControl ? (
-          <div className="flex w-full min-w-0 shrink-0 items-center gap-2 @min-[32rem]/settings-row:w-auto @min-[32rem]/settings-row:justify-end">
+          <div className="flex w-full min-w-0 shrink-0 items-center gap-2 @min-[32rem]/settings-row:w-auto @min-[32rem]/settings-row:justify-end @min-[32rem]/settings-row:[&_[data-slot=select-trigger]]:min-w-40">
             {renderedControl}
           </div>
         ) : null}
@@ -590,10 +592,12 @@ export function SettingsPageContainer({
   children,
   className,
   width = "readable",
+  searchTargetFallbacks,
 }: {
   children: ReactNode;
   className?: string;
   width?: WorkspacePageWidth;
+  searchTargetFallbacks?: Readonly<Record<string, string | undefined>>;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -613,7 +617,7 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider
-      targetId={targetId}
+      targetId={targetId === null ? null : (searchTargetFallbacks?.[targetId] ?? targetId)}
       highlightTarget={highlightTarget}
       onTargetHandled={clearTargetHash}
     >

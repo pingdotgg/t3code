@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { SecretProviderId } from "@t3tools/contracts";
+import { DeviceHostId, SecretProviderId, UsageLimitSourceId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 
@@ -32,6 +32,7 @@ const hosts = {
 function countingResolver() {
   const reads: Array<string> = [];
   const resolver = SecretResolver.SecretResolver.of({
+    label: (provider) => Effect.succeed(provider),
     read: (references) =>
       Effect.sync(() =>
         references.map((reference) => {
@@ -58,11 +59,11 @@ it.effect(
     }),
 );
 
-it.effect("treats a reference the provider cannot read as an unset credential", () =>
+it.effect("keeps a reference the provider cannot read, so it never passes for an unset one", () =>
   Effect.gen(function* () {
     const { reads, resolver } = countingResolver();
     const resolved = yield* resolveSourceControlHostSecrets(resolver, hosts, "gitcafe");
-    assert.deepEqual(resolved.gitcafe, { token: "" });
+    assert.deepEqual(resolved.gitcafe, { token: source("missing#token") });
     assert.deepEqual(reads, ["missing#token"]);
   }),
 );
@@ -109,6 +110,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
     let current = "stale";
     const cache = new Map<string, string>();
     const resolver = SecretResolver.SecretResolver.of({
+      label: (provider) => Effect.succeed(provider),
       read: (references) =>
         Effect.sync(() =>
           references.map((reference) => {
@@ -125,12 +127,65 @@ it.effect("reads a collected reference again once it is invalidated", () =>
         }),
     });
     const read = () => resolveSourceControlHostSecrets(resolver, hosts, "bitbucket");
+    const usageLimitSources = {
+      [UsageLimitSourceId.make("referenced")]: {
+        kind: "cliproxy",
+        url: "https://hub.test",
+        managementKey: source("cliproxy#key"),
+        enabled: true,
+      },
+      [UsageLimitSourceId.make("literal")]: {
+        kind: "cliproxy",
+        url: "https://hub.test",
+        managementKey: "plain-key",
+        enabled: true,
+      },
+    } as const;
+    const easDeviceHosts = [
+      {
+        kind: "eas" as const,
+        id: DeviceHostId.make("ref"),
+        label: "Ref",
+        maxSessionMinutes: 30,
+        idleMinutes: 10,
+        maxConcurrentSessions: 2,
+        accessToken: source("expo#token"),
+      },
+    ];
+    const simlockDeviceHosts = [
+      {
+        kind: "simlock" as const,
+        id: DeviceHostId.make("pool"),
+        label: "Pool",
+        gatewayUrl: "https://simlock.test:4700",
+        agentToken: source("simlock#token"),
+        maxLeases: 2,
+        maxLeaseMinutes: 60,
+      },
+    ];
+    cache.set("cliproxy#key", "stale");
+    cache.set("voice#key", "stale");
+    cache.set("expo#token", "stale");
+    cache.set("simlock#token", "stale");
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "stale",
     });
     current = "rotated";
-    yield* invalidateSettingsSecrets(resolver, Effect.succeed({ sourceControlHosts: hosts }));
+    yield* invalidateSettingsSecrets(
+      resolver,
+      Effect.succeed({
+        sourceControlHosts: hosts,
+        cloudSpeechCredentials: { openai: source("voice#key"), xai: "", openrouter: "" },
+        usageLimitSources,
+        easDeviceHosts,
+        simlockDeviceHosts,
+      }),
+    );
+    assert.isFalse(cache.has("cliproxy#key"));
+    assert.isFalse(cache.has("voice#key"));
+    assert.isFalse(cache.has("expo#token"));
+    assert.isFalse(cache.has("simlock#token"));
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "rotated",

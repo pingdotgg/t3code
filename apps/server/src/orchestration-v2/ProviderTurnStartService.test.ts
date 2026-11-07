@@ -280,6 +280,7 @@ function makeLocalCommandHarness(input: {
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
+  readonly resumeFailure?: ProviderAdapter.ProviderAdapterV2Error;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -301,6 +302,7 @@ function makeLocalCommandHarness(input: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly nativeForkFrom?: "idle" | "busy";
     readonly switchedProvider?: boolean;
+    readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
   };
 }) {
   const settledRuns: Array<string> = [];
@@ -565,7 +567,7 @@ function makeLocalCommandHarness(input: {
       ...projection,
       thread: {
         ...projection.thread,
-        runtimeMode: "full-access",
+        runtimeMode: input.sideChat.threadRuntimeMode ?? "full-access",
         lineage: {
           parentThreadId,
           relationshipToParent: "fork",
@@ -648,7 +650,7 @@ function makeLocalCommandHarness(input: {
       ],
     };
   }
-  if ("historyReadFailureAfterFallback" in input) {
+  if ("historyReadFailureAfterFallback" in input || "resumeFailure" in input) {
     const nativeThreadRef = {
       driver: providerThread.driver,
       nativeId: "native-resume-thread",
@@ -755,17 +757,19 @@ function makeLocalCommandHarness(input: {
       ),
     ),
   );
+  const fallbackEnsureThread = vi.fn(() => Effect.succeed(providerThread));
   const resumeFallbackSession = {
     driver: providerThread.driver,
     resumeThread: () =>
       Effect.fail(
-        new ProviderAdapter.ProviderAdapterEventStreamError({
-          driver: providerThread.driver,
-          providerSessionId,
-          cause: "native thread is gone",
-        }),
+        input.resumeFailure ??
+          new ProviderAdapter.ProviderAdapterEventStreamError({
+            driver: providerThread.driver,
+            providerSessionId,
+            cause: "native thread is gone",
+          }),
       ),
-    ensureThread: () => Effect.succeed(providerThread),
+    ensureThread: fallbackEnsureThread,
   };
   const providerSession = {
     id: providerSessionId,
@@ -804,7 +808,7 @@ function makeLocalCommandHarness(input: {
       ? Effect.succeed(sideChatSession as never)
       : input.interruptOpen === true
         ? Effect.interrupt
-        : "historyReadFailureAfterFallback" in input
+        : "historyReadFailureAfterFallback" in input || "resumeFailure" in input
           ? Effect.succeed(resumeFallbackSession as never)
           : "ensureThreadFailure" in input
             ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
@@ -1012,6 +1016,7 @@ function makeLocalCommandHarness(input: {
     resolveRuntimePolicy,
     createWorktree,
     open,
+    fallbackEnsureThread,
     writeIfRunCurrent,
     startRootRun,
     startTurn,
@@ -1256,16 +1261,22 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
 );
 
 effectIt.effect.each([
-  { contextRun: "current", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "failed", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "cancelled", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "current", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "failed", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "cancelled", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
   {
     contextRun: "failed",
     switchedProvider: true,
-    runtimeMode: "approval-required",
+    runtimeMode: "full-access",
     context: "SIDE_CHAT_CONTEXT",
   },
   { contextRun: "delivered", runtimeMode: "full-access", context: "" },
+  {
+    contextRun: "current",
+    threadRuntimeMode: "approval-required",
+    runtimeMode: "approval-required",
+    context: "SIDE_CHAT_CONTEXT",
+  },
 ] as const)(
   "sends side chat context inline once, for the first turn that reaches the provider: %j",
   ({ runtimeMode, context, ...sideChat }) =>
@@ -1277,7 +1288,6 @@ effectIt.effect.each([
 
       yield* harness.start;
 
-      // The turn that delivers the context is clamped; a later one follows the thread's mode.
       expect(harness.open).toHaveBeenCalledWith(
         expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
       );
@@ -1727,6 +1737,40 @@ effectIt.effect("does not overwrite a run interrupted while its provider session
     expect(projection.nodes[0]?.status).toBe("pending");
     expect(projection.turnItems).toEqual([]);
     expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("fails the run instead of replacing a native thread another client holds", () =>
+  Effect.gen(function* () {
+    const detail = "This conversation is open in another Codex client.";
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      resumeFailure: new ProviderAdapter.ProviderAdapterThreadInUseError({
+        driver: ProviderDriverKind.make("codex"),
+        providerThreadId: ProviderThreadId.make("new-provider-thread"),
+        detail,
+        cause: new Error("thread native-resume-thread already has an active writer"),
+      }),
+    });
+
+    const exit = yield* Effect.exit(harness.start);
+
+    expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
+    expect(exit._tag).toBe("Success");
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    const projection = harness.projection();
+    expect(projection.providerThreads.at(-1)?.nativeThreadRef?.nativeId).toBe(
+      "native-resume-thread",
+    );
+    expect(projection.contextHandoffs).toEqual([]);
+    expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.turnItems).toMatchObject([
+      {
+        type: "error",
+        title: "Provider turn failed to start",
+        failure: { class: "provider_error", message: detail },
+      },
+    ]);
   }),
 );
 
