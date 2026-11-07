@@ -40,14 +40,14 @@ const { ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
-    { status: "finished", model: undefined, lateModel: undefined, rotateMcpSession: false },
-    { status: "cancelled", model: "claude-opus-4-6", lateModel: undefined, rotateMcpSession: true },
-    { status: "error", model: "custom-fable", lateModel: undefined, rotateMcpSession: false },
-    { status: "finished", model: undefined, lateModel: "gpt-6-sol", rotateMcpSession: false },
-    { status: "finished", model: "gpt-6-sol", lateModel: null, rotateMcpSession: false },
+    { status: "finished", model: undefined, lateModel: undefined },
+    { status: "cancelled", model: "claude-opus-4-6", lateModel: undefined },
+    { status: "error", model: "custom-fable", lateModel: undefined },
+    { status: "finished", model: undefined, lateModel: "gpt-6-sol" },
+    { status: "finished", model: "gpt-6-sol", lateModel: null },
   ] as const)(
     "projects Cursor tasks and unfinished tools: $status, late model $lateModel",
-    ({ status, model, lateModel, rotateMcpSession }) =>
+    ({ status, model, lateModel }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const workspace = yield* fileSystem.makeTempDirectoryScoped({
@@ -56,7 +56,7 @@ describe("CursorAdapterV2", () => {
         const instanceId = ProviderInstanceId.make("cursor");
         const threadId = ThreadId.make("cursor-lifecycle-thread");
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-        const mcpSession = {
+        yield* mcpSessions.set({
           environmentId: EnvironmentId.make("cursor-lifecycle-environment"),
           threadId,
           providerSessionId: "cursor-lifecycle-session",
@@ -64,9 +64,8 @@ describe("CursorAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
           browserToolsAvailable: true,
-        };
-        yield* mcpSessions.set(mcpSession);
-        let sentWithMcpOverride: boolean | undefined;
+        });
+        let sentWithMcpOverride = true;
         const modelSelection = { instanceId, model: "composer-2.5" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
@@ -175,9 +174,6 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
         });
-        if (rotateMcpSession) {
-          yield* mcpSessions.set({ ...mcpSession, authorizationHeader: "Bearer rotated-token" });
-        }
         const now = yield* DateTime.now;
         yield* runtime.startTurn({
           threadId,
@@ -224,7 +220,7 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.equal(sentWithMcpOverride, rotateMcpSession);
+        assert.isFalse(sentWithMcpOverride);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
@@ -669,17 +665,19 @@ describe("CursorAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
       const sentMessages: Array<string> = [];
+      const sentMcpOverrides: Array<boolean> = [];
+      let opens = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      const setDeviceAccess = (device: boolean) =>
+      const setDeviceAccess = (device: boolean, token = "synthetic-cursor-token") =>
         mcpSessions.set({
           environmentId: EnvironmentId.make("cursor-device-environment"),
           threadId,
           providerSessionId: "cursor-device-session",
           providerInstanceId: instanceId,
           endpoint: "http://127.0.0.1:43123/mcp",
-          authorizationHeader: "Bearer synthetic-cursor-token",
+          authorizationHeader: `Bearer ${token}`,
           browserToolsAvailable: true,
           capabilities: new Set(device ? ["device"] : []),
         });
@@ -695,13 +693,15 @@ describe("CursorAdapterV2", () => {
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
-          open: () =>
-            Effect.succeed({
+          open: () => {
+            opens += 1;
+            return Effect.succeed({
               agentId: "native-cursor-device",
               listMessages: Effect.succeed([]),
               close: Effect.void,
               send: (input) =>
                 Effect.sync(() => {
+                  sentMcpOverrides.push(Object.hasOwn(input.options ?? {}, "mcpServers"));
                   sentMessages.push(
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
@@ -719,7 +719,8 @@ describe("CursorAdapterV2", () => {
                     cancel: Effect.void,
                   };
                 }),
-            }),
+            });
+          },
         }),
         Effect.provide(TestProviderHost.layer({ cwd: workspace })),
       );
@@ -808,6 +809,12 @@ describe("CursorAdapterV2", () => {
       yield* setDeviceAccess(true);
       assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
       assert.deepEqual(yield* send(), told(false, false));
+      const opensBeforeRotation = opens;
+      yield* setDeviceAccess(true, "rotated-cursor-token");
+      yield* send();
+      yield* send();
+      assert.equal(opens, opensBeforeRotation + 1, "a rotated MCP token reopens the agent once");
+      assert.notInclude(sentMcpOverrides, true);
     }).pipe(
       Effect.scoped,
       Effect.provide(

@@ -2237,10 +2237,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly agentId?: string;
         }) {
           const existing = yield* Ref.get(liveAgent);
+          const mcpSession = yield* mcpSessions.read(openInput.threadId);
+          // A send that carries mcpServers makes the SDK reconnect every MCP server, ambient ones
+          // included, so an agent whose MCP session changed is reopened rather than overridden.
           if (
             existing !== null &&
             openInput.operation === "resume" &&
-            existing.nativeThreadId === openInput.agentId
+            existing.nativeThreadId === openInput.agentId &&
+            sameMcpEndpoint(existing.mcpSession, mcpSession)
           ) {
             return existing;
           }
@@ -2248,7 +2252,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* existing.session.close.pipe(Effect.ignore);
             yield* Ref.set(liveAgent, null);
           }
-          const mcpSession = yield* mcpSessions.read(openInput.threadId);
           const options = makeCursorAgentOptions({
             ...(apiKey === undefined ? {} : { apiKey }),
             modelSelection: openInput.modelSelection,
@@ -2407,11 +2410,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const compacted = message === "/compress";
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
-            // Send-time mcpServers make the SDK reconnect every MCP server, ambient ones included,
-            // so send them only when they no longer match the set the agent was opened with.
-            const sendMcpServers = sameMcpEndpoint(agent.mcpSession, mcpSession)
-              ? undefined
-              : mcpServers;
             const sdkRun = yield* agent.session
               .send({
                 message,
@@ -2419,7 +2417,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 options: {
                   model: cursorSdkModelSelection(turnInput.modelSelection),
                   mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                  ...(sendMcpServers === undefined ? {} : { mcpServers: sendMcpServers }),
                 },
                 onDelta: (update) => {
                   if (context === null) {
