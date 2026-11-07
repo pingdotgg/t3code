@@ -120,11 +120,16 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     linger: string;
     enabled: boolean;
     active: boolean;
+    // launchd can load a bootstrapped job yet leave its RunAtLoad spawn pending.
+    bootstrapSpawns: boolean;
+    launchdRunning: boolean;
   } = {
     failCommand: undefined,
     linger: "yes",
     enabled: true,
     active: true,
+    bootstrapSpawns: true,
+    launchdRunning: false,
   };
   const runner = ProcessRunner.ProcessRunner.of({
     run: Effect.fn("test.run_boot_service_command")(function* (
@@ -141,6 +146,16 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
       // A timed-out stop may still stop the service.
       if (command === "systemctl --user stop t3code.service") control.active = false;
+      if (command.startsWith("launchctl bootout ")) control.launchdRunning = false;
+      if (!failed && command.startsWith("launchctl bootstrap "))
+        control.launchdRunning = control.bootstrapSpawns;
+      if (
+        !failed &&
+        input.command === "launchctl" &&
+        input.args[0] === "kickstart" &&
+        input.args.at(-1) === "gui/501/com.t3tools.t3code.service"
+      )
+        control.launchdRunning = true;
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
@@ -497,6 +512,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
             : [
                 "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
+                "launchctl kickstart gui/501/com.t3tools.t3code.service",
               ],
         );
       }),
@@ -982,5 +998,24 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.exists(markerPath)).toBe(false);
       expect((yield* service.status).current).toBe(true);
     }),
+  );
+
+  // regression: #29522
+  it.effect.each(["install", "restart", "withStopped"] as const)(
+    "runs a launch agent that launchd leaves pending after bootstrap via %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const { service, control } = yield* makeHarness("darwin");
+        yield* service.install();
+        control.bootstrapSpawns = false;
+
+        yield* operation === "install"
+          ? service.install()
+          : operation === "restart"
+            ? service.restart
+            : service.withStopped(Effect.void);
+
+        expect(control.launchdRunning, "launch agent is loaded but not running").toBe(true);
+      }),
   );
 });
