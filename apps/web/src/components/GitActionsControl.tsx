@@ -658,7 +658,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                       isSelected
                         ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
-                        : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
+                        : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent dark:hover:text-accent-foreground dark:hover:[--contrast-foreground:var(--contrast-accent-foreground)] dark:hover:[--contrast-muted-foreground:var(--contrast-accent-foreground)]",
                     )}
                   >
                     <option.Icon className="size-5 shrink-0" aria-hidden />
@@ -744,7 +744,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                         "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                         isSelected
                           ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
-                          : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
+                          : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent dark:hover:text-accent-foreground dark:hover:[--contrast-foreground:var(--contrast-accent-foreground)] dark:hover:[--contrast-muted-foreground:var(--contrast-accent-foreground)]",
                       )}
                     >
                       <option.Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />

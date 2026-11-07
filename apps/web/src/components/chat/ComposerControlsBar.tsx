@@ -36,7 +36,7 @@ import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
  * expanded footer or the resting controls host.
  */
 // Model and effort share one trigger; it stays filled while its popup is open.
-const MODEL_TRIGGER_STATES = "data-popup-open:bg-accent data-popup-open:text-foreground";
+const MODEL_TRIGGER_STATES = "data-popup-open:bg-accent data-popup-open:text-accent-foreground";
 
 export function ComposerControlsBar(props: {
   environmentId: EnvironmentId;

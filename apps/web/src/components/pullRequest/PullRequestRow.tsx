@@ -111,7 +111,9 @@ function PullRequestRowImpl({
       data-pull-request-key={statsKey}
       className={cn(
         "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
-        selected ? "bg-accent" : "hover:bg-accent/60",
+        selected
+          ? "bg-accent text-accent-foreground [--contrast-muted-foreground:var(--contrast-accent-foreground)]"
+          : "hover:bg-accent/60",
       )}
     >
       <button

@@ -910,7 +910,7 @@ export default function DiffPanel({
                       <div
                         key={commit.sha}
                         className={cn(
-                          "flex items-center rounded-sm hover:bg-accent has-data-highlighted:bg-accent has-focus-visible:bg-accent [&_[data-checked]]:bg-transparent [&_[data-highlighted]]:bg-transparent",
+                          "flex items-center rounded-sm hover:bg-accent has-data-highlighted:bg-accent has-focus-visible:bg-accent [&_[data-checked]]:bg-transparent [&_[data-highlighted]]:bg-transparent hover:text-accent-foreground has-data-highlighted:text-accent-foreground has-focus-visible:text-accent-foreground hover:[--contrast-muted-foreground:var(--contrast-accent-foreground)] has-data-highlighted:[--contrast-muted-foreground:var(--contrast-accent-foreground)] has-focus-visible:[--contrast-muted-foreground:var(--contrast-accent-foreground)]",
                           selectedCommitSha === commit.sha && "bg-foreground/[0.08]",
                         )}
                       >

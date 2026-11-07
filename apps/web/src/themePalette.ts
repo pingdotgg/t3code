@@ -1598,6 +1598,37 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
   return APP_THEME_VARIABLES[role];
 }
 
+const SIDEBAR_SELECTION_FOREGROUND_VARIABLE = "--app-theme-sidebar-row-selected-foreground";
+
+function applySidebarSelectionForeground(root: HTMLElement, colors: ThemeColors): void {
+  const selection = parseThemeColor(colors.sidebarRowSelected);
+  let foreground = "var(--contrast-sidebar-foreground)";
+  if (selection?.alpha === 1) {
+    const surface = themeOklchToRgb(selection.color, false);
+    const contrastOnSelection = (value: string) => {
+      const color = parseThemeColor(value);
+      return color
+        ? themeContrastRatio(
+            mixThemeRgbColors(surface, themeOklchToRgb(color.color, false), color.alpha),
+            surface,
+          )
+        : 0;
+    };
+    const sidebarTextIsReadable = contrastOnSelection(colors.sidebarForeground) >= 4.5;
+    const usesHighlightSurface =
+      themeColorToHex(colors.sidebarRowSelected) === themeColorToHex(colors.accentSurface);
+    if (
+      (usesHighlightSurface || !sidebarTextIsReadable) &&
+      contrastOnSelection(colors.accentSurfaceForeground) >= 4.5
+    ) {
+      foreground = "var(--contrast-accent-foreground)";
+    } else if (!sidebarTextIsReadable) {
+      foreground = themeRgbToThemeColor(readableThemeForeground(surface));
+    }
+  }
+  root.style.setProperty(SIDEBAR_SELECTION_FOREGROUND_VARIABLE, foreground);
+}
+
 export const THEME_PREVIEW_ID = "__preview";
 
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
@@ -1611,6 +1642,7 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  applySidebarSelectionForeground(root, colors);
   applyContextChipVariables(root, colors);
   setThemePreviewAppearance(appearance);
 }
@@ -1631,11 +1663,13 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
+    applySidebarSelectionForeground(root, colors);
     applyContextChipVariables(root, colors);
     return;
   }
 
   delete root.dataset.themeId;
+  root.style.removeProperty(SIDEBAR_SELECTION_FOREGROUND_VARIABLE);
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
