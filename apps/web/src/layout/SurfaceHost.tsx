@@ -104,6 +104,10 @@ const OVERVIEW_RENDER_MIN_PX = 120;
 const RENDERED_RECENT_CHATS = 8;
 /** An off-screen chat past the cap unmounts once it has stayed past it this long. */
 const UNRENDER_DELAY_MS = 1500;
+
+/** Set once the first chat pane of this page load has committed. */
+let documentFirstFrameDrawn = false;
+
 /** A modal dialog is open; dialogs portal out of their chat, so any one holds the cap. */
 const OPEN_DIALOG_SELECTOR =
   '[aria-modal="true"]:is([role="dialog"], [role="alertdialog"]), [data-slot$="dialog-popup"][data-open]';
@@ -1504,6 +1508,8 @@ function LayoutChatSurface({
         // timeline's scroll position and the terminal's size survive.
         !visible && "pointer-events-none inset-0 [content-visibility:hidden]",
         visible && (split || staged) && "overflow-clip rounded-pane pane-surface",
+        // A lone pane paints flat before its chat does, not the inset's grain behind it.
+        visible && !(split || staged) && "bg-background",
       )}
       style={placed?.style}
       // Not inert mid-switch: flipping inert restyles a whole rendered chat,
@@ -1554,9 +1560,16 @@ const LayoutChatSurfaceBody = memo(function LayoutChatSurfaceBody({
     target.kind === "draft" ? `draft:${target.draftId}` : scopedThreadKey(target.threadRef),
   );
   // Paint the pane before rendering ChatView in a separate task. Avoid transitions, whose
-  // interruption can destroy the composer editor beneath the pane.
-  const [rendered, setRendered] = useState(false);
+  // interruption can destroy the composer editor beneath the pane. The first frame after a
+  // load has no pane to hold steady, so the focused chat renders in it.
   const wanted = paneState.visible && near;
+  const [rendered, setRendered] = useState(
+    () => !documentFirstFrameDrawn && wanted && (paneState.focused || paneState.related),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mark the document's first frame as committed so later panes keep the stand-in.
+  useEffect(() => {
+    documentFirstFrameDrawn = true;
+  }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Schedule live chat mounting through the shared render queue and cancel stale requests.
   useEffect(() => {
     if (rendered || !wanted) return;
