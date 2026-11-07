@@ -73,11 +73,24 @@ describe("desktop preload bundle verifier", () => {
         ${validPreload}
         require("electron/common");
         require("electron/renderer");
-        require("node:events");
-        require("node:timers");
-        require("node:url");
       `),
     );
+  });
+
+  it("rejects Node module shims removed in Electron 45", () => {
+    for (const moduleName of [
+      "events",
+      "node:events",
+      "timers",
+      "node:timers",
+      "url",
+      "node:url",
+    ]) {
+      assert.throws(
+        () => verifyPreloadBundle(`${validPreload}\nrequire("${moduleName}");`),
+        /unsupported sandbox imports/,
+      );
+    }
   });
 
   it("ignores require-like text in strings and comments", () => {

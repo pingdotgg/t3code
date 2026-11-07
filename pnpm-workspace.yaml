@@ -186,7 +186,7 @@ overrides:
   # stays pinned on its own.
   "@opencode/protocol>effect": "catalog:"
   "@opencode/schema>effect": "catalog:"
-  node-abi: 4.33.0
+  node-abi: 4.40.0
   # react-native-worklets peers on any version, so a fresh resolve takes the newest
   # one; React Native's CLI plugin wants exactly its own. Move with react-native.
   "@react-native/metro-config": 0.88.0
@@ -299,6 +299,7 @@ publicHoistPattern:
   - "@cursor/sdk-*"
 
 minimumReleaseAgeExclude:
+  - electron@45.2.3
   - "@effect/tsgo-darwin-arm64@0.67.1"
   - "@effect/tsgo-darwin-x64@0.67.1"
   - "@effect/tsgo-linux-arm64@0.67.1"

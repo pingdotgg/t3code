@@ -1,7 +1,5 @@
-import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeTimers from "node:timers";
 import * as NodeURL from "node:url";
 import * as NodeVM from "node:vm";
 import { parse } from "acorn";
@@ -78,12 +76,6 @@ const createSandboxModules = (exposedGlobals) => {
     ["electron", electron],
     ["electron/common", electron],
     ["electron/renderer", electron],
-    ["events", NodeEvents.default],
-    ["node:events", NodeEvents.default],
-    ["timers", NodeTimers.default],
-    ["node:timers", NodeTimers.default],
-    ["url", NodeURL.default],
-    ["node:url", NodeURL.default],
   ]);
 };
 
