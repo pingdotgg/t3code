@@ -205,14 +205,6 @@ function runEndMs(run: TimingRun, runItems: ReadonlyArray<TimingTurnItem>, nowMs
   return latest;
 }
 
-function sumDurationByKind(spans: ReadonlyArray<ThreadTimingSpan>, kind: TimingSpanKind): number {
-  let total = 0;
-  for (const span of spans) {
-    if (span.kind === kind) total += span.durationMs;
-  }
-  return total;
-}
-
 /** Shared-time-axis placement for a waterfall bar. Tiny spans keep a visible sliver. */
 export function timingBarPlacement(
   startMs: number,
@@ -621,7 +613,12 @@ export function deriveThreadTimingTrace(input: {
         left.startMs - right.startMs || left.endMs - right.endMs || left.id.localeCompare(right.id),
     );
 
-    const waitMs = sumDurationByKind(spans, "wait");
+    // Overlapping approval waits count once so workMs is not understated.
+    const waitMs = unionIntervalMs(
+      spans
+        .filter((span) => span.kind === "wait")
+        .map((span) => ({ startMs: span.startMs, endMs: span.endMs })),
+    );
     const durationMs = Math.max(0, endMs - requestedAtMs);
     const workMs = Math.max(0, durationMs - queueWaitMs - waitMs);
 
