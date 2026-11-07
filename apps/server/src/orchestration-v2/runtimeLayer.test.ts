@@ -8151,6 +8151,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "expired-snooze",
     "wake",
     "wake-after-arm",
+    "wake-before-arm",
+    "stop-after-arm-wake",
+    "stop-before-arm-wake",
     "stop",
     "stop-before-arm",
     "stop-before-arm-mismatched-recovery",
@@ -8281,6 +8284,68 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.equal(resumeHeldQueue._tag, "Failure");
         assert.isTrue((yield* orchestrator.getThreadProjection(threadId)).runs[1]?.queueHeld);
       }
+      const writeNotificationWake = Effect.fn("UsageLimitRecoveryTest.writeNotificationWake")(
+        function* () {
+          const wakeRunId = RunId.make(`recovery:notification-wake:run:${scenario}`);
+          const wakeNodeId = NodeId.make(`recovery:notification-wake:root:${scenario}`);
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make(`recovery:notification-wake:created:${scenario}`),
+                type: "run.created",
+                threadId,
+                runId: wakeRunId,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: now,
+                payload: {
+                  ...run,
+                  id: wakeRunId,
+                  ordinal: run.ordinal + 1,
+                  rootNodeId: wakeNodeId,
+                  userMessageId: MessageId.make(`recovery:notification-wake:message:${scenario}`),
+                  status: "completed",
+                  startedAt: now,
+                  completedAt: now,
+                },
+              },
+              {
+                id: EventId.make(`recovery:notification-wake:notification:${scenario}`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`recovery:notification-wake:item:${scenario}`),
+                  type: "notification",
+                  threadId,
+                  runId: wakeRunId,
+                  nodeId: wakeNodeId,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 1,
+                  status: "completed",
+                  title: null,
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  source: { kind: "delegated_task", taskIds: [] },
+                  outcome: "failed",
+                  summary: "Background subagent failed",
+                },
+              },
+            ],
+          });
+        },
+      );
+      const hasWake =
+        scenario === "wake-after-arm" ||
+        scenario === "wake-before-arm" ||
+        scenario === "stop-after-arm-wake" ||
+        scenario === "stop-before-arm-wake";
+      if (scenario === "wake-before-arm" || scenario === "stop-before-arm-wake") {
+        yield* writeNotificationWake();
+      }
       const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
       )!;
@@ -8310,7 +8375,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         limitRecovery: arm.limitRecovery,
       };
       const stopBeforeArm =
-        scenario === "stop-before-arm" || scenario === "stop-before-arm-mismatched-recovery";
+        scenario === "stop-before-arm" ||
+        scenario === "stop-before-arm-mismatched-recovery" ||
+        scenario === "stop-before-arm-wake";
       if (stopBeforeArm) {
         if (scenario === "stop-before-arm-mismatched-recovery") {
           const current = yield* orchestrator.getThreadProjection(threadId);
@@ -8365,58 +8432,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         : arm;
       if (stopBeforeArm) yield* orchestrator.dispatch(armCommand);
       else yield* orchestrator.autoArmLimitRecovery(automaticArm);
-      if (scenario === "wake-after-arm") {
-        // A notification-only run after arming must not hide the failed source.
-        const wakeRunId = RunId.make("recovery:armed-notification-wake:run");
-        const wakeNodeId = NodeId.make("recovery:armed-notification-wake:root");
-        yield* events.write({
-          events: [
-            {
-              id: EventId.make("recovery:armed-notification-wake:created"),
-              type: "run.created",
-              threadId,
-              runId: wakeRunId,
-              providerInstanceId: modelSelection.instanceId,
-              occurredAt: now,
-              payload: {
-                ...run,
-                id: wakeRunId,
-                ordinal: run.ordinal + 1,
-                rootNodeId: wakeNodeId,
-                userMessageId: MessageId.make("recovery:armed-notification-wake:message"),
-                status: "completed",
-                startedAt: now,
-                completedAt: now,
-              },
-            },
-            {
-              id: EventId.make("recovery:armed-notification-wake:notification"),
-              type: "turn-item.updated",
-              threadId,
-              occurredAt: now,
-              payload: {
-                id: TurnItemId.make("recovery:armed-notification-wake:item"),
-                type: "notification",
-                threadId,
-                runId: wakeRunId,
-                nodeId: wakeNodeId,
-                providerThreadId: null,
-                providerTurnId: null,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                status: "completed",
-                title: null,
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-                source: { kind: "delegated_task", taskIds: [] },
-                outcome: "failed",
-                summary: "Background subagent failed",
-              },
-            },
-          ],
-        });
+      if (scenario === "wake-after-arm" || scenario === "stop-after-arm-wake") {
+        yield* writeNotificationWake();
       }
       let armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
@@ -8428,7 +8445,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         snooze,
         requestId: armCommand.commandId,
       });
-      if (scenario === "wake-after-arm") {
+      if (hasWake) {
         assert.equal(armedShell.latestRunId, run.id);
         assert.equal(armedShell.status, "failed");
         assert.equal(armedShell.lastErrorClass, "usage_limit");
@@ -8547,10 +8564,10 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       });
       assert.lengthOf(
         (yield* orchestrator.getThreadProjection(threadId)).runs,
-        scenario === "queued-resume" || scenario === "wake-after-arm" ? 2 : 1,
+        scenario === "queued-resume" || hasWake ? 2 : 1,
       );
       yield* TestClock.adjust("1 minute");
-      if (scenario === "wake-after-arm") {
+      if (hasWake) {
         const store = yield* ProjectionStore.ProjectionStoreV2;
         const candidate = (yield* store.getLimitRecoveryCandidates({
           now: yield* DateTime.now,
@@ -8621,7 +8638,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           commandId: CommandId.make(`recovery:archive:${scenario}`),
           threadId,
         });
-      if (scenario === "stop") {
+      if (scenario === "stop" || scenario === "stop-after-arm-wake") {
         yield* orchestrator.dispatch({
           type: "thread.stop",
           commandId: CommandId.make(`recovery:stop:${scenario}`),
@@ -8778,6 +8795,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           scenario === "resume-started" ||
           scenario === "resume-untagged" ||
           scenario === "wake-after-arm" ||
+          scenario === "wake-before-arm" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
@@ -8792,6 +8810,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           scenario === "resume-started" ||
           scenario === "resume-untagged" ||
           scenario === "wake-after-arm" ||
+          scenario === "wake-before-arm" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
@@ -8799,7 +8818,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             ? 1
             : 0),
       );
-      if (scenario === "stop") {
+      if (scenario === "stop" || scenario === "stop-after-arm-wake") {
         assert.deepInclude(after.thread.limitRecovery, { runId: run.id, autoResume: false });
         const projections = yield* ProjectionStore.ProjectionStoreV2;
         const sweep = { now: yield* DateTime.now, autoResume: true, snooze: false };
@@ -8808,7 +8827,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         );
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("recovery:rearm-after-stop"),
+          commandId: CommandId.make(`recovery:rearm-after-stop:${scenario}`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: true },
         });
@@ -8819,7 +8838,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const freshResume = limitRecoveryCommand(rearmed, true, DateTime.toEpochMillis(sweep.now));
         assert.isNotNull(freshResume);
         yield* orchestrator.dispatch(freshResume!);
-        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, hasWake ? 3 : 2);
       }
       if (scenario === "queued-resume") {
         const held = after.runs[1]!;
