@@ -1,3 +1,4 @@
+import { isModelContextRecord } from "~/lib/composerContextRecords";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
@@ -302,6 +303,14 @@ export function useComposerContextImport(input: {
           : 0,
     );
     for (const candidate of orderedRecords) {
+      if (isModelContextRecord(candidate)) {
+        if (questionAttachmentTarget !== null) continue;
+        addComposerDraftEnvironmentContexts(composerDraftTarget, [candidate], {
+          appendReference: false,
+        });
+        rewritten.set(candidate.contextId, candidate.contextId);
+        continue;
+      }
       // Producer ids fold into context ids, so two different excerpts can collide. Only skip
       // when the draft already holds the same payload; a colliding but different record is
       // re-minted under a fresh id so both survive the paste.
@@ -337,7 +346,9 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread" || existing?.kind === "environment"
+              : existing?.kind === "thread" ||
+                  existing?.kind === "environment" ||
+                  existing?.kind === "model"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)

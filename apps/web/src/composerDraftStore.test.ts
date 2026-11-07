@@ -98,6 +98,7 @@ import { insertInlineContextReference } from "./lib/composerContextReferences";
 import {
   buildMessageContext,
   environmentContextRecord,
+  modelContextRecord,
   terminalContextReference,
 } from "./lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
@@ -766,6 +767,34 @@ describe("composerDraftStore environment contexts", () => {
   const vps = environmentContextRecord(EnvironmentId.make("environment-vps"), "Hetzner [vps]");
 
   beforeEach(resetComposerDraftStore);
+
+  it("keeps a named model through persistence and into the sent context", () => {
+    const opus = modelContextRecord("claudeAgent", "claude-opus-5.5", "Claude Opus 5.5");
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "Ask");
+    store.addEnvironmentContexts(threadRef, [opus]);
+
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const hydrated = merge(
+      JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      ),
+      useComposerDraftStore.getInitialState(),
+    );
+    const restored = hydrated.draftsByThreadKey[scopedThreadKey(threadRef)];
+    expect(restored?.environmentContexts).toEqual([opus]);
+    expect(restored?.prompt).toBe(
+      `Ask [Claude Opus 5.5](t3-context://v1/model/${opus.contextId}) `,
+    );
+    expect(
+      buildMessageContext({
+        terminalContexts: [],
+        reviewComments: [],
+        previewAnnotations: [],
+        environmentContexts: restored?.environmentContexts ?? [],
+      })?.records,
+    ).toEqual([opus]);
+  });
 
   it("mentions a machine once, survives persistence, and sends only its identity", () => {
     const store = useComposerDraftStore.getState();

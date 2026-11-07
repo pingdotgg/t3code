@@ -2471,6 +2471,25 @@ code {
   position: relative;
 }
 
+/* Ghost text after the caret; Tab turns it into a chip. */
+.composer-tiptap .composer-inline-suggestion {
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  pointer-events: none;
+  user-select: none;
+  white-space: pre;
+}
+
+.composer-tiptap .composer-inline-suggestion-key {
+  margin-inline-start: 0.5em;
+  padding: 0 0.35em;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.7em;
+  vertical-align: 0.1em;
+}
+
 .composer-tiptap.ProseMirror-focused .composer-chip-range-selected::after {
   content: "";
   position: absolute;

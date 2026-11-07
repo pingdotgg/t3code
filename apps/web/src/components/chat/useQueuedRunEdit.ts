@@ -1,3 +1,4 @@
+import type { MentionContextRecord } from "~/lib/composerContextRecords";
 import { useAtomValue } from "@effect/atom-react";
 import {
   makeQueuedRunEditStore,
@@ -7,7 +8,6 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
-  type EnvironmentContextRecord,
   type EnvironmentId,
   type MessageId,
   type OrchestrationMessageContext,
@@ -80,7 +80,7 @@ interface QueuedRunEditContent {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
-  readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  readonly environmentContexts: ReadonlyArray<MentionContextRecord>;
 }
 
 function queuedEditDraftTarget(routeThreadRef: ScopedThreadRef, runId: RunId) {

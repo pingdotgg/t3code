@@ -6,7 +6,9 @@ import {
   COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
+  UnknownContextRecord,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import type {
   ComposerContextId,
   ComposerContextRecord,
@@ -169,9 +171,54 @@ export function threadContextReference(record: ThreadContextRecord): ComposerCon
 
 /** One record per machine: mentioning the same machine twice reuses the chip. */
 export function environmentContextReference(
-  record: EnvironmentContextRecord,
+  record: MentionContextRecord,
 ): ComposerContextReference {
-  return { kind: "environment", contextId: record.contextId, label: record.label };
+  return { kind: record.kind, contextId: record.contextId, label: record.label };
+}
+
+/**
+ * A model the prompt names. It stays an unknown-kind record on the wire: every server and client
+ * already carries those, and the agent reads the payload as is.
+ */
+export interface ModelContextRecord extends UnknownContextRecord {
+  readonly kind: "model";
+  readonly payload: {
+    readonly providerInstanceId: string;
+    readonly model: string;
+    readonly note: string;
+  };
+}
+
+export type MentionContextRecord = EnvironmentContextRecord | ModelContextRecord;
+
+/** A name the composer's ghost text can complete into a chip. */
+export type ComposerInlineCandidate = { readonly label: string } & (
+  | { readonly kind: "environment"; readonly environmentId: EnvironmentId }
+  | { readonly kind: "model"; readonly instanceId: string; readonly model: string }
+);
+
+const isUnknownContextRecord = Schema.is(UnknownContextRecord);
+
+export function isModelContextRecord(record: unknown): record is ModelContextRecord {
+  return isUnknownContextRecord(record) && record.kind === "model";
+}
+
+export function modelContextRecord(
+  providerInstanceId: string,
+  model: string,
+  label: string,
+): ModelContextRecord {
+  return {
+    version: 1,
+    kind: "model",
+    contextId: toKindScopedComposerContextId("model", JSON.stringify([providerInstanceId, model])),
+    label: sanitizeComposerContextLabel(label, "model"),
+    payload: {
+      providerInstanceId,
+      model,
+      note: "The user means this model. To run work on it, pass these as target.providerInstanceId and target.model to delegate_task.",
+    },
+  };
 }
 
 export function environmentContextRecord(
@@ -330,7 +377,7 @@ export function buildMessageContext(input: {
   reviewComments: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
-  environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  environmentContexts?: ReadonlyArray<MentionContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(

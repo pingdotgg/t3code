@@ -7,7 +7,8 @@ import {
   useRetainedContextPayloads,
 } from "./chat/composerContextUndo";
 
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import { matchComposerInlineSuggestion } from "@t3tools/client-runtime/composerInlineSuggestion";
+import { EnvironmentId, type ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
@@ -36,12 +37,13 @@ function Composer({
   richTextEnabled,
   skills,
   onChange,
+  ...inlineSuggestions
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
-}) {
+} & Pick<ComposerPromptEditorProps, "matchInlineSuggestion" | "onAcceptInlineSuggestion">) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
     <ComposerPromptEditor
@@ -58,6 +60,7 @@ function Composer({
         onChange?.(...args);
       }}
       onPaste={() => {}}
+      {...inlineSuggestions}
     />
   );
 }
@@ -232,6 +235,80 @@ it.each([false, true])(
     expect(serializeEditorDoc(editor.state.doc).value).toBe("ö");
   },
 );
+
+it("draws a completion while typing, reports Tab, and keeps a dismissed one gone", async () => {
+  const candidate = {
+    kind: "environment",
+    environmentId: EnvironmentId.make("env-vps"),
+    label: "Hetzner VPS",
+  } as const;
+  const onAccept = vi.fn();
+  await using screen = await render(
+    <Composer
+      value=""
+      richTextEnabled
+      skills={[]}
+      matchInlineSuggestion={(text) => matchComposerInlineSuggestion(text, [candidate])}
+      onAcceptInlineSuggestion={onAccept}
+    />,
+  );
+  const ghost = () => screen.container.querySelector(".composer-inline-suggestion")?.textContent;
+  await act(async () => editorIn(screen.container).view.focus());
+
+  await userEvent.keyboard("on hetz");
+  await vi.waitFor(() => expect(ghost()).toBe("ner VPSTab"));
+  await userEvent.keyboard("{Tab}");
+  expect(onAccept).toHaveBeenCalledWith({ candidate, typed: "hetz", remainder: "ner VPS" });
+
+  await userEvent.keyboard("{Escape}");
+  await vi.waitFor(() => expect(ghost()).toBeUndefined());
+  await userEvent.keyboard("n");
+  expect(ghost()).toBeUndefined();
+
+  await userEvent.keyboard(" hetz");
+  await vi.waitFor(() => expect(ghost()).toBe("ner VPSTab"));
+  await userEvent.keyboard("{ArrowLeft}");
+  await vi.waitFor(() => expect(ghost()).toBeUndefined());
+  expect(onAccept).toHaveBeenCalledTimes(1);
+});
+
+it("proposes no completion for pasted text or a name crossing formatting", async () => {
+  const candidate = {
+    kind: "environment",
+    environmentId: EnvironmentId.make("env-mini"),
+    label: "Mac mini",
+  } as const;
+  await using screen = await render(
+    <Composer
+      value="**Mac** m"
+      richTextEnabled
+      skills={[]}
+      matchInlineSuggestion={(text) => matchComposerInlineSuggestion(text, [candidate])}
+    />,
+  );
+  const editor = editorIn(screen.container);
+  const ghost = () => screen.container.querySelector(".composer-inline-suggestion");
+  await act(async () => {
+    editor.view.focus();
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+
+  await userEvent.keyboard("i");
+  await vi.waitFor(() => expect(editor.state.doc.textContent).toContain("mi"));
+  expect(ghost()).toBeNull();
+
+  await userEvent.keyboard(" ");
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "mac");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  await vi.waitFor(() => expect(editor.state.doc.textContent).toContain("mi mac"));
+  expect(ghost()).toBeNull();
+
+  await userEvent.keyboard(" mac");
+  await vi.waitFor(() => expect(ghost()).not.toBeNull());
+});
 
 it("lets composition replace selected text without surrounding it", async () => {
   await using screen = await mountEditor("word");
