@@ -1712,8 +1712,11 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
-  // Git status knows the root without a remote, unlike the project's repository identity.
-  const activeRepositoryRoot = gitStatusQuery.data?.workingTree.rootPath;
+  // Git status knows the root without a remote; the repository identity covers it while
+  // status loads or fails. A worktree thread's root is its cwd.
+  const activeRepositoryRoot =
+    gitStatusQuery.data?.workingTree.rootPath ??
+    (activeThreadWorktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   const liveIsGitRepo = gitStatusQuery.data?.isRepo;

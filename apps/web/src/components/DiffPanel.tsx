@@ -274,8 +274,11 @@ export default function DiffPanel({
         })
       : null,
   );
-  // Git status knows the root without a remote, unlike the project's repository identity.
-  const activeRepositoryRoot = gitStatusQuery.data?.workingTree.rootPath;
+  // Git status knows the root without a remote; the repository identity covers it while
+  // status loads or fails. A worktree thread's root is its cwd.
+  const activeRepositoryRoot =
+    gitStatusQuery.data?.workingTree.rootPath ??
+    (activeThread?.worktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
