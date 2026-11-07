@@ -3,8 +3,9 @@ import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { NavigationContext } from "@react-navigation/native";
 import { use, useId, useLayoutEffect } from "react";
-import { View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
+import { SymbolView } from "./AppSymbol";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/StackHeader";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
@@ -22,6 +23,7 @@ import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { useControlTheme } from "./useControlTheme";
+import { formatBackCount } from "../../features/threads/threadListV2";
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -63,12 +65,28 @@ export function AppBar(props: AppBarProps) {
       ? { ...props.backInSplitView, onPress: splitBackPress }
       : null;
   const navigation = use(NavigationContext);
+  const backCount = props.backCount ?? 0;
+  const backCountLabel = formatBackCount(backCount);
+  // Editor-style bars are chevron-only, so a count must replace the system back with a labelled
+  // control — same place Messages puts the unread number.
+  const countedListBack =
+    backCountLabel !== "" &&
+    !layout.usesSplitView &&
+    props.onBackToList &&
+    props.onClose === undefined &&
+    splitBack === null &&
+    !(props.guardBack && props.onBack)
+      ? props.onBackToList
+      : null;
   const rootBack =
-    !layout.usesSplitView && props.onBackToList && navigation?.canGoBack() === false
+    countedListBack ??
+    (!layout.usesSplitView && props.onBackToList && navigation?.canGoBack() === false
       ? props.onBackToList
       : props.guardBack && props.onBack
         ? props.onBack
-        : null;
+        : null);
+  const backAccessibilityLabel =
+    backCount > 0 ? `Back, ${backCount} idle` : rootBack ? "Back" : undefined;
   const compose =
     layout.usesSplitView && !(usesNativeWorkspaceColumns && isDuoDevice(deviceType))
       ? props.onCompose
@@ -94,12 +112,17 @@ export function AppBar(props: AppBarProps) {
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={[props.optionsVersion, compactSearch ? menu : undefined]}
+        optionsVersion={[
+          props.optionsVersion,
+          compactSearch ? menu : undefined,
+          countedListBack ? backCountLabel : 0,
+        ]}
         options={{
           headerShown: true,
           headerBackVisible:
             props.onClose === undefined &&
             splitBack === null &&
+            countedListBack === null &&
             !(layout.usesSplitView && props.onBackToList) &&
             !(props.guardBack && props.onBack),
           ...(props.guardBack ? { gestureEnabled: false } : undefined),
@@ -159,9 +182,25 @@ export function AppBar(props: AppBarProps) {
         </Toolbar>
       ) : rootBack || splitBack || sidebarToggle || compose ? (
         <Toolbar placement="left">
-          {rootBack ? (
+          {countedListBack ? (
+            <Toolbar.Custom>
+              <Pressable
+                accessibilityLabel={backAccessibilityLabel ?? "Back"}
+                accessibilityRole="button"
+                onPress={countedListBack}
+                className="h-9 flex-row items-center gap-1 rounded-full bg-screen px-1.5 shadow-sm shadow-adaptive-black-a10-a25"
+              >
+                <SymbolView name="chevron.left" size={17} tintColorClassName="accent-foreground" />
+                <View className="min-h-[22px] min-w-[22px] items-center justify-center rounded-full bg-foreground px-1.5">
+                  <Text className="text-[12px] font-semibold leading-none tabular-nums text-screen">
+                    {backCountLabel}
+                  </Text>
+                </View>
+              </Pressable>
+            </Toolbar.Custom>
+          ) : rootBack ? (
             <ScreenHeaderButton
-              accessibilityLabel="Back"
+              accessibilityLabel={backAccessibilityLabel ?? "Back"}
               icon="chevron.left"
               onPress={rootBack}
               separateBackground

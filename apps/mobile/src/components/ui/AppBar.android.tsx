@@ -16,6 +16,7 @@ import { SearchField } from "./SearchField";
 import { findAppBarMenuItem, menuActionsFromAppBarItems } from "./menuActionItems";
 import type { AppBarMenuItem, AppBarProps, AppBarSearch } from "./AppBar.types";
 import { useHasWorkspaceAppBar, WorkspaceAppBar } from "./WorkspaceAppBar.android";
+import { formatBackCount } from "../../features/threads/threadListV2";
 
 function selectMenuItem(items: ReadonlyArray<AppBarMenuItem>, id: string) {
   const action = findAppBarMenuItem(items, id);
@@ -76,6 +77,7 @@ function SearchableAppBar(props: AppBarProps & { readonly search: AppBarSearch }
 
 function AppBarView(props: AppBarProps & { readonly searchState?: SearchState }) {
   const { search, searchState } = props;
+  const { layout } = useAdaptiveWorkspaceLayout();
   const inFormSheet = use(RoutedFormSheetContext);
   const { paddingTop, paddingBottom } = useToolbarLayout(props.sheet || inFormSheet);
   const { themeVariables } = useAppearancePreferences();
@@ -165,6 +167,9 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       />
     </View>
   ) : null;
+  const backCount = props.backCount ?? 0;
+  const backCountLabel = formatBackCount(backCount);
+  const backAccessibilityLabel = backCount > 0 ? `Navigate up, ${backCount} idle` : undefined;
   const options =
     props.embedded || props.sheet ? null : (
       <NativeStackScreenOptions
@@ -184,6 +189,12 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       titleContent={props.titleContent}
       subtitle={props.subtitle}
       onBack={props.onClose ? undefined : props.onBack}
+      backCountLabel={
+        props.onClose || layout.usesSplitView ? undefined : backCountLabel || undefined
+      }
+      backAccessibilityLabel={
+        props.onClose || layout.usesSplitView ? undefined : backAccessibilityLabel
+      }
       leading={
         (props.onClose ? (
           <AndroidHeaderIconButton

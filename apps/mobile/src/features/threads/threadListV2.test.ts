@@ -45,6 +45,9 @@ import {
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
+  countIdleThreads,
+  formatBackCount,
+  isIdleThread,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -209,6 +212,50 @@ describe("resolveThreadListV2Status", () => {
       expect(threadHasUnseenCompletion(thread)).toBe(true);
     },
   );
+});
+
+describe("countIdleThreads", () => {
+  const idle = () =>
+    presentThreadShell(
+      environmentId,
+      decodeThreadShell(
+        makeRawThreadShell({
+          latestRunId: RunId.make("run-idle"),
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+        }),
+      ),
+    );
+
+  it("counts ready threads, including already-visited ones", () => {
+    const ready = idle();
+    const blocked = { ...ready, id: ThreadId.make("blocked"), hasPendingApprovals: true };
+    expect(isIdleThread(ready)).toBe(true);
+    expect(isIdleThread(blocked)).toBe(false);
+    expect(countIdleThreads([ready, blocked])).toBe(1);
+  });
+
+  it("skips settled and archived threads", () => {
+    const ready = idle();
+    expect(
+      countIdleThreads([
+        { ...ready, settledOverride: "settled" },
+        { ...ready, archivedAt: NOW },
+      ]),
+    ).toBe(0);
+  });
+
+  it("can exclude the open thread", () => {
+    const ready = idle();
+    expect(countIdleThreads([ready], { excludeThreadId: ready.id })).toBe(0);
+  });
+
+  it("formats the back-button glyphs like Messages", () => {
+    expect(formatBackCount(0)).toBe("");
+    expect(formatBackCount(3)).toBe("3");
+    expect(formatBackCount(99)).toBe("99");
+    expect(formatBackCount(100)).toBe("99+");
+  });
 });
 
 describe("resolveThreadListV2SwipeActions", () => {

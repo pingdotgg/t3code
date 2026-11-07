@@ -243,6 +243,59 @@ export function threadHasUnseenCompletion(
   return completedAtMs > lastVisitedAtMs;
 }
 
+/** Listed idle (ready) threads — Done rows that still sit in the open list. */
+export function isIdleThread(
+  thread: Pick<
+    EnvironmentThreadShell,
+    | "archivedAt"
+    | "lineage"
+    | "settledOverride"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingSubagentRequest"
+    | "pendingGuestMessageCount"
+    | "runtime"
+    | "blockedOnThreadWait"
+  >,
+): boolean {
+  if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
+  if (thread.settledOverride === "settled") return false;
+  return resolveThreadListV2Status(thread) === "ready";
+}
+
+/** Count for the Messages-style badge on the thread back button. */
+export function countIdleThreads(
+  threads: ReadonlyArray<
+    Pick<
+      EnvironmentThreadShell,
+      | "id"
+      | "archivedAt"
+      | "lineage"
+      | "settledOverride"
+      | "hasPendingApprovals"
+      | "hasPendingUserInput"
+      | "pendingSubagentRequest"
+      | "pendingGuestMessageCount"
+      | "runtime"
+      | "blockedOnThreadWait"
+    >
+  >,
+  options?: { readonly excludeThreadId?: string },
+): number {
+  let count = 0;
+  for (const thread of threads) {
+    if (options?.excludeThreadId !== undefined && thread.id === options.excludeThreadId) continue;
+    if (isIdleThread(thread)) count += 1;
+  }
+  return count;
+}
+
+/** Glyphs for the back-button count; VoiceOver still hears the exact number. */
+export function formatBackCount(count: number): string {
+  if (count <= 0) return "";
+  return count > 99 ? "99+" : String(count);
+}
+
 export function resolveThreadListV2WokeAt(
   thread: EnvironmentThreadShell,
   options: { readonly now: string },

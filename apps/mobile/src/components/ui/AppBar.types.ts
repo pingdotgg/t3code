@@ -91,6 +91,11 @@ export interface AppBarProps {
    */
   readonly onBackToList?: () => void;
   /**
+   * Unread idle threads waiting back in the list. Shown next to the back chevron like iOS Messages
+   * (native back title on iOS; label beside the up affordance on Android). Hidden at zero.
+   */
+  readonly backCount?: number;
+  /**
    * iOS: a labelled compose button beside the sidebar button in split view. The Duo's column bar
    * and Android's sidebar compose on their own, so they ignore it.
    */

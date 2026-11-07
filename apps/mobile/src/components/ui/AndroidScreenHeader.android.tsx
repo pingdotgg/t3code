@@ -2,7 +2,7 @@ import { AppActivityIndicator } from "./AppActivityIndicator";
 import { Column, Row, Text as NativeText, RNHostView } from "@expo/ui/jetpack-compose";
 import { weight } from "@expo/ui/jetpack-compose/modifiers";
 import { use, useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 
 import type { AppSymbolName } from "./AppSymbol";
 import { NativeAppBar } from "./NativeAppBar.android";
@@ -44,6 +44,9 @@ export function AndroidScreenHeader(props: {
   readonly leading?: ReactNode;
   readonly trailing?: ReactNode;
   readonly onBack?: () => void;
+  /** Unread count beside the up affordance, matching iOS Messages' back badge. */
+  readonly backCountLabel?: string;
+  readonly backAccessibilityLabel?: string;
   readonly embedded?: boolean;
   readonly hideBottomBorder?: boolean;
   /** One row with the subtitle after the title, for screens short on height. */
@@ -82,12 +85,25 @@ export function AndroidScreenHeader(props: {
           props.onBack || props.leading ? (
             <View collapsable={false} className="flex-row items-center">
               {props.onBack ? (
-                <IconButton
-                  accessibilityLabel="Navigate up"
-                  icon="arrow.left"
-                  tintColorClassName="accent-header-foreground"
-                  onPress={props.onBack}
-                />
+                <View className="flex-row items-center">
+                  <IconButton
+                    accessibilityLabel={props.backAccessibilityLabel ?? "Navigate up"}
+                    icon="arrow.left"
+                    tintColorClassName="accent-header-foreground"
+                    onPress={props.onBack}
+                  />
+                  {props.backCountLabel ? (
+                    <View
+                      accessible={false}
+                      className="min-h-[22px] min-w-[22px] items-center justify-center rounded-full bg-foreground px-1.5"
+                      style={{ marginStart: -4 }}
+                    >
+                      <Text className="text-[12px] font-semibold leading-none tabular-nums text-screen">
+                        {props.backCountLabel}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
               ) : null}
 
               {props.leading}
