@@ -108,8 +108,17 @@ export function workspaceTabsReducer(
 }
 
 /**
- * iOS 27's integrated search X closes the field with only a blur, leaving `expanded`.
- * An empty one has nothing to restore, except where the caller keeps it open (the Duo).
+ * iOS 27's integrated search X closes with only a blur (no cancel). Treat that as cancel so the
+ * query clears, unless Search asked to keep filtering with the keyboard dismissed (or the Duo,
+ * which keeps an empty field open).
+ */
+export function workspaceSearchBlurAction(retainQuery: boolean): "expand" | "cancel" {
+  return retainQuery ? "expand" : "cancel";
+}
+
+/**
+ * Restore only while search is still open. After cancel the mode is `resting`; after a keep-query
+ * blur it is `expanded`. An empty expanded field has nothing to restore, except on the Duo.
  */
 export function shouldRestoreNativeSearch(tab: WorkspaceTabState, keepsEmptySearchOpen: boolean) {
   if (tab.searchMode === "resting") return false;

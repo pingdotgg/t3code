@@ -1,7 +1,7 @@
 import { useActiveNewTask } from "../../../state/active-new-task";
 import { Toolbar } from "../../../components/ui/Toolbar";
-import { useFocusEffect, useIsFocused } from "@react-navigation/native";
-import { use, useCallback, useEffect, useRef } from "react";
+import { useIsFocused } from "@react-navigation/native";
+import { use, useCallback, useEffect, useEffectEvent, useRef } from "react";
 import { isDuoDevice } from "../../../lib/device-type";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { createNativeHeaderMenu } from "../../../components/ui/nativeHeaderMenu.ios";
@@ -17,7 +17,7 @@ import {
 import { useHardwareKeyboardCommand } from "../../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
-import { shouldRestoreNativeSearch } from "./workspace-tabs-state";
+import { shouldRestoreNativeSearch, workspaceSearchBlurAction } from "./workspace-tabs-state";
 import { useFloatingWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
 
@@ -83,6 +83,17 @@ export function WorkspaceToolbar(props: {
     workspace.recordScrollOffset(selectedTab, tab.searchEntryOffset);
     workspace.dispatch({ type: "cancel", tab: selectedTab });
   };
+  // iOS 27's X only blurs; Search sets this so blur keeps the filter instead of clearing.
+  const retainQueryOnBlur = useRef(false);
+  const handleSearchBlur = () => {
+    const action = workspaceSearchBlurAction(retainQueryOnBlur.current || duoSearch);
+    retainQueryOnBlur.current = false;
+    if (action === "expand") {
+      workspace.dispatch({ type: "expand", tab: selectedTab });
+      return;
+    }
+    cancelSearch();
+  };
   const searchFocused = () =>
     tab.searchMode === "resting"
       ? enterSearch()
@@ -106,19 +117,15 @@ export function WorkspaceToolbar(props: {
       }
     }
   };
-  useFocusEffect(
-    useCallback(() => {
-      const frame = requestAnimationFrame(restoreSearch);
-      return () => cancelAnimationFrame(frame);
-    }, [restoreSearch]),
-  );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to restore the native search bar's text and focus when its tab becomes active
+  const restoreOnAppearance = useEffectEvent(restoreSearch);
+  // iOS 27's X reports only a blur; restoring then would write the query back into the closing field.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to restore the native search bar's text and focus when its host appears, refocuses or moves
   useEffect(() => {
     if (!tabActive) return;
-    const frame = requestAnimationFrame(restoreSearch);
+    const frame = requestAnimationFrame(() => restoreOnAppearance());
     return () => cancelAnimationFrame(frame);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Moving the search bar to the bottom toolbar restores its focus and query.
-  }, [restoreSearch, tabActive, bottomSearch]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each is a way the native search bar reappears or moves, while query and mode edits must not restore it
+  }, [focused, searchHostVisible, searchVisible, selectedTab, tabActive, bottomSearch]);
   const composeButton = nativeToolbarCompose ? (
     <Toolbar.Button
       identifier="workspace-compose"
@@ -169,8 +176,11 @@ export function WorkspaceToolbar(props: {
                   placeholder: searchLabel,
                   cancelButtonHidden: foldedSearch,
                   onFocus: searchFocused,
-                  onBlur: () => workspace.dispatch({ type: "expand", tab: selectedTab }),
-                  onSearchButtonPress: () => searchRef.current?.blur(),
+                  onBlur: handleSearchBlur,
+                  onSearchButtonPress: () => {
+                    retainQueryOnBlur.current = true;
+                    searchRef.current?.blur();
+                  },
                   onChangeText: ({ nativeEvent }) =>
                     workspace.dispatch({
                       type: "query",

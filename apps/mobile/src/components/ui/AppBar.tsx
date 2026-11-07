@@ -2,7 +2,7 @@ import { Toolbar } from "./Toolbar";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { NavigationContext } from "@react-navigation/native";
-import { use, useId, useLayoutEffect } from "react";
+import { use, useId, useLayoutEffect, useRef } from "react";
 import { View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
@@ -90,6 +90,20 @@ export function AppBar(props: AppBarProps) {
     !compactSearch &&
     NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED &&
     isDuoDevice(deviceType);
+  // iOS 27's X only blurs; Search sets this so blur keeps the filter instead of clearing.
+  const retainQueryOnBlur = useRef(false);
+  const clearSearch = () => {
+    search?.onChangeText("");
+    search?.onClose?.();
+  };
+  const handleSearchBlur = () => {
+    if (!search || search.mode === "inline" || duoBottomSearch) return;
+    if (retainQueryOnBlur.current) {
+      retainQueryOnBlur.current = false;
+      return;
+    }
+    clearSearch();
+  };
   if (props.embedded || props.sheet) return null;
   return (
     <>
@@ -143,7 +157,11 @@ export function AppBar(props: AppBarProps) {
                         : undefined),
                       placeholder: search.placeholder,
                       onChangeText: (event) => search.onChangeText(event.nativeEvent.text),
-                      onCancelButtonPress: () => search.onChangeText(""),
+                      onBlur: handleSearchBlur,
+                      onSearchButtonPress: () => {
+                        retainQueryOnBlur.current = true;
+                      },
+                      onCancelButtonPress: clearSearch,
                     },
               }
             : undefined),

@@ -6,6 +6,7 @@ import {
   initialWorkspaceTabsState,
   workspaceTabsReducer,
   shouldRestoreNativeSearch,
+  workspaceSearchBlurAction,
   workspaceTabForNativeSlot,
   resolveWorkspaceTabOrder,
   workspaceSearchBottomClearance,
@@ -154,6 +155,21 @@ describe("workspace root navigation", () => {
     expect(shouldRestoreNativeSearch(filtered.tabs.threads, false)).toBe(true);
     expect(shouldRestoreNativeSearch(opened.tabs.threads, false)).toBe(true);
     expect(shouldRestoreNativeSearch(initialWorkspaceTabsState().tabs.threads, true)).toBe(false);
+  });
+
+  it("treats a plain blur as cancel so the iOS search X clears the query", () => {
+    expect(workspaceSearchBlurAction(false)).toBe("cancel");
+    expect(workspaceSearchBlurAction(true)).toBe("expand");
+
+    let state = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
+    state = workspaceTabsReducer(state, { type: "query", query: "zzz" });
+    state = workspaceTabsReducer(state, { type: workspaceSearchBlurAction(false) });
+    expect(state.tabs.threads).toMatchObject({ query: "", searchMode: "resting" });
+
+    state = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
+    state = workspaceTabsReducer(state, { type: "query", query: "zzz" });
+    state = workspaceTabsReducer(state, { type: workspaceSearchBlurAction(true) });
+    expect(state.tabs.threads).toMatchObject({ query: "zzz", searchMode: "expanded" });
   });
 
   it("returns from Usage without losing list state", () => {
