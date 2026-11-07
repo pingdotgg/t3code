@@ -261,7 +261,7 @@ import {
   type SidebarProviderEntry,
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
-import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
+import { SidebarDraftBlock, useSidebarDrafts } from "./sidebar/SidebarDraftBlock";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -322,6 +322,7 @@ const sidebarProviderEntriesAtom = Atom.make((get) => {
 }).pipe(Atom.withLabel("sidebar-provider-entries"));
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Map();
+const EMPTY_DRAFT_IDS: readonly DraftId[] = [];
 const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
@@ -1425,10 +1426,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const settledThreadKeysRef = useRef(settledThreadKeys);
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
+  const { draftIds, routeDraftComposer } = useSidebarDrafts(scopedProjectKeys, routeDraftIdForRows);
+  // Numbered jumps follow the rows on screen: drafts first, then threads.
+  // Search hides the draft rows, so they take no numbers while it is open.
+  const jumpDraftIds = isSearchingThreads ? EMPTY_DRAFT_IDS : draftIds;
   const jumpLabelByKey = (() => {
     const mapping = new Map<string, string>();
     for (const [index, threadKey] of orderedThreadKeys.entries()) {
-      const jumpCommand = threadJumpCommandForIndex(index);
+      const jumpCommand = threadJumpCommandForIndex(jumpDraftIds.length + index);
       if (!jumpCommand) break;
       const label = shortcutLabelForCommand(keybindings, jumpCommand);
       if (label) mapping.set(threadKey, label);
@@ -2916,12 +2921,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
       const jumpIndex = threadJumpIndexFromCommand(command ?? "");
       if (jumpIndex === null) return;
-      navigateToThreadKey(orderedThreadKeys[jumpIndex] ?? null);
+      const jumpDraftId = jumpDraftIds[jumpIndex];
+      if (jumpDraftId !== undefined) {
+        event.preventDefault();
+        event.stopPropagation();
+        navigateToDraft(jumpDraftId);
+        return;
+      }
+      navigateToThreadKey(orderedThreadKeys[jumpIndex - jumpDraftIds.length] ?? null);
     };
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
+    jumpDraftIds,
     keybindings,
+    navigateToDraft,
     navigateToThread,
     orderedThreadKeys,
     routeRowThreadKey,
@@ -2944,6 +2958,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
   const showJumpHints = useThreadJumpHintsVisible(shouldShowJumpHintsNow);
+  const draftJumpLabels = showJumpHints
+    ? jumpDraftIds.map((_, index) => {
+        const jumpCommand = threadJumpCommandForIndex(index);
+        return jumpCommand ? shortcutLabelForCommand(keybindings, jumpCommand) : null;
+      })
+    : null;
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
     if (
@@ -3443,9 +3463,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       const items: ReactNode[] = [
                         <SidebarDraftBlock
                           key="draft-sessions"
+                          draftIds={draftIds}
+                          routeDraftComposer={routeDraftComposer}
+                          jumpLabels={draftJumpLabels}
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
-                          scopedProjectKeys={scopedProjectKeys}
                           routeDraftId={routeDraftIdForRows}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
