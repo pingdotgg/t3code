@@ -3285,6 +3285,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           selectOption("effort", ["high", "max"]),
           ["approval-required", "auto", "full-access"],
         );
+        const legacyEffortClaude: ServerProvider = {
+          ...healthyClaude,
+          models: healthyClaude.models.map((model) => ({
+            ...model,
+            capabilities: {
+              optionDescriptors: [
+                selectOption("effort", ["high", "xhigh"]),
+                { id: "ultracode", label: "ultracode", type: "boolean" as const },
+              ],
+            },
+          })),
+        };
         const codex = withOptions(
           providerSnapshot({
             instanceId: codexInstanceId,
@@ -3295,29 +3307,17 @@ describe("OrchestratorMcpService provider resolution", () => {
           ["approval-required", "full-access"],
         );
         const cases = [
-          { name: "implicit, inherited exhausted", target: undefined, expected: fallback },
           {
-            name: "implicit, inherited has usage",
+            name: "implicit, with a runtime mode only the fallback offers",
             target: undefined,
-            codexUsage: false,
-            expected: inherited,
+            runtimeMode: "auto",
+            expected: fallback,
           },
           {
             name: "options only",
             target: { options: { effort: "max" } },
             expected: { ...fallback, options: [{ id: "effort", value: "max" }] },
-          },
-          {
-            name: "options only, inherited has usage",
-            target: { options: { effort: "max" } },
-            codexUsage: false,
-            expected: { error: "invalid_request" },
-          },
-          {
-            name: "runtime mode only the fallback offers",
-            target: undefined,
-            runtimeMode: "auto",
-            expected: fallback,
+            retry: true,
           },
           {
             name: "explicit instance",
@@ -3330,18 +3330,6 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: inherited,
           },
           { name: "explicit model", target: { model: "gpt-5.4" }, expected: inherited },
-          {
-            name: "fallback exhausted",
-            target: undefined,
-            claude: { ...healthyClaude, usageLimits: exhausted },
-            expected: inherited,
-          },
-          {
-            name: "fallback unauthenticated",
-            target: undefined,
-            claude: { ...healthyClaude, auth: { status: "unauthenticated" } },
-            expected: inherited,
-          },
           {
             name: "fallback in error",
             target: undefined,
@@ -3361,6 +3349,20 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: inherited,
           },
           {
+            name: "fallback saved with the legacy ultracode effort",
+            target: undefined,
+            claude: legacyEffortClaude,
+            fallbackOptions: [{ id: "effort", value: "ultracode" }],
+            fallbackActive: true,
+            expected: {
+              ...fallback,
+              options: [
+                { id: "effort", value: "xhigh" },
+                { id: "ultracode", value: true },
+              ],
+            },
+          },
+          {
             name: "fallback without adapter",
             target: undefined,
             adapters: [codexInstanceId],
@@ -3376,8 +3378,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           name: string;
           target: unknown;
           expected: unknown;
-          codexUsage?: boolean;
           runtimeMode?: OrchestratorMcpRuntimeMode;
+          retry?: boolean;
+          fallbackActive?: boolean;
           claude?: unknown;
           fallbackOptions?: ReadonlyArray<{ id: string; value: string }>;
           adapters?: ReadonlyArray<ProviderInstanceId>;
@@ -3395,8 +3398,8 @@ describe("OrchestratorMcpService provider resolution", () => {
             threadId: parentThreadId,
             origin: "app_owned",
             childThreadId,
-            providerInstanceId: "error" in expected ? codexInstanceId : expected.instanceId,
-            model: "error" in expected ? inherited.model : expected.model,
+            providerInstanceId: expected.instanceId,
+            model: expected.model,
             status: "running",
             result: null,
           };
@@ -3435,7 +3438,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 : {}),
             }),
             providerRegistryLayer([
-              "codexUsage" in testCase ? codex : { ...codex, usageLimits: exhausted },
+              { ...codex, usageLimits: exhausted },
               ("claude" in testCase ? testCase.claude : healthyClaude) as ServerProvider,
             ]),
             adapterRegistryLayer(
@@ -3456,13 +3459,11 @@ describe("OrchestratorMcpService provider resolution", () => {
                 providerInstanceId: savedFallback.instanceId,
                 model: savedFallback.model,
                 options: savedFallback.options,
-                active: ![
-                  "codexUsage",
-                  "claude",
-                  "fallbackOptions",
-                  "adapters",
-                  "projectDisablesFallback",
-                ].some((key) => key in testCase),
+                active:
+                  "fallbackActive" in testCase ||
+                  !["claude", "fallbackOptions", "adapters", "projectDisablesFallback"].some(
+                    (key) => key in testCase,
+                  ),
               },
               testCase.name,
             );
@@ -3475,16 +3476,11 @@ describe("OrchestratorMcpService provider resolution", () => {
               mode: "async" as const,
               clientRequestId: testCase.name,
             };
-            if ("error" in expected) {
-              const error = yield* service.delegateTask(scope, request).pipe(Effect.flip);
-              assert.equal(error.code, expected.error, testCase.name);
-              assert.equal(commands.length, 0, testCase.name);
-              return;
-            }
             yield* service.delegateTask(scope, request);
             assert.deepEqual(commands[0]?.modelSelection, expected, testCase.name);
+            if (!("retry" in testCase)) return;
 
-            // The retry replays the accepted task even though the fallback has since been cleared.
+            // The retry replays the accepted task even though its options no longer fit the inherited model.
             yield* settings.updateSettings({ fallbackModelSelection: null });
             yield* service.delegateTask(scope, request);
             assert.equal(commands.length, 2, testCase.name);

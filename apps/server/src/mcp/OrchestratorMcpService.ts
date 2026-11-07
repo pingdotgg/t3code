@@ -404,10 +404,11 @@ function activeFallback(input: {
     return undefined;
   }
   const model = provider.models.find((entry) => entry.slug === selection.model);
+  const descriptors = model?.capabilities?.optionDescriptors;
+  const options = withLegacyUltracodeEffort(descriptors, selection.options);
   return (provider.models.length === 0 || model !== undefined) &&
-    invalidOptionSelections(selection.options ?? [], model?.capabilities?.optionDescriptors)
-      .length === 0
-    ? selection
+    invalidOptionSelections(options ?? [], descriptors).length === 0
+    ? { ...selection, ...(options === undefined ? {} : { options }) }
     : undefined;
 }
 
