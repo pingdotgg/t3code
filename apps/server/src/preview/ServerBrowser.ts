@@ -915,8 +915,15 @@ const make = Effect.gen(function* () {
       });
       await cdp.send("Page.enable");
     }
-    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
-      request.isNavigationRequest() && request.frame() === page.mainFrame();
+    // Playwright's `request.frame()` throws for a request issued before its frame exists, and a
+    // throw from a page listener is uncaught, so such a request is not a main-frame navigation.
+    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) => {
+      try {
+        return request.isNavigationRequest() && request.frame() === page.mainFrame();
+      } catch {
+        return false;
+      }
+    };
     const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
       if (!isMainNavigation(request)) return;
