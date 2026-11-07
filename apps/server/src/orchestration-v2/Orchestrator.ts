@@ -79,7 +79,7 @@ import {
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelSelectionsEqual, withoutUltracode } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -88,6 +88,7 @@ import {
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
+import * as Predicate from "effect/Predicate";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -3018,7 +3019,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       title: command.title,
       ...(command.lesson === undefined ? {} : { lesson: command.lesson }),
       providerInstanceId: command.modelSelection.instanceId,
-      modelSelection: command.modelSelection,
+      modelSelection:
+        command.lesson === undefined
+          ? command.modelSelection
+          : withoutUltracode(command.modelSelection),
       runtimeMode: command.runtimeMode,
       interactionMode: command.interactionMode,
       branch: command.branch,
@@ -6123,7 +6127,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = applyToProjection(projection, event);
     }
-    const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    const requestedSelection = command.modelSelection ?? projection.thread.modelSelection;
+    const modelSelection =
+      projection.thread.lesson === undefined && projection.thread.sideChat === undefined
+        ? requestedSelection
+        : withoutUltracode(requestedSelection);
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -6357,7 +6365,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
 
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
-      yield* dispatchSteerIntoRun({
+      const steerMode = dispatchMode;
+      const steered = yield* dispatchSteerIntoRun({
         command,
         events,
         effects,
@@ -6382,8 +6391,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
         forceRestart: dispatchMode.type === "restart_active",
-      });
-      return;
+      }).pipe(
+        Effect.as(true),
+        // A user's steer the provider can't take in place (it switches provider) runs next instead.
+        Effect.catchIf(
+          (error) =>
+            steerMode.type === "steer_active" &&
+            command.createdBy === "user" &&
+            Predicate.isTagged(error.cause, "CommandPolicyCapabilityUnsupportedError"),
+          () => Effect.succeed(false),
+        ),
+      );
+      if (steered) return;
+      dispatchMode = { type: "queue_after_active" };
     }
 
     const activeProviderThread = projection.providerThreads.find(

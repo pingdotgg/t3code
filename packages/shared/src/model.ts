@@ -223,6 +223,22 @@ export function withLegacyUltracodeEffort<
   ];
 }
 
+/** Ultracode fans out background multi-agent workflows that leave a learner waiting (APP-79). */
+export function withoutUltracode(selection: ModelSelection): ModelSelection {
+  const options = selection.options ?? [];
+  if (!options.some((o) => o.value === "ultracode" || (o.id === "ultracode" && o.value === true))) {
+    return selection;
+  }
+  return createModelSelection(selection.instanceId, selection.model, [
+    ...options
+      .filter((o) => o.id !== "ultracode")
+      .map((o) =>
+        o.id === "effort" && o.value === "ultracode" ? { id: "effort", value: "xhigh" } : o,
+      ),
+    { id: "ultracode", value: false },
+  ]);
+}
+
 export function getProviderOptionDescriptors(input: {
   caps: ModelCapabilities;
   selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
