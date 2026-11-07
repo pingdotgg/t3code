@@ -16,14 +16,13 @@ import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
 import { Heading } from "@tiptap/extension-heading";
 import { HorizontalRule } from "@tiptap/extension-horizontal-rule";
-import { Italic, starInputRegex, starPasteRegex } from "@tiptap/extension-italic";
+import { Italic, starInputRegex } from "@tiptap/extension-italic";
 import {
   type Command,
   type Editor,
   Extension,
   InputRule,
   markInputRule,
-  markPasteRule,
   mergeAttributes,
 } from "@tiptap/core";
 import { BulletList, ListItem, OrderedList } from "@tiptap/extension-list";
@@ -299,9 +298,6 @@ function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
 export const ComposerItalicExtension = Italic.extend({
   addInputRules() {
     return [markInputRuleOutsideCode(starInputRegex, this.type)];
-  },
-  addPasteRules() {
-    return [markPasteRule({ find: starPasteRegex, type: this.type })];
   },
 });
 
