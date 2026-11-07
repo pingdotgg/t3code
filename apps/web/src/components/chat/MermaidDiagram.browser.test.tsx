@@ -49,7 +49,7 @@ function ExpandableHost({ children }: { children: ReactNode }) {
       <button type="button" onClick={() => setOpen(true)}>
         Open
       </button>
-      {open ? <div className="w-[480px]">{children}</div> : null}
+      <div className={open ? "w-[480px]" : "w-0 overflow-hidden"}>{children}</div>
     </div>
   );
 }
@@ -91,6 +91,9 @@ describe("MermaidDiagram in collapsed containers", () => {
       { router: false },
     );
 
+    await vi.waitFor(() => {
+      expect(screen.container.querySelector("[data-markdown-mermaid]")).not.toBeNull();
+    });
     expect(mountSpy).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
 
