@@ -6,7 +6,7 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_TODO_TOOL } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -41,9 +41,11 @@ async function loadHooks(
     NodeFSP,
     NodePath,
     stripFrontmatter: (content: string) => content,
+    Type: { Unsafe: (schema: unknown) => schema },
     pi: {
       on: (name: string, handler: unknown) => handlers.set(name, handler),
       getCommands: () => commands,
+      registerTool: () => undefined,
     },
   });
   return handlers;
@@ -72,7 +74,10 @@ describe("Pi orchestration prompt section", () => {
     const bridge = await loadMcpBridge();
     const hook = bridge.handlers.get("before_agent_start")!;
     for (const event of events) {
-      const result = await hook(event, { ui: { notify: assert.fail } });
+      const result = await hook(event, {
+        isProjectTrusted: () => true,
+        ui: { notify: assert.fail },
+      });
       assert.isDefined(result);
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
@@ -162,6 +167,7 @@ describe("Pi MCP tool results", () => {
 describe("Pi MCP tool exposure", () => {
   const discoveryContext = {
     model: { api: "anthropic-messages" },
+    isProjectTrusted: () => true,
     ui: { notify: () => undefined },
   };
 
@@ -174,7 +180,7 @@ describe("Pi MCP tool exposure", () => {
     assert.include(prompt?.systemPrompt ?? "", "orchestrator_capabilities");
     assert.equal(bridge.servers.length, 0);
     assert.equal(bridge.tools.length, 8);
-    assert.deepEqual(bridge.getActiveTools(), ["read", "tool_search"]);
+    assert.deepEqual(bridge.getActiveTools(), ["read", PI_T3_TODO_TOOL, "tool_search"]);
     assert.deepEqual(
       bridge.tools
         .filter((tool) => tool.exposure !== "hidden")
@@ -210,13 +216,18 @@ describe("Pi MCP tool exposure", () => {
     });
     const event = { systemPrompt: "" };
     await bridge.handlers.get("session_start")!(event, discoveryContext);
-    const gatewayContext = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
+    const gatewayContext = {
+      model: { api: "openai-completions" },
+      isProjectTrusted: () => true,
+      ui: { notify: assert.fail },
+    };
     await bridge.handlers.get("model_select")!(event, gatewayContext);
     bridge.restoreActiveTools(["read", "mcp__t3-code__task_status"]);
     await bridge.handlers.get("session_tree")!(event, gatewayContext);
     assert.deepEqual(bridge.getActiveTools(), [
       "read",
       "mcp__t3-code__task_status",
+      PI_T3_TODO_TOOL,
       "tool_search",
       "mcp__t3-code__orchestrator_capabilities",
       "mcp__t3-code__preview_snapshot",
@@ -293,6 +304,70 @@ describe("Pi MCP tool schemas", () => {
   });
 });
 
+describe("Pi T3 todo tool", () => {
+  it("returns the full typed list without MCP credentials", async () => {
+    const bridge = await loadMcpBridge({ withoutMcp: true });
+    const result = await bridge.registeredTool(PI_T3_TODO_TOOL)!.execute("todos-1", {
+      explanation: " Fixing the parser first ",
+      todos: [
+        { id: " parse ", text: " Fix the parser ", status: "completed" },
+        { id: "tests", text: "Run the tests", status: "in_progress" },
+        { id: "docs", text: "Update docs", status: "pending" },
+      ],
+    });
+    assert.deepEqual(result.details, {
+      explanation: "Fixing the parser first",
+      steps: [
+        { id: "parse", text: "Fix the parser", status: "completed" },
+        { id: "tests", text: "Run the tests", status: "running" },
+        { id: "docs", text: "Update docs", status: "pending" },
+      ],
+    });
+  });
+
+  it("reactivates itself when a session restores a loadout without it", async () => {
+    const bridge = await loadMcpBridge({ withoutMcp: true });
+    const ctx = { isProjectTrusted: () => true, ui: { notify: () => undefined } };
+    bridge.restoreActiveTools(["read"]);
+    await bridge.handlers.get("session_start")!({ systemPrompt: "" }, ctx);
+    assert.deepEqual(bridge.getActiveTools(), ["read", PI_T3_TODO_TOOL]);
+    bridge.restoreActiveTools(["read"]);
+    await bridge.handlers.get("session_tree")!({ systemPrompt: "" }, ctx);
+    assert.deepEqual(bridge.getActiveTools(), ["read", PI_T3_TODO_TOOL]);
+    bridge.setBridgeSourcePath("/user/extensions/replacement.ts");
+    bridge.restoreActiveTools(["read"]);
+    await bridge.handlers.get("session_tree")!({ systemPrompt: "" }, ctx);
+    assert.deepEqual(bridge.getActiveTools(), ["read"]);
+  });
+
+  it.each([
+    {
+      name: "duplicate ids",
+      todos: [
+        { id: "a", text: "One", status: "pending" },
+        { id: "a", text: "Two", status: "pending" },
+      ],
+    },
+    { name: "an empty list", todos: [] },
+    { name: "blank text", todos: [{ id: "a", text: " ", status: "pending" }] },
+    { name: "unknown status", todos: [{ id: "a", text: "One", status: "done" }] },
+    {
+      name: "an inherited property as status",
+      todos: [{ id: "a", text: "One", status: "constructor" }],
+    },
+  ])("rejects $name so the model can resend the list", async ({ todos }) => {
+    const bridge = await loadMcpBridge({ withoutMcp: true });
+    const rejected = await bridge
+      .registeredTool(PI_T3_TODO_TOOL)!
+      .execute("todos-bad", { todos })
+      .then(
+        () => false,
+        () => true,
+      );
+    assert.isTrue(rejected);
+  });
+});
+
 describe("Pi tool discovery permissions", () => {
   it.each(["approval-required", "auto-accept-edits", "auto"])(
     "allows annotated T3 reads in %s while gating mutations and replacements",
@@ -324,8 +399,10 @@ describe("Pi tool discovery permissions", () => {
           true,
         );
       }
+      assert.isUndefined(await hook({ toolName: PI_T3_TODO_TOOL, input: {} }, ctx));
       assert.equal(confirmations.length, 4);
       bridge.setBridgeSourcePath("/user/extensions/replacement.ts");
+      assert.equal((await hook({ toolName: PI_T3_TODO_TOOL, input: {} }, ctx))?.block, true);
       assert.equal(
         (await hook({ toolName: "mcp__t3-code__orchestrator_capabilities", input: {} }, ctx))
           ?.block,
@@ -335,7 +412,7 @@ describe("Pi tool discovery permissions", () => {
         (await hook({ toolName: "mcp__other__orchestrator_capabilities", input: {} }, ctx))?.block,
         true,
       );
-      assert.equal(confirmations.length, 6);
+      assert.equal(confirmations.length, 7);
     },
   );
 
@@ -363,10 +440,12 @@ describe("Pi tool discovery permissions", () => {
     );
     await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
       process: { env: { T3_PI_RUNTIME_MODE: "approval-required" } },
+      Type: { Unsafe: (schema: unknown) => schema },
       pi: {
         on: (name: string, handler: ToolCallHook) => {
           if (name === "tool_call") toolCall = handler;
         },
+        registerTool: () => undefined,
         getAllTools: () => [{ name: "tool_search", sourceInfo: { path: searchPath } }],
       },
     });
@@ -408,7 +487,11 @@ async function loadRequestHook(): Promise<RequestHook> {
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: { env: {} },
-    pi: { on: (name: string, handler: RequestHook) => handlers.set(name, handler) },
+    Type: { Unsafe: (schema: unknown) => schema },
+    pi: {
+      on: (name: string, handler: RequestHook) => handlers.set(name, handler),
+      registerTool: () => undefined,
+    },
   });
   const hook = handlers.get("before_provider_request");
   assert.isDefined(hook);

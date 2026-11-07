@@ -11,6 +11,10 @@ export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
+// Pi has no native plan protocol. The adapter projects this tool's result details,
+// `{ steps: OrchestrationV2PlanStep[], explanation? }`, as the turn's T3 todo list.
+export const PI_T3_TODO_TOOL = "t3_update_todos";
+
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as NodeFSP from "node:fs/promises";
@@ -25,6 +29,8 @@ const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRU
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
+const TODO_TOOL = ${JSON.stringify(PI_T3_TODO_TOOL)};
+const TODO_STATUSES = new Map([["pending", "pending"], ["in_progress", "running"], ["completed", "completed"]] as const);
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
@@ -317,21 +323,24 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     typeof pi.getAllTools === "function" &&
     pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
 
-  const readOnlyMcpTools = new Set<string>();
-  const isReadOnlyMcpTool = (name: string) => {
+  // A user extension may own the same name. Only tools this extension registered
+  // may skip approval as T3 reads.
+  const ownsTool = (name: string) => {
     const extensionPath = env(EXTENSION_PATH_ENV);
-    if (extensionPath === undefined || !readOnlyMcpTools.has(name) || typeof pi.getAllTools !== "function") return false;
-    // A user extension may own the same name. Only our registered HTTP bridge
-    // may inherit the canonical T3 server's read-only annotation.
+    if (extensionPath === undefined || typeof pi.getAllTools !== "function") return false;
     return pi.getAllTools().some((tool) => tool.name === name &&
       typeof tool.sourceInfo?.path === "string" &&
       NodePath.resolve(tool.sourceInfo.path) === NodePath.resolve(extensionPath));
   };
+  const readOnlyMcpTools = new Set<string>();
+  const isReadOnlyMcpTool = (name: string) => readOnlyMcpTools.has(name) && ownsTool(name);
 
   pi.on("tool_call", async (event, ctx) => {
     const mode = runtimeMode();
     if (mode === "full-access") return;
-    if ((event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) || isReadOnlyMcpTool(event.toolName)) {
+    if ((event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) ||
+      isReadOnlyMcpTool(event.toolName) ||
+      (event.toolName === TODO_TOOL && ownsTool(TODO_TOOL))) {
       return;
     }
     if (mode === "auto-accept-edits" && FILE_CHANGE_TOOLS.has(event.toolName)) {
@@ -346,6 +355,68 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       return { block: true, reason: \`\${event.toolName} was declined in T3 Code.\` };
     }
   });
+
+  // Only displays the list in T3 Code, so it needs no MCP session and no approval.
+  pi.registerTool({
+    name: TODO_TOOL,
+    label: "Update todos",
+    description:
+      "Show your task list for multi-step work to the user in T3 Code. Send the complete list on every call. " +
+      "Keep each item's id stable across calls and change only its status or text. " +
+      "Mark one item in_progress while you work on it, and completed as soon as it is done. Skip this for simple requests.",
+    parameters: jsonSchemaToTypebox({
+      type: "object",
+      properties: {
+        todos: {
+          type: "array",
+          description: "The complete list, in order.",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: 'Short id, unchanged across updates, for example "tests".' },
+              text: { type: "string", description: "What this item does." },
+              status: { type: "string", enum: [...TODO_STATUSES.keys()] },
+            },
+            required: ["id", "text", "status"],
+          },
+        },
+        explanation: { type: "string", description: "Optional note on why the list changed." },
+      },
+      required: ["todos"],
+    }),
+    async execute(_toolCallId, params) {
+      const input = params as { todos?: unknown; explanation?: unknown };
+      if (!Array.isArray(input.todos) || input.todos.length === 0) throw new Error("todos must list at least one item.");
+      const ids = new Set<string>();
+      const steps = input.todos.map((todo: { id?: unknown; text?: unknown; status?: unknown }) => {
+        const id = typeof todo?.id === "string" ? todo.id.trim() : "";
+        const text = typeof todo?.text === "string" ? todo.text.trim() : "";
+        const status = TODO_STATUSES.get(todo?.status as never);
+        if (id.length === 0 || text.length === 0) throw new Error("Every todo needs a non-empty id and text.");
+        if (ids.has(id)) throw new Error(\`Todo id "\${id}" is used more than once.\`);
+        if (status === undefined) throw new Error("status must be pending, in_progress or completed.");
+        ids.add(id);
+        return { id, text, status };
+      });
+      const explanation = typeof input.explanation === "string" ? input.explanation.trim() : "";
+      const done = steps.filter((step) => step.status === "completed").length;
+      return {
+        content: [{ type: "text", text: \`Todo list updated: \${done}/\${steps.length} completed.\` }],
+        details: { steps, ...(explanation.length > 0 ? { explanation } : {}) },
+      };
+    },
+  });
+
+  // Pi restores a session's recorded tool loadout, in which a terminal Pi run without this
+  // extension removed the todo tool. Reactivate it, as in a fresh session; --tools allowlists
+  // and --exclude-tools still keep it off.
+  const activateTodoTool = () => {
+    if (typeof pi.getActiveTools !== "function" || !ownsTool(TODO_TOOL)) return;
+    const active = pi.getActiveTools();
+    if (!active.includes(TODO_TOOL)) pi.setActiveTools([...active, TODO_TOOL]);
+  };
+  pi.on("session_start", activateTodoTool);
+  pi.on("session_tree", activateTodoTool);
 
   const endpoint = env(URL_ENV);
   const token = env(TOKEN_ENV);
