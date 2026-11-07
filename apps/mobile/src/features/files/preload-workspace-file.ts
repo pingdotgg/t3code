@@ -4,6 +4,7 @@ import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   isWorkspaceBrowserPreviewPath,
+  modelPreviewFormat,
   isWorkspaceImagePreviewPath,
 } from "@t3tools/shared/filePreview";
 
@@ -35,6 +36,7 @@ export function preloadWorkspaceFileContents(input: {
     !readEnvironmentScope(input.environmentId, AuthFilesystemReadScope) ||
     isWorkspaceBrowserPreviewPath(input.relativePath) ||
     isWorkspaceImagePreviewPath(input.relativePath) ||
+    modelPreviewFormat(input.relativePath) !== null ||
     isVideoPreviewFile(input.relativePath)
   ) {
     return;

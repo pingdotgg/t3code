@@ -9,11 +9,19 @@ import { useMediaActions } from "../../state/mediaActions";
 import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 
-function ResolvedWorkspaceFileImagePreview(props: {
-  readonly accessibilityLabel: string;
-  readonly uri: string;
-  readonly actionsSource?: MediaActionsSource;
-}) {
+interface UnavailableCopy {
+  /** Replaces the generic failure copy, e.g. for derived images a file may lack. */
+  readonly unavailableTitle?: string | undefined;
+  readonly unavailableDetail?: string | undefined;
+}
+
+function ResolvedWorkspaceFileImagePreview(
+  props: {
+    readonly accessibilityLabel: string;
+    readonly uri: string;
+    readonly actionsSource?: MediaActionsSource;
+  } & UnavailableCopy,
+) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const sourceIdentifier = useId();
@@ -60,7 +68,10 @@ function ResolvedWorkspaceFileImagePreview(props: {
           pointerEvents="none"
           className="absolute inset-0 items-center justify-center bg-card px-6"
         >
-          <EmptyState title="Image unavailable" detail={loadError} />
+          <EmptyState
+            title={props.unavailableTitle ?? "Image unavailable"}
+            detail={props.unavailableDetail ?? loadError}
+          />
         </View>
       ) : null}
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
@@ -68,11 +79,13 @@ function ResolvedWorkspaceFileImagePreview(props: {
   );
 }
 
-export function WorkspaceFileImagePreview(props: {
-  readonly accessibilityLabel: string;
-  readonly uri: string | null;
-  readonly actionsSource?: MediaActionsSource;
-}) {
+export function WorkspaceFileImagePreview(
+  props: {
+    readonly accessibilityLabel: string;
+    readonly uri: string | null;
+    readonly actionsSource?: MediaActionsSource;
+  } & UnavailableCopy,
+) {
   if (props.uri === null) {
     return <FilePreviewLoading message="Preparing image preview..." background="card" />;
   }
@@ -82,6 +95,8 @@ export function WorkspaceFileImagePreview(props: {
       accessibilityLabel={props.accessibilityLabel}
       uri={props.uri}
       actionsSource={props.actionsSource}
+      unavailableTitle={props.unavailableTitle}
+      unavailableDetail={props.unavailableDetail}
     />
   );
 }

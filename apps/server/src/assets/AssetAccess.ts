@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import {
   hostPreviewMimeTypeFromExtension,
+  modelPreviewFormat,
   isWorkspaceAudioPreviewPath,
   isWorkspacePreviewEntryPath,
   isWorkspaceVideoPreviewPath,
@@ -57,6 +58,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ModelPreviews from "./ModelPreviews.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
@@ -122,6 +124,8 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("media-file-exact"),
     filePath: Schema.String,
     download: Schema.optionalKey(Schema.Boolean),
+    /** Serves a `.blend` file's geometry, exported by Blender, instead of the file. */
+    geometry: Schema.optionalKey(Schema.Boolean),
     device: Schema.String,
     inode: Schema.String,
     expiresAt: Schema.Number,
@@ -131,6 +135,7 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("attachment"),
     attachmentId: Schema.String,
     download: Schema.optionalKey(Schema.Boolean),
+    geometry: Schema.optionalKey(Schema.Boolean),
     fileName: Schema.optionalKey(Schema.String),
     mimeType: Schema.optionalKey(Schema.String),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
@@ -268,6 +273,34 @@ const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(functio
     : null;
 });
 
+// Browsers cannot draw 3D files; serve a PNG preview of them instead.
+const modelPreviewAsset = Effect.fn("AssetAccess.modelPreviewAsset")(function* (
+  filePath: string,
+  identity?: { readonly device: string; readonly inode: string },
+) {
+  const modelPreviews = yield* ModelPreviews.ModelPreviews;
+  const png = yield* modelPreviews.png(filePath, identity);
+  return png
+    ? ({ kind: "bytes", bytes: png, mimeType: "image/png" } satisfies ResolvedAsset)
+    : null;
+});
+
+// The 3D view cannot read `.blend` files; serve the geometry an installed Blender exports.
+const blendGeometryAsset = Effect.fn("AssetAccess.blendGeometryAsset")(function* (
+  filePath: string,
+  identity?: { readonly device: string; readonly inode: string },
+) {
+  const modelPreviews = yield* ModelPreviews.ModelPreviews;
+  const geometryPath = yield* modelPreviews.blendGeometry(filePath, identity);
+  return geometryPath
+    ? ({
+        kind: "file",
+        path: geometryPath,
+        mimeType: "application/octet-stream",
+      } satisfies ResolvedAsset)
+    : null;
+});
+
 const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(function* (
   filePath: string,
 ) {
@@ -387,9 +420,20 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         checkedPath: input.requestedPath,
       });
     }
-    const download =
-      input.resource._tag === "media-file" && input.resource.disposition === "attachment";
-    if (!download && hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
+    const disposition =
+      input.resource._tag === "media-file" || input.resource._tag === "draft-workspace-file"
+        ? input.resource.disposition
+        : undefined;
+    const download = disposition === "attachment";
+    const geometry = disposition === "geometry";
+    if (geometry && modelPreviewFormat(canonicalFile) !== "blend") {
+      return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
+    }
+    if (
+      !download &&
+      hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null &&
+      modelPreviewFormat(canonicalFile) === null
+    ) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
     }
     const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(path.extname(canonicalFile).toLowerCase());
@@ -425,6 +469,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         kind: "media-file-exact" as const,
         filePath: canonicalFile,
         ...(download ? { download: true } : {}),
+        ...(geometry ? { geometry: true } : {}),
         ...opened.identity,
         expiresAt: input.expiresAt,
       },
@@ -459,10 +504,12 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             }),
         ),
       );
+    // 3D files are served as a preview image, which needs the file's exact identity.
     const isDraftMedia =
-      input.resource._tag === "draft-workspace-file" &&
-      (isWorkspaceAudioPreviewPath(resolved.relativePath) ||
-        isWorkspaceVideoPreviewPath(resolved.relativePath));
+      (input.resource._tag === "draft-workspace-file" &&
+        (isWorkspaceAudioPreviewPath(resolved.relativePath) ||
+          isWorkspaceVideoPreviewPath(resolved.relativePath))) ||
+      modelPreviewFormat(resolved.relativePath) !== null;
     if (!isDraftMedia && !isWorkspacePreviewEntryPath(resolved.relativePath)) {
       return yield* new AssetPreviewTypeValidationError({
         resource: input.resource,
@@ -655,9 +702,15 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const isGenericFile = extension !== null;
       const videoMimeType = input.resource.mimeType?.split(";", 1)[0]?.trim() ?? "";
       const isVideo = INLINE_VIDEO_MIME_TYPE_PATTERN.test(videoMimeType);
+      const geometry = input.resource.disposition === "geometry";
+      if (geometry && (extension === null || modelPreviewFormat(`.${extension}`) !== "blend")) {
+        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
+      }
       const inlinePreviewMimeType =
         input.resource.disposition === "inline" && extension !== null
-          ? inlinePreviewMimeTypeForExtension(extension)
+          ? modelPreviewFormat(`.${extension}`) !== null
+            ? "image/png"
+            : inlinePreviewMimeTypeForExtension(extension)
           : undefined;
       if (!isGenericFile) {
         imageDimensions = yield* fileSystem.realPath(attachmentPath).pipe(
@@ -669,9 +722,11 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         version: 1,
         kind: "attachment",
         attachmentId: input.resource.attachmentId,
-        ...(isGenericFile && !isVideo && inlinePreviewMimeType === undefined
-          ? { download: true }
-          : {}),
+        ...(geometry
+          ? { geometry: true }
+          : isGenericFile && !isVideo && inlinePreviewMimeType === undefined
+            ? { download: true }
+            : {}),
         ...(input.resource.fileName !== undefined ? { fileName: input.resource.fileName } : {}),
         ...(inlinePreviewMimeType !== undefined
           ? { mimeType: inlinePreviewMimeType }
@@ -912,16 +967,19 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => Option.none()),
     );
-    return Option.isSome(info) && info.value.type === "File"
-      ? ({
-          kind: "file",
-          path: attachmentPath,
-          ...(claims.download ? { download: true } : {}),
-          ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
-          ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
-          ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
-        } satisfies ResolvedAsset)
-      : null;
+    if (Option.isNone(info) || info.value.type !== "File") return null;
+    if (claims.geometry) return yield* blendGeometryAsset(attachmentPath);
+    if (!claims.download && modelPreviewFormat(attachmentPath) !== null) {
+      return yield* modelPreviewAsset(attachmentPath);
+    }
+    return {
+      kind: "file",
+      path: attachmentPath,
+      ...(claims.download ? { download: true } : {}),
+      ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
+      ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
+      ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
+    } satisfies ResolvedAsset;
   }
 
   if (claims.kind === "project-favicon") {
@@ -986,6 +1044,10 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     if (canonicalFile !== claims.filePath) return null;
+    if (claims.geometry) return yield* blendGeometryAsset(canonicalFile, claims);
+    if (!claims.download && modelPreviewFormat(canonicalFile) !== null) {
+      return yield* modelPreviewAsset(canonicalFile, claims);
+    }
     const mimeType = claims.download
       ? "application/octet-stream"
       : hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
