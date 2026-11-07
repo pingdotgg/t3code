@@ -9,8 +9,10 @@ if [ -z "$ANDROID_HOME" ]; then
   elif [ -d "$HOME/Android/Sdk" ]; then export ANDROID_HOME="$HOME/Android/Sdk"; fi
 fi
 if [ -n "$ANDROID_HOME" ]; then export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"; fi
-if [ -z "$JAVA_HOME" ] && ! command -v java >/dev/null 2>&1; then
-  for device_java_home in "$HOME/.local/opt/android-studio/jbr" /opt/android-studio/jbr /Applications/Android\\ Studio.app/Contents/jbr "$HOME/Applications/Android Studio.app/Contents/jbr"; do
+device_java_path="$(command -v java 2>/dev/null)"
+if [ "$device_java_path" = /usr/bin/java ] && [ "$(uname)" = Darwin ] && ! /usr/libexec/java_home >/dev/null 2>&1; then device_java_path=; fi
+if [ -z "$JAVA_HOME" ] && [ -z "$device_java_path" ]; then
+  for device_java_home in "$HOME/.local/opt/android-studio/jbr" /opt/android-studio/jbr /usr/local/android-studio/jbr /snap/android-studio/current/jbr /Applications/Android\\ Studio.app/Contents/jbr/Contents/Home "$HOME/Applications/Android Studio.app/Contents/jbr/Contents/Home"; do
     if [ -x "$device_java_home/bin/java" ]; then export JAVA_HOME="$device_java_home"; break; fi
   done
 fi

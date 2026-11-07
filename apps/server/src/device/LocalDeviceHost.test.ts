@@ -40,6 +40,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
+  runs: Array<ProcessRunner.ProcessRunInput> = [],
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -92,10 +93,12 @@ const agentFixture = Effect.fn("agentFixture")(function* (
       ),
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
-      run: (input) =>
-        input.args.includes("devices")
+      run: (input) => {
+        runs.push(input);
+        return input.args.includes("devices")
           ? startup(stateDir)
-          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0)),
+          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
+      },
     }),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -114,7 +117,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir, hub, daemonHealthy };
+  return { host, fs, stateDir, baseDir, hub, daemonHealthy };
 });
 
 describe("AgentDevice startup", () => {
@@ -284,12 +287,16 @@ const diagnose = (
   platform: NodeJS.Platform = "darwin",
 ) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: () => Effect.die("JDK metadata must not spawn Java"),
+    }),
     Effect.provideService(HostProcess.Environment, environment),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
         exists: (file) => Effect.succeed(files.includes(file)),
+        readFileString: () => Effect.succeed('JAVA_VERSION="17.0.1"'),
       }),
     ),
     Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
@@ -380,8 +387,9 @@ describe("Android SDK availability", () => {
           "/sdk/emulator/emulator",
           "/sdk/tools/bin/avdmanager",
           "/sdk/cmdline-tools/latest/bin/avdmanager",
+          "/jdk/bin/java",
         ],
-        { ANDROID_HOME: "/sdk" },
+        { ANDROID_HOME: "/sdk", JAVA_HOME: "/jdk" },
       );
       expect(reason).toBeNull();
     }),
@@ -395,13 +403,169 @@ describe("Android SDK availability", () => {
           `${root}/platform-tools/adb`,
           `${root}/emulator/emulator`,
           `${root}/cmdline-tools/latest/bin/avdmanager`,
+          "/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java",
         ],
         { HOME: "/test/home" },
       );
       expect(reason).toBeNull();
     }),
   );
+
+  it.effect("explains that avdmanager needs Java when no JDK is reachable", () =>
+    Effect.gen(function* () {
+      const root = "/test/home/Android/Sdk";
+      const reason = yield* diagnose(
+        [
+          `${root}/platform-tools/adb`,
+          `${root}/emulator/emulator`,
+          `${root}/cmdline-tools/latest/bin/avdmanager`,
+        ],
+        { HOME: "/test/home", PATH: "" },
+        "linux",
+      );
+      expect(reason).toContain("need Java 17 or later");
+      expect(reason).toContain("JAVA_HOME");
+    }),
+  );
+
+  it.effect("prefers JAVA_HOME and falls back to Android Studio's bundled JDK", () =>
+    Effect.gen(function* () {
+      const javaHome = (
+        files: ReadonlyArray<string>,
+        environment: NodeJS.ProcessEnv,
+        platform: NodeJS.Platform,
+        version = "17.0.1",
+      ) =>
+        LocalDeviceHost.__testing.androidJava.pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: "", ...environment }),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              exists: (file) => Effect.succeed(files.includes(file)),
+              realPath: (file) => Effect.succeed(file),
+              readFileString: () => Effect.succeed(`JAVA_VERSION="${version}"`),
+              readDirectory: (directory) =>
+                Effect.succeed(
+                  files
+                    .filter((file) => file.startsWith(`${directory}/`))
+                    .map((file) => file.slice(directory.length + 1).split("/")[0]!),
+                ),
+            }),
+          ),
+          Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
+        );
+      expect(yield* javaHome([], { JAVA_HOME: "/removed" }, "linux")).toBeNull();
+      expect(
+        yield* javaHome(["/old/bin/java"], { JAVA_HOME: "/old" }, "linux", "1.8.0"),
+      ).toBeNull();
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(`${directory}/bin`);
+      yield* fs.writeFileString(`${directory}/bin/java`, "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(`${directory}/bin/java`, 0o755);
+      yield* fs.writeFileString(`${directory}/release`, 'JAVA_VERSION="11.0.1"');
+      expect(
+        yield* LocalDeviceHost.__testing.androidJava.pipe(
+          Effect.provideService(HostProcess.Environment, {
+            HOME: directory,
+            PATH: `${directory}/bin`,
+          }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        ),
+      ).toBeNull();
+      yield* fs.remove(`${directory}/release`);
+      yield* fs.writeFileString(
+        `${directory}/bin/java`,
+        "#!/bin/sh\necho 'openjdk version \"17.0.1\"' >&2\n",
+      );
+      expect(
+        yield* LocalDeviceHost.__testing.androidJava.pipe(
+          Effect.provideService(HostProcess.Environment, {
+            HOME: directory,
+            PATH: `${directory}/bin`,
+          }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        ),
+      ).toBeUndefined();
+      const studio = "/opt/android-studio/jbr";
+      expect(
+        yield* javaHome(["/jdk/bin/java", `${studio}/bin/java`], { JAVA_HOME: " /jdk " }, "linux"),
+      ).toBe("/jdk");
+      expect(yield* javaHome([`${studio}/bin/java`], { HOME: "/test/home" }, "linux")).toBe(studio);
+      expect(
+        yield* javaHome(
+          ["D:\\Apps\\Android\\Android Studio\\jbr\\bin\\java.exe"],
+          { USERPROFILE: "C:\\Users\\test", ProgramFiles: "D:\\Apps" },
+          "win32",
+        ),
+      ).toBe("D:\\Apps\\Android\\Android Studio\\jbr");
+      expect(yield* javaHome([], { HOME: "/test/home" }, "linux")).toBeNull();
+      const macStudio = "/Applications/Android Studio.app/Contents/jbr/Contents/Home";
+      expect(yield* javaHome([`${macStudio}/bin/java`], { HOME: "/Users/test" }, "darwin")).toBe(
+        macStudio,
+      );
+      expect(
+        yield* javaHome(
+          [
+            `${macStudio}/bin/java`,
+            "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home/bin/java",
+          ],
+          { HOME: "/Users/test" },
+          "darwin",
+        ),
+      ).toBe("/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
+  );
+
+  it.effect("reports an absent SDK without running or installing tools", () =>
+    Effect.gen(function* () {
+      expect(yield* diagnose([], { HOME: "/test/home" })).toContain("Android SDK was not found");
+    }),
+  );
 });
+
+it.effect("puts detected Android tools on the helper PATH without losing existing commands", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const environment = LocalDeviceHost.__testing.deviceHostEnvironment(
+      { PATH: "/usr/bin", HOME: "/test/home" },
+      "/sdk",
+      "/jbr",
+      "darwin",
+      path,
+    );
+    expect(environment.PATH).toBe("/sdk/platform-tools:/sdk/emulator:/usr/bin");
+    expect(environment.ANDROID_HOME).toBe("/sdk");
+    expect(environment.JAVA_HOME).toBe("/jbr");
+    expect(environment.HOME).toBe("/test/home");
+  }).pipe(Effect.provide(NodePath.layerPosix)),
+);
+
+it.effect("finds an Android SDK installed after the server started", () =>
+  Effect.gen(function* () {
+    const runs: Array<ProcessRunner.ProcessRunInput> = [];
+    const { host, fs, baseDir } = yield* agentFixture(
+      () => Effect.succeed(processOutput(0)),
+      processOutput(0),
+      runs,
+    );
+    const sdk = `${baseDir}/Library/Android/sdk`;
+    for (const file of [`${sdk}/platform-tools/adb`, `${sdk}/emulator/emulator`]) {
+      yield* fs.makeDirectory(file.slice(0, file.lastIndexOf("/")), { recursive: true });
+      yield* fs.writeFileString(file, "");
+    }
+    const ready = yield* host.current;
+    yield* ready!.run("emulator", ["-list-avds"]);
+    expect(runs.at(-1)).toMatchObject({
+      command: `${sdk}/emulator/emulator`,
+      env: { ANDROID_HOME: sdk },
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect(
   "recovers an owned Linux runtime directory without overriding explicit environments",
@@ -524,6 +688,9 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
     yield* fs.makeDirectory(`${baseDir}/bin`);
     yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 0\n");
     yield* fs.chmod(`${baseDir}/bin/xcrun`, 0o755);
+    yield* fs.makeDirectory(`${baseDir}/jdk/bin`, { recursive: true });
+    yield* fs.writeFileString(`${baseDir}/jdk/bin/java`, "");
+    yield* fs.writeFileString(`${baseDir}/jdk/release`, 'JAVA_VERSION="17.0.1"');
     for (const [directory, tool] of [
       ["platform-tools", "adb"],
       ["emulator", "emulator"],
@@ -538,6 +705,7 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
           HOME: baseDir,
           PATH: `${baseDir}/bin`,
           ANDROID_HOME: `${baseDir}/sdk`,
+          JAVA_HOME: `${baseDir}/jdk`,
         }),
         Effect.provideService(HostProcess.Platform, "darwin"),
       );
