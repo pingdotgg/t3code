@@ -500,6 +500,10 @@ export const ClientSettingsSchema = Schema.Struct({
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** macOS desktop: a three-finger swipe moves one column or workspace (needs the system's "Swipe between pages" on three fingers). */
   layoutThreeFingerSwipe: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Labs: panes scroll sideways instead of shrinking, and the layout keeps several workspaces. */
+  scrollingWorkspacesEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
@@ -2094,6 +2098,7 @@ export const ClientSettingsPatch = Schema.Struct({
   effortDisplay: Schema.optionalKey(EffortDisplay),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   layoutThreeFingerSwipe: Schema.optionalKey(Schema.Boolean),
+  scrollingWorkspacesEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
   surfaceStyle: Schema.optionalKey(SurfaceStyle),
