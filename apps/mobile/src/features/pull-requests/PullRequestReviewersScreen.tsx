@@ -14,7 +14,7 @@ import {
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { FlatList, Pressable, ScrollView, View } from "react-native";
-import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { renderNativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useContentTopInset, useSearchToolbarInset } from "../../components/ui/useBarInset";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -154,7 +154,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           ref={listRef}
           data={candidates}
           keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
-          renderScrollComponent={NativeScrollView}
+          renderScrollComponent={renderNativeScrollView}
           contentInsetAdjustmentBehavior="automatic"
           automaticallyAdjustKeyboardInsets
           keyboardDismissMode="on-drag"

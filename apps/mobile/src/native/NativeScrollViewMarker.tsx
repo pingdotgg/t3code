@@ -48,3 +48,9 @@ export function NativeScrollView(props: ComponentProps<typeof ScrollView>) {
     scrollView
   );
 }
+
+// FlatList calls renderScrollComponent inside its class render, where NativeScrollView's hooks
+// throw, and clones the result with its cells and ref, which belong on the inner ScrollView.
+export function renderNativeScrollView(props: ComponentProps<typeof ScrollView>) {
+  return <NativeScrollView {...props} />;
+}
