@@ -3,7 +3,9 @@ import { assert, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -254,6 +256,30 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
           (yield* instance.snapshot.getSnapshot).skills.map((skill) => skill.name),
           ["personal"],
         );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "updates native Pi installations and their extensions with the instance environment",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pi-maintenance-" });
+        const binaryPath = path.join(tempDir, "pi");
+        yield* fs.writeFileString(binaryPath, "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(binaryPath, 0o755);
+
+        const { spawner } = yield* makePiSpawner();
+        const instance = yield* create({ binaryPath }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        assert.isNotNull(capabilities.update);
+        assert.equal(capabilities.update?.executable, binaryPath);
+        assert.deepEqual(capabilities.update?.args, ["update", "--all"]);
+        assert.equal(capabilities.update?.lockKey, "pi-native");
+        assert.equal(capabilities.update?.env?.PI_CODING_AGENT_DIR, "/isolated-pi");
       }).pipe(Effect.scoped),
   );
 });
