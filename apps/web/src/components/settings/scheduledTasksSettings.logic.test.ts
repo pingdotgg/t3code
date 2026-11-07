@@ -168,6 +168,14 @@ describe("editing scheduled task branch settings", () => {
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
   });
+
+  it("keeps the saved reasoning level", () => {
+    const modelSelection = {
+      ...legacyTask.modelSelection,
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    expect(taskToDraft({ ...legacyTask, modelSelection }).modelSelection).toEqual(modelSelection);
+  });
 });
 
 describe("one-time scheduled tasks", () => {
