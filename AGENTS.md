@@ -147,6 +147,7 @@ For mobile verification, a missing or outdated native client is an install step,
 
 ## Pull requests
 
+- Before assessing or acting on a T3 Code issue or PR, read [CONTRIBUTING.md](CONTRIBUTING.md) and follow its scope, approval, evidence, and triage requirements.
 - Never make a PR unless the developer explicitly asks you to do so.
 - If `origin` is git.cafe, follow [GitCafe mirror](docs/operations/development.md#gitcafe-mirror-optional): push to `origin`, open and track PRs with `cafe` and their git.cafe URLs, and keep `gh` for merging.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
