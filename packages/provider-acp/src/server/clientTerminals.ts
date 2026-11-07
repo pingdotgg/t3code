@@ -11,6 +11,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const MAX_LIVE_TERMINALS = 16;
 const MAX_UNRELEASED_TERMINALS = 64;
@@ -135,15 +136,30 @@ function acpTerminalCommand(input: {
   readonly request: EffectAcpSchema.CreateTerminalRequest;
   readonly shellCommands?: boolean | undefined;
   readonly defaultCwd: string;
-  readonly environment?: NodeJS.ProcessEnv | undefined;
+  readonly environment: NodeJS.ProcessEnv;
   readonly forceKillAfter: Duration.Input;
 }) {
   return ChildProcess.make(input.request.command, input.request.args ?? [], {
     cwd: input.request.cwd ?? input.defaultCwd,
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    env: input.environment,
     shell: input.shellCommands === true && (input.request.args?.length ?? 0) === 0,
     forceKillAfter: input.forceKillAfter,
   });
+}
+
+// Windows variable names are case-insensitive and Node passes only one spelling to the child,
+// so a later layer's `Path` must replace an earlier `PATH` rather than sit beside it.
+function mergeEnvironments(
+  isWindows: boolean,
+  layers: ReadonlyArray<Iterable<readonly [string, string | undefined]>>,
+) {
+  const variables = new Map<string, readonly [string, string | undefined]>();
+  for (const layer of layers) {
+    for (const [name, value] of layer) {
+      variables.set(isWindows ? name.toUpperCase() : name, [name, value]);
+    }
+  }
+  return Object.fromEntries(variables.values());
 }
 
 export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(function* (
@@ -151,6 +167,15 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
 ): Effect.fn.Return<AcpClientTerminals, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const forceKillAfter = options.forceKillAfter ?? "5 seconds";
+  const isWindows = yield* HostProcess.isWindows;
+  // T3 MCP credentials come from environmentForSession; inherited ones belong to whichever
+  // thread launched this server, so a terminal must never fall back to them. Windows treats
+  // variable names case-insensitively, so match the prefix regardless of case.
+  const inheritedEnvironment = Object.fromEntries(
+    Object.entries(options.environment ?? (yield* HostProcess.Environment)).filter(
+      ([name]) => !name.toUpperCase().startsWith("T3_ACP_MCP_"),
+    ),
+  );
   const creationPermit = yield* Semaphore.make(1);
   const terminals = new Map<string, ManagedAcpTerminal>();
   let nextTerminalNumber = 1;
@@ -213,16 +238,12 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
               `ACP terminal/create exceeded the limit of ${MAX_LIVE_TERMINALS} concurrent terminals.`,
             );
           }
-          const requestEnvironment = Object.fromEntries(
-            (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
-          );
           const sessionEnvironment = options.environmentForSession?.(request.sessionId);
-          const environment =
-            options.environment === undefined &&
-            sessionEnvironment === undefined &&
-            (request.env?.length ?? 0) === 0
-              ? undefined
-              : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
+          const environment = mergeEnvironments(isWindows, [
+            Object.entries(inheritedEnvironment),
+            Object.entries(sessionEnvironment ?? {}),
+            (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
+          ]);
           const terminalScope = yield* Scope.make();
           const child = yield* restore(
             spawner
