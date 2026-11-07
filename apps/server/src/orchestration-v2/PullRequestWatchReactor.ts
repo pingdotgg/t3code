@@ -410,6 +410,23 @@ export const make = Effect.gen(function* () {
       Effect.tap(() => ended(target, "closed")),
     );
 
+  const merged = (target: WatchTarget) =>
+    record(target, null, {
+      text: `Pull request #${target.link.number} (${target.link.url}) was merged, so T3 Code stopped watching it. Finish any cleanup for it now.`,
+      notification: {
+        source: { kind: "monitor" },
+        outcome: "completed",
+        summary: `#${target.link.number}: merged, stopped watching`,
+      },
+    }).pipe(
+      Effect.tap(() => woke(target)),
+      Effect.tap(() => ended(target, "merged")),
+    );
+
+  // The orchestrator refuses to wake a settled thread, so only an unsettled one is told.
+  const canHearMerge = ({ thread }: WatchTarget) =>
+    thread.settledOverride !== "settled" && thread.settledAt === null;
+
   const endsWithoutRead = ({ thread, link }: WatchTarget): WatchEndReason | undefined =>
     link.snapshot?.state === "merged"
       ? "merged"
@@ -529,7 +546,9 @@ export const make = Effect.gen(function* () {
       return yield* eachTarget(group, (target) =>
         detail.state === "closed"
           ? closed(target)
-          : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
+          : canHearMerge(target)
+            ? merged(target)
+            : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
       );
     }
 
@@ -618,8 +637,10 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       ending,
       ([target, reason]) =>
-        record(target, null).pipe(
-          Effect.tap(() => ended(target, reason)),
+        (reason === "merged" && canHearMerge(target)
+          ? merged(target)
+          : record(target, null).pipe(Effect.tap(() => ended(target, reason)))
+        ).pipe(
           Effect.catchCause(
             logFailure("pull request watch stop failed", {
               threadId: target.thread.id,
