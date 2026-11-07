@@ -42,6 +42,7 @@ import {
   makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
+  routeAntigravityChildToolUpdate,
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
@@ -267,8 +268,18 @@ export function makeAntigravityAcpAdapterFlavor(
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },
+    normalizeSessionUpdate: routeAntigravityChildToolUpdate,
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
+    adoptChildSession: (childSessionId) => ({
+      nativeTaskId: `trajectory:${childSessionId}`,
+      childSessionId,
+      prompt: "",
+      title: `Antigravity subagent ${childSessionId.slice(0, 8)}`,
+      model: null,
+      status: "running",
+      result: null,
+    }),
     supportsImagePrompts: true,
     // ACP 1.3.0 treats /compact as ordinary model input.
     supportsCompaction: false,
