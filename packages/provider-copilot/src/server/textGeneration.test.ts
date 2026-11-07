@@ -80,7 +80,7 @@ it.layer(NodeServices.layer)("GitHub Copilot text generation", (it) => {
             model: "claude-haiku-4.5",
           },
         })
-        .pipe(Effect.ignore);
+        .pipe(Effect.ignore, Effect.provideService(HostProcess.Platform, "darwin"));
 
       assert.isTrue(sent?.investigate);
       assert.strictEqual(sent?.timeoutMs, 900_000);
