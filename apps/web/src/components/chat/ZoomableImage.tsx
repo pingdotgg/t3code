@@ -71,11 +71,20 @@ export function ZoomableImage({
   const suppressClickRef = useRef(false);
   const [dragging, setDragging] = useState(false);
   const maxHeight = Math.max(1, Math.min(viewerSize.height * 0.86, viewerSize.height - 160));
+  const availableWidth = viewerSize.width * 0.92 - (viewerSize.width >= 640 ? 96 : 0);
   // A vector scales without loss, and an SVG without width and height reports a tiny default size.
+  const vector = mimeType === "image/svg+xml";
   const fit = Math.min(
-    mimeType === "image/svg+xml" ? Infinity : 1,
-    (viewerSize.width * 0.92 - (viewerSize.width >= 640 ? 96 : 0)) / (naturalSize.width || 1),
+    vector ? Infinity : 1,
+    availableWidth / (naturalSize.width || 1),
     maxHeight / (naturalSize.height || 1),
+  );
+  // A tall raster fits as a sliver: zooming must still reach its natural size,
+  // and zooming in fills the width instead of doubling the sliver.
+  const maxZoom = vector ? MAX_ZOOM : Math.max(MAX_ZOOM, 1 / fit);
+  const zoomInTarget = Math.max(
+    2,
+    Math.min(availableWidth / (naturalSize.width * fit || 1), vector ? Infinity : 1 / fit),
   );
   const width = naturalSize.width * fit * zoom;
   const height = naturalSize.height * fit * zoom;
@@ -116,7 +125,7 @@ export function ZoomableImage({
 
   const changeZoom = (next: number, point?: { x: number; y: number }) => {
     const viewport = viewportRef.current;
-    const clamped = Math.min(MAX_ZOOM, Math.max(1, next));
+    let clamped = Math.min(maxZoom, Math.max(1, next));
     if (!viewport || zoom === clamped) return;
     const bounds = viewport.getBoundingClientRect();
     const x = point ? point.x - bounds.left : viewport.clientWidth / 2;
@@ -127,6 +136,16 @@ export function ZoomableImage({
     const clientY = bounds.top + y;
     // The new size must be laid out before the scroll position can keep the anchor in place.
     flushSync(() => setZoom(clamped));
+    // A classic vertical scrollbar must not leave the filled width scrolling sideways.
+    const overflow = viewport.scrollWidth - viewport.clientWidth;
+    if (
+      next === zoomInTarget &&
+      overflow > 0 &&
+      overflow <= viewport.offsetWidth - viewport.clientWidth
+    ) {
+      clamped = Math.max(1, (clamped * viewport.clientWidth) / viewport.scrollWidth);
+      flushSync(() => setZoom(clamped));
+    }
     const resized = viewport.getBoundingClientRect();
     viewport.scrollLeft = anchorX * clamped - (clientX - resized.left);
     viewport.scrollTop = anchorY * clamped - (clientY - resized.top);
@@ -161,9 +180,8 @@ export function ZoomableImage({
         aria-label={`${name}, zoomable image`}
         aria-description="Click to zoom in or return to fit. Scroll to zoom, drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit."
         tabIndex={0}
-        className="max-w-[var(--media-width)] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        className="w-max max-w-[var(--media-width)] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
         style={{
-          width: width || undefined,
           height: height || undefined,
           maxHeight,
           cursor: zoom > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
@@ -171,13 +189,13 @@ export function ZoomableImage({
         onClick={(event) => {
           // Pointer capture emits a click after dragging; preserve zoom.
           if (suppressClickRef.current || event.detail > 1) return;
-          changeZoom(zoom > 1 ? 1 : 2, { x: event.clientX, y: event.clientY });
+          changeZoom(zoom > 1 ? 1 : zoomInTarget, { x: event.clientX, y: event.clientY });
         }}
         onKeyDown={(event) => {
           if (event.ctrlKey || event.metaKey || event.altKey) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            if (!event.repeat) changeZoom(zoom > 1 ? 1 : 2);
+            if (!event.repeat) changeZoom(zoom > 1 ? 1 : zoomInTarget);
           } else if (event.key === "+" || event.key === "=") {
             event.preventDefault();
             changeZoom(zoom * 1.5);
