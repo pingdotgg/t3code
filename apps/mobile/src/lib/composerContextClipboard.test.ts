@@ -235,21 +235,17 @@ describe("mobile context clipboard imports", () => {
     expect(result!.failures).toEqual([]);
     expect(result!.skippedThreads).toEqual([foreignThread.title]);
     const references = collectComposerContextReferences(result!.text);
-    expect(references.map((reference) => reference.label)).toEqual(
-      mixedRecords.map((record) => record.label),
-    );
     expect(result!.context.records.map((record) => record.contextId)).toEqual(
-      references.slice(1).map((reference) => reference.contextId),
+      references.map((reference) => reference.contextId),
     );
     expect(
       references.every(
         (reference) => !mixedRecords.some((record) => record.contextId === reference.contextId),
       ),
     ).toBe(true);
-    expect(
-      result!.context.records.some((record) => record.contextId === references[0]!.contextId),
-    ).toBe(false);
-    expect(result!.text).toMatch(/^Compare these findings: .* before changing anything\.$/);
+    expect(result!.text).toMatch(
+      /^Compare these findings: \[Remote discussion\]\(t3-thread:\/\/v2\/source\/foreign-thread\) .* before changing anything\.$/,
+    );
 
     const restoreHistory = createComposerContextHistory();
     restoreHistory(formatComposerContextReference(foreignThread), {
@@ -290,9 +286,6 @@ describe("mobile context clipboard imports", () => {
     expect(result!.failures).toEqual([image.name]);
     expect(result!.skippedThreads).toEqual([foreignThread.title]);
     const references = collectComposerContextReferences(result!.text);
-    expect(references.map((reference) => reference.label)).toEqual(
-      mixedRecords.map((record) => record.label),
-    );
     expect(
       references
         .filter(
@@ -300,7 +293,7 @@ describe("mobile context clipboard imports", () => {
             !result!.context.records.some((record) => record.contextId === reference.contextId),
         )
         .map((reference) => reference.label),
-    ).toEqual([foreignThread.label, image.label]);
+    ).toEqual([image.label]);
     expect(result!.text).toMatch(/^Compare these findings: .* before changing anything\.$/);
   });
 

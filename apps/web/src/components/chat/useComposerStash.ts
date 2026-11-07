@@ -29,7 +29,10 @@ import { type PendingUserInput } from "../../session-logic";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { collapseExpandedComposerCursor } from "../../composer-logic";
 import { compressImageForStash } from "../../lib/imageCompression";
-import { formatInlineContextReference } from "~/lib/composerContextReferences";
+import {
+  type ImportedContextReference,
+  rewriteImportedContextReferences,
+} from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { pendingDraftWork } from "./pendingDraftWork";
 import {
@@ -45,7 +48,6 @@ import {
   verifyStashedAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { remainingComposerAttachmentSlots } from "./composerThreadImport";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
@@ -95,7 +97,7 @@ export function useComposerStash(input: {
     records: ReadonlyArray<ComposerContextRecord>,
     sourceEnvironmentId: EnvironmentId | null,
     threadDraftTarget?: ChatComposerProps["composerDraftTarget"],
-  ) => ReadonlyMap<string, string>;
+  ) => ReadonlyMap<string, ImportedContextReference>;
   readonly expandMobileComposer: () => void;
 }) {
   const {
@@ -204,19 +206,12 @@ export function useComposerStash(input: {
       });
     }
 
-    const rewrittenContextIds = entry.records
-      ? importContextRecords(entry.records, null, composerDraftTarget)
-      : new Map<string, string>();
-    const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
-      const contextId = rewrittenContextIds.get(reference.contextId);
-      return contextId
-        ? formatInlineContextReference({
-            ...reference,
-            contextId,
-            kind: reference.kind === "element" ? "preview-annotation" : reference.kind,
-          })
-        : reference.source;
-    });
+    const restoredPrompt = entry.records
+      ? rewriteImportedContextReferences(
+          entry.prompt,
+          importContextRecords(entry.records, null, composerDraftTarget),
+        )
+      : entry.prompt;
     const currentPrompt = promptRef.current;
     const nextPrompt =
       restoredPrompt.length === 0

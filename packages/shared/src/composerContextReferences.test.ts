@@ -18,6 +18,7 @@ import {
   threadContextRecord,
   threadContextsOutsideEnvironment,
   threadLinkContextReferences,
+  unreadableThreadContextLink,
   toComposerContextId,
   toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
@@ -520,6 +521,26 @@ describe("threadLinkContextReferences", () => {
       () => "Here",
     );
     expect(pasted.records).toEqual([copied, threadContextRecord(thread("env-9", "t9"), "Here")]);
+    for (const [environmentId, threadId, form] of [
+      ["env-1", "a)b", "https://"],
+      ["env-1", "a(b", "https://"],
+      ["env-1", "a b", "https://"],
+      ["env-1", "a>b", "https://"],
+      ["env-1", "a\\!b", "https://"],
+      ["env-1", "a%29b", "t3-thread://"],
+      ["env-1", "..", "t3-thread://"],
+      ["source/machine", "t1", "https://"],
+      // No link form carries both: a hosted URL drops the dot segment.
+      [".", "a b", null],
+    ] as const) {
+      const record = threadContextRecord(thread(environmentId, threadId), "Copied title");
+      const link = unreadableThreadContextLink(record);
+      if (form === null) expect(link).toBe("Copied title");
+      else expect(link).toContain(`](${form}`);
+      expect(threadLinkContextReferences(link, [], () => undefined).records).toEqual(
+        form === null ? [] : [record],
+      );
+    }
     expect(
       threadLinkContextReferences("https://app.t3.codes/threads/env-9/t9", [], () => undefined)
         .records,

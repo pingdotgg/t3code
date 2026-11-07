@@ -10,7 +10,12 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
-import { replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
+import {
+  formatHostedThreadLink,
+  formatThreadLink,
+  replaceThreadLinks,
+  threadLinkCandidates,
+} from "./threadLinks.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
 const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
@@ -425,6 +430,31 @@ export function threadContextsOutsideEnvironment(input: {
       record.environmentId !== input.environmentId &&
       !input.linkedEnvironments.has(record.environmentId),
   );
+}
+
+/** A thread this agent can't read stays a link naming its machine, so the ids survive without attaching it. */
+export function unreadableThreadContextLink(record: ThreadContextRecord): string {
+  const namesRecord = (markdown: string) => {
+    let links = 0;
+    let exact = false;
+    replaceThreadLinks(markdown, (link) => {
+      links += 1;
+      exact = link.environmentId === record.environmentId && link.threadId === record.threadId;
+      return undefined;
+    });
+    return links === 1 && exact;
+  };
+  const link = formatThreadLink(record, record.title);
+  // Markdown mangles a v2 link with these characters; `/` and dot segments are caught by parsing back.
+  if (!/[\s()<>\\]/.test(`${record.environmentId}/${record.threadId}`) && namesRecord(link))
+    return link;
+  try {
+    const hosted = formatHostedThreadLink(record, record.title);
+    if (namesRecord(hosted)) return hosted;
+  } catch {
+    // A lone surrogate can't be URI-encoded.
+  }
+  return record.title;
 }
 
 export function remapComposerContextAttachments(

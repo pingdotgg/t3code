@@ -55,5 +55,22 @@ describe("importPastedComposerText", () => {
     expect(importPastedComposerText(clipboard({ "text/plain": pasted }), () => new Map())).toBe(
       pasted,
     );
+    const record = threadContextRecord(thread, "Login");
+    const link = "[Login](t3-thread://v2/env-1/thread-1)";
+    for (const text of [chip("Login"), link]) {
+      expect(
+        importPastedComposerText(
+          clipboard({
+            "text/plain": text,
+            [COMPOSER_CONTEXT_CLIPBOARD_MIME]: encodeComposerContextFragment({
+              version: 1,
+              source: { environmentId: thread.environmentId },
+              records: [record],
+            })!,
+          }),
+          () => new Map([[record.contextId, { markdown: link }]]),
+        ),
+      ).toBe(link);
+    }
   });
 });

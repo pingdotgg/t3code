@@ -4,6 +4,7 @@ import type {
   ComposerContextRecord,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
@@ -11,10 +12,13 @@ import {
 } from "@t3tools/shared/composerContextClipboard";
 import {
   collectComposerContextReferences,
-  formatComposerContextReference,
-  replaceComposerContextReferences,
   threadLinkContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+
+import {
+  type ImportedContextReference,
+  rewriteImportedContextReferences,
+} from "../lib/composerContextReferences";
 
 import { readThreadShell } from "~/state/entities";
 
@@ -63,7 +67,7 @@ export function importPastedComposerText(
   clipboardData: Pick<DataTransfer, "getData">,
   importContextFragment?: (
     fragment: ComposerContextClipboardFragment,
-  ) => ReadonlyMap<string, string>,
+  ) => ReadonlyMap<string, ImportedContextReference>,
 ): string {
   const pastedText = clipboardData.getData("text/plain");
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
@@ -72,18 +76,9 @@ export function importPastedComposerText(
   if (!rewrittenIds || rewrittenIds.size === 0) return pastedText;
   const nextId = (contextId: string) => {
     const id = rewrittenIds.get(contextId);
-    return id ? ComposerContextId.make(id) : undefined;
+    return typeof id === "string" ? ComposerContextId.make(id) : undefined;
   };
-  const text = replaceComposerContextReferences(pastedText, (occurrence) => {
-    const contextId = nextId(occurrence.contextId);
-    return contextId
-      ? formatComposerContextReference({
-          ...occurrence,
-          contextId,
-          kind: occurrence.kind === "element" ? "preview-annotation" : occurrence.kind,
-        })
-      : occurrence.source;
-  });
+  const text = rewriteImportedContextReferences(pastedText, rewrittenIds);
   // A thread the import refused, on a machine this agent cannot read, stays the link it was.
   return threadLinkContextReferences(text, fragment?.records ?? [], threadTitle, (record) =>
     nextId(record.contextId),
