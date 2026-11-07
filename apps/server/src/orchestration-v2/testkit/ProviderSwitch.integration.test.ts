@@ -113,6 +113,7 @@ function makeTestAdapter(input: {
   >;
   readonly failure?: ReturnType<typeof makeProviderFailure>;
   readonly failedRunOrdinals?: ReadonlySet<number>;
+  readonly brokenRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
   readonly pendingBackgroundWork?: Ref.Ref<boolean>;
@@ -211,6 +212,13 @@ function makeTestAdapter(input: {
             }),
           resumeThread: ({ providerThread }) =>
             Effect.gen(function* () {
+              if (input.brokenRunOrdinals !== undefined && providerThread.status === "error") {
+                return yield* new ProviderAdapter.ProviderAdapterResumeThreadError({
+                  driver: input.driver,
+                  providerSessionId: sessionInput.providerSessionId,
+                  providerThreadId: providerThread.id,
+                });
+              }
               if (
                 input.failResume ||
                 (input.failResumeOnce !== undefined &&
@@ -367,7 +375,9 @@ function makeTestAdapter(input: {
                           }),
                       }
                     : { status: terminalStatus, failure: null }),
-                  threadDisposition: "reusable",
+                  threadDisposition: input.brokenRunOrdinals?.has(turnInput.runOrdinal)
+                    ? "broken"
+                    : "reusable",
                 },
               ];
               const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
@@ -1224,6 +1234,185 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live.each([
+    "direct",
+    "queued-cached",
+    "queued-detached",
+    "direct-switched",
+    "queued-switched",
+  ] as const)("recovers a rejected conversation with a %s follow-up", (followupMode) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const queued = followupMode.startsWith("queued-");
+        const followupSelection = followupMode.endsWith("-switched")
+          ? { ...CODEX_MODEL_SELECTION, instanceId: ProviderInstanceId.make("codex-alternate") }
+          : CODEX_MODEL_SELECTION;
+        const selections =
+          followupSelection === CODEX_MODEL_SELECTION
+            ? [CODEX_MODEL_SELECTION]
+            : [CODEX_MODEL_SELECTION, followupSelection];
+        const holdsQueue = queued && followupMode !== "queued-switched";
+        const cwd = yield* checkpointWorkspace(`rejected-queue-${followupMode}`);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const generation = yield* Ref.make(0);
+        const originalPrompt = "Keep the logo abstract and use pastel colors.";
+        const partialResponse = "The current logo has an asymmetric outline.";
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(
+          selections.map((selection) =>
+            makeTestAdapter({
+              instanceId: selection.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: selection,
+              responseByRunOrdinal: { 1: partialResponse },
+              capturedTurns,
+              injectedHistory,
+              failedRunOrdinals: new Set([1]),
+              brokenRunOrdinals: new Set([1]),
+              holdFirstTurn: started,
+              releaseFirstTurn: release,
+              nativeThreadGeneration: generation,
+            }),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const waitForRun = (ordinal: number, status: "failed" | "completed") =>
+            orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.threadId === threadId &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "failed" || event.payload.status === "completed"),
+              ),
+              Stream.runHead,
+              Effect.andThen(worker.drain()),
+              Effect.andThen(
+                Effect.gen(function* () {
+                  const projection = yield* orchestrator.getThreadProjection(threadId);
+                  assert.equal(
+                    projection.runs.find((run) => run.ordinal === ordinal)?.status,
+                    status,
+                  );
+                }),
+              ),
+            );
+          const dispatch = (
+            key: string,
+            text: string,
+            queued: boolean,
+            modelSelection = CODEX_MODEL_SELECTION,
+          ) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`rejected-queue:${key}`),
+              threadId,
+              messageId: MessageId.make(`rejected-queue:${key}`),
+              createdBy: "user",
+              creationSource: "web",
+              text,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: queued ? "queue_after_active" : "start_immediately" },
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("rejected-queue:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Rejected conversation recovery",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* dispatch("first", originalPrompt, false);
+          yield* Deferred.await(started);
+          if (queued) yield* dispatch("queued", "Continue the logo work.", true, followupSelection);
+          const failed = yield* waitForRun(1, "failed").pipe(
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          const heldQueue = holdsQueue
+            ? yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.threadId === threadId &&
+                    event.payload.ordinal === 2 &&
+                    event.payload.queueHeld === true,
+                ),
+                Stream.runHead,
+                Effect.forkScoped({ startImmediately: true }),
+              )
+            : undefined;
+          // A queued provider switch may finish before the first failure's follow-up processing.
+          const completed = yield* waitForRun(2, "completed").pipe(
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(failed);
+          if (heldQueue !== undefined) yield* Fiber.join(heldQueue);
+          const held = yield* orchestrator.getThreadProjection(threadId);
+          if (holdsQueue) {
+            assert.equal(held.runs.at(-1)?.status, "queued");
+            assert.isTrue(held.runs.at(-1)?.queueHeld);
+          }
+          if (holdsQueue || !queued) assert.equal(held.providerThreads.at(0)?.status, "error");
+          if (followupMode === "queued-detached") {
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("rejected-queue:detach"),
+              threadId,
+              providerSessionId: held.providerThreads[0]!.providerSessionId!,
+            });
+            yield* worker.drain();
+          }
+          if (queued) {
+            yield* orchestrator.dispatch({
+              type: "queue.resume",
+              commandId: CommandId.make("rejected-queue:resume"),
+              threadId,
+            });
+          } else {
+            yield* dispatch("followup", "Continue the logo work.", false, followupSelection);
+          }
+          yield* Fiber.join(completed);
+          const turns = yield* Ref.get(capturedTurns);
+          assert.equal(turns.length, 2);
+          assert.equal(yield* Ref.get(generation), 2);
+          assert.notEqual(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+          assert.equal(turns[1]?.text, "Continue the logo work.");
+          assert.equal(turns[1]?.modelSelection.instanceId, followupSelection.instanceId);
+          const history = yield* encodeJson(yield* Ref.get(injectedHistory));
+          assert.include(history, originalPrompt);
+          assert.include(history, partialResponse);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: `rejected-queue-${followupMode}`,
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live.each(["native", "legacy"] as const)(

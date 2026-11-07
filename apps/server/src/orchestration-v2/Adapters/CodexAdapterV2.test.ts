@@ -5605,6 +5605,57 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedClass: "usage_limit",
     },
     {
+      name: "bad-request",
+      code: "other",
+      message: '{"detail":"Bad Request"}',
+      notification: true,
+      expectedClass: "provider_error",
+      expectedDisposition: "broken",
+    },
+    {
+      name: "bad-request-completion-only",
+      code: "other",
+      message: ' { "detail": "Bad Request" } ',
+      notification: false,
+      expectedClass: "provider_error",
+      expectedDisposition: "broken",
+    },
+    {
+      name: "bad-request-prose",
+      code: "other",
+      message: "Tool returned Bad Request; try a different argument.",
+      notification: false,
+      expectedClass: "provider_error",
+    },
+    {
+      name: "bad-request-usage-limit",
+      code: "usageLimitExceeded",
+      message: '{"detail":"Bad Request"}',
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "bad-request-workspace-limit",
+      code: "other",
+      message: '{"detail":"Bad Request"}',
+      details: "subscription_sharing_workplace_individual_usage_limit_exceeded",
+      notification: true,
+      expectedClass: "usage_limit",
+      expectedCode: "subscription_sharing_workplace_individual_usage_limit_exceeded",
+      expectedMessage: "workspace admin",
+    },
+    {
+      name: "bad-request-sharing-retry",
+      code: "other",
+      message: '{"detail":"Bad Request"}',
+      details: "subscription_sharing_usage_limit_exceeded",
+      notification: true,
+      willRetry: true,
+      expectedClass: "usage_limit",
+      expectedCode: "subscription_sharing_usage_limit_exceeded",
+      expectedMessage: "Usage settings",
+    },
+    {
       name: "exhausted-500",
       code: "responseTooManyFailedAttempts",
       errorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 500 } },
@@ -5791,6 +5842,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
+            ...("expectedDisposition" in scenario && scenario.expectedDisposition === "broken"
+              ? [
+                  {
+                    type: "emit_inbound" as const,
+                    label: "thread/goal/updated after failure",
+                    frame: {
+                      method: "thread/goal/updated",
+                      params: {
+                        threadId: nativeThreadId,
+                        goal: {
+                          threadId: nativeThreadId,
+                          objective: "Continue the task",
+                          status: "paused",
+                          tokenBudget: null,
+                          tokensUsed: 0,
+                          timeUsedSeconds: 0,
+                          createdAt: 1782622440,
+                          updatedAt: 1782622450,
+                        },
+                      },
+                    },
+                  },
+                ]
+              : []),
             ...(scenario.name === "late-reset" || "resetAfter" in scenario ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
               ? [
@@ -5857,7 +5932,36 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(terminal?.status, "failed");
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
-        assert.equal(terminal.threadDisposition, "reusable");
+        assert.equal(
+          terminal.threadDisposition,
+          "expectedDisposition" in scenario ? scenario.expectedDisposition : "reusable",
+        );
+        if (terminal.threadDisposition === "broken") {
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.goal?.objective === "Continue the task",
+            ),
+          );
+          const goalUpdate = harness.events.find(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "provider_thread.updated" }
+            > =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.goal?.objective === "Continue the task",
+          );
+          assert.equal(goalUpdate?.providerThread.status, "error");
+          const error = yield* Effect.flip(
+            harness.runtime.resumeThread({
+              providerThread: goalUpdate!.providerThread,
+            }),
+          );
+          assert.instanceOf(error, ProviderAdapter.ProviderAdapterResumeThreadError);
+        }
         if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
@@ -5889,6 +5993,188 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.include(terminal.failure.message, scenario.expectedMessage);
           assert.equal(terminal.failure.resetAt, null);
         }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("ignores goal updates from a native conversation replaced after rejection", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const original = "rejected-native";
+        const replacement = "replacement-native";
+        const preamble = (nativeThreadId: string) =>
+          codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: `${nativeThreadId}-turn`,
+            prompt: "work",
+          });
+        const completed = (
+          nativeThreadId: string,
+          failed = false,
+        ): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          label: `completed ${nativeThreadId}`,
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: nativeThreadId,
+              turn: {
+                ...makeCodexReplayTurn({
+                  id: `${nativeThreadId}-turn`,
+                  status: failed ? "failed" : "completed",
+                }),
+                ...(failed
+                  ? { error: { message: '{"detail":"Bad Request"}', codexErrorInfo: "other" } }
+                  : {}),
+              },
+            },
+          },
+        });
+        const goal = (nativeThreadId: string, status: "active" | "paused" = "paused") => ({
+          threadId: nativeThreadId,
+          objective: `Goal for ${nativeThreadId}`,
+          status,
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1782622440,
+          updatedAt: 1782622450,
+        });
+        const goalUpdate = (
+          nativeThreadId: string,
+          status: "active" | "paused" = "paused",
+        ): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          label: `goal update ${nativeThreadId}`,
+          frame: {
+            method: "thread/goal/updated",
+            params: {
+              threadId: nativeThreadId,
+              goal: goal(nativeThreadId, status),
+            },
+          },
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "replaced-native-goal-update",
+          entries: [
+            ...preamble(original),
+            completed(original, true),
+            ...preamble(replacement)
+              .slice(3, 4)
+              .map((entry) => withReplayRequestId(entry, 4)),
+            goalUpdate(original, "active"),
+            ...preamble(replacement)
+              .slice(4, 5)
+              .map((entry) => withReplayRequestId(entry, 4)),
+            ...preamble(replacement)
+              .slice(-3)
+              .map((entry, index) => (index < 2 ? withReplayRequestId(entry, 5) : entry)),
+            goalUpdate(original, "active"),
+            {
+              type: "emit_inbound",
+              label: "orphan goal turn",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: original,
+                  turn: makeCodexReplayTurn({ id: "orphan-goal-turn", status: "inProgress" }),
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "pause retired goal",
+              frame: {
+                id: 6,
+                method: "thread/goal/set",
+                params: { threadId: original, status: "paused" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "retired goal paused",
+              frame: { id: 6, result: { goal: goal(original) } },
+            },
+            {
+              type: "expect_outbound",
+              label: "interrupt orphan goal turn",
+              frame: {
+                id: 7,
+                method: "turn/interrupt",
+                params: { threadId: original, turnId: "orphan-goal-turn" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "orphan goal interrupted",
+              frame: { id: 7, result: {} },
+            },
+            goalUpdate(replacement),
+            completed(replacement),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("rejected-attempt"),
+            text: "work",
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.threadDisposition, "broken");
+        const resumeError = yield* Effect.flip(
+          harness.runtime.resumeThread({
+            providerThread: { ...harness.providerThread, status: "error" },
+          }),
+        );
+        assert.instanceOf(resumeError, ProviderAdapter.ProviderAdapterResumeThreadError);
+        const beforeReplacement = harness.events.length;
+        const created = yield* harness.runtime.ensureThread({
+          threadId: harness.threadId,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        const replacementThread = {
+          ...created,
+          id: harness.providerThread.id,
+          status: "active" as const,
+        };
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: replacementThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("replacement-attempt"),
+            text: "work",
+          }),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+        });
+        yield* harness.awaitTerminal(2);
+        const publishedThreads = harness.events
+          .slice(beforeReplacement)
+          .flatMap((event) =>
+            event.type === "provider_thread.updated" ? [event.providerThread] : [],
+          );
+        assert.isNotEmpty(publishedThreads);
+        assert.deepEqual(
+          publishedThreads.map((thread) => thread.nativeThreadRef?.nativeId),
+          [replacement],
+        );
+        assert.equal(publishedThreads[0]?.goal?.objective, `Goal for ${replacement}`);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

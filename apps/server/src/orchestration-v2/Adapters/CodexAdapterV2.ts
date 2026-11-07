@@ -1122,6 +1122,24 @@ function codexErrorInfoCode(value: unknown): string | null {
 
 type CodexErrorInfo = CodexSchema.ServerNotification__CodexErrorInfo;
 
+// This opaque rejection can persist with retained history; only this signature
+// opts into fresh-history recovery, without assuming all HTTP 400s corrupt a session.
+function isCodexRejectedConversation(message: string, code: string | null): boolean {
+  if (code !== "other") return false;
+  try {
+    const payload: unknown = JSON.parse(message);
+    return (
+      typeof payload === "object" &&
+      payload !== null &&
+      "detail" in payload &&
+      Object.keys(payload).length === 1 &&
+      payload.detail === "Bad Request"
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Retry exhaustion only says why it failed through the last attempt's HTTP
  * status. Exhaustion on 429 is a usage or rate limit, so it keeps the Limited
@@ -1990,7 +2008,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // Serialize native completion and interrupt timeout so only one publishes terminal events.
         const turnTerminalizationPermit = yield* Semaphore.make(1);
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
-        const rootProviderThreads = new Map<string, OrchestrationV2ProviderThread>();
+        // Retired roots keep a null binding so late goal turns are still stopped.
+        const rootProviderThreads = new Map<string, OrchestrationV2ProviderThread | null>();
         const goalHolds = new Map<string, CodexGoalHold>();
         const continuedRuns = new Map<ProviderTurnId, Array<ActiveCodexTurnContext>>();
         const capacityContinuations = new Map<
@@ -2039,7 +2058,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitGoalUpdate = Effect.fnUntraced(function* (nativeThreadId: string) {
           const providerThread = rootProviderThreads.get(nativeThreadId);
           if (
-            providerThread === undefined ||
+            providerThread == null ||
             !goalsByNativeThread.has(nativeThreadId) ||
             goalUpdatesHeld.has(nativeThreadId)
           ) {
@@ -5852,7 +5871,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       retry: input.providerRetry.retry,
                       retryStartedAt: input.providerRetry.startedAt,
                     }),
-                threadDisposition: "reusable",
+                threadDisposition: isCodexRejectedConversation(
+                  input.failureMessage ?? previousFailure?.nativeMessage ?? "",
+                  failure.code,
+                )
+                  ? "broken"
+                  : "reusable",
               };
             }
             return {
@@ -5902,8 +5926,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
           const rootProviderThread =
             nativeThreadId == null ? undefined : rootProviderThreads.get(nativeThreadId);
-          if (nativeThreadId != null && rootProviderThread !== undefined) {
-            rootProviderThreads.set(nativeThreadId, { ...rootProviderThread, status: "idle" });
+          if (nativeThreadId != null && rootProviderThread != null) {
+            rootProviderThreads.set(nativeThreadId, {
+              ...rootProviderThread,
+              status: current.threadDisposition === "broken" ? "error" : "idle",
+            });
           }
           if (current.status === "failed" && current.failure.class === "usage_limit") {
             const item = makeProviderFailureTurnItem({
@@ -7160,8 +7187,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 updatedAt: codexTimestamp(response.thread.updatedAt),
               } satisfies OrchestrationV2ProviderThread;
             },
-            (effect, threadInput) =>
-              effect.pipe(
+            (effect, threadInput) => {
+              // Retire before recovery delivers history so late updates cannot restore this thread.
+              if (threadInput.providerThread.status === "error") {
+                return Effect.suspend(() => {
+                  const nativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
+                  if (nativeThreadId != null) rootProviderThreads.set(nativeThreadId, null);
+                  return Effect.fail(
+                    new ProviderAdapter.ProviderAdapterResumeThreadError({
+                      driver: CODEX_PROVIDER,
+                      providerSessionId: input.providerSessionId,
+                      providerThreadId: threadInput.providerThread.id,
+                      cause: "Codex conversation is not reusable.",
+                    }),
+                  );
+                });
+              }
+              return effect.pipe(
                 Effect.mapError((cause) =>
                   isCodexActiveWriterError(cause)
                     ? new ProviderAdapter.ProviderAdapterThreadInUseError({
@@ -7177,7 +7219,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         cause,
                       }),
                 ),
-              ),
+              );
+            },
           ),
           compactThread: Effect.fn("CodexAdapterV2.compactThread")(
             function* (turnInput) {

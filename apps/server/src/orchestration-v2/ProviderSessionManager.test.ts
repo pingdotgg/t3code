@@ -4027,6 +4027,15 @@ it.effect(
           siblingThread: yield* countRawResumes(sibling),
         };
 
+        const beforeErroredResume = (yield* Ref.get(state)).resumeCount;
+        yield* failed.runtime.resumeThread({
+          providerThread: { ...failed.providerThread, status: "error" },
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).resumeCount - beforeErroredResume, 1);
+        assert.equal(yield* countRawResumes(sibling), 0);
+
         yield* publish({
           type: "provider_thread.updated",
           driver: CODEX_DRIVER,
