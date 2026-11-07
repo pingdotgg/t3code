@@ -7,6 +7,7 @@ import {
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { PluggableList } from "unified";
+import { rehypePullRequestMentions } from "./pullRequestMentions";
 
 export {
   splitPullRequestBody,
@@ -18,26 +19,35 @@ type MarkdownNode = {
   value?: string;
   children?: MarkdownNode[];
   url?: string;
-  data?: unknown;
+  tagName?: string;
+  properties?: Record<string, unknown>;
 };
 
-const AUTOLINK_IGNORED_TYPES = new Set(["link", "linkReference"]);
+const AUTOLINK_IGNORED_TYPES = new Set(["a", "code", "pre", "kbd", "samp", "script", "style"]);
 
-export function remarkPullRequestAutolinks(options: {
+export function rehypePullRequestAutolinks(options: {
   readonly autolinks: (text: string) => ReadonlyArray<ReferenceAutolink>;
+  readonly userMentionsHandled?: boolean;
 }) {
   const visit = (node: MarkdownNode): void => {
     const children = node.children;
     if (children === undefined) return;
     for (let index = 0; index < children.length; index += 1) {
       const child = children[index]!;
-      if (AUTOLINK_IGNORED_TYPES.has(child.type)) continue;
+      if (child.tagName !== undefined && AUTOLINK_IGNORED_TYPES.has(child.tagName)) continue;
       if (child.type !== "text" || child.value === undefined) {
         visit(child);
         continue;
       }
       const value = child.value;
-      const links = options.autolinks(value);
+      // The mention pass already checked authored escapes and username boundaries.
+      // Keep host-specific team links, but do not relink rejected user mentions.
+      const links = options
+        .autolinks(value)
+        .filter(
+          (link) =>
+            !options.userMentionsHandled || link.kind !== "mention" || link.text.includes("/"),
+        );
       if (links.length === 0) continue;
       const replacements: MarkdownNode[] = [];
       let start = 0;
@@ -46,9 +56,9 @@ export function remarkPullRequestAutolinks(options: {
           replacements.push({ type: "text", value: value.slice(start, link.index) });
         }
         replacements.push({
-          type: "link",
-          url: link.url,
-          data: { hProperties: { dataPullRequestAutolink: link.kind } },
+          type: "element",
+          tagName: "a",
+          properties: { href: link.url, dataPullRequestAutolink: link.kind },
           children: [{ type: "text", value: link.label }],
         });
         start = link.index + link.text.length;
@@ -72,26 +82,52 @@ function remarkChangeRequestMediaUrls(options: { readonly changeRequestUrl: stri
 }
 
 const NO_PLUGINS: PluggableList = [];
-const markdownPlugins = new Map<string, PluggableList>();
+const remarkPlugins = new Map<string, PluggableList>();
+const rehypePlugins = new Map<string, PluggableList>();
+
+function changeRequestRepositoryUrl(changeRequest: { readonly url: string }) {
+  return sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link.repositoryUrl;
+}
 
 /**
  * One plugin list per repository, so every comment of a pull request shares one markdown
  * renderer and its parse cache instead of parsing again on each render.
  */
 export function pullRequestMarkdownPlugins(
-  changeRequest: { readonly provider: string; readonly url: string } | null,
+  changeRequest: { readonly url: string } | null,
 ): PluggableList {
   if (changeRequest === null) return NO_PLUGINS;
-  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
-    .repositoryUrl;
+  const repositoryUrl = changeRequestRepositoryUrl(changeRequest);
   if (repositoryUrl === undefined) return NO_PLUGINS;
-  const key = `${changeRequest.provider}\u0000${repositoryUrl}`;
-  let plugins = markdownPlugins.get(key);
+  let plugins = remarkPlugins.get(repositoryUrl);
+  if (plugins === undefined) {
+    plugins = [[remarkChangeRequestMediaUrls, { changeRequestUrl: repositoryUrl }]];
+    remarkPlugins.set(repositoryUrl, plugins);
+  }
+  return plugins;
+}
+
+export function pullRequestRehypePlugins(
+  changeRequest: {
+    readonly provider: string;
+    readonly url: string;
+    readonly viewer?: string | null | undefined;
+  } | null,
+): PluggableList {
+  if (changeRequest === null) return NO_PLUGINS;
+  const repositoryUrl = changeRequestRepositoryUrl(changeRequest);
+  if (repositoryUrl === undefined) return NO_PLUGINS;
+  const key = `${changeRequest.provider}\u0000${repositoryUrl}\u0000${changeRequest.viewer ?? ""}`;
+  let plugins = rehypePlugins.get(key);
   if (plugins === undefined) {
     const autolinks = changeRequestReferenceAutolinker(changeRequest);
-    plugins = [[remarkChangeRequestMediaUrls, { changeRequestUrl: repositoryUrl }]];
-    if (autolinks) plugins.push([remarkPullRequestAutolinks, { autolinks }]);
-    markdownPlugins.set(key, plugins);
+    const github = changeRequest.provider === "github";
+    plugins = [];
+    if (github)
+      plugins.push([rehypePullRequestMentions, { repositoryUrl, viewer: changeRequest.viewer }]);
+    if (autolinks)
+      plugins.push([rehypePullRequestAutolinks, { autolinks, userMentionsHandled: github }]);
+    rehypePlugins.set(key, plugins);
   }
   return plugins;
 }

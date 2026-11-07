@@ -21,6 +21,7 @@ import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequest
 export const PullRequestMarkdownContext = createContext<{
   /** Stable per repository, so comments share one renderer and its parse cache. */
   remarkPlugins: PluggableList;
+  rehypePlugins: PluggableList;
   lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
   /** The change request's `owner/name`, which can differ from the checkout the body renders in. */
@@ -121,7 +122,12 @@ function PullRequestBodySegmentView({
         threadRef={threadRef}
         pullRequestPanelRef={threadRef ?? PULL_REQUESTS_PANEL_REF}
         environmentId={environmentId}
-        {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
+        {...(context
+          ? {
+              extraRemarkPlugins: context.remarkPlugins,
+              extraRehypePlugins: context.rehypePlugins,
+            }
+          : {})}
         lineBreaks={lineBreaks}
         sourceControlMedia
         sourceControlMediaRepository={repository}
@@ -207,6 +213,7 @@ export function PullRequestMarkdown({
         className,
       )}
       data-image-gallery
+      data-pull-request-markdown
     >
       {segments.map((segment) => (
         <PullRequestBodySegmentView

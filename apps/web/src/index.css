@@ -2060,6 +2060,42 @@ code {
   background-size: 4px 2px;
 }
 
+[data-pull-request-markdown] .chat-markdown a[data-pull-request-mention] {
+  border-radius: 0.25em;
+  color: var(--contrast-foreground);
+  font-weight: 600;
+}
+
+[data-pull-request-markdown] .chat-markdown a[data-pull-request-mention="self"] {
+  --mention-color: var(--color-yellow-500);
+  padding: 0.08em 0.24em;
+  color: color-mix(in srgb, var(--mention-color) 30%, var(--color-foreground));
+  background-color: color-mix(in srgb, var(--mention-color) 8%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+[data-pull-request-markdown] .chat-markdown a[data-pull-request-mention="self"] {
+  @variant dark {
+    color: color-mix(in srgb, var(--mention-color) 45%, var(--color-foreground));
+    background-color: color-mix(in srgb, var(--mention-color) 12%, transparent);
+  }
+}
+
+[data-pull-request-markdown]
+  .chat-markdown
+  a[data-pull-request-mention]:is(:hover, :focus-visible) {
+  background-image: none;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+[data-pull-request-markdown] .chat-markdown a[data-pull-request-mention]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 :is(.chat-markdown, .composer-tiptap) blockquote {
   border-inline-start: 2px solid color-mix(in srgb, currentcolor 35%, transparent);
   padding-inline-start: 0.8rem;
