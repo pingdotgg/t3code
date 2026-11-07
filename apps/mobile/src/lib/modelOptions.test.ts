@@ -22,6 +22,42 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("preserves ACP agent identity for branded icons independent of display name", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "cc",
+          driver: "acpRegistry",
+          displayName: "Renamed Agent",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "model", name: "Model", capabilities: null }],
+        },
+        {
+          instanceId: "other",
+          driver: "acpRegistry",
+          displayName: "Command Code",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "model", name: "Model", capabilities: null }],
+        },
+      ],
+      settings: {
+        providerInstances: {
+          cc: { driver: "acpRegistry", config: { agentId: "command-code" } },
+          other: { driver: "acpRegistry", config: { agentId: "different-agent" } },
+        },
+      },
+    } as unknown as ServerConfig;
+    const options = buildModelOptions(config, null, undefined, null);
+    expect(options.map((option) => option.providerBadge?.agentId)).toEqual([
+      "command-code",
+      "different-agent",
+    ]);
+  });
+
   it("distinguishes same-name OpenCode models without changing their routing", () => {
     const sources = [
       { id: "anthropic", label: "Anthropic" },

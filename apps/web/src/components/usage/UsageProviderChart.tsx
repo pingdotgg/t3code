@@ -255,6 +255,7 @@ function UsageChartTooltip({
               <ProviderInstanceIcon
                 driverKind={driverKind}
                 displayName={providerLabel}
+                decorative
                 iconClassName="size-3"
               />
               {providerLabel}

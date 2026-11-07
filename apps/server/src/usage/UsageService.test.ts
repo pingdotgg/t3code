@@ -483,6 +483,58 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.live("includes Command Code sessions in Usage without duplicating imported replies", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const folder = NodePath.join(home, ".commandcode", "projects", "demo");
+      const reply = {
+        type: "message",
+        id: "reply-1",
+        timestamp: "2026-08-01T10:00:00Z",
+        model: "deepseek/deepseek-v4-flash",
+        usage: {
+          inputTokens: 100,
+          outputTokens: 5,
+          cacheReadTokens: 80,
+          cacheWriteTokens: 0,
+          costUsd: 0.005,
+        },
+      };
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(folder, { recursive: true });
+        const content =
+          [JSON.stringify({ type: "session", id: "session-1" }), JSON.stringify(reply)].join("\n") +
+          "\n";
+        await NodeFSP.writeFile(NodePath.join(folder, "one.jsonl"), content);
+        await NodeFSP.writeFile(NodePath.join(folder, "export.jsonl"), content);
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-command-code", home, settings })),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const buckets = summary.buckets.filter((bucket) => bucket.provider === "command-code");
+      assert.lengthOf(buckets, 1);
+      assert.equal(buckets[0]?.totals.uncachedInputTokens, 20);
+      assert.equal(buckets[0]?.totals.cachedInputTokens, 80);
+      assert.equal(buckets[0]?.totals.outputTokens, 5);
+      assert.equal(buckets[0]?.costUsd, 0.005);
+      yield* Effect.promise(() => NodeFSP.rm(NodePath.dirname(folder), { recursive: true }));
+      const cleaned = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(cleaned.buckets, summary.buckets);
+      assert.deepStrictEqual(
+        cleaned.sources.find((source) => source.fingerprint.provider === "command-code")
+          ?.fingerprint,
+        summary.sources.find((source) => source.fingerprint.provider === "command-code")
+          ?.fingerprint,
+      );
+      assert.equal(
+        summary.sources.find((source) => source.fingerprint.provider === "command-code")
+          ?.distinctSessions,
+        1,
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("counts compressed Codex rollouts across refresh, rewrites, and cache restarts", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;

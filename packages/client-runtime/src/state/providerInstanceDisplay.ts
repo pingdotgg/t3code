@@ -5,6 +5,20 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
+/** An ACP registry agent ID is authoritative; labels are only a fallback for older clients. */
+export function isOfficialCommandCodeProvider(input: {
+  readonly driverKind: string | null | undefined;
+  readonly displayName?: string | undefined;
+  readonly agentId?: string | null | undefined;
+}): boolean {
+  if (input.driverKind === "command-code") return true;
+  if (input.driverKind !== "acpRegistry") return false;
+  if (input.agentId !== undefined && input.agentId !== null && input.agentId.length > 0) {
+    return input.agentId === "command-code" || input.agentId === "command-code-omarchy";
+  }
+  return /^Command Code(?: \([^)]+\))?$/.test(input.displayName ?? "");
+}
+
 function humanizeSlug(slug: string): string {
   return slug
     .replace(/([a-z])([A-Z])/g, "$1 $2")
