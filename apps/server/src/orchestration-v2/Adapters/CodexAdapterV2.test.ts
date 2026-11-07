@@ -6307,7 +6307,118 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
     ],
   });
+  it.effect("resumes an unloaded native thread and retries an MCP resource read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "mcp-resource-thread-recovery";
+        const nativeThreadId = `native-${scenario}`;
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "unused-turn",
+          prompt: "unused-prompt",
+        }).slice(0, 5);
 
+        const resourceResult = {
+          contents: [
+            {
+              uri: MCP_APP_RESOURCE,
+              mimeType: "text/html;profile=mcp-app",
+              text: MCP_APP_HTML,
+              _meta: { ui: { csp: { connectDomains: ["https://api.weather.test"] } } },
+            },
+          ],
+        };
+
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...preamble,
+            {
+              type: "expect_outbound",
+              label: "initial MCP resource read",
+              frame: {
+                id: 3,
+                method: "mcpServer/resource/read",
+                params: {
+                  threadId: nativeThreadId,
+                  server: "weather",
+                  uri: MCP_APP_RESOURCE,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "native thread is unloaded",
+              frame: {
+                id: 3,
+                error: {
+                  code: -32600,
+                  message: `thread not found: ${nativeThreadId}`,
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "resume unloaded native thread",
+              frame: {
+                id: 4,
+                method: "thread/resume",
+                params: {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "native thread resumed",
+              frame: {
+                id: 4,
+                result: {
+                  thread: { id: nativeThreadId, updatedAt: 1782622450 },
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "retry MCP resource read",
+              frame: {
+                id: 5,
+                method: "mcpServer/resource/read",
+                params: {
+                  threadId: nativeThreadId,
+                  server: "weather",
+                  uri: MCP_APP_RESOURCE,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "MCP resource read succeeds",
+              frame: { id: 5, result: resourceResult },
+            },
+          ],
+        });
+
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const mcpApps = harness.runtime.mcpApps;
+        assert.ok(mcpApps, "Codex runtime should expose MCP apps");
+
+        const result = yield* mcpApps.readResource({
+          providerThread: harness.providerThread,
+          server: "weather",
+          uri: MCP_APP_RESOURCE,
+        });
+
+        assert.deepEqual(result, resourceResult);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
   it.effect("captures an MCP app's resource and holds the turn open until it lands", () =>
     Effect.scoped(
       Effect.gen(function* () {

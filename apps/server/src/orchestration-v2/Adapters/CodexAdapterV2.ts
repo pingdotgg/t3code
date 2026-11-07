@@ -6972,24 +6972,61 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
             ),
         );
-
+        const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
         const mcpAppsError = (detail: string) => (cause: unknown) =>
           new ProviderAdapter.ProviderAdapterProtocolError({
             driver: CODEX_PROVIDER,
             detail,
             payload: cause,
           });
+        const withLoadedThread = <A, E, R>(
+          providerThread: OrchestrationV2ProviderThread,
+          threadId: string,
+          request: Effect.Effect<A, E, R>,
+        ) =>
+          request.pipe(
+            Effect.catchIf(
+              (error) =>
+                isCodexAppServerRequestError(error) &&
+                error.code === -32600 &&
+                error.errorMessage.startsWith("thread not found:"),
+              () =>
+                readMcpSession(providerThread.appThreadId).pipe(
+                  Effect.flatMap((mcpSession) =>
+                    client.raw.request("thread/resume", {
+                      threadId,
+                      excludeTurns: true,
+                      ...codexThreadRuntimeParams({
+                        threadId: providerThread.appThreadId,
+                        mcpSession,
+                        ...(input.modelSelection === undefined
+                          ? {}
+                          : { modelSelection: input.modelSelection }),
+                        ...(input.runtimePolicy === undefined
+                          ? {}
+                          : { runtimePolicy: input.runtimePolicy }),
+                      }),
+                    }),
+                  ),
+                  Effect.andThen(request),
+                ),
+            ),
+          );
         const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
           listTools: Effect.fn("CodexAdapterV2.listTools")(
             function* (toolsInput) {
               const threadId = yield* getNativeThreadId(toolsInput.providerThread);
-              const response = yield* ensureInitialized.pipe(
-                Effect.andThen(
-                  client.request("mcpServerStatus/list", {
-                    threadId,
-                    serverName: toolsInput.server,
-                    detail: "toolsAndAuthOnly",
-                  }),
+              const response = yield* withLoadedThread(
+                toolsInput.providerThread,
+                threadId,
+                ensureInitialized.pipe(
+                  Effect.andThen(
+                    client.request("mcpServerStatus/list", {
+                      threadId,
+                      serverName: toolsInput.server,
+                      detail: "toolsAndAuthOnly",
+                    }),
+                  ),
                 ),
               );
               const server = response.data.find((entry) => entry.name === toolsInput.server);
@@ -7000,14 +7037,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           callTool: Effect.fn("CodexAdapterV2.callTool")(
             function* (callInput) {
               const threadId = yield* getNativeThreadId(callInput.providerThread);
-              const response = yield* ensureInitialized.pipe(
-                Effect.andThen(
-                  client.request("mcpServer/tool/call", {
-                    threadId,
-                    server: callInput.server,
-                    tool: callInput.tool,
-                    arguments: callInput.arguments as Schema.Json,
-                  }),
+              const response = yield* withLoadedThread(
+                callInput.providerThread,
+                threadId,
+                ensureInitialized.pipe(
+                  Effect.andThen(
+                    client.request("mcpServer/tool/call", {
+                      threadId,
+                      server: callInput.server,
+                      tool: callInput.tool,
+                      arguments: callInput.arguments as Schema.Json,
+                    }),
+                  ),
                 ),
               );
               return {
@@ -7024,13 +7065,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readResource: Effect.fn("CodexAdapterV2.readResource")(
             function* (readInput) {
               const threadId = yield* getNativeThreadId(readInput.providerThread);
-              const response = yield* ensureInitialized.pipe(
-                Effect.andThen(
-                  client.request("mcpServer/resource/read", {
-                    threadId,
-                    server: readInput.server,
-                    uri: readInput.uri,
-                  }),
+              const response = yield* withLoadedThread(
+                readInput.providerThread,
+                threadId,
+                ensureInitialized.pipe(
+                  Effect.andThen(
+                    client.request("mcpServer/resource/read", {
+                      threadId,
+                      server: readInput.server,
+                      uri: readInput.uri,
+                    }),
+                  ),
                 ),
               );
               return { contents: response.contents };
@@ -7038,7 +7083,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             Effect.mapError(mcpAppsError("Codex MCP resource read failed.")),
           ),
         };
-
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
