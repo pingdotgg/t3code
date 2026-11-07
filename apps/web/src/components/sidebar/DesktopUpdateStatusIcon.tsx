@@ -19,14 +19,17 @@ function normalizeDesktopUpdateDownloadPercent(percent: number | null): number {
 }
 
 export function shouldShowDesktopUpdateCheckIcon({
+  hasUpdateAction,
   isAnimationLatched,
   isChecking,
   prefersReducedMotion,
 }: {
+  readonly hasUpdateAction: boolean;
   readonly isAnimationLatched: boolean;
   readonly isChecking: boolean;
   readonly prefersReducedMotion: boolean;
 }): boolean {
+  if (hasUpdateAction) return false;
   return isChecking || (isAnimationLatched && !prefersReducedMotion);
 }
 

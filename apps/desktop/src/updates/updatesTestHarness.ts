@@ -27,7 +27,7 @@ export interface UpdatesHarnessOptions {
   readonly beforeSetUpdateChannel?: Effect.Effect<void>;
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
-  readonly downloadUpdate?: Effect.Effect<void>;
+  readonly downloadUpdate?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterDownloadUpdateError>;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
@@ -52,6 +52,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let allowDowngrade = false;
   const checkAllowedDowngrade: boolean[] = [];
   let fullChangelog = false;
+  let installOnAppQuit: (() => void) | undefined;
+  const autoInstallOnAppQuitCalls: boolean[] = [];
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
@@ -80,7 +82,14 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         feedUrls.push(options);
       }),
     setAutoDownload: () => Effect.void,
-    setAutoInstallOnAppQuit: () => Effect.void,
+    setAutoInstallOnAppQuit: (value) =>
+      Effect.sync(() => {
+        autoInstallOnAppQuitCalls.push(value);
+      }),
+    onInstallOnAppQuit: (listener) =>
+      Effect.sync(() => {
+        installOnAppQuit = listener;
+      }),
     setChannel: () => Effect.void,
     setAllowPrerelease: () => Effect.void,
     allowDowngrade: Effect.sync(() => allowDowngrade),
@@ -306,15 +315,20 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     /** Whether each feed check could offer an older release, and the flag now. */
     checkAllowedDowngrade,
     allowDowngrade: () => allowDowngrade,
+    /** Every value passed to setAutoInstallOnAppQuit, in order. */
+    autoInstallOnAppQuitCalls,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,
         0,
       ),
     sentStates,
-    emit: (eventName: string, payload?: unknown) => {
+    emit: (eventName: string, ...args: ReadonlyArray<unknown>) => {
+      if (eventName === "quit" && args[1] === 0 && autoInstallOnAppQuitCalls.at(-1)) {
+        installOnAppQuit?.();
+      }
       for (const listener of listeners.get(eventName) ?? []) {
-        listener(payload);
+        listener(...args);
       }
     },
   };
