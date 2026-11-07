@@ -7,6 +7,7 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   EventId,
+  GitManagerError,
   MessageId,
   ProjectId,
   ThreadId,
@@ -1334,6 +1335,74 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       },
     ]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("a git action that fails partway still refreshes the repository status", () =>
+  Effect.gen(function* () {
+    const failure = new GitManagerError({ operation: "test", cwd: "/repo", detail: "push failed" });
+    const refreshed = yield* Deferred.make<string>();
+    const exits = yield* Queue.unbounded<string>();
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(GitWorkflowService.GitWorkflowService)({
+        runStackedAction: () => Effect.fail(failure),
+      }),
+      Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+        refreshStatus: (cwd) =>
+          Deferred.succeed(refreshed, cwd).pipe(Effect.andThen(Effect.fail(failure))),
+      }),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    );
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("git-test"),
+            subject: "git-test",
+            method: "browser-session-cookie",
+            scopes: [AuthSourceControlWriteScope],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(
+          Layer.provide(services),
+          Layer.merge(RpcAuthorization.layer([AuthSourceControlWriteScope])),
+        ),
+      ),
+    );
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("git"),
+      tag: WS_METHODS.gitRunStackedAction,
+      payload: { actionId: "action", cwd: "/repo", action: "commit_push" },
+      headers: Headers.empty,
+    });
+    assert.equal(yield* Queue.take(exits), "Failure");
+    assert.equal(yield* Deferred.await(refreshed), "/repo");
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
