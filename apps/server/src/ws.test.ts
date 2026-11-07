@@ -799,7 +799,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
   Layer.mock(LanGateway.LanGateway)({
     advertise: Effect.succeed([]),
-    advertisementChanges: Stream.empty,
+    subscribeAdvertisementChanges: Effect.succeed(Stream.empty),
   }),
   Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
   Layer.mock(PreviewManager.PreviewManager)({}),

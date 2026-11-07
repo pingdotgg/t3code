@@ -43,7 +43,7 @@ import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionDriver from "./driver.ts";
 import type { RouteCheck } from "./driver.ts";
 import * as GatewayHop from "./gatewayHop.ts";
-import { connectionRouteId, connectionRouteKind } from "./routes.ts";
+import { connectionRouteId, connectionRouteKind, connectionRoutes } from "./routes.ts";
 import {
   ConnectionTransientError,
   ConnectionBlockedError,
@@ -163,12 +163,17 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       connectionId: string,
     ) => Effect.Effect<void, ConnectionTransientError>;
     readonly checkRoute?: (route: ConnectionRoute) => RouteCheck;
-    readonly prepareRoute?: (target: ConnectionTarget) => ConnectionBlockedError | undefined;
+    readonly prepareRoute?: (
+      target: ConnectionTarget,
+    ) => ConnectionBlockedError | ConnectionTransientError | undefined;
     readonly beforePrepareRoute?: (
       target: ConnectionTarget,
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    readonly lanGatewayPeers?: (
+      environmentId: EnvironmentId,
+    ) => Stream.Stream<ServerConfig["lanGatewayPeers"]>;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -419,13 +424,21 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               ? Effect.die(new Error("Config is not used by registry tests."))
               : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
           subscribeServerConfig: () =>
-            options?.directEndpoints === undefined
-              ? Stream.never
-              : Stream.make({
-                  version: 1 as const,
-                  type: "snapshot" as const,
-                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
-                }),
+            options?.lanGatewayPeers !== undefined
+              ? options.lanGatewayPeers(target.environmentId).pipe(
+                  Stream.map((lanGatewayPeers) => ({
+                    version: 1 as const,
+                    type: "snapshot" as const,
+                    config: { lanGatewayPeers } as ServerConfig,
+                  })),
+                )
+              : options?.directEndpoints === undefined
+                ? Stream.never
+                : Stream.make({
+                    version: 1 as const,
+                    type: "snapshot" as const,
+                    config: { directEndpoints: options.directEndpoints } as ServerConfig,
+                  }),
           ready: Effect.void,
           probe: Effect.void,
           inboundFrames: Effect.succeed(0),
@@ -470,7 +483,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
         ),
         Layer.succeed(ConnectionDriver.ConnectionDriver, driver),
-        GatewayHop.layer,
+        Layer.mock(GatewayHop.GatewayHopAuthorization)({ remember: () => Effect.void }),
         layerCache,
         Layer.succeed(Persistence.EnvironmentOwnedDataCleanup, ownedDataCleanup),
       ),
@@ -2275,6 +2288,67 @@ describe("EnvironmentRegistry routes", () => {
         ]);
         expect(entries.get(LAN_TARGET.environmentId)?.alternateRoutes?.[0]?.target).toEqual(
           RELAY_TARGET,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("tries a gateway route as soon as it is learned, and drops it once unadvertised", () =>
+    Effect.gen(function* () {
+      const gatewayTarget = new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("env_gateway"),
+        label: "Gateway",
+        connectionId: "bearer:gateway",
+      });
+      const gatewayProfile = new BearerConnectionProfile({
+        connectionId: gatewayTarget.connectionId,
+        environmentId: gatewayTarget.environmentId,
+        label: gatewayTarget.label,
+        httpBaseUrl: "https://gateway.example.test/",
+        wsBaseUrl: "wss://gateway.example.test/",
+      });
+      const peerAdvertisement = { environmentId: LAN_TARGET.environmentId, label: "Peer" };
+      const otherAdvertisement = { environmentId: EnvironmentId.make("env_other"), label: "Other" };
+      const advertised = yield* SubscriptionRef.make<ReadonlyArray<typeof peerAdvertisement>>([]);
+      const routeId = `gateway:${gatewayTarget.environmentId}:${LAN_TARGET.environmentId}@${LAN_TARGET.connectionId}`;
+      const harness = yield* makeHarness(
+        [LAN_TARGET, gatewayTarget],
+        [LAN_PROFILE, gatewayProfile],
+        [
+          [LAN_TARGET.connectionId, BEARER_CREDENTIAL],
+          [gatewayTarget.connectionId, BEARER_CREDENTIAL],
+        ],
+        {
+          lanGatewayPeers: (environmentId) =>
+            environmentId === gatewayTarget.environmentId
+              ? SubscriptionRef.changes(advertised)
+              : Stream.never,
+          prepareRoute: (target) =>
+            connectionRouteId(target) === LAN_TARGET.connectionId
+              ? new ConnectionTransientError({ reason: "remote-unavailable", detail: "away" })
+              : undefined,
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        const reachesPhase = (phase: SupervisorConnectionState["phase"]) =>
+          registry.stateChanges(LAN_TARGET.environmentId).pipe(
+            Stream.filter((state) => state.phase === phase),
+            Stream.runHead,
+          );
+        yield* reachesPhase("backoff");
+
+        yield* SubscriptionRef.set(advertised, [peerAdvertisement]);
+        yield* reachesPhase("connected");
+        expect(yield* Ref.get(harness.connectedRoutes)).toContain(routeId);
+
+        yield* SubscriptionRef.set(advertised, [otherAdvertisement]);
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter(
+            (entries) => connectionRoutes(entries.get(LAN_TARGET.environmentId)!).length === 1,
+          ),
+          Stream.runHead,
         );
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),

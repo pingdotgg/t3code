@@ -497,6 +497,29 @@ describe("gateway routes", () => {
     ).toEqual(["lan", "relay"]);
   });
 
+  it("retires a gateway route whose credential changed", () => {
+    const relayFirst = mergeGatewayRoutes({
+      entry: { target: RELAY.target, profile: RELAY.profile, enabled: true },
+      gatewayEnvironmentId: GATEWAY_ID,
+      gatewayHttpBaseUrl: gatewayOrigin,
+      advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+    })!;
+    const entry: ConnectionCatalogEntry = {
+      ...paired,
+      alternateRoutes: [...relayFirst],
+    };
+    expect(
+      ids(
+        mergeGatewayRoutes({
+          entry,
+          gatewayEnvironmentId: GATEWAY_ID,
+          gatewayHttpBaseUrl: gatewayOrigin,
+          advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+        }),
+      ),
+    ).toEqual(["lan", `gateway:${GATEWAY_ID}:${PEER_ID}@lan`, "relay"]);
+  });
+
   it("ignores advertisements for other peers", () => {
     expect(
       mergeGatewayRoutes({

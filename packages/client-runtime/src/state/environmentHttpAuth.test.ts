@@ -24,6 +24,7 @@ import type { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
+  BearerConnectionTarget,
   ConnectionTransientError,
   RelayConnectionTarget,
   type PreparedConnection,
@@ -495,6 +496,34 @@ describe("authenticated environment HTTP requests", () => {
       expect(error._tag).toBe(errorTag);
       expect(harness.calls).toHaveLength(1);
       expect(harness.authorizations).toEqual([{ expectedEnvironmentId: TARGET.environmentId }]);
+    }),
+  );
+
+  it.effect("sends each LAN gateway request with a freshly minted hop ticket", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json(SESSION));
+      let minted = 0;
+      const input = {
+        ...harness.input,
+        prepared: {
+          ...PREPARED,
+          httpBaseUrl: "https://gateway.example.test/__t3_gateway/environment-1/",
+          httpAuthorization: { _tag: "Bearer", token: "peer-token" },
+          target: new BearerConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            connectionId: "gateway:route",
+          }),
+          gatewayTicket: Effect.sync(() => Option.some(`hop-${++minted}`)),
+        } satisfies PreparedConnection,
+      };
+      yield* fetchEnvironmentSessionState(input).pipe(Effect.provide(harness.httpLayer));
+      yield* fetchEnvironmentSessionState(input).pipe(Effect.provide(harness.httpLayer));
+
+      expect(harness.calls.map((call) => call.url)).toEqual([
+        "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session?gatewayTicket=hop-1",
+        "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session?gatewayTicket=hop-2",
+      ]);
     }),
   );
 

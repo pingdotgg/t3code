@@ -53,6 +53,7 @@ import {
   hasSavedBearerRoute,
   mergeGatewayRoutes,
   mergeLearnedRoutes,
+  routeGatewayEnvironmentId,
   routesAfterRemoving,
   upsertRoute,
   type ReportedEndpoint,
@@ -205,6 +206,7 @@ export class EnvironmentRegistry extends Context.Service<
 interface EnvironmentServiceScope {
   readonly entry: ConnectionCatalogEntry;
   readonly supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"];
+  readonly currentEntry: Ref.Ref<ConnectionCatalogEntry>;
   readonly scope: Scope.Closeable;
 }
 
@@ -366,7 +368,9 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const environmentId = entry.target.environmentId;
           const scope = yield* Scope.fork(registryScope);
+          const currentEntry = yield* Ref.make(entry);
           const supervisor = yield* EnvironmentSupervisor.make(entry, {
+            currentEntry,
             // Seed the intent to avoid publishing a false switched-off state
             // before an enabled, compatible environment starts connecting.
             initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
@@ -382,7 +386,7 @@ export const make = Effect.gen(function* () {
           );
           yield* SubscriptionRef.update(serviceScopes, (current) => {
             const next = new Map(current);
-            next.set(environmentId, { entry, supervisor, scope });
+            next.set(environmentId, { entry, supervisor, currentEntry, scope });
             return next;
           });
           yield* SubscriptionRef.changes(supervisor.state).pipe(
@@ -1013,8 +1017,14 @@ export const make = Effect.gen(function* () {
       yield* SubscriptionRef.update(serviceScopes, (current) =>
         new Map(current).set(environmentId, { ...lease, entry: next }),
       );
+      yield* Ref.set(lease.currentEntry, next);
     }
     yield* SubscriptionRef.update(entries, (current) => new Map(current).set(environmentId, next));
+    // A connected supervisor finds the routes on its next better-route check.
+    if (lease !== undefined) {
+      const state = yield* SubscriptionRef.get(lease.supervisor.state);
+      if (state.phase === "backoff") yield* lease.supervisor.retryNow;
+    }
     return next;
   });
 
@@ -1024,24 +1034,16 @@ export const make = Effect.gen(function* () {
     readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
   }) {
     const catalog = yield* SubscriptionRef.get(entries);
-    const peerIds = new Set<EnvironmentId>();
-    if (input.advertised.length === 0) {
-      // Drop learned gateway routes for peers that already carry one for this host.
-      for (const [environmentId, entry] of catalog) {
-        if (
-          connectionRoutes(entry).some((route) => {
-            const profile = Option.getOrNull(route.profile);
-            return (
-              profile?._tag === "BearerConnectionProfile" &&
-              profile.gatewayEnvironmentId === input.gatewayEnvironmentId
-            );
-          })
-        ) {
-          peerIds.add(environmentId);
-        }
+    const peerIds = new Set(input.advertised.map((peer) => peer.environmentId));
+    // A peer this host stopped advertising still carries a route to clean up.
+    for (const [environmentId, entry] of catalog) {
+      if (
+        connectionRoutes(entry).some(
+          (route) => routeGatewayEnvironmentId(route) === input.gatewayEnvironmentId,
+        )
+      ) {
+        peerIds.add(environmentId);
       }
-    } else {
-      for (const peer of input.advertised) peerIds.add(peer.environmentId);
     }
     for (const peerEnvironmentId of peerIds) {
       if (peerEnvironmentId === input.gatewayEnvironmentId) continue;

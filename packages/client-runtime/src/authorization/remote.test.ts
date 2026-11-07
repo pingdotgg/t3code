@@ -213,6 +213,29 @@ describe("remote environment authorization", () => {
     }),
   );
 
+  it.effect("reaches a peer's ticket route and socket through its LAN gateway prefix", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json({ ticket: "ws-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
+      );
+
+      const url = yield* resolveRemoteWebSocketConnectionUrl({
+        wsBaseUrl: "wss://gateway.example.com/__t3_gateway/env_peer/?gatewayTicket=hop",
+        httpBaseUrl: "https://gateway.example.com/__t3_gateway/env_peer/?gatewayTicket=hop",
+        bearerToken: "bearer-token",
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+
+      expectFetchCall(fetch.calls, 1, {
+        url: "https://gateway.example.com/__t3_gateway/env_peer/api/auth/websocket-ticket/rpc?gatewayTicket=hop",
+        method: "POST",
+        headers: { authorization: "Bearer bearer-token" },
+      });
+      expect(url).toBe(
+        "wss://gateway.example.com/__t3_gateway/env_peer/ws?gatewayTicket=hop&wsTicket=ws-ticket",
+      );
+    }),
+  );
+
   it.effect("binds a DPoP client's rpc ticket to its key and proves the upgrade", () =>
     Effect.gen(function* () {
       const fetch = recordedFetch(

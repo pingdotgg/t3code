@@ -123,12 +123,14 @@ function AddPeerAction({ environmentId }: { readonly environmentId: EnvironmentI
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
+  const dialogSession = useRef(0);
   const formId = useId();
   const add = useAtomCommand(lanGatewayEnvironment.add, { label: "add gateway peer" });
   const ready = url.trim().length > 0;
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) {
+      dialogSession.current += 1;
       setUrl("");
       setBusy(false);
       inFlight.current = false;
@@ -138,7 +140,9 @@ function AddPeerAction({ environmentId }: { readonly environmentId: EnvironmentI
     if (!ready || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
+    const session = dialogSession.current;
     const result = await add({ environmentId, input: { url: url.trim() } });
+    if (session !== dialogSession.current) return;
     inFlight.current = false;
     setBusy(false);
     if (result._tag === "Failure") {

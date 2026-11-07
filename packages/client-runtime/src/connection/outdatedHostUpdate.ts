@@ -24,6 +24,7 @@ import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { makeWsRpcProtocolClient, PING_TIMEOUT } from "../rpc/protocol.ts";
 import { isLegacyUpdateHandoffLoss, resolveServerUpdateProgressResult } from "../state/server.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
+import { ticketedHttpBaseUrl } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import {
@@ -203,12 +204,16 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
 
     yield* onStage("resuming");
     const pollUrls = [
-      prepared.httpBaseUrl,
-      ...connectionRoutes(entry).flatMap((route) => routeHttpBaseUrl(route) ?? []),
-    ].filter((url, index, all) => all.indexOf(url) === index);
+      ticketedHttpBaseUrl(prepared),
+      ...connectionRoutes(entry)
+        .flatMap((route) => routeHttpBaseUrl(route) ?? [])
+        .filter((url, index, all) => url !== prepared.httpBaseUrl && all.indexOf(url) === index)
+        .map((url) => Effect.succeed(url)),
+    ];
     const resumed = yield* Effect.firstSuccessOf(
-      pollUrls.map((httpBaseUrl) =>
-        fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
+      pollUrls.map((pollUrl) =>
+        pollUrl.pipe(
+          Effect.flatMap((httpBaseUrl) => fetchRemoteEnvironmentDescriptor({ httpBaseUrl })),
           Effect.filterOrFail(
             (descriptor) =>
               descriptor.environmentId === environmentId && isCompatibleDescriptor(descriptor),

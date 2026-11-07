@@ -423,12 +423,9 @@ export function credentialConnectionId(connectionId: string): string {
     : connectionId;
 }
 
-function isGatewayRouteFor(route: ConnectionRoute, gatewayEnvironmentId: EnvironmentId): boolean {
+export function routeGatewayEnvironmentId(route: ConnectionRoute): EnvironmentId | undefined {
   const profile = Option.getOrNull(route.profile);
-  return (
-    profile?._tag === "BearerConnectionProfile" &&
-    profile.gatewayEnvironmentId === gatewayEnvironmentId
-  );
+  return profile?._tag === "BearerConnectionProfile" ? profile.gatewayEnvironmentId : undefined;
 }
 
 function gatewayHttpBaseUrl(gatewayHttpBaseUrl: string, peerEnvironmentId: EnvironmentId): string {
@@ -474,19 +471,21 @@ export function mergeGatewayRoutes(input: {
     return undefined;
   })();
 
-  const kept = saved.flatMap((route): ReadonlyArray<ConnectionRoute> => {
-    if (!isGatewayRouteFor(route, gatewayEnvironmentId)) return [route];
-    return advertised ? [route] : [];
-  });
+  // The id names the credential, so pairing or forgetting one retires the route built on the old id.
+  const connectionId = gatewayConnectionId(
+    gatewayEnvironmentId,
+    peerEnvironmentId,
+    sharedCredential,
+  );
+  const kept = saved.filter(
+    (route) =>
+      routeGatewayEnvironmentId(route) !== gatewayEnvironmentId ||
+      (advertised && connectionRouteId(route.target) === connectionId),
+  );
 
   let next: ReadonlyArray<ConnectionRoute> = kept;
   if (advertised) {
     const httpBaseUrl = gatewayHttpBaseUrl(gatewayOrigin, peerEnvironmentId);
-    const connectionId = gatewayConnectionId(
-      gatewayEnvironmentId,
-      peerEnvironmentId,
-      sharedCredential,
-    );
     const existing = kept.find((route) => connectionRouteId(route.target) === connectionId);
     const route: ConnectionRoute = {
       target: new BearerConnectionTarget({

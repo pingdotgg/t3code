@@ -1,6 +1,10 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
+import * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import { withGatewayTicket } from "../environment/endpoint.ts";
 
 const ConnectionTargetBase = {
   environmentId: EnvironmentId,
@@ -154,7 +158,19 @@ export interface PreparedConnection {
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization | null;
   readonly target: ConnectionTarget;
+  /** On a LAN gateway route, mints the short-lived ticket a request needs to pass the gateway. */
+  readonly gatewayTicket?: Effect.Effect<Option.Option<string>, ConnectionAttemptError>;
 }
+
+/** The base URL for one request: a gateway route's ticket expires, so `httpBaseUrl` holds none. */
+export const ticketedHttpBaseUrl = (
+  prepared: PreparedConnection,
+): Effect.Effect<string, ConnectionAttemptError> =>
+  prepared.gatewayTicket === undefined
+    ? Effect.succeed(prepared.httpBaseUrl)
+    : prepared.gatewayTicket.pipe(
+        Effect.map((ticket) => withGatewayTicket(prepared.httpBaseUrl, ticket)),
+      );
 
 export type SupervisorConnectionPhase =
   | "available"
