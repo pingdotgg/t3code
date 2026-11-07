@@ -1458,9 +1458,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   /** Parent run and wake message events that commit a planDelegatedCompletionDelivery result. */
   const isUnobservedAcknowledgement = (
-    command: OrchestrationV2Command,
+    command: OrchestrationV2ServerCommand,
   ): command is Extract<
-    OrchestrationV2Command,
+    OrchestrationV2ServerCommand,
     { readonly type: "delegated_task.completion-delivery.acknowledge" }
   > & { readonly observedByRunId: null } =>
     command.type === "delegated_task.completion-delivery.acknowledge" &&
