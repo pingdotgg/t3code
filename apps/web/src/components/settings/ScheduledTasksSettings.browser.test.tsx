@@ -5,6 +5,9 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
+  type ServerProvider,
+  type UnifiedSettings,
   ScheduledTaskId,
   ThreadId,
   type ScheduledTask,
@@ -13,6 +16,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { act, render } from "../../../test/render";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
 
@@ -47,14 +51,26 @@ const threadFamilyRead = {
   threads: [{ id: task.threadId, title: "Fix login bug" }],
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, secondary: false }));
+const state = vi.hoisted(() => ({
+  connected: true,
+  tasksLoaded: true,
+  tasks: [] as ScheduledTask[],
+  secondary: false,
+  providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
+  settings: null as unknown as UnifiedSettings,
+  upsert: vi.fn(async () => ({ _tag: "Success" as const })),
+}));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
 
 function setup() {
   state.connected = true;
   state.tasksLoaded = true;
+  state.tasks = [task];
   state.secondary = false;
+  state.providers = Atom.make<ReadonlyArray<ServerProvider>>([]);
+  state.settings = DEFAULT_UNIFIED_SETTINGS;
+  state.upsert.mockClear();
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -104,6 +120,7 @@ vi.mock(import("../../state/server"), async (original) => {
     ...actual,
     serverEnvironment: {
       ...actual.serverEnvironment,
+      providersValueAtom: (() => state.providers) as never,
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
         permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
@@ -125,7 +142,7 @@ vi.mock(import("../../state/query"), async (original) => ({
     data:
       request === null || request === threadFamilyRead
         ? request
-        : { tasks: state.tasksLoaded ? [task] : [] },
+        : { tasks: state.tasksLoaded ? state.tasks : [] },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -142,10 +159,123 @@ vi.mock(import("../../state/entities"), async (original) => ({
 }));
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
-  useEnvironmentSettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
+  useEnvironmentSettings: (() => state.settings) as never,
+}));
+
+vi.mock(import("../../state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => state.upsert) as never,
+}));
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
 }));
 
 describe("ScheduledTasksSettings", () => {
+  it.each([false, true])(
+    "preserves and edits model options (existing task: %s)",
+    async (editing) => {
+      setup();
+      const selection = {
+        ...task.modelSelection,
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      state.tasks = [{ ...task, modelSelection: selection }];
+      state.settings = { ...DEFAULT_UNIFIED_SETTINGS, defaultModelSelection: selection };
+      state.providers = Atom.make<ReadonlyArray<ServerProvider>>([
+        {
+          instanceId: selection.instanceId,
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-11-03T00:00:00.000Z",
+          models: [
+            {
+              slug: selection.model,
+              name: "GPT-5.4",
+              isCustom: false,
+              capabilities: createModelCapabilities({
+                optionDescriptors: [
+                  {
+                    id: "reasoningEffort",
+                    label: "Reasoning effort",
+                    type: "select",
+                    options: [
+                      { id: "low", label: "Low", isDefault: true },
+                      { id: "high", label: "High" },
+                    ],
+                    currentValue: "low",
+                  },
+                ],
+              }),
+            },
+            { slug: "plain", name: "Plain model", isCustom: false, capabilities: null },
+          ],
+          skills: [],
+          slashCommands: [],
+        },
+      ]);
+      await using screen = await render(
+        <ScheduledTasksSettings {...(editing ? { taskId: task.id } : {})} />,
+      );
+      if (!editing) await screen.getByRole("button", { name: "New task" }).click();
+      await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Effort task");
+      await userEvent.fill(
+        page.getByRole("textbox", { name: "Prompt", exact: true }),
+        "Review issues",
+      );
+      await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+      await page.getByRole("option", { name: /GPT-5.4/ }).click();
+      expect(page.getByRole("button", { name: "High", exact: true }).query()).not.toBeNull();
+      await page.getByRole("button", { name: editing ? "Save task" : "Create task" }).click();
+      await vi.waitFor(() =>
+        expect(state.upsert).toHaveBeenLastCalledWith({
+          environmentId,
+          input: expect.objectContaining({ modelSelection: selection }),
+        }),
+      );
+
+      await screen.rerender(<ScheduledTasksSettings />);
+      await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
+      await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Low effort task");
+      await userEvent.fill(
+        page.getByRole("textbox", { name: "Prompt", exact: true }),
+        "Review issues",
+      );
+      await page.getByRole("button", { name: "High", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: /^Low/ }).click();
+      await expect.element(page.getByRole("button", { name: "Low", exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Save task" }).click();
+      await vi.waitFor(() =>
+        expect(state.upsert).toHaveBeenLastCalledWith({
+          environmentId,
+          input: expect.objectContaining({
+            modelSelection: {
+              ...selection,
+              options: expect.arrayContaining([{ id: "reasoningEffort", value: "low" }]),
+            },
+          }),
+        }),
+      );
+      await screen.rerender(<ScheduledTasksSettings />);
+      await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
+      await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+      await page.getByRole("option", { name: /Plain model/ }).click();
+      expect(page.getByRole("button", { name: "High", exact: true }).query()).toBeNull();
+      await page.getByRole("button", { name: "Save task" }).click();
+      await vi.waitFor(() =>
+        expect(state.upsert).toHaveBeenLastCalledWith({
+          environmentId,
+          input: expect.objectContaining({
+            modelSelection: { instanceId: selection.instanceId, model: "plain" },
+          }),
+        }),
+      );
+    },
+  );
   it("creates on a permitted secondary and reacts to permission changes", async () => {
     setup();
     state.secondary = true;
