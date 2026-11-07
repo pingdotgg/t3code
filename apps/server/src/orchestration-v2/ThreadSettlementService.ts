@@ -25,6 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import * as DeviceService from "../device/DeviceService.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -311,6 +312,7 @@ export const make = Effect.gen(function* () {
   // a minute, so these threads' next lookup reads the host fresh.
   const shellClosedThreads = new Set<ThreadId>();
   const terminals = yield* TerminalManager.TerminalManager;
+  const devices = yield* DeviceService.DeviceService;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
@@ -602,6 +604,26 @@ export const make = Effect.gen(function* () {
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
+      // Per device: a thread without devices skips the lock a starting host holds, one unreachable
+      // host leaves no other device claimed, and a thread re-engaged meanwhile keeps the rest.
+      yield* Effect.forEach(
+        yield* devices.sessionsForThread(threadId),
+        ({ hostId, deviceId }) =>
+          Effect.gen(function* () {
+            if ((yield* projections.getThread(threadId)).settledOverride !== "settled") return;
+            yield* devices.close({ threadId, hostId, deviceId }).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("releasing a settled thread's device failed", {
+                  threadId,
+                  hostId,
+                  deviceId,
+                  error,
+                }),
+              ),
+            );
+          }),
+        { discard: true },
+      );
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
       // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.

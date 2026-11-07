@@ -7,6 +7,7 @@ import {
   EventId,
   ProviderInstanceId,
   RuntimeRequestId,
+  DeviceHostUnavailableError,
   RunId,
   ThreadId,
   TurnItemId,
@@ -34,6 +35,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
+import * as DeviceService from "../device/DeviceService.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -562,6 +564,9 @@ interface HarnessOptions {
     input: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput,
   ) => Effect.Effect<void>;
   readonly onCloseIdle?: () => Effect.Effect<void>;
+  readonly onDeviceClose?: (hostId: string | undefined) => Effect.Effect<void>;
+  readonly deviceCloseError?: DeviceHostUnavailableError;
+  readonly deviceSessions?: ReadonlyArray<{ readonly hostId: string; readonly deviceId: string }>;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
 }
 
@@ -588,6 +593,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   >([]);
   const summaryRecovery = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const invalidatedCwds = yield* Ref.make<ReadonlyArray<string>>([]);
+  const deviceCloses = yield* Ref.make<
+    ReadonlyArray<Parameters<DeviceService.DeviceService["Service"]["close"]>[0]>
+  >([]);
   const domainEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
   const closedIdle = yield* Queue.unbounded<{ readonly threadId: string }>();
   const scriptRuns =
@@ -685,6 +693,28 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       closeOnSettle: (input) =>
         Queue.offer(closedIdle, input).pipe(Effect.andThen(options.onCloseIdle?.() ?? Effect.void)),
     }),
+    Layer.mock(DeviceService.DeviceService)({
+      sessionsForThread: (threadId) =>
+        Effect.succeed(
+          (options.deviceSessions ?? [{ hostId: "local", deviceId: "emulator-5554" }]).map(
+            (session) => ({
+              ...session,
+              threadId,
+              platform: "android" as const,
+              openedAt: "2026-01-01T00:00:00.000Z",
+            }),
+          ),
+        ),
+      close: (input) =>
+        Ref.update(deviceCloses, (closes) => [...closes, input]).pipe(
+          Effect.andThen(options.onDeviceClose?.(input.hostId) ?? Effect.void),
+          Effect.andThen(
+            options.deviceCloseError && options.deviceCloseError.hostId === input.hostId
+              ? Effect.fail(options.deviceCloseError)
+              : Effect.void,
+          ),
+        ),
+    }),
     Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
       runForThread: (input) =>
         Queue.offer(scriptRuns, input).pipe(
@@ -735,6 +765,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     invalidatedCwds,
     closedIdle,
     scriptRuns,
+    deviceCloses,
     publishEvent: (event: OrchestrationV2DomainEvent) => PubSub.publish(domainEvents, event),
     updateSettings,
     publishMerge: PubSub.publish(mergedPullRequests, {
@@ -1478,6 +1509,131 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
+  it.effect("keeps the remaining devices of a thread re-engaged during an earlier release", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const firstFinished = yield* Deferred.make<void>();
+        const settled = appThread("multi-device-thread", "settled");
+        const marker = appThread("marker-thread", "settled");
+        const currentThreads = [settled, marker];
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads,
+          deviceSessions: [
+            { hostId: "slow-ssh", deviceId: "pixel" },
+            { hostId: "local", deviceId: "emulator-5554" },
+          ],
+          onDeviceClose: (hostId) =>
+            hostId === "slow-ssh"
+              ? Deferred.succeed(firstStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(firstFinished)),
+                )
+              : Effect.void,
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          yield* Deferred.await(firstStarted);
+          currentThreads[0] = { ...settled, settledOverride: "active" };
+          yield* Deferred.succeed(firstFinished, undefined);
+          yield* fixture.publishEvent(settledEvent(marker));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.deviceCloses)).filter((close) => close.threadId === settled.id),
+            [{ threadId: settled.id, hostId: "slow-ssh", deviceId: "pixel" }],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("releases a settled thread's devices without shutting them down", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settled = appThread("device-thread", "settled");
+        const marker = appThread("marker-thread", "settled");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [settled, marker],
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          yield* fixture.publishEvent(settledEvent(marker));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
+          const closes = yield* Ref.get(fixture.deviceCloses);
+          assert.deepStrictEqual(
+            closes.filter((close) => close.threadId === settled.id),
+            [{ threadId: settled.id, hostId: "local", deviceId: "emulator-5554" }],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("releases the other devices and runs the settle script when one release fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settled = appThread("reconnecting-host-thread", "settled", "/worktrees/thread");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [settled],
+          existingWorktreePaths: ["/worktrees/thread"],
+          deviceSessions: [
+            { hostId: "ssh-host", deviceId: "remote-pixel" },
+            { hostId: "local", deviceId: "emulator-5554" },
+          ],
+          deviceCloseError: new DeviceHostUnavailableError({
+            hostId: "ssh-host",
+            reason: "Device host is reconnecting. Retry close after it reconnects.",
+          }),
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
+          const run = yield* Queue.take(fixture.scriptRuns);
+          assert.strictEqual(run.threadId, settled.id);
+          assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), [
+            { threadId: settled.id, hostId: "ssh-host", deviceId: "remote-pixel" },
+            { threadId: settled.id, hostId: "local", deviceId: "emulator-5554" },
+          ]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("leaves the device service alone for a settled thread without devices", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settled = appThread("deviceless-thread", "settled", "/worktrees/deviceless");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [settled],
+          existingWorktreePaths: ["/worktrees/deviceless"],
+          deviceSessions: [],
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, settled.id);
+          assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("runs the settle script in the thread's own worktree", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1527,6 +1683,10 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(settled));
           yield* fixture.publishEvent(settledEvent(marker));
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.deviceCloses)).filter((close) => close.threadId === settled.id),
+            [],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
