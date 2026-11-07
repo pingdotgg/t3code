@@ -600,12 +600,13 @@ describe("auth pairing create --base-url", () => {
   );
 });
 
-describe("scripted auth output", () => {
+describe("scripted CLI output", () => {
   it.effect.each(
     [
       ["auth", "session", "issue", "--token-only"],
       ["auth", "session", "list", "--json"],
       ["auth", "pairing", "list", "--json"],
+      ["thread", "list", "--json"],
     ].map((command) => ({ command, label: command.join(" ") })),
   )("prints only the result for $label after removing an abandoned upload", ({ command }) =>
     Effect.gen(function* () {
@@ -622,12 +623,15 @@ describe("scripted auth output", () => {
 
       const lines = yield* provideCliTestLayers(
         Effect.gen(function* () {
-          yield* runCli([...command, "--base-dir", baseDir]);
+          const exit = yield* Effect.exit(runCli([...command, "--base-dir", baseDir]));
+          // No server runs here, so `t3 thread` fails after config resolution swept.
+          assert.equal(Exit.isSuccess(exit), command[0] !== "thread");
           return yield* TestConsole.logLines;
         }),
       );
 
       assert.isFalse(NodeFS.existsSync(abandoned));
+      if (command[0] === "thread") return assert.lengthOf(lines, 0);
       assert.lengthOf(lines, 1);
       const output = String(lines[0]);
       if (command.includes("--json")) {
