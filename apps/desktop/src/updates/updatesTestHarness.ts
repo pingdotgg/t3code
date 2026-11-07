@@ -359,7 +359,7 @@ export function makeSshHarness(
     Effect.gen(function* () {
       const args = command._tag === "StandardCommand" ? command.args : [];
       const forward = args.includes("-N");
-      const port = forward ? Number(args[args.indexOf("-L") + 1]?.split(":")[0]) : 0;
+      const port = forward ? Number(String(args[args.indexOf("-L") + 1]).split(":")[0]) : 0;
       const bindFailed = forward && occupiedPorts.has(port);
       if (forward && !bindFailed) listeners.add(port);
       const stdin = command._tag === "StandardCommand" ? command.options.stdin : undefined;
@@ -422,6 +422,7 @@ export function makeSshHarness(
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Layer.succeed(
           HttpClient.HttpClient,
