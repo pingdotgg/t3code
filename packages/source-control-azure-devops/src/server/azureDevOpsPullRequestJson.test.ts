@@ -74,6 +74,8 @@ describe("decodePullRequestListJson", () => {
   it.each([
     ["succeeded", "mergeable"],
     ["conflicts", "conflicting"],
+    ["failure", "unknown"],
+    ["rejectedByPolicy", "unknown"],
     ["queued", "unknown"],
   ])("reads the %s merge status as %s", (mergeStatus, expected) => {
     const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest({ mergeStatus })])));
