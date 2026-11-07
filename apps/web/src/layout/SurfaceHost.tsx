@@ -12,6 +12,7 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { StatusDot } from "../components/ui/status-dot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
 import { usePaneMotion } from "../motion/paneMotion";
@@ -526,7 +527,8 @@ export function LayoutSurfaceHost({
   const workspace = selectFocusedWorkspace(shown);
   const narrow = useMediaQuery("max-md");
   useSyncLayoutBehavior();
-  useThreeFingerSwipe(active);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
+  useThreeFingerSwipe(active && scrollingWorkspaces);
   useLayoutSurfaceSync();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const lastWorkspaceFocus = useRef<HTMLElement | null>(null);
@@ -755,7 +757,7 @@ export function LayoutSurfaceHost({
     const root = rootRef.current;
     const scroller = scrollerRef.current;
     const element = stageRef.current;
-    if (!root || !scroller || !element) return;
+    if (!scrollingWorkspaces || !root || !scroller || !element) return;
     return attachWorkspaceSwitch({
       root,
       scroller,
@@ -764,7 +766,7 @@ export function LayoutSurfaceHost({
       blocked: () => stagedRef.current || backgroundRef.current,
       stripShown: () => stripShownRef.current,
     });
-  }, [backgroundRef, stageGapRef, stagedRef, stripShownRef]);
+  }, [backgroundRef, scrollingWorkspaces, stageGapRef, stagedRef, stripShownRef]);
 
   // Before the reveal below: leaving the overview hands the strip its scroll
   // back first, so the reveal finds the focused pane in place, not a strip
@@ -826,7 +828,7 @@ export function LayoutSurfaceHost({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own wheel and swipe subscriptions on the mounted workspace scroller.
   useEffect(() => {
     const scroller = scrollerRef.current;
-    if (!scroller) return;
+    if (!scrollingWorkspaces || !scroller) return;
     const mac = isMacPlatform(navigator.platform);
     const held = (event: MouseEvent) =>
       mac ? event.metaKey && event.altKey : event.ctrlKey && event.altKey;
@@ -879,7 +881,7 @@ export function LayoutSurfaceHost({
       scroller.removeEventListener("pointerdown", onPointerDown, true);
       scroller.removeEventListener("touchmove", onTouchMove);
     };
-  }, []);
+  }, [scrollingWorkspaces]);
 
   // The pane each column focuses when focus follows the view back to it.
   const lastFocusedPaneByColumn = useRef(new Map<string, string>());
@@ -1396,10 +1398,10 @@ export function LayoutSurfaceHost({
       {active ? (
         <>
           <LayoutStripHint />
-          <LayoutOnboarding />
+          {scrollingWorkspaces ? <LayoutOnboarding /> : null}
           <LayoutDropZones />
           <LayoutKeyboard />
-          <LayoutOverview />
+          {scrollingWorkspaces ? <LayoutOverview /> : null}
           <PaneThumbnailServices />
           {unseenPeeks.left && !stacked ? (
             <UnseenPeekDot side="left" tabId={unseenPeeks.left} />
@@ -1834,8 +1836,11 @@ function LayoutEmptyWorkspace({
   // Its surfaces open for the thread the URL still shows, if any.
   const routeTarget = useThreadRouteTarget();
   // The way back only means something while another workspace holds tabs.
-  const othersHoldTabs = useLayoutStore((state) =>
-    state.layout.workspaces.some((workspace) => workspace.columns.length > 0),
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
+  const othersHoldTabs = useLayoutStore(
+    (state) =>
+      scrollingWorkspaces &&
+      state.layout.workspaces.some((workspace) => workspace.columns.length > 0),
   );
   const back = othersHoldTabs
     ? shortcutLabelForCommand(

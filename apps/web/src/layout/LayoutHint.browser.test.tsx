@@ -15,6 +15,7 @@ vi.mock(import("../state/server"), async () => {
   const { Atom } = await import("effect/reactivity");
   return { primaryServerKeybindingsAtom: Atom.make(compileResolvedKeybindingsConfig([])) };
 });
+vi.mock(import("../hooks/useSettings"), () => ({ useScrollingWorkspacesEnabled: () => true }));
 vi.mock(import("../state/entities"), () => ({ useThreadShell: () => null }));
 vi.mock(import("./PaneTabs"), () => ({
   useLayoutTabLabel: () => ({ title: "Chat", tooltip: "Chat", icon: null }),

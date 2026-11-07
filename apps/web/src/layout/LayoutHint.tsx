@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useState, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 
 import { Kbd } from "../components/ui/kbd";
+import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "../lib/utils";
 import { observeResize } from "../lib/observeResize";
@@ -131,11 +132,13 @@ function placeHint(placement: ReturnType<typeof useHintPlacement>, pill: ReactEl
  */
 export function LayoutStripHint() {
   const hint = useLayoutStore((state) => state.hint);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
 
   // Any workspace switch (keys, sidebar, overview, wheel) names the workspace
   // it landed on for a second (pen qnrAZ), unless a move hint already says so.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to imperative workspace changes that should display a navigation hint.
   useEffect(() => {
+    if (!scrollingWorkspaces) return;
     let overviewOpenedOn: string | null = null;
     return useLayoutStore.subscribe((state, previous) => {
       if (state.overviewOpen) {
@@ -161,10 +164,12 @@ export function LayoutStripHint() {
         count: workspaces.length,
       });
     });
-  }, []);
+  }, [scrollingWorkspaces]);
 
   if (!hint) return null;
   if (hint.kind === "terminal") return <TerminalHintPill key={hint.id} hint={hint} />;
+  // Column and workspace hints coach the scrolling strip.
+  if (!scrollingWorkspaces) return null;
   if (hint.kind === "column") return <ColumnHintPill key={hint.id} hint={hint} />;
   return <WorkspaceHintPill key={hint.id} hint={hint} />;
 }
