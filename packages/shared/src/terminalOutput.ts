@@ -523,7 +523,7 @@ class Terminal {
     };
     for (let index = 0; index < input.length; index += 1) {
       const code = input.charCodeAt(index);
-      if (code === 0x09 || (code >= 0x20 && code !== 0x7f && (code < 0x80 || code > 0x9f))) {
+      if (code >= 0x20 && code !== 0x7f && (code < 0x80 || code > 0x9f)) {
         continue;
       }
       flush(index);
@@ -531,6 +531,7 @@ class Terminal {
       if (code === 0x0a) this.newline();
       else if (code === 0x0d) this.col = 0;
       else if (code === 0x08) this.col = Math.max(0, this.col - 1);
+      else if (code === 0x09) this.moveTo(this.row, this.col + 8 - (this.col % 8));
       else if (code === 0x1b) {
         const length = escapeLength(input, index);
         if (length === -1) {

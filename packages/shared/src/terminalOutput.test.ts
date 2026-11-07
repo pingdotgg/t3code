@@ -24,6 +24,26 @@ describe("appendTerminalOutput", () => {
     expect(feed(["[1/3]", "\r[2/3]", "\r[3/3] done\nnext"]).text).toBe("[3/3] done\nnext");
   });
 
+  it.each([
+    { chunks: ["A\tB"], text: "A       B", col: 9 },
+    { chunks: ["abcdefgh\tX"], text: "abcdefgh        X", col: 17 },
+    { chunks: ["A\t"], text: "A", col: 8 },
+    { chunks: ["A\tB\rXY"], text: "XY      B", col: 2 },
+    { chunks: ["A\tB", "\u001b[9GX"], text: "A       X", col: 9 },
+    { chunks: ["A\tB", "\u001b[1;9HX"], text: "A       X", col: 9 },
+    { chunks: ["abcdefghij\rA\tX"], text: "AbcdefghXj", col: 9 },
+  ])("moves tabs to the next eight-column stop: $chunks", ({ chunks, text, col }) => {
+    const state = feed(chunks);
+    expect(state.text).toBe(text);
+    expect(state.screen.col).toBe(col);
+    expect(
+      appendTerminalOutput(
+        appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, terminalOutputResumeText(state)),
+        "Z",
+      ).text,
+    ).toBe(appendTerminalOutput(state, "Z").text);
+  });
+
   it("redraws several lines in place when the cursor moves up", () => {
     const frames = [
       "layer a: 10%\nlayer b: 10%\n",
@@ -195,6 +215,7 @@ describe("appendTerminalOutput under adversarial output", () => {
 
   it("gives the same result however the output is split into chunks", () => {
     const input =
+      "A\tB\rXY\nA\tB\u001b[9GX\nA\tB\u001b[1;9HX\nabcdefghij\rA\tX\n" +
       "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
       "\u001b[1;31mbold red\u001b[mplain\u001b[38:2::12:34:56mrgb\u001b[0m\n" +
       "\u001b[1;31mbold red again\u001b[mplain again\u001b[38:2::12:34:56mrgb again\u001b[0m";
