@@ -4193,18 +4193,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `;
             case "restart-continuations":
               return sql`
-                SELECT bindings.thread_id
-                FROM orchestration_v2_projection_provider_sessions AS sessions
-                JOIN orchestration_v2_projection_provider_session_bindings AS bindings
-                  ON bindings.provider_session_id = sessions.provider_session_id
-                WHERE sessions.status NOT IN ('stopped', 'error')
-                UNION
-                SELECT thread_id FROM orchestration_v2_projection_provider_sessions AS sessions
-                WHERE status NOT IN ('stopped', 'error') AND thread_id IS NOT NULL
-                  AND NOT EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS bindings
-                    WHERE bindings.provider_session_id = sessions.provider_session_id
-                  )
+                SELECT thread_id FROM (
+                  SELECT bindings.thread_id
+                  FROM orchestration_v2_projection_provider_sessions AS sessions
+                  JOIN orchestration_v2_projection_provider_session_bindings AS bindings
+                    ON bindings.provider_session_id = sessions.provider_session_id
+                  WHERE sessions.status NOT IN ('stopped', 'error')
+                  UNION
+                  SELECT thread_id FROM orchestration_v2_projection_provider_sessions AS sessions
+                  WHERE status NOT IN ('stopped', 'error') AND thread_id IS NOT NULL
+                    AND NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS bindings
+                      WHERE bindings.provider_session_id = sessions.provider_session_id
+                    )
+                )
+                -- A live session alone continues nothing: restartContinuationRun
+                -- also needs an active provider thread or open background work.
+                WHERE thread_id IN (
+                  SELECT thread_id FROM orchestration_v2_projection_provider_threads
+                  WHERE status = 'active'
+                    OR CASE WHEN json_valid(payload_json)
+                      THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+                      ELSE 0 END
+                  UNION
+                  SELECT thread_id FROM orchestration_v2_projection_turn_items
+                  WHERE type IN ('command_execution', 'dynamic_tool', 'subagent')
+                    AND status IN ('pending', 'running', 'waiting')
+                )
                 UNION
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE status = 'starting'
@@ -4236,10 +4251,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT thread_id FROM orchestration_v2_projection_runtime_requests
                 WHERE status = 'pending'
                 UNION
-                SELECT bindings.thread_id
+                -- One bound thread stops a session; the other arms select the
+                -- bound threads with work, so idle threads on a shared session stay out.
+                SELECT (
+                  SELECT bindings.thread_id
+                  FROM orchestration_v2_projection_provider_session_bindings AS bindings
+                  JOIN orchestration_v2_projection_threads AS threads
+                    ON threads.thread_id = bindings.thread_id
+                  WHERE bindings.provider_session_id = sessions.provider_session_id
+                    AND threads.deleted_at IS NULL
+                  ORDER BY bindings.thread_id LIMIT 1
+                )
                 FROM orchestration_v2_projection_provider_sessions AS sessions
-                CROSS JOIN orchestration_v2_projection_provider_session_bindings AS bindings
-                  ON bindings.provider_session_id = sessions.provider_session_id
                 WHERE sessions.status NOT IN ('stopped', 'error')
                   OR (sessions.status = 'error' AND CASE WHEN json_valid(sessions.payload_json)
                     THEN json_array_length(sessions.payload_json, '$.extensionStatuses') > 0
