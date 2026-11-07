@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ScrollArea } from "../ui/scroll-area";
@@ -47,6 +48,10 @@ interface UpdateEverythingDialogProps {
   readonly rows: ReadonlyArray<UpdateEverythingRow>;
   readonly restarts: ReadonlyArray<RestartingMachine>;
   readonly onConfirm: () => void;
+  readonly providerUpdates?: {
+    readonly included: boolean;
+    readonly onIncludedChange: (included: boolean) => void;
+  };
   /** Overrides the "Update N machines?" title, for an update-track switch. */
   readonly title?: string;
   readonly confirmLabel?: string;
@@ -96,6 +101,7 @@ function UpdateEverythingDialogContent({
   rows,
   restarts,
   onConfirm,
+  providerUpdates,
   cancelRef,
   title,
   confirmLabel = "Update",
@@ -213,13 +219,11 @@ function UpdateEverythingDialogContent({
           ) : null}
         </div>
       </ScrollArea>
-      <AlertDialogFooter>
+      <AlertDialogFooter className="flex-col sm:flex-col">
         {disabledReason !== null ? (
-          <p className="self-center text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
-            {disabledReason}
-          </p>
+          <p className="text-sm">{disabledReason}</p>
         ) : running > 0 ? (
-          <p className="self-center text-muted-foreground text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
+          <p className="text-muted-foreground text-sm">
             {stopped === 0
               ? `${threads} will be interrupted and can resume after the restart.`
               : continuing === 0
@@ -227,12 +231,26 @@ function UpdateEverythingDialogContent({
                 : `${threads} will be interrupted. ${continuing} can resume after the restart.`}
           </p>
         ) : null}
-        <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
-          Cancel
-        </AlertDialogClose>
-        <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
-          {confirmLabel}
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {providerUpdates ? (
+            <label className="mr-auto flex min-w-0 items-center gap-2 text-sm">
+              <Checkbox
+                checked={providerUpdates.included}
+                onCheckedChange={providerUpdates.onIncludedChange}
+                disabled={busy}
+              />
+              Include provider updates
+            </label>
+          ) : null}
+          <div className="flex gap-2">
+            <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
+              Cancel
+            </AlertDialogClose>
+            <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
+              {confirmLabel}
+            </Button>
+          </div>
+        </div>
       </AlertDialogFooter>
     </>
   );
