@@ -13,7 +13,11 @@ import * as Option from "effect/Option";
 import * as NodePath from "effect/Path";
 import * as NodeFS from "effect/FileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { buildPiRpcLaunch, materializePiT3McpExtension, resolvePiLaunchArgs } from "./mcpInjection.ts";
+import {
+  buildPiRpcLaunch,
+  materializePiT3McpExtension,
+  resolvePiLaunchArgs,
+} from "./mcpInjection.ts";
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 
 const threadId = ThreadId.make("thread-pi-t3-mcp");
@@ -167,27 +171,31 @@ describe("materializePiT3McpExtension", () => {
       const writer = yield* Effect.forkChild(
         Effect.gen(function* () {
           for (let index = 0; index < stopAfter; index += 1) {
-            yield* fs.remove(
-              path.join(directory, "pi-t3-mcp-extension.ts"),
-              { force: true },
-            ).pipe(Effect.ignore);
-            yield* materializePiT3McpExtension(directory);
+            yield* fs
+              .remove(path.join(directory, "pi-t3-mcp-extension.ts"), { force: true })
+              .pipe(Effect.ignore);
+            yield* Effect.all(
+              [materializePiT3McpExtension(directory), materializePiT3McpExtension(directory)],
+              { concurrency: "unbounded" },
+            );
           }
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       );
       const reader = yield* Effect.forkChild(
         Effect.forever(
           Effect.gen(function* () {
-            const text = yield* fs.readFileString(
-              path.join(directory, "pi-t3-mcp-extension.ts"),
-            ).pipe(Effect.option);
+            const text = yield* fs
+              .readFileString(path.join(directory, "pi-t3-mcp-extension.ts"))
+              .pipe(Effect.option);
             if (Option.isNone(text)) return; // Missing between writes: legitimate.
             // A read that SUCCEEDS must return the full extension: an empty or
             // partial read means the writer truncated the file mid-write.
             if (text.value.length === 0) {
               anomalies.push("empty: truncated mid-write");
             } else if (text.value.length !== PI_T3_MCP_EXTENSION_SOURCE.length) {
-              anomalies.push(`partial: ${text.value.length} of ${PI_T3_MCP_EXTENSION_SOURCE.length} chars`);
+              anomalies.push(
+                `partial: ${text.value.length} of ${PI_T3_MCP_EXTENSION_SOURCE.length} chars`,
+              );
             }
           }),
         ),
