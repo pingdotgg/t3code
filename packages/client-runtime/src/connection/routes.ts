@@ -263,6 +263,8 @@ export function mergeLearnedRoutes(input: {
     }),
   );
   const kept = saved.flatMap((route): ReadonlyArray<ConnectionRoute> => {
+    // Gateway reverse-proxy routes are learned separately; directEndpoints never list them.
+    if (routeGatewayEnvironmentId(route) !== undefined) return [route];
     const url = routeHttpBaseUrl(route);
     if (!isLearned(route)) {
       return [
@@ -471,6 +473,22 @@ export function mergeGatewayRoutes(input: {
     return undefined;
   })();
 
+  const routeSignature = (routes: ReadonlyArray<ConnectionRoute>) =>
+    routes
+      .map(
+        (route) =>
+          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
+      )
+      .join("\n");
+
+  // Pair on the LAN first; without a borrowed bearer the gateway route cannot authenticate.
+  if (sharedCredential === undefined) {
+    const withoutGateway = saved.filter(
+      (route) => routeGatewayEnvironmentId(route) !== gatewayEnvironmentId,
+    );
+    return routeSignature(saved) === routeSignature(withoutGateway) ? null : withoutGateway;
+  }
+
   // The id names the credential, so pairing or forgetting one retires the route built on the old id.
   const connectionId = gatewayConnectionId(
     gatewayEnvironmentId,
@@ -513,14 +531,7 @@ export function mergeGatewayRoutes(input: {
           );
   }
 
-  const signature = (routes: ReadonlyArray<ConnectionRoute>) =>
-    routes
-      .map(
-        (route) =>
-          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
-      )
-      .join("\n");
-  return signature(saved) === signature(next) ? null : next;
+  return routeSignature(saved) === routeSignature(next) ? null : next;
 }
 
 export function isLearned(route: ConnectionRoute): boolean {

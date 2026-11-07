@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import {
   HttpClient,
   HttpClientRequest,
@@ -25,6 +26,13 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "host",
   "cookie",
   "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
   "upgrade",
   "sec-websocket-key",
   "sec-websocket-version",
@@ -35,13 +43,36 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "x-forwarded-proto",
 ]);
 
+const DROPPED_RESPONSE_HEADERS = new Set([
+  "content-encoding",
+  "transfer-encoding",
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "te",
+  "trailer",
+  "upgrade",
+  "set-cookie",
+]);
+
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
   request.headers.upgrade?.toLowerCase() === "websocket";
 
+const connectionListedHeaders = (connection: string | undefined): ReadonlySet<string> => {
+  if (connection === undefined || connection.length === 0) return new Set();
+  return new Set(
+    connection
+      .split(",")
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => name.length > 0),
+  );
+};
+
 const forwardHeaders = (request: HttpServerRequest.HttpServerRequest) => {
+  const hop = connectionListedHeaders(request.headers.connection);
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(request.headers)) {
-    if (DROPPED_REQUEST_HEADERS.has(name) || value === undefined) continue;
+    if (DROPPED_REQUEST_HEADERS.has(name) || hop.has(name) || value === undefined) continue;
     headers[name] = value;
   }
   return headers;
@@ -92,7 +123,12 @@ const proxyHttp = Effect.fn("LanGatewayProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
 ) {
-  const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
+  // Peers must not redirect the gateway onto a public or other host.
+  const httpClient = HttpClient.withScope(
+    HttpClient.transform(yield* HttpClient.HttpClient, (response) =>
+      Effect.provideService(response, FetchHttpClient.RequestInit, { redirect: "manual" }),
+    ),
+  );
   const method = request.method;
   if (!HttpMethod.isHttpMethod(method)) {
     return HttpServerResponse.text("Method Not Allowed", { status: 405 });
@@ -106,17 +142,11 @@ const proxyHttp = Effect.fn("LanGatewayProxy.proxyHttp")(function* (
         }),
   );
   const response = yield* httpClient.execute(upstreamRequest);
+  const hop = connectionListedHeaders(response.headers.connection);
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.headers)) {
-    if (
-      name === "content-encoding" ||
-      name === "transfer-encoding" ||
-      name === "connection" ||
-      name === "set-cookie"
-    ) {
-      continue;
-    }
-    if (value !== undefined) headers[name] = value;
+    if (DROPPED_RESPONSE_HEADERS.has(name) || hop.has(name) || value === undefined) continue;
+    headers[name] = value;
   }
   return HttpServerResponse.stream(response.stream, {
     status: response.status,
