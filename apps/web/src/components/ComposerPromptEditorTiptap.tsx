@@ -121,10 +121,7 @@ import {
   ComposerContextReferenceChip,
   ComposerContextRecordsContext,
 } from "./composerContextPresentation";
-import {
-  findAssistantCitationSourceAnchor,
-  type AssistantCitationSourceAnchor,
-} from "~/lib/assistantTextSelection";
+import { type AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
@@ -447,7 +444,10 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="span"
-      className={CHIP_NODE_SELECTION_CLASS_NAME}
+      className={cn(
+        CHIP_NODE_SELECTION_CLASS_NAME,
+        "data-[composer-chip-selected]:after:rounded-md",
+      )}
       contentEditable={false}
       spellCheck={false}
       data-composer-citation-chip="true"
@@ -473,11 +473,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
         composer
         commentEditor={{
           open: commentTarget !== null,
-          sourceAnchor: commentTarget
-            ? (commentTarget.sourceAnchor ??
-              findAssistantCitationSourceAnchor(document, citation) ??
-              undefined)
-            : undefined,
+          sourceAnchor: commentTarget?.sourceAnchor,
           onOpenChange: (open) => {
             if (open && !editor.isEditable) return;
             commentContext.onOpenChange(citeKey, open);

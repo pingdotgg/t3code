@@ -24,7 +24,7 @@ import { cn } from "~/lib/utils";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
-import { Popover, PopoverClose, PopoverPopup } from "../ui/popover";
+import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
@@ -144,7 +144,6 @@ export function AssistantCitationChip({
       }
       event.preventDefault();
       void navigate(assistantCitationNavigation(citation));
-      if (composer) commentEditor?.onOpenChange(true);
     },
   };
   const composerSourceLink = (
@@ -152,8 +151,6 @@ export function AssistantCitationChip({
       kind="citation"
       shape="pill"
       ref={chipRef}
-      aria-haspopup={commentEditor ? "dialog" : undefined}
-      aria-expanded={commentEditor ? commentOpen : undefined}
       render={<Link {...sourceLinkProps} />}
       data-citation-comment-trigger={commentEditor ? "true" : undefined}
       onKeyDownCapture={(event) => {
@@ -204,7 +201,6 @@ export function AssistantCitationChip({
       data-assistant-citation-chip="true"
       data-markdown-copy={serializeAssistantCitation(citation)}
     >
-      {composerSourceLink}
       {commentEditor ? (
         <Popover
           open={commentEditor.open && !voiceSetupOpen}
@@ -216,6 +212,25 @@ export function AssistantCitationChip({
             commentEditor.onOpenChange(open);
           }}
         >
+          <PopoverTrigger
+            nativeButton={false}
+            role="link"
+            render={composerSourceLink}
+            onKeyUp={(event) => {
+              if (event.key === " ") event.preventBaseUIHandler();
+            }}
+            onClick={(event) => {
+              if (
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                event.preventBaseUIHandler();
+              }
+            }}
+          />
           {commentEditor.open ? (
             <PopoverPopup
               // The editor stays mounted while its voice setup dialog replaces the popover.
@@ -282,7 +297,9 @@ export function AssistantCitationChip({
             </PopoverPopup>
           ) : null}
         </Popover>
-      ) : null}
+      ) : (
+        composerSourceLink
+      )}
     </span>
   );
 }
