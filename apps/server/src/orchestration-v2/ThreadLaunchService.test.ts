@@ -67,6 +67,8 @@ import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
+const isProjectNotFoundError = Schema.is(ProjectService.ProjectNotFoundError);
+
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
 const encodeThreadProjection = Schema.encodeEffect(OrchestrationV2ThreadProjectionJson);
@@ -120,6 +122,7 @@ const claudeAdapter = {
 interface HarnessOptions {
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
+  readonly databaseLayer?: typeof SqlitePersistence.layerMemory;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchWorktreeBaseCommit?: GitWorkflow.GitWorkflowService["Service"]["fetchWorktreeBaseCommit"];
@@ -135,7 +138,7 @@ interface HarnessOptions {
 }
 
 function makeHarness(options: HarnessOptions = {}) {
-  const layerDatabase = SqlitePersistence.layerMemory;
+  const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(options.adapters ?? [adapter]);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "thread-launch" },
@@ -323,6 +326,22 @@ function launchInput(input: {
     creationSource: "web" as const,
   };
 }
+
+it.effect("retains a typed cause for a nonexistent project on a root launch", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const result = yield* launches
+      .launch({
+        ...launchInput({ command: "command:missing-project", thread: "thread:missing-project" }),
+        projectId: ProjectId.make("project:missing"),
+      })
+      .pipe(Effect.result);
+    assert.ok(Result.isFailure(result));
+    assert.ok(result.failure._tag === "ThreadLaunchError");
+    assert.ok(isProjectNotFoundError(result.failure.cause));
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>
@@ -1595,6 +1614,48 @@ it.effect("replays an accepted launch after the project disables the instance", 
     }
   }).pipe(Effect.provide(harness.layer));
 });
+
+it.effect("replays an accepted launch receipt after rebuilding the destination runtime", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const databaseLayer = Layer.succeedContext(database);
+      const { threadId: _unusedThreadId, ...input } = launchInput({
+        command: "command:launch:restart-receipt",
+        thread: "unused",
+        message: "Only once across restart",
+      });
+      const first = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const launches = yield* ThreadLaunch.ThreadLaunchService;
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const launched = yield* launches.launch(input);
+          yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.commandId === CommandId.make(`${input.commandId}:release`) &&
+                stored.event.type === "run.updated",
+            ),
+            Stream.runHead,
+          );
+          return launched;
+        }).pipe(Effect.provide(makeHarness({ databaseLayer }).layer)),
+      );
+      const after = makeHarness({ databaseLayer });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const retry = yield* launches.launch(input);
+        assert.isTrue(retry.resumed);
+        assert.equal(retry.threadId, first.threadId);
+        assert.equal(retry.projection.messages.length, 1);
+        assert.equal(retry.projection.runs.length, 1);
+        assert.equal(retry.projection.messages[0]?.id, first.projection.messages[0]?.id);
+        assert.equal(retry.projection.runs[0]?.id, first.projection.runs[0]?.id);
+        assert.equal(after.runSetup.mock.calls.length, 0);
+      }).pipe(Effect.provide(after.layer));
+    }),
+  ),
+);
 
 it.effect("an agent's launch never starts work above the modes it asks for", () => {
   const harness = makeHarness();

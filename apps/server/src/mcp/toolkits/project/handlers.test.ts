@@ -53,6 +53,7 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  readonly launchFailure?: "missing" | "lookup";
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -114,6 +115,18 @@ const clientLaunchHarness = (input: {
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
       launch: (launch) => {
         input.launched.push(launch);
+        if (input.launchFailure)
+          return Effect.fail(
+            new ThreadLaunch.ThreadLaunchError({
+              operation: "resolve-project",
+              commandId: launch.commandId,
+              projectId: launch.projectId,
+              cause:
+                input.launchFailure === "missing"
+                  ? new Project.ProjectNotFoundError({ projectId: launch.projectId })
+                  : new Error("Project storage unavailable"),
+            }),
+          );
         if (input.refusedByCeiling) {
           return Effect.fail(
             new ThreadLaunch.ThreadLaunchError({
@@ -663,6 +676,31 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
 
     expect(discarded).toEqual([harness.projectId]);
   }),
+);
+
+it.effect.each(["missing", "lookup"] as const)(
+  "classifies %s project launch failures",
+  (launchFailure) =>
+    Effect.gen(function* () {
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "full-access",
+        launched: [],
+        launchFailure,
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = yield* toolkit
+        .handle("t3_thread_launch", { projectId, title: "Missing project" })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      expect(result.at(-1)?.result).toMatchObject({
+        code: launchFailure === "missing" ? "invalid_request" : "orchestration_error",
+      });
+    }),
 );
 
 it.effect("an update the project refuses tells the agent why", () =>

@@ -127,6 +127,7 @@ export function ThreadSubagentGroup(props: {
       completedAt: live?.completedAt ?? item.completedAt,
       result: live?.result ?? item.result,
       progress: live?.progress ?? item.progress,
+      remoteChild: live?.remoteChild ?? item.remoteChild,
       model: live?.model ?? null,
       modelSelection: live?.modelSelection,
     };
@@ -152,7 +153,7 @@ export function ThreadSubagentGroup(props: {
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
               <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} config={configOf(agent.item)} />
+                <SubagentAvatar item={agent} config={configOf(agent)} />
               </View>
             ))}
             {agents.length > 3 ? (

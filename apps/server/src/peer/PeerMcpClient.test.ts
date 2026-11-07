@@ -185,6 +185,7 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
                 Effect.succeed({
                   link: {
                     environmentId: box.environmentId,
+                    launchIdentity: "fixture-grant",
                     label: box.label,
                     urls: ["https://peer.example"],
                     access: "auto",

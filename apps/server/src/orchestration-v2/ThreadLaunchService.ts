@@ -849,7 +849,13 @@ const make = Effect.gen(function* () {
         Effect.mapError(mapError(input, "resolve-project")),
         Effect.flatMap(
           Option.match({
-            onNone: () => Effect.fail(mapError(input, "resolve-project")("Project not found.")),
+            onNone: () =>
+              Effect.fail(
+                mapError(
+                  input,
+                  "resolve-project",
+                )(new ProjectService.ProjectNotFoundError({ projectId: input.projectId })),
+              ),
             onSome: Effect.succeed,
           }),
         ),

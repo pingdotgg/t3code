@@ -32,6 +32,8 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
+const isProjectNotFoundError = Schema.is(Project.ProjectNotFoundError);
+
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
 
 function projectFailure(error: Project.ProjectServiceError) {
@@ -261,6 +263,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               return new OrchestratorMcpFailure({
                 code: "invalid_request",
                 message: error.message,
+              });
+            }
+            if (error._tag === "ThreadLaunchError" && isProjectNotFoundError(error.cause)) {
+              return new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: error.cause.message,
               });
             }
             // The administrator's ceiling refuses the mode; say so rather than "unavailable".
