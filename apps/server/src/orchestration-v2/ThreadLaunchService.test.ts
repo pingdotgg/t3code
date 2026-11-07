@@ -42,7 +42,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as RepoWorktrees from "../git/RepoWorktreeService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -55,6 +57,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CheckpointService from "./CheckpointService.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -117,7 +120,19 @@ const claudeAdapter = {
   openSession: () => Effect.die("provider execution is disabled in launch tests"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
-interface HarnessOptions {
+type HarnessSharedServices =
+  | ThreadManagement.ThreadManagementService
+  | ProjectionStore.ProjectionStoreV2
+  | ProjectService.ProjectService
+  | ServerSettings.ServerSettingsService
+  | GitWorkflow.GitWorkflowService;
+
+interface HarnessOptions<RRepoWorktrees = never> {
+  readonly workspaceRoots?: { readonly project: string; readonly other: string };
+  /** Defaults to a guard that forwards every removal to the git mock. */
+  readonly repoWorktrees?: (
+    shared: Layer.Layer<HarnessSharedServices>,
+  ) => Layer.Layer<RepoWorktrees.RepoWorktreeService, never, RRepoWorktrees>;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
@@ -134,7 +149,12 @@ interface HarnessOptions {
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
 }
 
-function makeHarness(options: HarnessOptions = {}) {
+function makeHarness<RRepoWorktrees = never>(options: HarnessOptions<RRepoWorktrees> = {}) {
+  const roots = options.workspaceRoots;
+  const harnessProject =
+    roots === undefined ? project : { ...project, workspaceRoot: roots.project };
+  const harnessOtherProject =
+    roots === undefined ? otherProject : { ...otherProject, workspaceRoot: roots.other };
   const layerDatabase = SqlitePersistence.layerMemory;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(options.adapters ?? [adapter]);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
@@ -191,12 +211,12 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some(project)
+            ? Option.some(harnessProject)
             : id === otherProjectId
-              ? Option.some(otherProject)
+              ? Option.some(harnessOtherProject)
               : Option.none(),
         ),
-      getByWorkspaceRoot: () => Effect.succeedSome(project),
+      getByWorkspaceRoot: () => Effect.succeedSome(harnessProject),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
       listShells: () => Effect.die("unused"),
@@ -231,12 +251,24 @@ function makeHarness(options: HarnessOptions = {}) {
         folderForThread: () => Effect.succeedNone,
       }),
   );
+  const layerRepoWorktrees =
+    options.repoWorktrees?.(
+      Layer.mergeAll(
+        layerExternalServices,
+        layerThreadManagement,
+        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ).pipe(Layer.orDie),
+    ) ??
+    Layer.mock(RepoWorktrees.RepoWorktreeService)({
+      removeWorktree: (input) => removeWorktree(input),
+    });
   const layerLaunch = ThreadLaunch.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerExternalServices,
         layerThreadManagement,
         layerReceipts,
+        layerRepoWorktrees,
         IdAllocator.layer,
       ),
     ),
@@ -277,6 +309,7 @@ function makeHarness(options: HarnessOptions = {}) {
   return {
     layer: Layer.mergeAll(
       layerLaunch,
+      layerRepoWorktrees,
       layerRegistry,
       layerThreadManagement,
       layerTitleRegeneration,
@@ -2287,56 +2320,152 @@ it.effect(
     }),
 );
 
-it.effect("stops an in-flight branch rename when tracked setup is cancelled", () =>
-  Effect.gen(function* () {
-    const setupEntered = yield* Deferred.make<void>();
-    const branchNameStarted = yield* Deferred.make<void>();
-    const allowBranchName = yield* Deferred.make<void>();
-    const branchNameInterrupted = yield* Deferred.make<void>();
-    const renameAttempted = yield* Deferred.make<void>();
-    const harness = makeHarness({
-      renameBranch: (input) =>
-        Deferred.succeed(renameAttempted, undefined).pipe(Effect.as({ branch: input.newBranch })),
-      runSetup: () => Deferred.succeed(setupEntered, undefined).pipe(Effect.andThen(Effect.never)),
-      generateBranchName: () =>
-        Deferred.succeed(branchNameStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(allowBranchName)),
-          Effect.as({ branch: "generated-branch" }),
-          Effect.onInterrupt(() => Deferred.succeed(branchNameInterrupted, undefined)),
+it.effect.each(["attached", "unattached"] as const)(
+  "cancelling setup removes its new worktree only when no folder thread attached it: %s",
+  (attachment) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const root = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "launch-cancel-shared-" }),
+      );
+      // Projects and the worktree are reached through a link, while Git
+      // reports the reused checkout by its real path.
+      const real = `${root}/real`;
+      const alias = `${root}/alias`;
+      yield* fs.makeDirectory(`${real}/folder/alpha`, { recursive: true });
+      yield* fs.symlink(real, alias);
+      const repo = `${alias}/folder/alpha`;
+      const command = (cwd: string, args: ReadonlyArray<string>) =>
+        git
+          .execute({ operation: "launch-test", cwd, args })
+          .pipe(Effect.map((result) => result.stdout.trim()));
+      yield* command(repo, ["init", "-b", "main"]);
+      yield* command(repo, [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.test",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "initial",
+      ]);
+      const branch = "feature/cancel-shared";
+      const worktreePath = `${alias}/worktrees/alpha/feature-cancel-shared`;
+      const ordinaryThreadId = ThreadId.make("thread:cancel-shared");
+      const setupEntered = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        workspaceRoots: { project: repo, other: `${alias}/folder` },
+        serverSettings: {
+          repoWorktrees: true,
+          newWorktreesStartFromOrigin: false,
+          worktreesDirectory: `${alias}/worktrees`,
+        },
+        createWorktree: (input, options) =>
+          git.createWorktree({ ...input, path: worktreePath }, options),
+        git: { removeWorktree: git.removeWorktree },
+        // The folder thread's launch runs setup too; only the worktree thread's is held.
+        runSetup: (input) =>
+          input.threadId === ordinaryThreadId
+            ? Deferred.succeed(setupEntered, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed({ status: "no-script" as const }),
+        repoWorktrees: (shared) =>
+          RepoWorktrees.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                shared,
+                NodeCrypto.layer,
+                Layer.mock(CheckpointService.CheckpointServiceV2)({
+                  captureRepositoryBaseline: () => Effect.succeed("ready" as const),
+                }),
+              ),
+            ),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const repoWorktrees = yield* RepoWorktrees.RepoWorktreeService;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const folder = yield* launches.launch({
+          ...launchInput({ command: "launch:cancel-shared:folder", thread: "thread:folder" }),
+          projectId: otherProjectId,
+        });
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "launch:cancel-shared",
+            thread: ordinaryThreadId,
+            message: "Start",
+            workspace: { type: "worktree", baseRef: "main", branch, startFromOrigin: false },
+          }),
+        );
+        yield* Deferred.await(setupEntered);
+        assert.equal((yield* tracker.get(launched.threadId))?.phase, "running");
+        assert.equal(
+          (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
+          worktreePath,
+        );
+        let draftPath: string | null = null;
+        if (attachment === "attached") {
+          const ensured = yield* repoWorktrees.ensure({
+            threadId: folder.threadId,
+            repository: "alpha",
+            branch,
+          });
+          assert.equal(ensured.status, "reused");
+          assert.equal(
+            ensured.repoWorktree.worktreePath,
+            `${real}/worktrees/alpha/feature-cancel-shared`,
+          );
+          draftPath = `${ensured.repoWorktree.worktreePath}/draft.txt`;
+          yield* fs.writeFileString(draftPath, "must survive cancel\n");
+        }
+
+        assert.isTrue(yield* tracker.cancel(launched.threadId));
+
+        assert.equal((yield* tracker.get(launched.threadId))?.phase, "cancelled");
+        const cancelled = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(cancelled.runs[0]?.status, "failed");
+        assert.isNull(cancelled.thread.worktreePath);
+        assert.isNull(cancelled.thread.branch);
+        const listed = yield* command(repo, ["worktree", "list", "--porcelain"]);
+        // A checkout kept for the folder thread keeps its branch too.
+        assert.deepEqual(
+          harness.deleteLocalBranch.mock.calls.map(([call]) => call.refName),
+          attachment === "attached" ? [] : [branch],
+        );
+        const folderThread = (yield* threads.getThreadProjection(folder.threadId)).thread;
+        if (draftPath === null) {
+          assert.isFalse(yield* fs.exists(worktreePath));
+          assert.notInclude(listed, "feature-cancel-shared");
+          assert.isEmpty(folderThread.repoWorktrees ?? []);
+          return;
+        }
+        assert.equal(yield* fs.readFileString(draftPath), "must survive cancel\n");
+        assert.include(listed, `branch refs/heads/${branch}`);
+        assert.equal(yield* command(worktreePath, ["status", "--porcelain"]), "?? draft.txt");
+        assert.deepEqual(
+          folderThread.repoWorktrees?.map((entry) => [entry.worktreePath, entry.branch]),
+          [[`${real}/worktrees/alpha/feature-cancel-shared`, branch]],
+        );
+        // The folder thread can still work in it: ensure reports it attached as it is.
+        const again = yield* repoWorktrees.ensure({
+          threadId: folder.threadId,
+          repository: "alpha",
+          branch,
+        });
+        assert.isTrue(again.alreadyAttached);
+        assert.equal(again.uncommittedFiles, 1);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "launch-git-" })),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
-    });
-    yield* Effect.gen(function* () {
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const launched = yield* launches.launch(
-        launchInput({
-          command: "launch:cancel-renaming",
-          thread: "thread:cancel-renaming",
-          message: "Start",
-          workspace: { type: "worktree", baseRef: "main" },
-        }),
-      );
-      yield* Deferred.await(setupEntered);
-      yield* Deferred.await(branchNameStarted);
-      assert.isTrue(yield* tracker.cancel(launched.threadId));
-      yield* Deferred.succeed(allowBranchName, undefined);
-      yield* Effect.raceFirst(
-        Deferred.await(branchNameInterrupted),
-        Deferred.await(renameAttempted),
-      );
-      assert.isTrue(
-        yield* Deferred.isDone(branchNameInterrupted),
-        "the cancelled setup's branch rename kept running",
-      );
-      assert.equal(harness.renameBranch.mock.calls.length, 0);
-      assert.isNull((yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath);
-      assert.equal(
-        harness.deleteLocalBranch.mock.calls[0]?.[0].refName,
-        harness.createWorktree.mock.calls[0]?.[0].newRefName,
-      );
-    }).pipe(Effect.provide(harness.layer));
-  }),
+      ),
+    ),
 );
 
 it.effect.each([0, 1])("releases an async setup before its completion with exit %s", (exitCode) =>

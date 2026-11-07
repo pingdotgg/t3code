@@ -7,15 +7,20 @@ import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import {
+  useSelectedThreadSourceControl,
+  useSelectedThreadWorktree,
+} from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitState() {
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  // Git actions follow the chosen repository worktree; branch controls stay on the thread.
+  const { sourceControlCwd } = useSelectedThreadSourceControl();
 
   const selectedThreadGitTarget = {
     environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
+    cwd: sourceControlCwd,
   };
   const gitActionState = useVcsActionState(selectedThreadGitTarget);
   const sourceControlDiscovery = useEnvironmentQuery(

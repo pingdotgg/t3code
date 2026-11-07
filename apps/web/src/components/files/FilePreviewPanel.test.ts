@@ -9,6 +9,7 @@ import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
+  repoWorktreeFilePath,
   resolveFilePreviewPath,
   shouldShowFileExplorer,
   workspaceAssetResource,
@@ -93,6 +94,27 @@ describe("resolveFilePreviewPath", () => {
         shouldShowFileExplorer({ relativePath, explorerOpen: false, attachmentOpen: false }),
       ).toBe(true);
     }
+  });
+});
+
+describe("repoWorktreeFilePath", () => {
+  const alpha = "/home/user/.t3/worktrees/alpha/feature";
+  const beta = "C:\\Users\\user\\worktrees\\beta";
+  it.each([
+    [`${alpha}/src/main.ts`, { worktreePath: alpha, relativePath: "src/main.ts" }],
+    [
+      "c:\\users\\user\\worktrees\\beta\\README.md",
+      { worktreePath: beta, relativePath: "README.md" },
+    ],
+    [alpha, null],
+    ["/home/user/.t3/worktrees/alpha/feature-two/main.ts", null],
+    [`${alpha}/../escape.ts`, null],
+    ["/home/user/elsewhere/main.ts", null],
+    ["src/main.ts", null],
+  ])("saves %s through %j", (path, expected) => {
+    expect(repoWorktreeFilePath(path, [{ worktreePath: alpha }, { worktreePath: beta }])).toEqual(
+      expected,
+    );
   });
 });
 

@@ -453,6 +453,8 @@ const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
+/** Opens the message of a checkpoint commit captured as a baseline. */
+const BASELINE_CHECKPOINT_SUBJECT = "t3 checkpoint baseline";
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -1261,7 +1263,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        const message = `t3 checkpoint ref=${input.checkpointRef}`;
+        const message = `${input.baseline === true ? BASELINE_CHECKPOINT_SUBJECT : "t3 checkpoint"} ref=${input.checkpointRef}`;
         // HEAD is the parent so listAuthoredPaths can see how HEAD moved between checkpoints.
         const commitTreeResult = yield* execute({
           operation,
@@ -1299,6 +1301,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
         Effect.map((commit) => commit !== null),
       ),
+
+    isBaselineCheckpoint: Effect.fn("GitVcsDriver.checkpoints.isBaselineCheckpoint")(
+      function* (input) {
+        const commit = yield* execute({
+          operation: "GitVcsDriver.checkpoints.isBaselineCheckpoint",
+          cwd: input.cwd,
+          args: ["cat-file", "commit", `${input.checkpointRef}^{commit}`],
+          allowNonZeroExit: true,
+        });
+        const messageStart = commit.stdout.indexOf("\n\n");
+        return (
+          commit.exitCode === 0 &&
+          messageStart >= 0 &&
+          commit.stdout.startsWith(`${BASELINE_CHECKPOINT_SUBJECT} `, messageStart + 2)
+        );
+      },
+    ),
 
     restoreCheckpoint: Effect.fn("GitVcsDriver.checkpoints.restoreCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.restoreCheckpoint";
@@ -1469,7 +1488,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           "--no-ext-diff",
           "--no-textconv",
           "--submodule=short",
-          ...PATCH_RENDER_PREFIX_ARGS,
+          ...(input.pathPrefix === undefined
+            ? PATCH_RENDER_PREFIX_ARGS
+            : [`--src-prefix=a/${input.pathPrefix}/`, `--dst-prefix=b/${input.pathPrefix}/`]),
           ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
           `${fromRevision}^{commit}`,
           `${input.toCheckpointRef}^{commit}`,
@@ -1556,17 +1577,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
       function* (input) {
-        yield* Effect.forEach(
-          input.checkpointRefs,
-          (checkpointRef) =>
-            execute({
-              operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
-              cwd: input.cwd,
-              args: ["update-ref", "-d", checkpointRef],
-              allowNonZeroExit: true,
-            }),
-          { discard: true },
+        // Deleting a missing ref succeeds. A ref Git keeps locked does not
+        // stop the rest, and its failure is reported after them.
+        const [, failures] = yield* Effect.partition(input.checkpointRefs, (checkpointRef) =>
+          execute({
+            operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
+            cwd: input.cwd,
+            args: ["update-ref", "-d", checkpointRef],
+          }),
         );
+        const [failure] = failures;
+        if (failure !== undefined) return yield* failure;
       },
     ),
   };

@@ -558,6 +558,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly providerSessionId: ProviderSessionId;
   readonly session: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly run: OrchestrationV2Run;
+  /** The thread's runs, for the checkpoint baseline this run is compared to. */
+  readonly runs?: CheckpointService.CheckpointRunHistory;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly checkpointScope: OrchestrationV2CheckpointScope;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -936,6 +938,10 @@ export const layer: Layer.Layer<
               : checkpointService.captureBaseline({
                   scope: input.checkpointScope,
                   ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+                  ...(input.appThread.repoWorktrees === undefined
+                    ? {}
+                    : { repoWorktrees: input.appThread.repoWorktrees }),
+                  ...(input.runs === undefined ? {} : { runs: input.runs }),
                 })
           ).pipe(
             Effect.catchCauseIf(

@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -24,6 +25,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
@@ -289,6 +291,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                               }),
                             ),
                         }),
+                        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+                        NodeServices.layer,
                       ),
                     ),
                   )
@@ -646,6 +650,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                       diffCheckpoints: () => Effect.succeed(""),
                       listAuthoredPaths: () => Effect.succeed(null),
                     }),
+                    Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+                    NodeServices.layer,
                   ),
                 ),
               ),
@@ -1072,6 +1078,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                     captureCheckpoint: gitUnavailable,
                     hasCheckpointRef: gitUnavailable,
                   }),
+                  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+                  NodeServices.layer,
                 ),
               ),
             ),

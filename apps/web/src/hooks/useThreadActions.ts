@@ -522,11 +522,12 @@ export function useThreadActions() {
     if (canDeleteWorktree && localApi && !automaticWorktreeCleanup) {
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
+          // Thread lists miss repository worktree attachments; the server refuses that removal.
           [
-            "This thread is the only one linked to this worktree:",
+            "Delete this thread's worktree too?",
             displayWorktreePath ?? orphanedWorktreePath,
             "",
-            "Delete the worktree too?",
+            "It's kept if another thread still works in it.",
           ].join("\n"),
           { variant: "destructive" },
         ),

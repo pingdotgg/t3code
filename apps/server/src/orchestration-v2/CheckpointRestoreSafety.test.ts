@@ -9,6 +9,7 @@ import {
   ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -34,6 +35,8 @@ it.effect.each([
   "sibling",
   "shared-provider",
   "conversation",
+  "repository-worktree",
+  ...(symlinksSupported ? (["aliased-repository-worktree"] as const) : []),
 ] as const)("preserves overlapping workspace files, owner=%s", (owner) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -46,6 +49,15 @@ it.effect.each([
     yield* fs.makeDirectory(sibling);
     const otherFile = path.join(nested, "other-thread.txt");
     yield* fs.writeFileString(otherFile, "other thread's uncommitted work");
+    const alias = path.join(parent, "alias");
+    if (owner === "aliased-repository-worktree") yield* fs.symlink(cwd, alias);
+    // A folder thread reused this thread's own checkout as a repository worktree.
+    const repositoryAttachment =
+      owner === "repository-worktree"
+        ? cwd
+        : owner === "aliased-repository-worktree"
+          ? alias
+          : null;
     const threadId = ThreadId.make("restore-current");
     const otherId = ThreadId.make("restore-other");
     const projectId = ProjectId.make("restore-project");
@@ -119,6 +131,12 @@ it.effect.each([
                 checkpoints: [],
                 checkpointScopes: [],
               }),
+            getThreadRepoWorktreePaths: () =>
+              Effect.succeed(
+                repositoryAttachment === null
+                  ? []
+                  : [{ threadId: otherId, title: "Folder", worktreePath: repositoryAttachment }],
+              ),
             getThreadProviderContext: () =>
               Effect.succeed({
                 thread: otherThread as never,
@@ -196,6 +214,7 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
         path,
         projections: {
           getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
+          getThreadRepoWorktreePaths: () => Effect.succeed([]),
         } as never,
         projects: {} as never,
       },
@@ -245,6 +264,7 @@ it.effect.each([
               }),
             getCheckpointContext: () => Effect.succeed({ checkpointScopes: [] }),
             getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+            getThreadRepoWorktreePaths: () => Effect.succeed([]),
           } as never,
           projects: {} as never,
         },

@@ -53,6 +53,27 @@ const handlers = {
       return yield* service.status(scope);
     }),
   ),
+  t3_repo_worktree_ensure: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
+      return yield* service.ensureRepoWorktree(scope, input);
+    }),
+  ),
+  t3_repo_worktree_detach: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
+      return yield* service.detachRepoWorktree(scope, input);
+    }),
+  ),
+  t3_repo_worktree_set_submodule: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
+      return yield* service.setRepoWorktreeSubmodule(scope, input);
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof WorktreeToolkit.tools>;
 
 export const layer = McpToolAccess.toLayer(WorktreeToolkit, handlers);

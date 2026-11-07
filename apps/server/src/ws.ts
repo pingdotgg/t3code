@@ -41,6 +41,7 @@ import {
   type FileManagerRevealKind,
   type OrchestrationV2Command,
   type GitActionProgressEvent,
+  GitCommandError,
   type GitManagerServiceError,
   type MessageId,
   type AcpRegistryImportSessionInput,
@@ -211,6 +212,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as RepoWorktreeService from "./git/RepoWorktreeService.ts";
 import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -1483,6 +1485,7 @@ export const layerWsRpc = (
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -1986,6 +1989,9 @@ export const layerWsRpc = (
         vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+      // The checkout's branch already changed, so a stale label must not fail the action.
+      const recordBranch = (cwd: string) =>
+        repoWorktrees.recordBranch({ cwd }).pipe(Effect.ignoreCause({ log: true }));
 
       const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
         const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
@@ -3162,6 +3168,9 @@ export const layerWsRpc = (
                           ),
                         ),
                       ),
+                      Effect.andThen(
+                        result.branch.status === "created" ? recordBranch(input.cwd) : Effect.void,
+                      ),
                       Effect.andThen(refreshGitStatus(input.cwd)),
                       Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
                     ),
@@ -3177,11 +3186,40 @@ export const layerWsRpc = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          repoWorktrees.removeWorktree(input).pipe(
+            Effect.catchTags({
+              RepoWorktreeInUseError: (error) =>
+                Effect.fail(
+                  new GitCommandError({
+                    operation: "RepoWorktreeService.removeWorktree",
+                    command: "git worktree remove",
+                    cwd: input.cwd,
+                    detail: error.message,
+                  }),
+                ),
+              RepoWorktreeReadError: (error) =>
+                Effect.fail(
+                  new GitCommandError({
+                    operation: "RepoWorktreeService.removeWorktree",
+                    command: "git worktree remove",
+                    cwd: input.cwd,
+                    detail: error.message,
+                    cause: error,
+                  }),
+                ),
+            }),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
-          gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          gitWorkflow.createRef(input).pipe(
+            Effect.tap(() => (input.switchRef === true ? recordBranch(input.cwd) : Effect.void)),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
-          gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          gitWorkflow.switchRef(input).pipe(
+            Effect.tap(() => recordBranch(input.cwd)),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.vcsInit]: (input) =>
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
@@ -3500,6 +3538,7 @@ export const layer = Layer.unwrap(
     const npmRelease = yield* NpmRelease.NpmRelease;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
+    const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const sql = yield* SqlClient.SqlClient;
@@ -3589,6 +3628,7 @@ export const layer = Layer.unwrap(
                   reviewGuides,
                 ),
               ),
+              Layer.provide(Layer.succeed(RepoWorktreeService.RepoWorktreeService, repoWorktrees)),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(

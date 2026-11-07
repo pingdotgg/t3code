@@ -48,7 +48,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
-import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { withRepositoryLease, withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { isNetworkPath } from "@t3tools/shared/path";
@@ -420,6 +420,32 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => null),
   );
 
+  // A repository worktree is recorded with the path Git reported, which can be
+  // another spelling (/private/tmp for /tmp) of a thread's own worktree path.
+  const pathIdentity = (target: string) =>
+    fs.realPath(target).pipe(
+      Effect.orElseSucceed(() => path.resolve(target)),
+      Effect.map(pathKey),
+    );
+
+  // Repository worktrees of threads that still exist, archived ones included,
+  // keyed by path identity. Cleanup never removes them, and a thread's own
+  // worktree that another thread also works in counts as shared.
+  const readRepoWorktreePaths = Effect.fn("StorageCleanup.readRepoWorktreePaths")(function* () {
+    const rows = yield* projections.getThreadRepoWorktreePaths().pipe(NodeSqliteClient.readOnly);
+    const paths = new Map<string, { readonly path: string; readonly threadIds: Set<string> }>();
+    for (const row of rows) {
+      const key = yield* pathIdentity(row.worktreePath);
+      const entry = paths.get(key) ?? {
+        path: path.resolve(row.worktreePath),
+        threadIds: new Set(),
+      };
+      entry.threadIds.add(row.threadId);
+      paths.set(key, entry);
+    }
+    return paths;
+  });
+
   // Large snapshots take seconds; use the reader worker instead of blocking the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
     const snapshot = yield* projections.getShellSnapshot().pipe(NodeSqliteClient.readOnly);
@@ -447,6 +473,7 @@ const make = Effect.gen(function* () {
   const reportOrphanWorktrees = Effect.fn("StorageCleanup.reportOrphanWorktrees")(function* (
     roots: ReadonlyArray<string>,
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
+    repoWorktreePaths: ReadonlyArray<string>,
     entries: StorageCleanupReportEntry[],
   ) {
     const rows = yield* sql<{ worktreePath: string }>`
@@ -455,8 +482,8 @@ const make = Effect.gen(function* () {
       WHERE json_extract(payload_json, '$.worktreePath') IS NOT NULL
     `.pipe(NodeSqliteClient.readOnly);
     const referenced = new Set<string>();
-    for (const row of rows) {
-      const resolved = path.resolve(row.worktreePath);
+    for (const worktreePath of [...rows.map((row) => row.worktreePath), ...repoWorktreePaths]) {
+      const resolved = path.resolve(worktreePath);
       referenced.add(pathKey(resolved));
       referenced.add(
         pathKey(yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved))),
@@ -827,6 +854,7 @@ const make = Effect.gen(function* () {
       ),
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
+    const repoWorktreePaths = yield* readRepoWorktreePaths();
     const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const defaultBranches = new Map<string, string | null>();
@@ -894,6 +922,8 @@ const make = Effect.gen(function* () {
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${members.length} threads`);
+        if (repoWorktreePaths.has(yield* pathIdentity(worktreePath)))
+          return keep("another thread works in it as a repository worktree");
         if (project === undefined) return keep("project is unavailable");
         if (
           thread.branch === null ||
@@ -1063,6 +1093,8 @@ const make = Effect.gen(function* () {
             includeArchived: true,
           })).filter((entry) => path.resolve(entry.worktreePath) === worktreePath);
           if (hasTerminal(worktreePath)) return waitForStop("open terminal");
+          if ((yield* readRepoWorktreePaths()).has(yield* pathIdentity(worktreePath)))
+            return "another thread works in it as a repository worktree";
           if (deleted) {
             if (
               !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
@@ -1167,24 +1199,54 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
-        if (settings.worktreeKeepWhen === "tracked-changes")
-          yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
-        const submodules = yield* submoduleRemoval(worktreePath, settings);
-        if (submodules.reason !== null) return keep(submodules.reason);
-        if (submodules.force) {
-          const changes = yield* localChangesReason(worktreePath, settings);
-          if (changes !== null) return keep(changes);
-        }
-        yield* removeLinkedWorktree({
-          operation: "StorageCleanup.cleanupGit",
+        const commonDir = yield* git.execute({
+          operation: "StorageCleanup.repositoryLease",
           cwd: project.workspaceRoot,
-          worktreePath,
-          // Git requires force for submodules; recursive checks above cannot make removal atomic.
-          force: submodules.force,
-          execute: git.execute,
-          run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
+          args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+          allowNonZeroExit: true,
         });
+        const leaseKey = yield* pathIdentity(
+          commonDir.exitCode === 0 && commonDir.stdout.trim() !== ""
+            ? commonDir.stdout.trim()
+            : project.workspaceRoot,
+        );
+        // Attaching takes this lease too, so the last attachment check holds
+        // through the clean and the removal.
+        const removed = yield* withRepositoryLease(
+          leaseKey,
+          Effect.gen(function* () {
+            if ((yield* readRepoWorktreePaths()).has(yield* pathIdentity(worktreePath))) {
+              keep("another thread works in it as a repository worktree");
+              return false;
+            }
+            // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
+            if (settings.worktreeKeepWhen === "tracked-changes")
+              yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+            const submodules = yield* submoduleRemoval(worktreePath, settings);
+            if (submodules.reason !== null) {
+              keep(submodules.reason);
+              return false;
+            }
+            if (submodules.force) {
+              const changes = yield* localChangesReason(worktreePath, settings);
+              if (changes !== null) {
+                keep(changes);
+                return false;
+              }
+            }
+            yield* removeLinkedWorktree({
+              operation: "StorageCleanup.cleanupGit",
+              cwd: project.workspaceRoot,
+              worktreePath,
+              // Git requires force for submodules; recursive checks above cannot make removal atomic.
+              force: submodules.force,
+              execute: git.execute,
+              run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
+            });
+            return true;
+          }),
+        );
+        if (!removed) return;
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.
@@ -1207,9 +1269,34 @@ const make = Effect.gen(function* () {
         ),
       );
     }
+    const candidatePaths = new Set(
+      yield* Effect.forEach(candidates, (thread) => pathIdentity(thread.worktreePath!)),
+    );
+    for (const [key, attached] of repoWorktreePaths) {
+      if (
+        candidatePaths.has(key) ||
+        !(yield* fs.exists(attached.path).pipe(Effect.orElseSucceed(() => false)))
+      )
+        continue;
+      const owner = snapshot.threads.find((thread) => attached.threadIds.has(thread.id));
+      entries.push({
+        kind: "worktree",
+        outcome: "kept",
+        reason: "Repository worktree attached to a thread; cleanup keeps it until it is detached",
+        path: attached.path,
+        projectPath:
+          snapshot.projects.find((project) => project.id === owner?.projectId)?.workspaceRoot ??
+          null,
+        threadId: owner?.id ?? null,
+        threadTitle: owner?.title ?? null,
+        bytes: null,
+        files: null,
+      });
+    }
     yield* reportOrphanWorktrees(
       roots,
       yield* projectStore.list({ includeDeleted: true }),
+      [...repoWorktreePaths.values()].map((attached) => attached.path),
       entries,
     );
     return { waiting, kept };

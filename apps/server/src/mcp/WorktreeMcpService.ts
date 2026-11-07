@@ -7,6 +7,12 @@ import {
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
   type WorktreeMcpHandoffResult,
+  type WorktreeMcpRepoDetachInput,
+  type WorktreeMcpRepoDetachResult,
+  type WorktreeMcpRepoEnsureInput,
+  type WorktreeMcpRepoEnsureResult,
+  type WorktreeMcpRepoSetSubmoduleInput,
+  type WorktreeMcpRepoSetSubmoduleResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
   type VcsListRefsInput,
@@ -23,6 +29,7 @@ import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as RepoWorktreeService from "../git/RepoWorktreeService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -40,6 +47,18 @@ export class WorktreeMcpService extends Context.Service<
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
+    readonly ensureRepoWorktree: (
+      scope: McpInvocationScope,
+      input: WorktreeMcpRepoEnsureInput,
+    ) => Effect.Effect<WorktreeMcpRepoEnsureResult, WorktreeMcpFailure>;
+    readonly detachRepoWorktree: (
+      scope: McpInvocationScope,
+      input: WorktreeMcpRepoDetachInput,
+    ) => Effect.Effect<WorktreeMcpRepoDetachResult, WorktreeMcpFailure>;
+    readonly setRepoWorktreeSubmodule: (
+      scope: McpInvocationScope,
+      input: WorktreeMcpRepoSetSubmoduleInput,
+    ) => Effect.Effect<WorktreeMcpRepoSetSubmoduleResult, WorktreeMcpFailure>;
     readonly listRefs: (
       input: Omit<VcsListRefsInput, "cwd"> & {
         readonly worktreePath: string | null;
@@ -75,6 +94,7 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+  const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
 
   // Serialize handoffs per thread to avoid creating two worktrees and orphaning one.
   const handoffThreadsInFlight = new Set<string>();
@@ -267,8 +287,10 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as({ status: "failed", detail } as const));
           });
 
+        // The new branch exists from here, so a folder thread may attach its
+        // checkout before the rollback; the guard then keeps both for it.
         const removeCreatedWorktree = Effect.suspend(() =>
-          gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
+          repoWorktrees.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
             Effect.andThen(
               Effect.suspend(() =>
                 gitWorkflow.deleteLocalBranch({
@@ -433,18 +455,76 @@ const make = Effect.gen(function* () {
       const projection = yield* loadThread(scope);
       const project = yield* loadProject(scope, projection.thread.projectId);
 
-      const defaultStartFromOrigin = yield* readDefaultStartFromOrigin(project.id);
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.map(
+          (current) => resolveProjectSettings(current, projection.thread.projectId).settings,
+        ),
+        asOperationFailed("Unable to read server settings"),
+      );
 
       const result: WorktreeMcpStatusResult = {
         attached: projection.thread.worktreePath !== null,
         worktreePath: projection.thread.worktreePath,
         branch: projection.thread.branch,
         projectWorkspaceRoot: project.workspaceRoot,
-        defaultStartFromOrigin,
+        defaultStartFromOrigin: settings.newWorktreesStartFromOrigin,
+        repoWorktreesEnabled: settings.repoWorktrees,
+        repoWorktrees: projection.thread.repoWorktrees ?? [],
       };
       return result;
     },
   );
+
+  const actAsThread = (callerScope: McpInvocationScope) =>
+    requireCapability(callerScope).pipe(Effect.andThen(requireThreadScope(callerScope)));
+
+  const ensureRepoWorktree: WorktreeMcpService["Service"]["ensureRepoWorktree"] = Effect.fn(
+    "WorktreeMcpService.ensureRepoWorktree",
+  )(function* (callerScope, input) {
+    const scope = yield* actAsThread(callerScope);
+    const result = yield* repoWorktrees
+      .ensure({ threadId: scope.thread.threadId, ...input })
+      .pipe(Effect.mapError(repoWorktreeFailure));
+    const { worktreePath, branch } = result.repoWorktree;
+    const note =
+      result.status === "reused"
+        ? `Reused the existing worktree for '${branch}' at ${worktreePath} as it is${
+            result.uncommittedFiles > 0
+              ? `, with ${result.uncommittedFiles} uncommitted ${result.uncommittedFiles === 1 ? "file" : "files"} kept`
+              : ""
+          }. Work there. If you meant to start new, independent work, detach it and choose a new branch name.`
+        : `Created ${worktreePath} on ${result.branchCreated ? "new" : "existing"} branch '${branch}'. Make every edit, build, and commit for this repository there. The thread stays in its folder.`;
+    return { ...result, note } satisfies WorktreeMcpRepoEnsureResult;
+  });
+
+  const detachRepoWorktree: WorktreeMcpService["Service"]["detachRepoWorktree"] = Effect.fn(
+    "WorktreeMcpService.detachRepoWorktree",
+  )(function* (callerScope, input) {
+    const scope = yield* actAsThread(callerScope);
+    const result = yield* repoWorktrees
+      .detach({ threadId: scope.thread.threadId, worktreePath: input.worktreePath })
+      .pipe(Effect.mapError(repoWorktreeFailure));
+    return {
+      ...result,
+      note: result.detached
+        ? "Detached. The folder, branch, and any edits are unchanged."
+        : "That worktree was not attached to this thread; nothing changed.",
+    } satisfies WorktreeMcpRepoDetachResult;
+  });
+
+  const setRepoWorktreeSubmodule: WorktreeMcpService["Service"]["setRepoWorktreeSubmodule"] =
+    Effect.fn("WorktreeMcpService.setRepoWorktreeSubmodule")(function* (callerScope, input) {
+      const scope = yield* actAsThread(callerScope);
+      const result = yield* repoWorktrees
+        .setSubmoduleCommit({ threadId: scope.thread.threadId, ...input })
+        .pipe(Effect.mapError(repoWorktreeFailure));
+      return {
+        ...result,
+        note: `${result.submodulePath} in ${result.worktreePath} is now at ${result.commit} (detached HEAD)${
+          result.staged ? " and the gitlink is staged" : ""
+        }. Commit it in that worktree with ordinary git. Push the submodule branch before pushing the parent so others can fetch the commit.`,
+      } satisfies WorktreeMcpRepoSetSubmoduleResult;
+    });
 
   const listRefs: WorktreeMcpService["Service"]["listRefs"] = Effect.fn(
     "WorktreeMcpService.listRefs",
@@ -457,8 +537,50 @@ const make = Effect.gen(function* () {
     return yield* gitWorkflow.listRefs({ ...refs, cwd });
   });
 
-  return WorktreeMcpService.of({ handoff, status, listRefs });
+  return WorktreeMcpService.of({
+    handoff,
+    status,
+    listRefs,
+    ensureRepoWorktree,
+    detachRepoWorktree,
+    setRepoWorktreeSubmodule,
+  });
 });
+
+/** Domain errors carry their own wording; only tool parameters are added here. */
+function repoWorktreeFailure(error: RepoWorktreeService.RepoWorktreeFailure): WorktreeMcpFailure {
+  switch (error._tag) {
+    case "RepoWorktreesDisabledError":
+      return failure("not_enabled", error.message);
+    case "RepoWorktreeThreadUnavailableError":
+      return failure(
+        error.state === "missing" ? "thread_not_found" : "invalid_request",
+        error.message,
+      );
+    case "RepoWorktreeRequestError":
+      return failure("invalid_request", `${error.message}${requestHint(error)}`);
+    case "RepoWorktreeDispatchError":
+    case "RepoWorktreeReadError":
+      return failure("operation_failed", error.message);
+    case "GitCommandError":
+      return failure("operation_failed", error.message);
+  }
+}
+
+function requestHint(error: RepoWorktreeService.RepoWorktreeRequestError): string {
+  switch (error.reason) {
+    case "branch_exists":
+      return " To continue it, call again with useExistingBranch:true.";
+    case "base_ref_required":
+      return " Pass baseRef.";
+    case "base_missing":
+      return error.remote === true
+        ? ` Pass baseRef 'origin/${error.baseRef}' to start from origin's last fetched commit, or startFromOrigin:true to fetch it first.`
+        : "";
+    default:
+      return "";
+  }
+}
 
 export const layer: Layer.Layer<
   WorktreeMcpService,
@@ -471,4 +593,5 @@ export const layer: Layer.Layer<
   | GitWorkflowService.GitWorkflowService
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster
+  | RepoWorktreeService.RepoWorktreeService
 > = Layer.effect(WorktreeMcpService, make);

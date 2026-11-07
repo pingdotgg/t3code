@@ -422,6 +422,25 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
 /**
+ * A worktree of a Git repository inside the project folder that the thread
+ * works in while its own workspace stays at the folder. Paths belong to the
+ * environment.
+ */
+export const ThreadRepoWorktree = Schema.Struct({
+  /** Repository path relative to the project folder, with `/` separators; `.` is the folder itself. */
+  repository: TrimmedNonEmptyString,
+  /** Top level of the source checkout the worktree was made from. */
+  repositoryPath: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  baseRef: Schema.NullOr(TrimmedNonEmptyString),
+  /** "reused" when the worktree already existed when this thread attached it. */
+  origin: Schema.Literals(["created", "reused"]),
+  attachedAt: IsoDateTime,
+});
+export type ThreadRepoWorktree = typeof ThreadRepoWorktree.Type;
+
+/**
  * `score` is an open count that halves every two weeks, as of `openedAt`.
  * `picks` stores lowercase palette queries, newest first.
  * Times are epoch milliseconds for ranking arithmetic.
@@ -452,6 +471,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  repoWorktrees: Schema.optional(Schema.Array(ThreadRepoWorktree)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -1388,6 +1408,38 @@ export const OrchestrationV2CheckpointFileSummary = Schema.Struct({
 });
 export type OrchestrationV2CheckpointFileSummary = typeof OrchestrationV2CheckpointFileSummary.Type;
 
+export const OrchestrationV2CheckpointStatus = Schema.Literals([
+  "ready",
+  "missing",
+  "error",
+  "stale",
+]);
+export type OrchestrationV2CheckpointStatus = typeof OrchestrationV2CheckpointStatus.Type;
+
+/**
+ * A repository worktree's snapshot in a checkpoint. Its ref lives in that
+ * repository. It keeps the worktree's identity, so diffs and rollback still
+ * find it after the thread detaches the worktree.
+ */
+export const OrchestrationV2CheckpointRepository = Schema.Struct({
+  /** Repository path relative to the project folder, as in `ThreadRepoWorktree`. */
+  repository: TrimmedNonEmptyString,
+  repositoryPath: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  /** Leads this repository's paths in the checkpoint's `files` and in its diffs. */
+  pathPrefix: TrimmedNonEmptyString,
+  ref: CheckpointRef,
+  status: OrchestrationV2CheckpointStatus,
+  /**
+   * A later turn filled this in with the snapshot rewinding here restores.
+   * The checkpoint's own run never captured the worktree. Absent on entries
+   * stored before this was recorded, which count as captured.
+   */
+  backfilled: Schema.optional(Schema.Literal(true)),
+});
+export type OrchestrationV2CheckpointRepository = typeof OrchestrationV2CheckpointRepository.Type;
+
 /** Sent only when the wire carries a prefix of `files`; the totals cover the full list. */
 export const OrchestrationV2CheckpointFileTotals = Schema.Struct({
   count: NonNegativeInt,
@@ -1405,10 +1457,14 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
   parentCheckpointId: Schema.NullOr(CheckpointId),
   ordinalWithinScope: NonNegativeInt,
   appRunOrdinal: Schema.NullOr(PositiveInt),
+  /** The scope's own workspace snapshot. With `repositories`, `status` and `files` cover all of them. */
   ref: CheckpointRef,
-  status: Schema.Literals(["ready", "missing", "error", "stale"]),
+  status: OrchestrationV2CheckpointStatus,
   files: Schema.Array(OrchestrationV2CheckpointFileSummary),
   filesTotal: Schema.optionalKey(OrchestrationV2CheckpointFileTotals),
+  /** Status of `ref` alone, present only with `repositories`. */
+  workspaceStatus: Schema.optional(OrchestrationV2CheckpointStatus),
+  repositories: Schema.optional(Schema.Array(OrchestrationV2CheckpointRepository)),
   capturedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
@@ -3095,6 +3151,13 @@ export const OrchestrationV2Command = Schema.Union([
     snapshot: ThreadPullRequestSnapshot,
     stack: Schema.NullOr(ThreadPullRequestStack),
   }),
+  /** Forgets a repository worktree; its folder, branch, and edits stay. */
+  Schema.Struct({
+    type: Schema.Literal("thread.repo-worktree.detach"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    worktreePath: TrimmedNonEmptyString,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.watch"),
     commandId: CommandId,
@@ -3390,6 +3453,15 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** Internal so only the server, after it validated or created the checkout, attaches one. */
+  Schema.Struct({
+    type: Schema.Literal("thread.repo-worktree.attach"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    repoWorktree: ThreadRepoWorktree,
+    /** Only updates a worktree the thread still lists, such as after its checkout switched branch. */
+    relabelOnly: Schema.optional(Schema.Boolean),
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

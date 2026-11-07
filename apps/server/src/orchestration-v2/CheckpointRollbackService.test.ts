@@ -32,9 +32,9 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { withRepositoryLease, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
-import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
+import { resolveCodexRollbackBoundary } from "./Adapters/CodexAdapterV2.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -104,6 +104,8 @@ it.effect.each(["initial", "waiting"])(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThread,
             getCheckpointRollbackContext,
+            getCheckpointContext: () =>
+              Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,
@@ -268,6 +270,9 @@ it.effect.each([
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
+            getCheckpointContext: () =>
+              Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
+            getThreadRepoWorktreePaths: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,
@@ -345,6 +350,135 @@ it.effect.each([
     }).pipe(Effect.provide(testLayer));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+// Beta was attached while the rollback waited for alpha's lease, after it chose its leases.
+it.effect("takes the lease of a repository attached while it waited before checking it", () => {
+  const threadId = ThreadId.make("thread:rollback-late-attach");
+  const providerThreadId = ProviderThreadId.make("provider-thread:rollback-late-attach");
+  const providerInstanceId = ProviderInstanceId.make("provider_rollback_late_attach");
+  const checkpointId = CheckpointId.make("checkpoint:rollback-late-attach");
+  const scopeId = CheckpointScopeId.make("checkpoint-scope:rollback-late-attach");
+  const repository = (name: string) => ({
+    repository: name,
+    repositoryPath: `/nonexistent/folder/${name}`,
+    worktreePath: `/nonexistent/worktrees/${name}`,
+    branch: "work",
+    baseRef: null,
+    origin: "created" as const,
+    attachedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const thread = {
+    id: threadId,
+    worktreePath: null,
+    branch: null,
+    activeProviderThreadId: providerThreadId,
+    modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+    repoWorktrees: [repository("alpha")],
+  };
+  const scope = { id: scopeId, kind: "root_run", cwd: "/nonexistent/folder" };
+  const askedForBetaLease = Deferred.makeUnsafe<void>();
+  const checkedBeta = Deferred.makeUnsafe<void>();
+  const betaHeld = Deferred.makeUnsafe<void>();
+  const releaseBeta = Deferred.makeUnsafe<void>();
+  let betaHeldElsewhere = false;
+  const checkedOutsideLease: Array<string> = [];
+  const testLayer = layerCheckpointRollbackService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ThreadCommandExecutor.layer,
+        Layer.mock(CheckpointService.CheckpointServiceV2)({
+          repositoryLeaseKey: (target) =>
+            target.worktreePath === repository("beta").worktreePath
+              ? Deferred.succeed(askedForBetaLease, undefined).pipe(Effect.as("beta"))
+              : Effect.succeed(target.worktreePath),
+          resolveRepositorySnapshot: () =>
+            Effect.succeed({
+              _tag: "found",
+              ordinal: 0,
+              ref: CheckpointRef.make("refs/t3/test/late-attach"),
+            } as const),
+          inspectRepositoryRestore: (input) =>
+            Effect.gen(function* () {
+              if (input.repository.repository !== "beta") return { recreate: false };
+              if (betaHeldElsewhere) checkedOutsideLease.push("beta");
+              yield* Deferred.succeed(checkedBeta, undefined);
+              return { recreate: false };
+            }),
+          restoreRepository: () => Effect.void,
+        }),
+        Layer.mock(EventSink.EventSinkV2)({ write: () => Effect.succeed([]) }),
+        IdAllocator.layer,
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThread: () => Effect.succeed(thread as never),
+          getCheckpointRollbackContext: () =>
+            Effect.succeed({
+              thread: { ...thread, repoWorktrees: [repository("alpha"), repository("beta")] },
+              providerThread: {
+                id: providerThreadId,
+                providerSessionId: ProviderSessionId.make("provider-session:late-attach"),
+                providerInstanceId,
+              },
+              providerSession: undefined,
+              checkpoint: {
+                id: checkpointId,
+                scopeId,
+                status: "ready",
+                workspaceStatus: "missing",
+                appRunOrdinal: 0,
+                ordinalWithinScope: 0,
+              },
+              scope,
+              runsToRollback: [],
+              targetAttempt: undefined,
+              rolledBackAttemptIds: [],
+              staleCheckpoints: [],
+              rootNodes: [],
+              providerTurns: [],
+            } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext),
+          getCheckpointContext: () =>
+            Effect.succeed({ runs: [], checkpointScopes: [scope], checkpoints: [] } as never),
+          getThreadRepoWorktreePaths: () => Effect.succeed([]),
+          getShellSnapshot: () =>
+            Effect.succeed({
+              schemaVersion: 1,
+              snapshotSequence: 0,
+              threads: [],
+              archivedThreads: [],
+            }),
+        }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          open: () => Effect.succeed({} as never),
+        }),
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+    const holder = yield* withRepositoryLease(
+      "beta",
+      Effect.gen(function* () {
+        betaHeldElsewhere = true;
+        yield* Deferred.succeed(betaHeld, undefined);
+        yield* Deferred.await(releaseBeta);
+        betaHeldElsewhere = false;
+      }),
+    ).pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(betaHeld);
+    const rollback = yield* service
+      .execute({ threadId, providerThreadId, checkpointId, scopeId })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    // Only one happens while beta's lease is held elsewhere: asking for it, or checking beta.
+    yield* Effect.raceFirst(Deferred.await(askedForBetaLease), Deferred.await(checkedBeta));
+    yield* Deferred.succeed(releaseBeta, undefined);
+    yield* Fiber.join(holder);
+    yield* Fiber.join(rollback);
+
+    assert.isTrue(yield* Deferred.isDone(checkedBeta));
+    assert.deepEqual(checkedOutsideLease, []);
+  }).pipe(Effect.provide(testLayer));
+});
 
 const seedRollbackHistory = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -597,7 +731,9 @@ const seedRollbackHistory = Effect.gen(function* () {
             Effect.succeed({
               rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
                 Effect.gen(function* () {
-                  rollbackCounts.push(yield* resolveCodexRollbackTurnCount(input));
+                  rollbackCounts.push(
+                    (yield* resolveCodexRollbackBoundary(input)).laterTurnIds.size,
+                  );
                   return { providerThread: input.providerThread };
                 }),
             } as never),

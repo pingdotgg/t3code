@@ -7,6 +7,7 @@ import {
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
+  fileRestoreRetryApplies,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
@@ -952,6 +953,75 @@ describe("waitForRevertedMessage", () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  // The conversation is back at turn 1; its later checkpoints stay ready until files are restored.
+  const rewoundTo1 = (
+    projection: ReturnType<typeof makeThreadProjectionFixture>,
+    checkpointStatus: "ready" | "stale",
+    rollbackFailure: { requestId: CommandId; message: string } | null = null,
+  ) =>
+    ({
+      ...projection,
+      thread: { ...projection.thread, rollbackRequestId: requestId, rollbackFailure },
+      providerThreads: projection.providerThreads.map((thread) => ({
+        ...thread,
+        lastRunOrdinal: 1,
+      })),
+      runs: projection.runs.map((run) =>
+        run.ordinal > 1 ? { ...run, status: "rolled_back" as const } : run,
+      ),
+      checkpoints: [2, 3, 4].map((ordinal) => ({
+        appRunOrdinal: ordinal,
+        status: checkpointStatus,
+      })),
+    }) as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+
+  it("waits for the files before reporting a rewind as finished", async () => {
+    vi.useFakeTimers();
+    const { state, projection } = projectionAtom();
+    let outcome: string | null | undefined;
+    const waiting = waitForRevertedMessage(threadRef, 1, requestId, async () => {}).then(
+      (failure) => {
+        outcome = failure;
+      },
+    );
+
+    try {
+      appAtomRegistry.set(state, { data: Option.some(rewoundTo1(projection, "ready")) });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBeUndefined();
+
+      appAtomRegistry.set(state, { data: Option.some(rewoundTo1(projection, "stale")) });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBeNull();
+      await waiting;
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves with the failure when the conversation rewound but files did not", async () => {
+    const { state, projection } = projectionAtom();
+    const waiting = waitForRevertedMessage(threadRef, 1, requestId, async () => {});
+    await Promise.resolve();
+    appAtomRegistry.set(state, {
+      data: Option.some(
+        rewoundTo1(projection, "ready", { requestId, message: "Restoring files stopped." }),
+      ),
+    });
+
+    await expect(waiting).resolves.toBe("Restoring files stopped.");
+  });
+
+  it("offers that file restore again only until another turn runs", () => {
+    const rewound = [
+      { ordinal: 1, status: "completed" as const },
+      { ordinal: 2, status: "rolled_back" as const },
+    ];
+    expect(fileRestoreRetryApplies(rewound, 1)).toBe(true);
+    expect(fileRestoreRetryApplies([...rewound, { ordinal: 3, status: "running" }], 1)).toBe(false);
   });
 
   it("rejects a stale edit already rewound by another client during attachment preparation", async () => {

@@ -51,7 +51,9 @@ import {
   idleCompactionOf,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
+  OrchestrationV2CheckpointRepository,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
+  OrchestrationV2CheckpointStatus,
   OrchestrationV2ContextHandoffJson as OrchestrationV2ContextHandoffJsonSchema,
   OrchestrationV2ContextTransferJson as OrchestrationV2ContextTransferJsonSchema,
   OrchestrationV2ConversationMessageJson as OrchestrationV2ConversationMessageJsonSchema,
@@ -247,12 +249,43 @@ const ProjectionCheckpointContext = Schema.Struct({
         appRunOrdinal,
         status,
         ref,
+        // SQLite yields NULL for an absent field and the array as JSON text.
+        workspaceStatus: Schema.NullOr(OrchestrationV2CheckpointStatus),
+        repositories: Schema.NullOr(
+          Schema.fromJsonString(Schema.Array(OrchestrationV2CheckpointRepository)),
+        ),
       }),
     ),
   ),
 });
-export type ProjectionCheckpointContext = typeof ProjectionCheckpointContext.Type;
-const decodeCheckpointContext = Schema.decodeUnknownEffect(ProjectionCheckpointContext);
+type ProjectionCheckpointContextRows = typeof ProjectionCheckpointContext.Type;
+export type ProjectionCheckpointContext = Omit<ProjectionCheckpointContextRows, "checkpoints"> & {
+  readonly checkpoints: ReadonlyArray<
+    Pick<
+      OrchestrationV2Checkpoint,
+      | "scopeId"
+      | "runId"
+      | "ordinalWithinScope"
+      | "appRunOrdinal"
+      | "status"
+      | "ref"
+      | "workspaceStatus"
+      | "repositories"
+    >
+  >;
+};
+const decodeCheckpointContextRows = Schema.decodeUnknownEffect(ProjectionCheckpointContext);
+const decodeCheckpointContext = (rows: unknown) =>
+  decodeCheckpointContextRows(rows).pipe(
+    Effect.map((context): ProjectionCheckpointContext => ({
+      ...context,
+      checkpoints: context.checkpoints.map(({ workspaceStatus, repositories, ...checkpoint }) => ({
+        ...checkpoint,
+        ...(workspaceStatus === null ? {} : { workspaceStatus }),
+        ...(repositories === null ? {} : { repositories }),
+      })),
+    })),
+  );
 
 export interface ProjectionCheckpointCaptureContext {
   readonly run: OrchestrationV2Run | undefined;
@@ -569,6 +602,15 @@ export interface ProjectionStoreV2Shape {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
     ReadonlyArray<{ readonly threadId: ThreadId; readonly worktreePath: string }>,
+    ProjectionStoreV2Error
+  >;
+  /** Repository worktrees attached to threads that are not deleted, archived ones included. */
+  readonly getThreadRepoWorktreePaths: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly worktreePath: string;
+    }>,
     ProjectionStoreV2Error
   >;
   /**
@@ -5286,7 +5328,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT scope_id AS "scopeId", run_id AS "runId",
                 ordinal_within_scope AS "ordinalWithinScope",
                 app_run_ordinal AS "appRunOrdinal", status,
-                json_extract(payload_json, '$.ref') AS ref
+                json_extract(payload_json, '$.ref') AS ref,
+                json_extract(payload_json, '$.workspaceStatus') AS "workspaceStatus",
+                json_extract(payload_json, '$.repositories') AS repositories
               FROM orchestration_v2_projection_checkpoints
               WHERE thread_id = ${threadId}
               ORDER BY scope_id ASC, ordinal_within_scope ASC
@@ -6771,6 +6815,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
 
+    const getThreadRepoWorktreePaths: ProjectionStoreV2Shape["getThreadRepoWorktreePaths"] = () =>
+      sql<{ readonly thread_id: string; readonly title: string; readonly worktree_path: string }>`
+        SELECT t.thread_id,
+          json_extract(t.payload_json, '$.title') AS title,
+          json_extract(r.value, '$.worktreePath') AS worktree_path
+        FROM orchestration_v2_projection_threads t, json_each(t.payload_json, '$.repoWorktrees') r
+        WHERE t.deleted_at IS NULL
+          AND json_extract(r.value, '$.worktreePath') IS NOT NULL
+      `.pipe(
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            threadId: ThreadId.make(row.thread_id),
+            title: row.title,
+            worktreePath: row.worktree_path,
+          })),
+        ),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
     const shellThreadStateFromRow =
       /* Runs once per shell row; the enclosing snapshot or thread read owns the span. */
       Effect.fnUntraced(function* (input: {
@@ -7486,6 +7549,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
+      getThreadRepoWorktreePaths: readOnReader(getThreadRepoWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),
       getTurnStartContext: readOnReader(getTurnStartContext),

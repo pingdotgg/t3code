@@ -3,6 +3,7 @@ import {
   OrchestrationV2TurnItem,
   type OrchestrationV2ThreadProjection,
   type ScopedThreadRef,
+  type ThreadRepoWorktree,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -45,6 +46,27 @@ import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.
 const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItems"] = Object.freeze(
   [],
 );
+const EMPTY_REPO_WORKTREES: ReadonlyArray<ThreadRepoWorktree> = Object.freeze([]);
+
+/**
+ * The repository worktree a thread's Changes and Git actions use, or null for its own workspace.
+ * `selection` is a worktree path, null for the workspace, or undefined for no choice; without
+ * one, a workspace that is not a Git repository uses its first repository worktree.
+ */
+export function resolveSelectedRepoWorktree(input: {
+  readonly repoWorktrees: ReadonlyArray<ThreadRepoWorktree>;
+  readonly selection: string | null | undefined;
+  readonly workspaceIsRepository: boolean;
+}): ThreadRepoWorktree | null {
+  if (input.selection === null) return null;
+  const chosen =
+    input.selection === undefined
+      ? undefined
+      : input.repoWorktrees.find((entry) => entry.worktreePath === input.selection);
+  if (chosen !== undefined) return chosen;
+  return input.workspaceIsRepository ? null : (input.repoWorktrees[0] ?? null);
+}
+
 const EMPTY_THREAD_STRUCTURE_TURN_ITEMS: ReadonlyArray<ThreadStructureVisibleTurnItem> =
   Object.freeze([]);
 const EMPTY_CHECKPOINT_SUMMARIES: ReadonlyArray<ThreadCheckpointSummary> = Object.freeze([]);
@@ -505,6 +527,22 @@ export function createEnvironmentThreadDetailAtoms<E>(
         Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.worktreePath ?? null,
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
   );
+  // The thread record keeps its identity across streamed items, so this only
+  // changes when a repository worktree is attached or detached.
+  const repoWorktreesAtomFamily = Atom.family((key: string) =>
+    Atom.make(
+      (get) =>
+        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.repoWorktrees ??
+        EMPTY_REPO_WORKTREES,
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-repo-worktrees:${key}`)),
+  );
+  // A view choice, kept for the session like the selected diff scope.
+  const repoWorktreeSelectionAtomFamily = Atom.family((key: string) =>
+    Atom.make<string | null | undefined>(undefined).pipe(
+      Atom.keepAlive,
+      Atom.withLabel(`environment-thread-repo-worktree-selection:${key}`),
+    ),
+  );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
     let previous: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
       null;
@@ -576,6 +614,9 @@ export function createEnvironmentThreadDetailAtoms<E>(
 
   return {
     worktreePathAtom: (ref: ScopedThreadRef) => worktreePathAtomFamily(threadKey(ref)),
+    repoWorktreesAtom: (ref: ScopedThreadRef) => repoWorktreesAtomFamily(threadKey(ref)),
+    repoWorktreeSelectionAtom: (ref: ScopedThreadRef) =>
+      repoWorktreeSelectionAtomFamily(threadKey(ref)),
     workspaceMutationIdAtom: (ref: ScopedThreadRef) =>
       workspaceMutationIdAtomFamily(threadKey(ref)),
     updatedAtAtom: (ref: ScopedThreadRef) => updatedAtAtomFamily(threadKey(ref)),

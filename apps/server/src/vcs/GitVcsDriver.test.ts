@@ -1187,6 +1187,40 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("checkpoint ref deletion reports a ref Git keeps locked and deletes the rest", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-delete-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const lockedRef = CheckpointRef.make("refs/t3/checkpoints/locked");
+    const missingRef = CheckpointRef.make("refs/t3/checkpoints/missing");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: lockedRef });
+    const lockPath = (yield* git([
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      `${lockedRef}.lock`,
+    ])).stdout.trim();
+    yield* fileSystem.writeFileString(lockPath, "held by another Git process\n");
+
+    const error = yield* driver.checkpoints
+      .deleteCheckpointRefs({ cwd, checkpointRefs: [lockedRef, checkpointRef, missingRef] })
+      .pipe(Effect.flip);
+    assert.strictEqual(error._tag, "VcsProcessExitError");
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+    assert.isTrue(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: lockedRef }));
+
+    yield* fileSystem.remove(lockPath);
+    yield* driver.checkpoints.deleteCheckpointRefs({
+      cwd,
+      checkpointRefs: [lockedRef, missingRef],
+    });
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: lockedRef }));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("restores a checkpoint before the first commit without staging its files", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

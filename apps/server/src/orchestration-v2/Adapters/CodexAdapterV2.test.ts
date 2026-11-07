@@ -329,7 +329,7 @@ describe("CodexAdapterV2 native protocol logging", () => {
 });
 
 describe("CodexAdapterV2 rollback mapping", () => {
-  it.effect("derives native rollback count from durable provider turns", () =>
+  it.effect("derives the native rollback boundary from durable provider turns", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const providerThreadId = ProviderThreadId.make("provider-thread-codex-rollback");
@@ -382,7 +382,25 @@ describe("CodexAdapterV2 rollback mapping", () => {
         nativeTurnRef: null,
       };
 
-      const numTurns = yield* CodexAdapterV2.resolveCodexRollbackTurnCount({
+      const otherThreadTurn = {
+        ...providerTurn("provider-turn-other-thread", 6, "completed"),
+        providerThreadId: ProviderThreadId.make("provider-thread-other"),
+      };
+      const steeredFirstTurn = {
+        ...providerTurn("provider-turn-steered-first", 7, "completed"),
+        nativeTurnRef: firstTurn.nativeTurnRef,
+      };
+      const providerThreadTurns = [
+        goalCommandTurn,
+        interruptedTurn,
+        runningTurn,
+        secondTurn,
+        firstTurn,
+        otherThreadTurn,
+        steeredFirstTurn,
+      ];
+
+      const boundary = yield* CodexAdapterV2.resolveCodexRollbackBoundary({
         providerThread,
         target: {
           type: "provider_turn",
@@ -390,10 +408,26 @@ describe("CodexAdapterV2 rollback mapping", () => {
           appRunOrdinal: 1,
           providerTurn: firstTurn,
         },
-        providerThreadTurns: [goalCommandTurn, interruptedTurn, runningTurn, secondTurn, firstTurn],
+        providerThreadTurns,
       });
+      assert.deepEqual([...boundary.keptTurnIds], ["native-provider-turn-first"]);
+      assert.deepEqual([...boundary.laterTurnIds].toSorted(), [
+        "native-provider-turn-interrupted",
+        "native-provider-turn-running",
+        "native-provider-turn-second",
+      ]);
 
-      assert.equal(numTurns, 2);
+      const fromStart = yield* CodexAdapterV2.resolveCodexRollbackBoundary({
+        providerThread,
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("start"),
+          appRunOrdinal: 0,
+        },
+        providerThreadTurns,
+      });
+      assert.equal(fromStart.keptTurnIds.size, 0);
+      assert.equal(fromStart.laterTurnIds.size, 4);
     }),
   );
 });

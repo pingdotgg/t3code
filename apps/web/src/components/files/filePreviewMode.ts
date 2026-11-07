@@ -7,6 +7,24 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
   return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
 }
 
+/**
+ * A host file inside a repository worktree attached to the thread, as that worktree and a path
+ * relative to it. The server saves workspace files only by such a pair.
+ */
+export function repoWorktreeFilePath(
+  path: string,
+  repoWorktrees: ReadonlyArray<{ readonly worktreePath: string }>,
+): { readonly worktreePath: string; readonly relativePath: string } | null {
+  if (!isHostPath(path)) return null;
+  for (const { worktreePath } of repoWorktrees) {
+    const relativePath = workspaceRelativeFilePath(path, worktreePath);
+    if (relativePath !== null && relativePath !== "." && !isHostPath(relativePath)) {
+      return { worktreePath, relativePath };
+    }
+  }
+  return null;
+}
+
 export const isMarkdownPreviewFile = (path: string): boolean =>
   /\.(?:md|mdx|markdown|mdown|mkd)$/i.test(path);
 

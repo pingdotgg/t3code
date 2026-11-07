@@ -6,6 +6,7 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type ThreadRepoWorktree,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -18,6 +19,7 @@ import type { ThreadStructureVisibleTurnItem } from "./models.ts";
 import {
   createEnvironmentThreadDetailAtoms,
   deriveWorkspaceMutationId,
+  resolveSelectedRepoWorktree,
   sameThreadStructure,
 } from "./threadDetail.ts";
 import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
@@ -384,5 +386,58 @@ describe("deriveWorkspaceMutationId", () => {
     expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
       null,
     );
+  });
+});
+
+describe("resolveSelectedRepoWorktree", () => {
+  const repoWorktree = (repository: string): ThreadRepoWorktree => ({
+    repository,
+    repositoryPath: `/folder/${repository}`,
+    worktreePath: `/worktrees/${repository}/work`,
+    branch: "t3/work",
+    baseRef: "main",
+    origin: "created",
+    attachedAt: "2026-11-04T00:00:00.000Z",
+  });
+  const repoWorktrees = [repoWorktree("alpha"), repoWorktree("beta")];
+
+  it("shows a repository's changes when the folder itself is not a Git repository", () => {
+    expect(
+      resolveSelectedRepoWorktree({
+        repoWorktrees,
+        selection: undefined,
+        workspaceIsRepository: false,
+      })?.repository,
+    ).toBe("alpha");
+  });
+
+  it("keeps a Git workspace until the user chooses a repository", () => {
+    expect(
+      resolveSelectedRepoWorktree({
+        repoWorktrees,
+        selection: undefined,
+        workspaceIsRepository: true,
+      }),
+    ).toBeNull();
+    expect(
+      resolveSelectedRepoWorktree({
+        repoWorktrees,
+        selection: "/worktrees/beta/work",
+        workspaceIsRepository: true,
+      })?.repository,
+    ).toBe("beta");
+  });
+
+  it("honors choosing the workspace, and forgets a choice the thread detached", () => {
+    expect(
+      resolveSelectedRepoWorktree({ repoWorktrees, selection: null, workspaceIsRepository: false }),
+    ).toBeNull();
+    expect(
+      resolveSelectedRepoWorktree({
+        repoWorktrees,
+        selection: "/worktrees/gone/work",
+        workspaceIsRepository: false,
+      })?.repository,
+    ).toBe("alpha");
   });
 });

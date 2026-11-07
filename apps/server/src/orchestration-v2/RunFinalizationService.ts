@@ -84,6 +84,22 @@ const make = Effect.gen(function* () {
         }),
       );
     }
+    // Repository worktrees the turn captured show their new status too. One
+    // that is gone must not fail the turn.
+    for (const repository of projection.checkpoints.find(
+      (checkpoint) => checkpoint.runId === input.runId,
+    )?.repositories ?? []) {
+      yield* observer
+        .refresh({ cwd: repository.worktreePath, threadId: input.threadId, runId: input.runId })
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to refresh a repository worktree after run completion", {
+              threadId: input.threadId,
+              cause: String(cause),
+            }),
+          ),
+        );
+    }
   });
   return RunFinalizationService.of({ finalize });
 });

@@ -103,6 +103,41 @@ export const layer: Layer.Layer<
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
+      const {
+        thread: { repoWorktrees },
+        runs,
+      } = yield* projections.getThreadRecords(input.threadId, ["runs"]);
+      // Read only when worktrees are snapshot, so each keeps its earlier path prefix.
+      const earlier =
+        repoWorktrees === undefined || repoWorktrees.length === 0 || sideChat
+          ? undefined
+          : (yield* projections.getThreadRecords(input.threadId, ["checkpoints"])).checkpoints;
+      const checkpoint = yield* checkpoints.capture({
+        scope,
+        runId: run.id,
+        nodeId: rootNode.id,
+        ordinalWithinScope: run.ordinal,
+        appRunOrdinal: run.ordinal,
+        capturedAt,
+        // A side chat shares its parent's checkouts, so it snapshots none of them.
+        ...(repoWorktrees === undefined || sideChat ? {} : { repoWorktrees }),
+        ...(earlier === undefined ? {} : { checkpoints: earlier }),
+        runs,
+        forceMissing: sideChat,
+      });
+      const hasRepositories = (checkpoint.repositories?.length ?? 0) > 0;
+      const backfilled = hasRepositories
+        ? yield* projections.getThreadRecords(input.threadId, ["checkpoints", "runs"]).pipe(
+            Effect.flatMap((history) =>
+              checkpoints.backfillRepositories({
+                scope,
+                checkpoint,
+                checkpoints: history.checkpoints,
+                runs: history.runs,
+              }),
+            ),
+          )
+        : [];
       // The baselines this capture materializes are attributed to the run materializing them. The
       // thread's scope may already be a later run's: one queued meanwhile, or sent after Stop.
       const materializeBaseline = (ordinalWithinScope: number) =>
@@ -111,24 +146,17 @@ export const layer: Layer.Layer<
           ordinalWithinScope,
           nodeId: rootNode.id,
           capturedAt: run.requestedAt,
+          runs,
           forceMissing: sideChat,
         });
       const threadStartCheckpoint =
-        baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
+        hasRepositories || baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
           ? null
           : yield* materializeBaseline(0);
-      const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
-        ? null
-        : yield* materializeBaseline(baselineOrdinalWithinScope);
-      const checkpoint = yield* checkpoints.capture({
-        scope,
-        runId: run.id,
-        nodeId: rootNode.id,
-        ordinalWithinScope: run.ordinal,
-        appRunOrdinal: run.ordinal,
-        capturedAt,
-        forceMissing: sideChat,
-      });
+      const baselineCheckpoint =
+        hasRepositories || hasReadyCheckpoint(baselineOrdinalWithinScope)
+          ? null
+          : yield* materializeBaseline(baselineOrdinalWithinScope);
       // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
       const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
@@ -139,6 +167,19 @@ export const layer: Layer.Layer<
         acceptedAt: capturedAt,
         effects: [],
         events: [
+          ...(yield* Effect.forEach(backfilled, (earlier) =>
+            Effect.map(ids.allocate.event({ threadId: input.threadId, commandId }), (id) => ({
+              id,
+              type: "checkpoint.captured" as const,
+              threadId: input.threadId,
+              ...(earlier.runId === null ? {} : { runId: earlier.runId }),
+              nodeId: earlier.nodeId,
+              driver: providerThread.driver,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: capturedAt,
+              payload: earlier,
+            })),
+          )),
           ...(threadStartCheckpoint === null
             ? []
             : [

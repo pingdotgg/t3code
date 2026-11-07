@@ -97,6 +97,8 @@ const SETTINGS_SEARCH_TERMS = {
     "branch prefix",
     "submodules",
     "start from remote",
+    "multi-repository project folder",
+    "repository guidance",
   ],
   SettingsLabs: [
     "legacy",

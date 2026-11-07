@@ -14,6 +14,11 @@ import * as VcsProcess from "./VcsProcess.ts";
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /**
+   * Taken before a turn changes files. A rewind can leave the snapshot a
+   * rolled-back turn ended with under the same ref; this tells them apart.
+   */
+  readonly baseline?: boolean;
 }
 
 export interface VcsRestoreCheckpointInput {
@@ -35,6 +40,8 @@ export interface VcsDiffCheckpointsInput {
   readonly maxOutputBytes?: number;
   /** An empty list yields an empty diff. */
   readonly filePaths?: ReadonlyArray<string>;
+  /** Shown before every patch path, so patches from several repositories stay apart. */
+  readonly pathPrefix?: string;
 }
 
 export interface VcsListAuthoredPathsInput {
@@ -51,6 +58,10 @@ export interface VcsDeleteCheckpointRefsInput {
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
+    input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
+  ) => Effect.Effect<boolean, VcsError>;
+  /** False when the ref is missing or was not captured as a baseline. */
+  readonly isBaselineCheckpoint: (
     input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
   ) => Effect.Effect<boolean, VcsError>;
   readonly restoreCheckpoint: (

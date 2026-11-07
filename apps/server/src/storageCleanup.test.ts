@@ -342,6 +342,8 @@ const cleanupFixture = (
     let threads = [shell({ branch: "feature", worktreePath: worktree })];
     let deletedThreads: OrchestrationV2ThreadShell[] = [];
     let storedWorktreePaths: string[] = [worktree];
+    let repoWorktreeRows: Array<{ threadId: string; worktreePath: string }> = [];
+    let attachBeforeRemoval: Array<{ threadId: string; worktreePath: string }> | null = null;
     let projectRoots = [repo];
     let editBeforeRemoval = false;
     let openSessionCwd: string | null = null;
@@ -366,6 +368,9 @@ const cleanupFixture = (
               (input.args.includes("remove") || input.args.includes("--porcelain"))
             )
               yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
+            // The repository lease is the last step before removal.
+            if (attachBeforeRemoval !== null && input.args.includes("--git-common-dir"))
+              repoWorktreeRows = attachBeforeRemoval;
             return yield* git.execute(input);
           }),
         statusDetailsLocal: (...args) => {
@@ -415,6 +420,8 @@ const cleanupFixture = (
           ),
         getThreadShell: (threadId: ThreadId) =>
           Effect.sync(() => threads.find((thread) => thread.id === threadId) ?? null),
+        getThreadRepoWorktreePaths: () =>
+          Effect.sync(() => repoWorktreeRows.map((row) => ({ ...row, title: "Folder thread" }))),
       } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
       Effect.provideService(ProviderSessionManager.ProviderSessionManagerV2, {
         isLive: () =>
@@ -528,6 +535,12 @@ const cleanupFixture = (
       },
       setStoredWorktreePaths: (paths: string[]) => {
         storedWorktreePaths = paths;
+      },
+      setRepoWorktrees: (rows: Array<{ threadId: string; worktreePath: string }>) => {
+        repoWorktreeRows = rows;
+      },
+      attachBeforeRemoval: (rows: Array<{ threadId: string; worktreePath: string }>) => {
+        attachBeforeRemoval = rows;
       },
       setProjectRoots: (roots: string[]) => {
         projectRoots = roots;
@@ -2246,6 +2259,97 @@ describe("storage cleanup reports and local file policies", () => {
         expect(report.bytesFreed).toBe(0);
         expect(yield* fs.exists(worktree)).toBe(true);
         expect(yield* fs.readFileString(`${worktree}/notes.txt`)).toBe("untracked\n");
+      }),
+    ),
+  );
+  it.live(
+    "keeps a thread's worktree while another thread works in it as a repository worktree",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture();
+          fixture.setRepoWorktrees([{ threadId: "thread-2", worktreePath: fixture.worktree }]);
+          expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Another thread works in it as a repository worktree",
+          });
+          expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+
+          fixture.setRepoWorktrees([]);
+          expect((yield* fixture.service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        }),
+      ),
+  );
+  // Git records a reused checkout by its real path, while the thread that made
+  // it may use the configured spelling (/tmp for /private/tmp).
+  it.live("keeps a worktree attached under another spelling of its path", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const { fs } = fixture;
+        const link = `${yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-link-" })}/worktrees`;
+        yield* fs.symlink(fixture.config.worktreesDir, link);
+        const linked = `${link}/feature`;
+        const real = yield* fs.realPath(fixture.worktree);
+        for (const [threadPath, attachedPath] of [
+          [linked, real],
+          [fixture.worktree, linked],
+        ] as const) {
+          fixture.setThreads([shell({ branch: "feature", worktreePath: threadPath })]);
+          fixture.setRepoWorktrees([{ threadId: "thread-2", worktreePath: attachedPath }]);
+          expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Another thread works in it as a repository worktree",
+          });
+        }
+        expect(yield* fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live("keeps a worktree attached right before its removal, without cleaning it", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setPolicy("tracked-changes");
+        yield* fixture.fs.writeFileString(`${fixture.worktree}/notes.txt`, "untracked\n");
+        fixture.attachBeforeRemoval([{ threadId: "thread-2", worktreePath: fixture.worktree }]);
+        expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Another thread works in it as a repository worktree",
+        });
+        expect(yield* fixture.fs.readFileString(`${fixture.worktree}/notes.txt`)).toBe(
+          "untracked\n",
+        );
+      }),
+    ),
+  );
+  it.live("lists attached repository worktrees as kept, not as unused folders", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const folder = `${fixture.config.worktreesDir}/other/feature`;
+        yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "repo-work", folder]);
+        yield* fixture.fs.utimes(folder, 1, 1);
+        fixture.setRepoWorktrees([{ threadId: "thread-9", worktreePath: folder }]);
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({
+            path: folder,
+            outcome: "kept",
+            reason:
+              "Repository worktree attached to a thread; cleanup keeps it until it is detached",
+          }),
+        ]);
+
+        fixture.setRepoWorktrees([]);
+        // Unused folders are reported under the canonical managed root.
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({
+            path: yield* fixture.fs.realPath(folder),
+            reason: "No thread uses this worktree",
+          }),
+        ]);
+        expect(yield* fixture.fs.exists(`${folder}/tracked.txt`)).toBe(true);
       }),
     ),
   );

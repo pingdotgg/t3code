@@ -14,6 +14,7 @@ import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
+import { useSelectedThreadSourceControl } from "../../../state/use-selected-thread-worktree";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { SheetActionButton } from "./gitSheetComponents";
 
@@ -34,6 +35,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
+  const { repoWorktree } = useSelectedThreadSourceControl();
   const { selectedThreadProject } = useThreadSelection();
   const terminology = sourceControlClients.get(
     selectedThreadProject?.repositoryIdentity?.provider,
@@ -89,17 +91,20 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       return;
     }
 
+    // The new branch goes where the action runs, which may be a repository worktree.
     const branches =
-      gitState.selectedThreadBranches.length > 0
+      repoWorktree === null && gitState.selectedThreadBranches.length > 0
         ? gitState.selectedThreadBranches
-        : await gitActions.refreshSelectedThreadBranches();
+        : await gitActions.refreshSelectedThreadBranches({ sourceControl: true });
     if (branches === null) return;
     const newBranchName = resolveAutoFeatureBranchName(
       Arr.filterMap(branches, (branch) =>
         branch.isRemote ? Result.failVoid : Result.succeed(branch.name),
       ),
     );
-    const created = await gitActions.onCreateSelectedThreadBranch(newBranchName);
+    const created = await gitActions.onCreateSelectedThreadBranch(newBranchName, {
+      sourceControl: true,
+    });
     if (created === null) return;
     await gitActions.onRunSelectedThreadGitAction({ action: confirmAction });
   }, [
@@ -107,6 +112,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
     confirmAction,
     gitActions,
     gitState.selectedThreadBranches,
+    repoWorktree,
     includesCommit,
     params,
     navigation,

@@ -253,6 +253,25 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["worktree location folder directory path drive external disk"],
   },
   {
+    id: "repo-worktrees",
+    title: "Multi-Repository Project Folder",
+    to: "/settings/worktrees",
+    scope: "project-defaults",
+    searchTerms: [
+      "multiple repositories repos multi repo multirepo monorepo several git repositories worktrees per repository nested submodule",
+    ],
+  },
+  {
+    id: "repo-worktree-guidance",
+    targetId: "repo-worktrees",
+    title: "Repository Guidance",
+    to: "/settings/worktrees",
+    scope: "project-defaults",
+    searchTerms: [
+      "agent instructions multiple repositories repos worktrees base branch submodule rules",
+    ],
+  },
+  {
     id: "storage-artifacts",
     title: "Artifacts and logs",
     to: "/settings/maintenance",

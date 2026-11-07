@@ -23,6 +23,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as RepoWorktreeService from "../git/RepoWorktreeService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerConfig from "../config.ts";
 import {
@@ -114,6 +115,8 @@ interface HarnessOptions {
   readonly fetchWorktreeBaseFails?: boolean;
   readonly worktreeBaseMissing?: boolean;
   readonly removeWorktreeFails?: boolean;
+  /** Another thread attached the new checkout before the rollback. */
+  readonly removalRefusedInUse?: boolean;
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
   readonly existsFails?: boolean;
@@ -331,6 +334,18 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
+        Layer.mock(RepoWorktreeService.RepoWorktreeService)({
+          removeWorktree: (input) =>
+            options.removalRefusedInUse
+              ? Effect.fail(
+                  new RepoWorktreeService.RepoWorktreeInUseError({
+                    path: input.path,
+                    threadId: "thread-folder",
+                    threadTitle: "Folder thread",
+                  }),
+                )
+              : removeWorktree(input),
+        }),
         NodeServices.layer,
         NodeCrypto.layer,
         options.existsFails
@@ -641,6 +656,16 @@ describe("t3_worktree_handoff", () => {
       expect(harness.runForThread).toHaveBeenCalledTimes(1);
     }),
   );
+
+  it.effect("keeps the checkout and branch when another thread attached them first", () => {
+    const harness = makeHarness({ dispatchFails: true, removalRefusedInUse: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runHandoff(harness, { branch: "feature/attached-race" }));
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
+      expect(harness.removeWorktree).not.toHaveBeenCalled();
+      expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
+    });
+  });
 
   it.effect("creates the worktree in the managed directory even when a call names a path", () => {
     const harness = makeHarness();

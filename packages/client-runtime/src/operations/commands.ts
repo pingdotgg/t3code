@@ -1131,6 +1131,20 @@ export const watchThreadPullRequest = Effect.fn("EnvironmentCommands.watchThread
     });
   },
 );
+export type DetachThreadRepoWorktreeInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.repo-worktree.detach" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export const detachThreadRepoWorktree = Effect.fn("EnvironmentCommands.detachThreadRepoWorktree")(
+  function* (input: DetachThreadRepoWorktreeInput) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.repo-worktree.detach",
+      commandId: yield* allocateCommandId(input),
+    });
+  },
+);
 export const unlinkThreadPullRequest = Effect.fn("EnvironmentCommands.unlinkThreadPullRequest")(
   function* (input: UnlinkThreadPullRequestInput) {
     return yield* dispatch({

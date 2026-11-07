@@ -150,8 +150,8 @@ export async function startFanoutThread(input: {
 
 /**
  * Reverts the thread to before `message` and puts that message's text and
- * attachments back in the composer draft. Returns the restored prompt, or the
- * error to show; on error the draft is untouched.
+ * attachments back in the composer draft. Returns the restored prompt and why
+ * restoring files stopped, if it did, or the error to show; on error the draft is untouched.
  */
 export async function rewindToMessage(input: {
   readonly message: ChatMessage;
@@ -179,7 +179,7 @@ export async function rewindToMessage(input: {
   }) => Promise<AtomCommandResult<unknown, unknown>>;
 }): Promise<
   | { readonly error: string; readonly prompt?: never }
-  | { readonly error: null; readonly prompt: string }
+  | { readonly error: null; readonly prompt: string; readonly fileRestoreFailure: string | null }
 > {
   const { message, environmentId, draftTarget } = input;
   try {
@@ -203,21 +203,26 @@ export async function rewindToMessage(input: {
       throw new Error("Make room for this message's attachments in the composer before rewinding.");
     }
     const commandId = CommandId.make(randomUUID());
-    await waitForRevertedMessage(input.routeThreadRef, input.turnCount, commandId, async () => {
-      const result = await input.revertThreadCheckpoint({
-        environmentId,
-        input: {
-          commandId,
-          threadId: input.threadId,
-          turnCount: input.turnCount,
-          restoreFiles: input.restoreFiles,
-          ...(input.checkpoint === undefined
-            ? {}
-            : { checkpointId: input.checkpoint.id, scopeId: input.checkpoint.scopeId }),
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    });
+    const fileRestoreFailure = await waitForRevertedMessage(
+      input.routeThreadRef,
+      input.turnCount,
+      commandId,
+      async () => {
+        const result = await input.revertThreadCheckpoint({
+          environmentId,
+          input: {
+            commandId,
+            threadId: input.threadId,
+            turnCount: input.turnCount,
+            restoreFiles: input.restoreFiles,
+            ...(input.checkpoint === undefined
+              ? {}
+              : { checkpointId: input.checkpoint.id, scopeId: input.checkpoint.scopeId }),
+          },
+        });
+        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      },
+    );
     const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
     const restoredPrompt = recallableComposerPrompt(message.text);
     const nextPrompt =
@@ -245,7 +250,7 @@ export async function rewindToMessage(input: {
     });
     store.addImages(draftTarget, images, { allowDuplicates: true });
     store.addFiles(draftTarget, restoredFiles, { allowDuplicates: true });
-    return { error: null, prompt: nextPrompt };
+    return { error: null, prompt: nextPrompt, fileRestoreFailure };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Failed to revert thread state." };
   }

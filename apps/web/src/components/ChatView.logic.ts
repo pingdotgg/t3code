@@ -1,4 +1,8 @@
-import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2Run,
+  type RunAttemptId,
+} from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -220,13 +224,15 @@ export function shouldOpenProactiveTurnDiff(input: {
 }
 
 export function resolveProactiveTurnDiffAction(input: {
-  checkpoint: Pick<TurnDiffSummary, "status" | "files" | "filesTotal"> | undefined;
+  checkpoint: Pick<TurnDiffSummary, "status" | "files" | "filesTotal" | "repositories"> | undefined;
   isGitRepo: boolean | undefined;
 }): "defer" | "ignore" | "open" {
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
-  if (input.isGitRepo === undefined) return "defer";
+  // Repository worktrees have diffs even when the folder is not a Git repository.
+  const hasRepositories = (input.checkpoint.repositories?.length ?? 0) > 0;
+  if (input.isGitRepo === undefined && !hasRepositories) return "defer";
   if (
-    !input.isGitRepo ||
+    (!input.isGitRepo && !hasRepositories) ||
     input.checkpoint.status !== "ready" ||
     input.checkpoint.files.length === 0
   ) {
@@ -952,13 +958,29 @@ export async function waitForStartedServerThread(
   });
 }
 
+/**
+ * Whether trying a stopped file restore again still restores only its files. A turn that ran
+ * since, from any client, would be rewound by it.
+ */
+export function fileRestoreRetryApplies(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status">>,
+  turnCount: number,
+): boolean {
+  return runs.every((run) => run.ordinal <= turnCount || run.status === "rolled_back");
+}
+
+/**
+ * Resolves once the conversation is rewound to before the message: with
+ * `null` when the files were restored too, or with the failure when restoring
+ * them stopped. Rejects when nothing was rewound.
+ */
 export async function waitForRevertedMessage(
   threadRef: ScopedThreadRef,
   turnCount: number,
   requestId: CommandId,
   revert: () => Promise<void>,
   timeoutMs = 120_000,
-): Promise<void> {
+): Promise<string | null> {
   const threadAtom = environmentThreadDetails.stateAtom(threadRef);
   const readProjection = () => Option.getOrNull(appAtomRegistry.get(threadAtom).data);
   const initial = readProjection();
@@ -982,29 +1004,41 @@ export async function waitForRevertedMessage(
   if (witness === undefined) {
     throw new Error("The thread has changed. Select a message to rewind again.");
   }
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<string | null>((resolve, reject) => {
     let settled = false;
     let accepted = false;
     let unsubscribe = () => {};
     let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
-    const finish = (error?: unknown) => {
+    const finish = (outcome: { readonly error: unknown } | { readonly failure: string | null }) => {
       if (settled) return;
       settled = true;
       if (timeout !== undefined) globalThis.clearTimeout(timeout);
       unsubscribe();
-      if (error !== undefined) reject(error);
-      else resolve();
+      if ("error" in outcome) reject(outcome.error);
+      else resolve(outcome.failure);
     };
     const inspect = () => {
       const thread = readProjection();
       if (!thread) return;
+      const rewound = thread.runs.some(
+        (run) => run.id === witness.id && run.status === "rolled_back",
+      );
       const failure = thread.thread.rollbackFailure;
       if (failure?.requestId === requestId) {
-        finish(new Error(failure.message));
+        finish(rewound ? { failure: failure.message } : { error: new Error(failure.message) });
         return;
       }
+      // Later checkpoints turn stale once their files are back; until then a failure may follow.
+      const filesPending = thread.checkpoints.some(
+        (checkpoint) =>
+          checkpoint.status === "ready" &&
+          checkpoint.appRunOrdinal !== null &&
+          checkpoint.appRunOrdinal > turnCount,
+      );
       if (
         accepted &&
+        rewound &&
+        !filesPending &&
         thread.providerThreads.some(
           (providerThread) =>
             (providerThread.id === providerThreadId ||
@@ -1015,21 +1049,23 @@ export async function waitForRevertedMessage(
                 providerThread.providerInstanceId === initialProviderThread?.providerInstanceId &&
                 !initialProviderThreadIds.has(providerThread.id))) &&
             providerThread.lastRunOrdinal === (turnCount === 0 ? null : turnCount),
-        ) &&
-        thread.runs.some((run) => run.id === witness.id && run.status === "rolled_back")
+        )
       )
-        finish();
+        finish({ failure: null });
     };
     unsubscribe = appAtomRegistry.subscribe(threadAtom, inspect);
     timeout = globalThis.setTimeout(() => {
-      finish(new Error("Timed out waiting for the thread to rewind."));
+      finish({ error: new Error("Timed out waiting for the thread to rewind.") });
     }, timeoutMs);
     Promise.resolve()
       .then(revert)
-      .then(() => {
-        accepted = true;
-        inspect();
-      }, finish);
+      .then(
+        () => {
+          accepted = true;
+          inspect();
+        },
+        (error: unknown) => finish({ error }),
+      );
   });
 }
 
