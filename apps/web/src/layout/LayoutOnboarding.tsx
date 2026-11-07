@@ -13,6 +13,7 @@ import { Button } from "../components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "../components/ui/dialog";
 import { Popover, PopoverPopup } from "../components/ui/popover";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { isMacPlatform } from "../lib/utils";
 import { LayoutTourDiagram, LayoutTourKeys, type LayoutTourLesson } from "./LayoutTourDiagram";
 import { useLayoutStore } from "./layoutStore";
@@ -55,12 +56,13 @@ function useLayoutLessons() {
 /** First-use tips disappear as the user exercises the corresponding layout actions. */
 export function LayoutLearningTips() {
   const learned = useLayoutLessons();
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const keys = isMacPlatform(navigator.platform) ? "⌥⌘" : "Ctrl+Alt";
   const tips = [
     { key: "split", Icon: GripHorizontalIcon, text: "Drag a tab to the right edge" },
     { key: "keys", Icon: KeyboardIcon, text: `Hold ${keys} to see the layout keys` },
   ].filter((tip) => !learned.includes(tip.key));
-  if (tips.length === 0) return null;
+  if (!scrollingWorkspaces || tips.length === 0) return null;
   return (
     <div
       className="mt-5 flex flex-col gap-2 border-t border-border pt-4 text-muted-foreground"

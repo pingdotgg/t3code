@@ -38,6 +38,7 @@ import {
   useClientLayoutSettings,
   useClientSettings,
   useClientSettingsHydrated,
+  useScrollingWorkspacesEnabled,
   updateClientSettings,
 } from "../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../keybindings";
@@ -101,6 +102,7 @@ const UNDO_LIMIT = 20;
 
 export function LayoutSettings() {
   const layout = useClientLayoutSettings();
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const [steps, setSteps] = useState<LayoutTemplate[]>([]);
   const template = layout.template;
@@ -188,18 +190,22 @@ export function LayoutSettings() {
           options={NEW_TAB_OPTIONS}
           onChange={(newTabPosition) => setBehavior({ newTabPosition })}
         />
-        <PlacementRow
-          {...searchableSetting("layout-when-no-room")}
-          title="When it doesn't fit"
-          description="What happens when a new pane has no room."
-          value={layout.whenNoRoom}
-          defaultValue={DEFAULT_LAYOUT_SETTINGS.whenNoRoom}
-          options={WHEN_NO_ROOM_OPTIONS}
-          onChange={(whenNoRoom) => setBehavior({ whenNoRoom })}
-          onPreviewChange={setPreviewingNoRoom}
-        />
+        {scrollingWorkspaces ? (
+          <PlacementRow
+            {...searchableSetting("layout-when-no-room")}
+            title="When it doesn't fit"
+            description="What happens when a new pane has no room."
+            value={layout.whenNoRoom}
+            defaultValue={DEFAULT_LAYOUT_SETTINGS.whenNoRoom}
+            options={WHEN_NO_ROOM_OPTIONS}
+            onChange={(whenNoRoom) => setBehavior({ whenNoRoom })}
+            onPreviewChange={setPreviewingNoRoom}
+          />
+        ) : null}
       </SettingsSection>
-      {isElectron && isMacPlatform(navigator.platform) ? <TrackpadSection /> : null}
+      {scrollingWorkspaces && isElectron && isMacPlatform(navigator.platform) ? (
+        <TrackpadSection />
+      ) : null}
     </SettingsPageContainer>
   );
 }
