@@ -17,12 +17,14 @@ describe("mergeProviderInstanceEnvironment", () => {
       const baseEnv = {
         CODEX_HOME: "~/.inherited-codex",
         CLAUDE_CONFIG_DIR: "~/.inherited-claude",
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: "~/.inherited-claude-secure",
         GROK_HOME: "~/.inherited-grok",
       };
       const environment = yield* mergeProviderInstanceEnvironment(
         [
           { name: "CODEX_HOME", value, sensitive: false },
           { name: "CLAUDE_CONFIG_DIR", value, sensitive: false },
+          { name: "CLAUDE_SECURESTORAGE_CONFIG_DIR", value, sensitive: false },
           { name: "GROK_HOME", value, sensitive: false },
           { name: "CUSTOM_VALUE", value, sensitive: false },
         ],
@@ -32,12 +34,14 @@ describe("mergeProviderInstanceEnvironment", () => {
       expect(environment).toEqual({
         CODEX_HOME: path.join("/home/ada", tail),
         CLAUDE_CONFIG_DIR: path.join("/home/ada", tail),
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: path.join("/home/ada", tail),
         GROK_HOME: path.join("/home/ada", tail),
         CUSTOM_VALUE: value,
       });
       expect(baseEnv).toEqual({
         CODEX_HOME: "~/.inherited-codex",
         CLAUDE_CONFIG_DIR: "~/.inherited-claude",
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: "~/.inherited-claude-secure",
         GROK_HOME: "~/.inherited-grok",
       });
     }).pipe(
