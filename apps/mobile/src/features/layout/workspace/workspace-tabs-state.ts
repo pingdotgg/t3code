@@ -116,7 +116,7 @@ export function shouldRestoreNativeSearch(tab: WorkspaceTabState, keepsEmptySear
   return tab.searchMode === "active" || tab.query !== "" || keepsEmptySearchOpen;
 }
 
-/** Settings keeps a closed bar's query out of the list; threads and PRs share this shape. */
+/** Settings list filter follows the open search session only. */
 export function settingsSearchQuery(tab: WorkspaceTabState) {
   return tab.searchMode === "resting" ? "" : tab.query;
 }
