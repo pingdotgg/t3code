@@ -1,3 +1,4 @@
+import { isInSideChatPane } from "~/lib/sideChatPane";
 import { getClientSettings } from "~/hooks/useSettings";
 
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -66,6 +67,12 @@ function isSurfaceLauncherKey(event: KeyboardEvent): boolean {
 
 export function shouldRedirectInputToComposer(event: Event): boolean {
   if (event.defaultPrevented) return false;
+  const selection = window.getSelection();
+  if (
+    isInSideChatPane(event.target) ||
+    isInSideChatPane(selection?.anchorNode?.parentElement ?? null)
+  )
+    return false;
   // Never persist or send secret-request typing through the composer.
   if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
@@ -83,6 +90,16 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
 
 let pendingCitation: AssistantCitationSourceAnchor | undefined;
 
+type ActiveCite = (text: string) => AssistantCitationSourceAnchor | null;
+let activeCite: ActiveCite | undefined;
+
+export function registerActiveCite(cite: ActiveCite) {
+  activeCite = cite;
+  return () => {
+    if (activeCite === cite) activeCite = undefined;
+  };
+}
+
 function citeSelectionInput(event: Event, text: string): boolean {
   if (getClientSettings().typingWithSelection !== "cite") return false;
   const pending = pendingCitation?.commentInput;
@@ -97,20 +114,8 @@ function citeSelectionInput(event: Event, text: string): boolean {
     event.stopPropagation();
     return true;
   }
-  pendingCitation = undefined;
-  const toolbar = document.querySelector<HTMLButtonElement>("[data-type-to-cite]:not(:disabled)");
-  if (!toolbar) return false;
-  const request = new CustomEvent("cite-selection-input", {
-    detail: {
-      text,
-      accept: (anchor: AssistantCitationSourceAnchor) => {
-        pendingCitation = anchor;
-      },
-    },
-    cancelable: true,
-  });
-  toolbar.dispatchEvent(request);
-  if (!request.defaultPrevented) return false;
+  pendingCitation = activeCite?.(text) ?? undefined;
+  if (!pendingCitation) return false;
   event.preventDefault();
   event.stopPropagation();
   return true;
@@ -119,9 +124,23 @@ function citeSelectionInput(event: Event, text: string): boolean {
 export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.isComposing || event.keyCode === 229) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
+  if (!shouldRedirectInputToComposer(event)) return false;
+  const pending = pendingCitation?.commentInput;
+  if (
+    pending?.pending &&
+    pendingCitation?.source.isConnected &&
+    window.getSelection()?.isCollapsed &&
+    ["Backspace", "Delete", "Escape", "Enter"].includes(event.key)
+  ) {
+    if (event.key === "Backspace") pending.backspace();
+    if (event.key === "Escape") pending.cancel();
+    pendingCitation.initialComment = pending.text;
+    event.preventDefault();
+    event.stopPropagation();
+    return false;
+  }
   if (event.key.length !== 1) return false;
   if (isSurfaceLauncherKey(event)) return false;
-  if (!shouldRedirectInputToComposer(event)) return false;
   if (citeSelectionInput(event, event.key)) return false;
 
   return true;

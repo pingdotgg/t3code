@@ -293,6 +293,7 @@ export function resolveAssistantCitationRange(
 export function createCitationCommentInput(initialText: string) {
   let text = initialText;
   let pending = true;
+  let cancelled = false;
   let onChange: ((text: string) => void) | undefined;
   return {
     get text() {
@@ -300,6 +301,18 @@ export function createCitationCommentInput(initialText: string) {
     },
     get pending() {
       return pending;
+    },
+    get cancelled() {
+      return cancelled;
+    },
+    cancel() {
+      cancelled = true;
+      pending = false;
+      onChange?.(text);
+    },
+    backspace() {
+      text = Array.from(text).slice(0, -1).join("");
+      onChange?.(text);
     },
     append(chunk: string) {
       text += chunk;
@@ -310,6 +323,7 @@ export function createCitationCommentInput(initialText: string) {
     },
     subscribe(listener: (text: string) => void) {
       onChange = listener;
+      if (cancelled) listener(text);
       return () => {
         pending = false;
         onChange = undefined;

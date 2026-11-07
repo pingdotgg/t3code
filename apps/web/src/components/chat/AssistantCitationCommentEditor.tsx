@@ -47,7 +47,10 @@ export function AssistantCitationCommentEditor({
     setComment(text);
     onDraftChange?.(text);
   };
-  const receiveCommentInput = useEffectEvent(updateComment);
+  const receiveCommentInput = useEffectEvent((text: string) => {
+    if (commentInput?.cancelled) onCancel();
+    else updateComment(text);
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- transfers input buffered while the citation popover was mounting into its editor
   useLayoutEffect(() => {
     return commentInput?.subscribe(receiveCommentInput);

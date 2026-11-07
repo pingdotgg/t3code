@@ -5,7 +5,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { QuoteIcon } from "lucide-react";
-import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { use, useEffectEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -19,6 +19,7 @@ import {
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
+import { registerActiveCite } from "./composerFocusRedirect";
 import { BackgroundThreadContext } from "./backgroundThread";
 
 export function AssistantSelectionToolbar({
@@ -177,13 +178,13 @@ export function AssistantSelectionToolbar({
     };
   }, [backgroundThread, threadRef, viewport]);
 
-  if (!selection) return null;
-  const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
+  const tooLong = (selection?.citation.text.length ?? 0) > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
   const dismiss = () => {
     actionsRef.current?.cancel();
     setSelection(null);
   };
   const cite = (comment?: string, accept?: (anchor: AssistantCitationSourceAnchor) => void) => {
+    if (!selection) return false;
     const anchor = {
       ...selection.sourceAnchor,
       ...(comment === undefined
@@ -199,27 +200,23 @@ export function AssistantSelectionToolbar({
     dismiss();
     return true;
   };
+  const typeToCite = useEffectEvent((text: string) => {
+    let anchor: AssistantCitationSourceAnchor | null = null;
+    cite(text, (accepted) => {
+      anchor = accepted;
+    });
+    return anchor;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the foreground toolbar with the window input router
+  useEffect(() => {
+    if (backgroundThread) return;
+    return registerActiveCite(typeToCite);
+  }, [backgroundThread]);
+
+  if (!selection) return null;
   return createPortal(
     <Button
-      data-type-to-cite={backgroundThread ? undefined : "true"}
-      ref={(element) => {
-        toolbarRef.current = element;
-        if (!element) return;
-        const handler = (event: Event) => {
-          const { text, accept } = (
-            event as CustomEvent<{
-              text: string;
-              accept: (anchor: AssistantCitationSourceAnchor) => void;
-            }>
-          ).detail;
-          if (cite(text, accept)) event.preventDefault();
-        };
-        element.addEventListener("cite-selection-input", handler);
-        return () => {
-          element.removeEventListener("cite-selection-input", handler);
-          toolbarRef.current = null;
-        };
-      }}
+      ref={toolbarRef}
       type="button"
       size="xs"
       variant="glass"

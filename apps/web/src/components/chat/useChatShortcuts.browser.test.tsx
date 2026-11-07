@@ -7,6 +7,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
+import { registerActiveCite } from "./composerFocusRedirect";
 import { useChatShortcuts } from "./useChatShortcuts";
 
 vi.mock(import("~/hooks/useSettings"), () => ({
@@ -213,11 +214,11 @@ it("does not resolve a shortcut after citation input consumes its key", async ()
   const composerKeys: string[] = [];
   const stops: string[] = [];
   await using _screen = await render(<Chat composerKeys={composerKeys} stops={stops} />, options);
-  const toolbar = document.createElement("button");
-  toolbar.dataset.typeToCite = "true";
-  toolbar.addEventListener("cite-selection-input", (event) => event.preventDefault());
-  document.body.append(toolbar);
-  using _toolbar = { [Symbol.dispose]: () => toolbar.remove() };
+  using _toolbar = {
+    [Symbol.dispose]: registerActiveCite(() => {
+      return { source: document.body, viewport: document.body, range: document.createRange() };
+    }),
+  };
   const event = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
   document.body.dispatchEvent(event);
   expect(event.defaultPrevented).toBe(true);
