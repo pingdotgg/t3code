@@ -595,6 +595,39 @@ describe("PullRequestSyncReactor", () => {
       }),
     ),
   );
+  it.effect("syncs a rebase blocker even when the PR timestamp is unchanged", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const required = yield* Ref.make(false);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("rebase", { pullRequests: [makeLink(7)] })]),
+          summary: (input) =>
+            Ref.get(required).pipe(
+              Effect.map((rebaseRequired) => makeSummary(input, { rebaseRequired })),
+            ),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* applyRecordedSyncs(fixture);
+          yield* Ref.set(required, true);
+          yield* reactor.requestSync({
+            host: "github.com",
+            repository: "owner/repository",
+            number: 7,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          const commands = yield* Ref.get(fixture.syncCommands);
+          assert.equal(commands.length, 2);
+          assert.equal(commands[0]?.snapshot?.rebaseRequired, false);
+          assert.equal(commands[1]?.snapshot?.rebaseRequired, true);
+          assert.equal(commands[0]?.snapshot?.updatedAt, commands[1]?.snapshot?.updatedAt);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("snapshots an unsynced link once and writes it to the thread", () =>
     Effect.scoped(
       Effect.gen(function* () {

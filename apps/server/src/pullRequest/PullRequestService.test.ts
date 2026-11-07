@@ -3137,6 +3137,7 @@ it.effect(
               Effect.succeed({
                 ...changeRequest(1, "2026-07-02T00:00:00Z"),
                 isDraft: true,
+                rebaseRequired: false,
                 reviewDecision: "approved",
                 checksState: "passing",
               }),
@@ -3146,6 +3147,7 @@ it.effect(
                 deletions: 3,
                 changedFiles: 5,
                 mergeability: "conflicting",
+                rebaseRequired: true,
               }),
           }),
         ],
@@ -3153,6 +3155,8 @@ it.effect(
       yield* service.summary(reference);
       const detail = yield* service.detail(reference);
       const summary = yield* service.summary(reference);
+      assert.strictEqual(detail.rebaseRequired, true);
+      assert.strictEqual(summary.rebaseRequired, true);
       assert.strictEqual(summary.isDraft, false);
       assert.deepStrictEqual(summary.author, detail.author);
       assert.strictEqual(summary.additions, 14);

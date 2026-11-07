@@ -3504,6 +3504,116 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["pending", "success"] as const)(
+    "wakes once when GitLab requires a rebase with %s CI",
+    (status) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const maintenance = yield* ProjectionReplay.ProjectionReplay;
+        const threadId = ThreadId.make(`watch-rebase-${status}`);
+        const projectId = ProjectId.make(`watch-rebase-${status}`);
+        yield* seedProject({
+          projectId,
+          title: "Rebase wake",
+          workspaceRoot: "/workspace/watch-rebase",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`watch-rebase-create-${status}`),
+          threadId,
+          projectId,
+          title: "Rebase wake",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "gitlab.example.test", repository: "acme/app", number: 7 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`watch-rebase-start-${status}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://gitlab.example.test/acme/app/-/merge_requests/7", source: "agent" },
+        });
+        let rebaseRequired = false;
+        const detail = {
+          ...watchedPullRequestDetail({ projectId, number: 7, at: "2026-10-02T12:00:00.000Z" }),
+          provider: SourceControlProviderKind.make("gitlab"),
+          repository: key.repository,
+          checks: [{ name: "test", status, description: null, url: null }],
+        };
+        let reads = 0;
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            watchFingerprint: () => Effect.succeed(null),
+            detail: () =>
+              Effect.sync(() => {
+                reads += 1;
+                return { ...detail, rebaseRequired };
+              }),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+          }),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        yield* reactor.sweep;
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const readsBefore = reads;
+        rebaseRequired = true;
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`watch-rebase-snapshot-${status}`),
+          threadId,
+          ...key,
+          snapshot: {
+            state: "open",
+            title: detail.title,
+            headBranch: detail.headBranch,
+            baseBranch: detail.baseBranch,
+            isDraft: false,
+            updatedAt: detail.updatedAt,
+            syncedAt: detail.updatedAt,
+            rebaseRequired,
+          },
+          stack: null,
+        });
+        yield* reactor.sweep;
+        assert.equal(reads, readsBefore + 1);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(after.messages.length, before.messages.length + 1);
+        const wake = after.messages.find(
+          (message) => !before.messages.some((seen) => seen.id === message.id),
+        );
+        assert.equal(wake?.notification?.summary, "#7: rebase required");
+        assert.equal(wake?.notification?.outcome, "failed");
+        assert.equal(after.runs.length, before.runs.length + 1);
+        assert.isTrue(after.thread.pullRequests?.[0]?.watch?.rebaseRequired);
+        yield* reactor.sweep;
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        yield* restarted.sweep;
+        const replayed = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(replayed.messages.length, after.messages.length);
+        assert.equal(replayed.runs.length, after.runs.length);
+        assert.isTrue(replayed.thread.pullRequests?.[0]?.watch?.rebaseRequired);
+      }),
+  );
+
   it.effect("finishes owed checks once after pending sweeps, a restart, and a re-watch", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

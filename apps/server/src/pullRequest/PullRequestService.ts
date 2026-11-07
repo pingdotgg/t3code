@@ -1260,6 +1260,9 @@ export const make = Effect.gen(function* () {
       state: input.item.state,
       isDraft: input.item.isDraft,
       mergeability: input.item.mergeability,
+      ...(input.item.rebaseRequired === undefined
+        ? {}
+        : { rebaseRequired: input.item.rebaseRequired }),
       additions: input.item.additions,
       deletions: input.item.deletions,
       createdAt: input.item.createdAt,
@@ -1721,6 +1724,9 @@ export const make = Effect.gen(function* () {
     ...(changeRequest.mergeability === undefined
       ? {}
       : { mergeability: changeRequest.mergeability }),
+    ...(changeRequest.rebaseRequired === undefined
+      ? {}
+      : { rebaseRequired: changeRequest.rebaseRequired }),
     ...(changeRequest.stack === undefined ? {} : { stack: changeRequest.stack }),
     ...(changeRequest.headSha?.trim() ? { headSha: changeRequest.headSha.trim() } : {}),
     ...(changeRequest.autoMergeEnabled === undefined
@@ -1820,6 +1826,9 @@ export const make = Effect.gen(function* () {
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
             mergeability: changeRequest.mergeability,
+            ...(changeRequest.rebaseRequired === undefined
+              ? {}
+              : { rebaseRequired: changeRequest.rebaseRequired }),
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,
             changedFiles: changeRequest.changedFiles,
@@ -3228,6 +3237,7 @@ export const make = Effect.gen(function* () {
     deletions: detail.deletions,
     changedFiles: detail.changedFiles,
     mergeability: detail.mergeability,
+    ...(detail.rebaseRequired === undefined ? {} : { rebaseRequired: detail.rebaseRequired }),
     headBranch: detail.headBranch,
     baseBranch: detail.baseBranch,
     closedAt: detail.closedAt,

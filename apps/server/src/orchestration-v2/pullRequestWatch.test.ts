@@ -79,6 +79,37 @@ const remark = (
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
+  it.each(["pending", "success"] as const)(
+    "reports a required rebase once with %s CI",
+    (status) => {
+      const blocked = detail({
+        mergeability: "unknown",
+        rebaseRequired: true,
+        checks: [check("test", status)],
+      });
+      const first = evaluatePullRequestWatch(watch(), blocked, noRemarks);
+      assert.include(
+        first.changes.map((change) => change.kind),
+        "needs-rebase",
+      );
+      assert.deepEqual(evaluatePullRequestWatch(first.next, blocked, noRemarks).changes, []);
+      const unknown = evaluatePullRequestWatch(
+        first.next,
+        { ...blocked, rebaseRequired: undefined },
+        noRemarks,
+      );
+      assert.deepEqual(evaluatePullRequestWatch(unknown.next, blocked, noRemarks).changes, []);
+      const clean = evaluatePullRequestWatch(
+        first.next,
+        { ...blocked, rebaseRequired: false },
+        noRemarks,
+      );
+      assert.deepEqual(evaluatePullRequestWatch(clean.next, blocked, noRemarks).changes, [
+        { kind: "needs-rebase" },
+      ]);
+    },
+  );
+
   it("reports each failure at once, even while another check never finishes", () => {
     const bot = check("CodeRabbit", "pending");
     const first = detail({ checks: [check("lint", "failure"), check("test", "pending"), bot] });

@@ -344,6 +344,7 @@ export const PullRequestListEntry = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   mergeability: PullRequestMergeability,
+  rebaseRequired: Schema.optional(Schema.Boolean),
   /** Zero until fetched through `PullRequestListStatsInput`; GitHub listings omit counts. */
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
@@ -495,6 +496,7 @@ export const PullRequestSummary = Schema.Struct({
   reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
   mergeability: Schema.optional(PullRequestMergeability),
+  rebaseRequired: Schema.optional(Schema.Boolean),
   /** Null when the host says the pull request is in no stack; absent when the read did not ask. */
   stack: Schema.optional(Schema.NullOr(PullRequestStackMembership)),
   headSha: Schema.optional(TrimmedNonEmptyString),
@@ -610,6 +612,7 @@ export const PullRequestDetail = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   mergeability: PullRequestMergeability,
+  rebaseRequired: Schema.optional(Schema.Boolean),
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
   changedFiles: NonNegativeInt,
