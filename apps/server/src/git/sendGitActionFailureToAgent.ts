@@ -55,7 +55,8 @@ export function gitActionFailureMessage(input: {
 
 /**
  * Never fails the caller: the stacked action already failed and the client is getting that error,
- * so a wake that cannot be made is logged and dropped.
+ * so a wake that cannot be made is logged and dropped. Callers must require orchestration-operate;
+ * source-control write alone must not reach this path.
  */
 export const sendGitActionFailureToAgent: <E>(input: {
   readonly threadId: ThreadId;
