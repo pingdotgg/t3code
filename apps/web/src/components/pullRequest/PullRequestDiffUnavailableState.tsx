@@ -28,7 +28,6 @@ export function PullRequestDiffUnavailableState({
     terminology.singular,
     timestampFormat,
   );
-  const resumeOnly = description.startsWith("Resumes ");
 
   return (
     <Empty size="compact" className="min-h-full" role="status">
@@ -37,11 +36,7 @@ export function PullRequestDiffUnavailableState({
       </div>
       <EmptyHeader>
         <EmptyTitle>{title}</EmptyTitle>
-        {resumeOnly ? (
-          <p className="mt-1 text-sm text-foreground">{description}</p>
-        ) : (
-          <EmptyDescription>{description}</EmptyDescription>
-        )}
+        <EmptyDescription>{description}</EmptyDescription>
       </EmptyHeader>
       <div className="flex flex-wrap justify-center gap-2">
         <Button size="sm" variant="default" onClick={onRetry}>

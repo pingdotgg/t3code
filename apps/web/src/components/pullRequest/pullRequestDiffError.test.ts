@@ -13,7 +13,8 @@ describe("describePullRequestDiffError", () => {
     const result = describePullRequestDiffError(error, "GitHub", "pull request");
 
     expect(result.title).toBe("GitHub rate limit reached");
-    expect(result.description).toMatch(/^Resumes /);
+    expect(result.description).toContain("Try again");
+    expect(result.description).toContain("temporarily limiting requests");
     expect(result.description).not.toContain("127.0.0.1");
     expect(result.description).not.toContain("PullRequestOperationError");
   });
@@ -26,7 +27,7 @@ describe("describePullRequestDiffError", () => {
     ).toBe("GitHub rate limit reached");
   });
 
-  it("leads with the resume time from a rate-limit error", () => {
+  it("includes the resume time in the muted subtitle copy", () => {
     using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-07T12:00:00.000Z"));
     const result = describePullRequestDiffError(
       "GitHub API rate limit exceeded. Requests resume at 2026-11-07T18:00:00.000Z.",
@@ -35,9 +36,9 @@ describe("describePullRequestDiffError", () => {
       "12-hour",
     );
 
-    expect(result.description).toMatch(/^Resumes /);
+    expect(result.description).toMatch(/Try again at .+, or view the changes on GitHub\.$/);
+    expect(result.description).toContain("temporarily limiting requests");
     expect(result.description).not.toContain("after the limit resets");
-    expect(result.description).not.toContain("temporarily limiting");
   });
 
   it("does not blame a rate limit for an unknown connection failure", () => {

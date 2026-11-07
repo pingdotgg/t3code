@@ -28,13 +28,16 @@ export function describePullRequestDiffError(
 ) {
   if (RATE_LIMIT.test(error)) {
     const resumeAt = sourceControlRateLimitResumeAt(error);
+    const when = resumeAt === undefined ? "" : formatUpcomingTimestamp(resumeAt, timestampFormat);
+    const after =
+      when.length === 0
+        ? "after the limit resets"
+        : when.startsWith("tomorrow") || when.includes(" at ")
+          ? when
+          : `at ${when}`;
     return {
       title: `${providerName} rate limit reached`,
-      // Same shape as the usage-limit banner: the resume time is the description.
-      description:
-        resumeAt === undefined
-          ? `${providerName} is temporarily limiting requests. Try again after the limit resets, or view the changes on ${providerName}.`
-          : formatSourceControlRateLimitResume(resumeAt, timestampFormat),
+      description: `${providerName} is temporarily limiting requests, so this diff couldn't be loaded. Try again ${after}, or view the changes on ${providerName}.`,
     };
   }
 
