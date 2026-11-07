@@ -1,6 +1,7 @@
 import { InlineButton } from "../ui/button";
-import { useId, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "../../lib/utils";
 
 export function ExpandableText({
@@ -17,17 +18,29 @@ export function ExpandableText({
   expandLabel?: string;
 }) {
   const textId = useId();
-  const [expanded, setExpanded] = useState(false);
-  const canExpand = collapsedText !== text || text.length > 180 || text.includes("\n");
+  const textRef = useRef<HTMLDivElement>(null);
+  // Both are keyed to the text they were decided for, so a new text starts collapsed and unmeasured.
+  const [expandedText, setExpandedText] = useState<string | null>(null);
+  const [clampedText, setClampedText] = useState<string | null>(null);
+  const expanded = expandedText === text;
+  const hasHiddenText = collapsedText !== text;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- only the laid-out DOM knows whether the clamp hides a line; refit on resize
+  useLayoutEffect(() => {
+    const element = textRef.current;
+    if (!element || expanded || hasHiddenText) return;
+    const measure = () =>
+      setClampedText(element.scrollHeight > element.clientHeight ? collapsedText : null);
+    measure();
+    return observeResize(element, measure);
+  }, [expanded, hasHiddenText, collapsedText]);
+  const canExpand = hasHiddenText || clampedText === collapsedText;
 
   return (
     <div className={cn("min-w-0", className)}>
       <div
+        ref={textRef}
         id={textId}
-        className={cn(
-          "whitespace-pre-wrap break-words",
-          !expanded && canExpand ? collapsedClassName : null,
-        )}
+        className={cn("whitespace-pre-wrap break-words", !expanded ? collapsedClassName : null)}
       >
         {expanded ? text : collapsedText}
       </div>
@@ -37,7 +50,7 @@ export function ExpandableText({
           aria-controls={textId}
           tone="muted"
           className="mt-1"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={() => setExpandedText(expanded ? null : text)}
         >
           {expanded ? "Show less" : expandLabel}
         </InlineButton>
