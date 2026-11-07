@@ -157,7 +157,8 @@ close it. A closed folder shows how many threads it holds, and a dot when one of
 needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
 can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
-section is off. Each device keeps its own choice.
+section is off; with **Sections by project** on, each folder gets its own Working row instead.
+Each device keeps its own choice.
 
 ### List sections by project (beta)
 
