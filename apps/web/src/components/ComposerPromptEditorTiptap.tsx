@@ -208,11 +208,13 @@ const ComposerCitationCommentContext = createContext<{
   onOpenChange: (citeKey: string, open: boolean) => void;
   onDraftChange: (citeKey: string, comment: string) => void;
   onSubmitAndSend: () => void;
+  readOnly: boolean;
 }>({
   openComment: null,
   onOpenChange: () => {},
   onDraftChange: () => {},
   onSubmitAndSend: () => {},
+  readOnly: false,
 });
 
 const RichComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
@@ -476,7 +478,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
             if (open && !editor.isEditable) return;
             commentContext.onOpenChange(citeKey, open);
           },
-          onRemove,
+          onRemove: commentContext.readOnly ? undefined : onRemove,
           onSave: onSaveComment,
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
@@ -945,6 +947,7 @@ function ComposerPromptEditorTiptapInner(
       citationDraftRef.current = { key: nodeKey, comment };
     },
     onSubmitAndSend: onCitationSubmitAndSend ?? (() => {}),
+    readOnly: disabled,
   };
 
   const handleEditorChange = (updated: TiptapEditor) => {
