@@ -5,12 +5,21 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  deriveAvailableInstanceId,
+  deriveInstanceId,
+} from "@t3tools/client-runtime/provider-instance-ids";
+import { providerClients } from "@t3tools/client-runtime/provider-clients";
+import {
   AuthProvidersManageScope,
+  defaultInstanceIdForDriver,
   isManagedDriverAllowed,
+  ProviderInstanceId,
   type ProviderAuthResponse,
+  type ProviderDriverKind,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -82,35 +91,155 @@ function EnvironmentProviders({
   readonly environment: SettingsTarget;
   readonly providers: ReadonlyArray<ServerProvider>;
 }) {
+  const navigation = useNavigation();
   const accounts = providers.filter(canManageProvider);
   // Claude has no in-app sign-in; each account is its own instance on a signed-in config folder.
   const claudeAccounts = providers.filter(
     (provider) => provider.driver === CLAUDE_DRIVER && !canManageProvider(provider),
   );
+  const otherProviders = providers.filter(
+    (provider) =>
+      provider.driver !== CLAUDE_DRIVER &&
+      !canManageProvider(provider) &&
+      !accounts.some((account) => account.instanceId === provider.instanceId),
+  );
   const canAddClaude = isManagedDriverAllowed(
     environment.serverConfig.managedPolicy,
     CLAUDE_DRIVER,
   );
+  function openInstance(provider: ServerProvider) {
+    navigation.navigate("SettingsProviderInstance", {
+      environmentId: environment.environmentId,
+      instanceId: provider.instanceId,
+    });
+  }
   return (
     <>
-      {accounts.map((provider, index) => (
-        <ProviderAccount
-          key={provider.instanceId}
-          environment={environment}
-          provider={provider}
-          divider={index > 0}
-        />
-      ))}
-      {accounts.length === 0 ? (
+      {providers.length === 0 ? (
         <Text className="p-4 text-foreground-muted">
-          Configure a provider with in-app sign-in in web or desktop Settings.
+          No providers on this environment yet. Add one from web or desktop, or add a Claude account
+          below.
         </Text>
       ) : null}
+      {accounts.map((provider, index) => (
+        <View key={provider.instanceId}>
+          <ProviderAccount environment={environment} provider={provider} divider={index > 0} />
+          <SettingsActionRow
+            label="Provider settings"
+            description="Runtime config, enable, and display name"
+            onPress={() => openInstance(provider)}
+          />
+        </View>
+      ))}
+      {otherProviders.map((provider) => (
+        <SettingsActionRow
+          key={provider.instanceId}
+          label={provider.displayName ?? provider.driver}
+          description={
+            !provider.enabled
+              ? "Turned off"
+              : !provider.installed
+                ? "Not installed"
+                : provider.driver
+          }
+          onPress={() => openInstance(provider)}
+        />
+      ))}
       {claudeAccounts.map((provider) => (
-        <ClaudeAccount key={provider.instanceId} environment={environment} provider={provider} />
+        <View key={provider.instanceId}>
+          <ClaudeAccount environment={environment} provider={provider} />
+          <SettingsActionRow
+            label="Provider settings"
+            description="Runtime config, enable, and display name"
+            onPress={() => openInstance(provider)}
+          />
+        </View>
       ))}
       {canAddClaude ? <AddClaudeAccount environment={environment} /> : null}
+      <AddProviderInstance environment={environment} providers={providers} />
     </>
+  );
+}
+
+function AddProviderInstance(props: {
+  readonly environment: SettingsTarget;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}) {
+  const navigation = useNavigation();
+  const mutate = useAtomCommand(serverEnvironment.mutateProviderInstance, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const [pending, setPending] = useState(false);
+  const drivers = providerClients.definitions.filter(
+    (definition) =>
+      definition.driverKind !== CLAUDE_DRIVER &&
+      definition.featured !== false &&
+      isManagedDriverAllowed(props.environment.serverConfig.managedPolicy, definition.driverKind),
+  );
+  const actions: MenuAction[] = drivers.map((definition) => ({
+    id: definition.driverKind,
+    title: definition.label,
+  }));
+  if (actions.length === 0) return null;
+
+  async function add(driver: ProviderDriverKind) {
+    if (pending) return;
+    const existing = new Set([
+      defaultInstanceIdForDriver(driver),
+      ...Object.keys(props.environment.serverConfig.settings.providerInstances),
+    ]);
+    const instanceId = ProviderInstanceId.make(
+      deriveAvailableInstanceId(
+        (label) => deriveInstanceId(driver, label) || driver,
+        providerClients.get(driver)?.label ?? driver,
+        existing,
+      ) || driver,
+    );
+    setPending(true);
+    const result = await mutate({
+      environmentId: props.environment.environmentId,
+      input: {
+        patch: {},
+        providerInstanceMutation: {
+          operation: "create",
+          instanceId,
+          instance: { driver, enabled: true },
+        },
+      },
+    });
+    setPending(false);
+    if (result._tag === "Success") {
+      navigation.navigate("SettingsProviderInstance", {
+        environmentId: props.environment.environmentId,
+        instanceId,
+      });
+      return;
+    }
+    if (!isAtomCommandInterrupted(result)) {
+      const failure = squashAtomCommandFailure(result);
+      Dialog.alert(
+        "Could not add provider",
+        failure instanceof Error ? failure.message : String(failure),
+      );
+    }
+  }
+
+  return (
+    <View className="flex-row items-center justify-between gap-3 border-t border-border-subtle p-4">
+      <View className="min-w-0 flex-1 gap-1">
+        <Text className="text-base text-foreground">Add provider</Text>
+        <Text className="text-sm text-foreground-muted">Create another agent instance</Text>
+      </View>
+      <Menu
+        actions={actions}
+        onPressAction={({ nativeEvent }) => {
+          void add(nativeEvent.event as ProviderDriverKind);
+        }}
+      >
+        <ControlPill label="Add" disabled={pending} />
+      </Menu>
+    </View>
   );
 }
 

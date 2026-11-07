@@ -37,7 +37,11 @@ export function SettingsRow(props: {
   const onPress = () => {
     if (props.target) {
       if (inList) openSettings(navigation, props.target);
-      else navigation.navigate(props.target);
+      else {
+        // Targets are settings pages with no required params; the root stack also
+        // has paramful Settings* routes, so navigate's overload won't accept the union.
+        navigation.navigate(props.target as never);
+      }
     } else if (props.fullScreenTarget) {
       navigation.navigate(props.fullScreenTarget);
     } else {
