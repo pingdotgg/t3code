@@ -12,7 +12,7 @@ import {
 import { PullRequestActivityFilters } from "./PullRequestActivityFilters";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import Animated from "react-native-reanimated";
+import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import {
   PR_ROW_LAYOUT,
   PR_ROW_ENTER,
@@ -124,6 +124,9 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 
 const EMPTY_IDS: readonly string[] = [];
+// Matches SegmentedControl's default height so the list spacer and overlay stay aligned.
+const PR_SECTION_CONTROL_HEIGHT = Platform.OS === "android" ? 40 : 36;
+const PR_LIST_CONTENT_TOP_PADDING = 8;
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
@@ -355,9 +358,27 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     offset: -contentTopInset,
   });
   const bodyY = useRef(0);
+  // Content Y of the section-control spacer: read-status height + y within the identity block.
+  const sectionControlReadStatusHeight = useRef(0);
+  const sectionControlYInHeader = useRef(0);
+  const [sectionControlReady, setSectionControlReady] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const scrollViews = useRef<Partial<Record<typeof section, LegendListRef | null>>>({});
+  // One native control stays mounted outside the opacity-hidden tabs (Usage-style), so Liquid
+  // Glass selection never remounts mid-gesture. Its top tracks the active tab's scroll.
+  const sectionControlTop = useSharedValue(0);
+  const sectionControlStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: sectionControlTop.value }],
+  }));
+  const syncSectionControlTop = (scrollY: number) => {
+    sectionControlTop.set(
+      PR_LIST_CONTENT_TOP_PADDING +
+        sectionControlReadStatusHeight.current +
+        sectionControlYInHeader.current -
+        scrollY,
+    );
+  };
   // AnimatedLegendList re-attaches its handle and sets state whenever its ref changes,
   // so an inline ref in the tab map loops the screen into "Maximum update depth exceeded".
   const [listRefs] = useState(() => {
@@ -383,6 +404,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     requestedSection.current = next;
     scrollOffsets.current[next] = offset;
     currentScrollOffset.current = { tab: next, offset };
+    syncSectionControlTop(offset);
     scrollViews.current[next]?.scrollToOffset({ offset, animated: false });
     setSection(next);
   };
@@ -599,9 +621,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   onScroll={(event) => {
                     const offset = event.nativeEvent.contentOffset.y;
                     scrollOffsets.current[tab] = offset;
-                    if (shown(requestedSection.current) === tab)
+                    if (shown(requestedSection.current) === tab) {
                       currentScrollOffset.current = { tab, offset };
+                      syncSectionControlTop(offset);
+                    }
                   }}
+                  scrollEventThrottle={16}
                   className="flex-1"
                   renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
                   contentInsetAdjustmentBehavior="never"
@@ -636,7 +661,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   }}
                   contentContainerStyle={{
                     paddingHorizontal: 16,
-                    paddingTop: 8,
+                    paddingTop: PR_LIST_CONTENT_TOP_PADDING,
                     paddingBottom: 24 + (Platform.OS === "android" ? toolbarHeight : 0),
                     // Short tabs must still be tall enough to preserve the collapsed header.
                     minHeight: Math.max(
@@ -760,11 +785,18 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   maintainVisibleContentPosition={false}
                   ListHeaderComponent={
                     <>
-                      <PullRequestReadStatus
-                        pending={result.isPending && !identity}
-                        error={result.error}
-                        terminology={terminology}
-                      />
+                      <View
+                        onLayout={(event) => {
+                          sectionControlReadStatusHeight.current = event.nativeEvent.layout.height;
+                          syncSectionControlTop(currentScrollOffset.current.offset);
+                        }}
+                      >
+                        <PullRequestReadStatus
+                          pending={result.isPending && !identity}
+                          error={result.error}
+                          terminology={terminology}
+                        />
+                      </View>
                       {identity ? (
                         <View
                           className="gap-5 pb-5"
@@ -774,25 +806,16 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           }}
                         >
                           <PullRequestIdentity pr={identity} params={params} />
-                          {/* UIKit draws the tapped control's glass lens outside the hidden
-                              tab's opacity, so only the visible tab mounts the control. */}
-                          {Platform.OS !== "ios" || section === tab ? (
-                            <SegmentedControl
-                              options={[
-                                { value: "overview", label: "Overview" },
-                                ...(guidesEnabled
-                                  ? [{ value: "guide" as const, label: "Guide" }]
-                                  : []),
-                                { value: "activity", label: "Activity" },
-                              ]}
-                              selected={section}
-                              onSelect={selectSection}
-                              role="tab"
-                              size="compact"
-                            />
-                          ) : (
-                            <View style={{ height: 32 }} />
-                          )}
+                          {/* Spacer only: the real control is overlaid outside opacity:0 tabs so
+                              UIKit's glass lens stays on one always-mounted native control. */}
+                          <View
+                            style={{ height: PR_SECTION_CONTROL_HEIGHT }}
+                            onLayout={(event) => {
+                              sectionControlYInHeader.current = event.nativeEvent.layout.y;
+                              syncSectionControlTop(currentScrollOffset.current.offset);
+                              setSectionControlReady(true);
+                            }}
+                          />
                         </View>
                       ) : null}
                     </>
@@ -801,6 +824,34 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 />
               </View>
             ))}
+          {identity && sectionControlReady ? (
+            <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+              <Animated.View
+                pointerEvents="box-none"
+                style={[
+                  {
+                    position: "absolute",
+                    left: 16,
+                    right: 16,
+                    top: 0,
+                  },
+                  sectionControlStyle,
+                ]}
+              >
+                <SegmentedControl
+                  options={[
+                    { value: "overview", label: "Overview" },
+                    ...(guidesEnabled ? [{ value: "guide" as const, label: "Guide" }] : []),
+                    { value: "activity", label: "Activity" },
+                  ]}
+                  selected={section}
+                  onSelect={selectSection}
+                  role="tab"
+                  className="w-full"
+                />
+              </Animated.View>
+            </View>
+          ) : null}
         </ScreenContent>
         <PullRequestActionToolbar
           pr={pr}
