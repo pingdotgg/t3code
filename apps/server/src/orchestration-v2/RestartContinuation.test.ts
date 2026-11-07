@@ -599,8 +599,19 @@ const devServer = {
   work: { kind: "shell" as const, label: "vp run dev", id: "turn-item:dev-server" },
 };
 
+const userShell = {
+  turnItem: {
+    ...devServer.turnItem,
+    userShell: { cwd: "/workspace", delivery: "pending", backgrounded: true },
+  },
+  work: { ...devServer.work, awaited: true as const },
+};
+const quietUserShell = { ...userShell, work: devServer.work };
+
 it.effect.each([
   ["completed", scratchProjectId, backgroundSubagent, true],
+  ["completed", scratchProjectId, userShell, true],
+  ["completed", scratchProjectId, quietUserShell, false],
   ["waiting", ProjectId.make("restart-project"), backgroundSubagent, true],
   ["completed", ProjectId.make("restart-project"), devServer, false],
   ["waiting", scratchProjectId, devServer, false],
@@ -613,7 +624,15 @@ it.effect.each([
         ...base,
         thread: { ...base.thread, projectId },
         runs: [{ ...base.runs[0]!, status }],
-        providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+        providerThreads:
+          "userShell" in background.turnItem
+            ? [{ ...base.providerThreads[0]!, nativeThreadRef: null, status: "not_loaded" }]
+            : base.providerThreads,
+        providerSessions: "userShell" in background.turnItem ? [] : base.providerSessions,
+        providerTurns:
+          "userShell" in background.turnItem
+            ? []
+            : [{ ...base.providerTurns[0]!, status: "completed" }],
         turnItems: [background.turnItem],
         subagents:
           background === backgroundSubagent
@@ -635,7 +654,10 @@ it.effect.each([
         const recovery = yield* ProviderRuntimeRecovery.make.pipe(
           Effect.provide(
             Layer.mergeAll(
-              ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+              ServerSettings.layerTest({
+                continueThreadsAfterServerUpdate: true,
+                respondToShellCommands: background !== quietUserShell,
+              }),
               Layer.mock(ProjectionStore.ProjectionStoreV2)({
                 getRecoveryThreadIds: () => Effect.succeed([threadId]),
                 getRuntimeRecoveryProjection: () => Effect.succeed(projection),

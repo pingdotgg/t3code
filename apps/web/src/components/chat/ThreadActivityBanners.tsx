@@ -13,6 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
+import { isUserShellItem } from "@t3tools/client-runtime/state/user-shell-commands";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 import {
@@ -187,8 +188,16 @@ export function backgroundWorkNowItem(input: {
     const subagent = item?.type === "subagent" ? item : undefined;
     return {
       task,
+      // A `!` command's task carries its "You ran" title; name the command, as its row does.
       label:
-        item?.type === "command_execution" && commandDisplayText(item.input) === task.label ? (
+        item !== undefined && isUserShellItem(item) ? (
+          <>
+            {item.title ?? "You ran"}{" "}
+            <span className="font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap">
+              {commandDisplayText(item.input)}
+            </span>
+          </>
+        ) : item?.type === "command_execution" && commandDisplayText(item.input) === task.label ? (
           <span className="font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap">
             {task.label}
           </span>

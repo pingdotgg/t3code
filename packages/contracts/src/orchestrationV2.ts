@@ -544,6 +544,28 @@ export function isCompactionCommandMessage(message: CompactionMessageFields): bo
   );
 }
 
+export function parseShellCommand(text: string): string | null {
+  if (!text.startsWith("!")) return null;
+  return text.slice(1).trim() || null;
+}
+
+export function userShellCommand(message: {
+  readonly text: string;
+  readonly createdBy?: string | undefined;
+  readonly creationSource?: string | undefined;
+  readonly scheduledTaskId?: string | undefined;
+  readonly guestMessageId?: string | undefined;
+  readonly context?: { readonly guest?: unknown } | undefined;
+}): string | null {
+  return message.createdBy === "user" &&
+    (message.creationSource === "web" || message.creationSource === "mobile") &&
+    message.scheduledTaskId === undefined &&
+    message.guestMessageId === undefined &&
+    message.context?.guest === undefined
+    ? parseShellCommand(message.text)
+    : null;
+}
+
 export type OrchestrationV2GoalCommand =
   | { readonly type: "show" }
   | { readonly type: "clear" }
@@ -1678,6 +1700,17 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("command_execution"),
+    userShell: Schema.optional(
+      Schema.Struct({
+        cwd: Schema.String,
+        delivery: Schema.Literals(["pending", "delivered", "dismissed"]),
+        durationSeconds: Schema.optional(Schema.Number),
+        outputFile: Schema.optional(Schema.String),
+        outputTruncated: Schema.optional(Schema.Boolean),
+        backgrounded: Schema.optional(Schema.Boolean),
+        stoppedByUser: Schema.optional(Schema.Boolean),
+      }),
+    ),
     input: Schema.String,
     output: Schema.optional(Schema.String),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
@@ -2512,6 +2545,17 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("command_execution"),
+    userShell: Schema.optional(
+      Schema.Struct({
+        cwd: Schema.String,
+        delivery: Schema.Literals(["pending", "delivered", "dismissed"]),
+        durationSeconds: Schema.optional(Schema.Number),
+        outputFile: Schema.optional(Schema.String),
+        outputTruncated: Schema.optional(Schema.Boolean),
+        backgrounded: Schema.optional(Schema.Boolean),
+        stoppedByUser: Schema.optional(Schema.Boolean),
+      }),
+    ),
     input: Schema.String,
     output: Schema.optional(Schema.String),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
@@ -3246,6 +3290,19 @@ export const OrchestrationV2Command = Schema.Union([
     runId: RunId,
     reason: Schema.optional(Schema.String),
     holdQueue: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("shell-command.stop"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: TurnItemId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("shell-command.delivery.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: TurnItemId,
+    delivery: Schema.Literals(["pending", "dismissed"]),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),

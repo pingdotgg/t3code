@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { isUserShellItem } from "@t3tools/client-runtime/state/user-shell-commands";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
@@ -3692,8 +3693,12 @@ export const ThreadFeed = memo(function ThreadFeed({
         ) {
           return undefined;
         }
+        // A user shell row can grow a Stop or Include action line below it.
         return entry.activities.some(
-          (activity) => activity.prominent || expandedWorkRows[activity.id],
+          (activity) =>
+            activity.prominent ||
+            expandedWorkRows[activity.id] ||
+            isUserShellItem(activity.projectedItem.item),
         )
           ? undefined
           : collapsedWorkLogHeight(entry.activities, entry.continuesWorkLog);

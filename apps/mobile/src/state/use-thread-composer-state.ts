@@ -24,6 +24,7 @@ import {
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   orchestrationV2WorktreePending,
+  parseShellCommand,
   type EnvironmentId,
   type ModelSelection,
   type ProviderInteractionMode,
@@ -62,6 +63,7 @@ import {
   selectPendingAcknowledgedMessages,
 } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
+import { shellCommandSendBlock } from "../features/threads/userShellCommands";
 import { appAtomRegistry } from "./atom-registry";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import {
@@ -626,6 +628,17 @@ export function useThreadComposerState(input: {
       Dialog.alert("Too much context", contextBlockReason);
       return null;
     }
+    const isShellCommand = parseShellCommand(text) !== null;
+    const shellBlock = shellCommandSendBlock({
+      environmentId: thread.environmentId,
+      text,
+      connected: selectedEnvironmentRuntime?.connectionState === "connected",
+      hasAttachmentsOrContext: attachments.length > 0 || (draft.context?.records.length ?? 0) > 0,
+    });
+    if (shellBlock) {
+      Dialog.alert(shellBlock.title, shellBlock.detail);
+      return null;
+    }
 
     const modelSelection = draft.modelSelection ?? thread.modelSelection;
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
@@ -684,7 +697,8 @@ export function useThreadComposerState(input: {
       return null;
     }
 
-    if (beforeDispatch !== undefined) {
+    // A shell command queues behind the active run, so it never answers or redirects approvals.
+    if (beforeDispatch !== undefined && !isShellCommand) {
       const response = await beforeDispatch(
         text,
         attachments.length > 0 || draft.context !== undefined,
@@ -718,6 +732,7 @@ export function useThreadComposerState(input: {
       running: activeThreadBusy && canSteerActiveTurn,
       alternateModifier: followUpOverride !== undefined && followUpOverride !== activeTurnDefault,
       activeTurnDefault,
+      canSteer: !isShellCommand,
     });
     const setupRunning = [selectedThreadActivityRun?.status, selectedThreadRuntime?.status].some(
       (status) => status === "preparing" || status === "starting",

@@ -354,6 +354,7 @@ export interface ProjectionRecordFilter {
   readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly subagentRunIds?: ReadonlyArray<RunId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
+  readonly pendingUserShellCommands?: boolean;
   readonly turnItemRequestIds?: ReadonlyArray<RuntimeRequestId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
@@ -3159,6 +3160,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE thread_id = ${threadId}
                   ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
+                  ${filter?.pendingUserShellCommands === true ? sql`AND json_extract(payload_json, '$.userShell.delivery') = 'pending'` : sql``}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
                   ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
@@ -4211,6 +4213,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND CASE WHEN json_valid(payload_json)
                     THEN json_extract(payload_json, '$.restartContinuationOfRunId') IS NOT NULL
                     ELSE 0 END
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_turn_items
+                WHERE type = 'command_execution' AND status = 'running'
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_extract(payload_json, '$.userShell.backgrounded') = 1
+                    ELSE 0 END
               `;
             case "runtime":
               return sql`
@@ -4537,6 +4545,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 OR (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact')
                 -- Earlier /goal turns defer context too; parseGoalCommand narrows this prefix match.
                 OR (role = 'user' AND trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace}) GLOB '/goal*')
+                -- Settled ! shell runs defer history too; userShellCommand narrows this prefix match.
+                OR (role = 'user' AND json_extract(payload_json, '$.text') GLOB '!*')
               ) ORDER BY created_at ASC, message_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeMessagePayload, threadId)));
             const conversation = yield* sql<{ present: number }>`

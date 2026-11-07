@@ -1,3 +1,4 @@
+import * as ShellCommandService from "./ShellCommandService.ts";
 import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -71,6 +72,7 @@ export class OrchestrationEffectExecutorV2 extends Context.Service<
 export const layerExecutor: Layer.Layer<
   OrchestrationEffectExecutorV2,
   never,
+  | ShellCommandService.ShellCommandService
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunFinalizationService.RunFinalizationService
   | CheckpointRollbackService.CheckpointRollbackServiceV2
@@ -83,6 +85,7 @@ export const layerExecutor: Layer.Layer<
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
+    const shells = yield* ShellCommandService.ShellCommandService;
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
     const resourceCleanup = yield* ResourceCleanupService.ResourceCleanupService;
     const checkpointRollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
@@ -496,6 +499,22 @@ export const layerExecutor: Layer.Layer<
               );
           case "scheduled-tasks.cleanup":
             return resourceCleanup.cleanupScheduledTasks(effect.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          case "shell-command.stop":
+          case "shell-output.cleanup":
+            return (
+              effect.request.type === "shell-command.stop"
+                ? shells.stop(effect.threadId, effect.request.itemId)
+                : shells.cleanup(effect.threadId)
+            ).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({

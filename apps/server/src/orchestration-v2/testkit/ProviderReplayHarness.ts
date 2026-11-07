@@ -1,3 +1,5 @@
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as ShellCommandService from "../ShellCommandService.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -200,6 +202,8 @@ export function runOrchestratorV2ProviderReplayScenario<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly shellSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
+    readonly respondToShellCommands?: boolean;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
@@ -243,6 +247,8 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly shellSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
+    readonly respondToShellCommands?: boolean;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
@@ -251,6 +257,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
+  | ShellCommandService.ShellCommandService
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
@@ -277,6 +284,8 @@ export function layerWithRegistry<Error>(
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly shellSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
+    readonly respondToShellCommands?: boolean;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
@@ -284,6 +293,7 @@ export function layerWithRegistry<Error>(
     readonly managedPolicy?: ManagedPolicyDocument;
   } = {},
 ): Layer.Layer<
+  | ShellCommandService.ShellCommandService
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
@@ -313,6 +323,7 @@ export function layerWithRegistry<Error>(
       ServerSettings.layerTest(
         {
           responseStreamingMode: "turn",
+          respondToShellCommands: options.respondToShellCommands ?? true,
           ...(options.continueThreadsAfterServerUpdate === undefined
             ? {}
             : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
@@ -413,7 +424,27 @@ export function layerWithRegistry<Error>(
       ),
     ),
   );
+  const layerShellCommandsProvided = ShellCommandService.layer.pipe(
+    Layer.provide(ThreadCommandExecutor.layer),
+    Layer.provide(
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        layerStores,
+        IdAllocator.layer,
+        layerCommandOutputHubProvided,
+        layerServerConfig,
+        layerServerSettings,
+      ),
+    ),
+    Layer.provide(layerContinuationRequests),
+    Layer.provide(
+      options.shellSpawner === undefined
+        ? NodeServices.layer
+        : Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, options.shellSpawner),
+    ),
+  );
   const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
+    Layer.provide(layerShellCommandsProvided),
     Layer.provide(
       Layer.mergeAll(
         layerContextHandoffServiceProvided,
@@ -516,6 +547,7 @@ export function layerWithRegistry<Error>(
         )
       : Layer.empty;
   const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
+    Layer.provide(layerShellCommandsProvided),
     Layer.provide(
       Layer.mergeAll(
         layerRunFinalizationServiceProvided,
@@ -534,6 +566,7 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
   const layerReplayRuntime = Layer.mergeAll(
+    layerShellCommandsProvided,
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,

@@ -201,6 +201,7 @@ import { ThreadFeed, type ThreadFeedHandle, type ThreadFeedHistoryControls } fro
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
+import { ComposerPendingShellCommands } from "./ComposerPendingShellCommands";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
@@ -1730,6 +1731,14 @@ function ThreadDetailBody(
                         />
                       </Animated.View>
                     ) : null}
+                    {props.draftMode ||
+                    props.selectedThreadDetailRef === null ||
+                    props.activePendingUserInput ? null : (
+                      <ComposerPendingShellCommands
+                        threadRef={props.selectedThreadDetailRef}
+                        canDismiss={props.canOperateThread}
+                      />
+                    )}
                     {usageLimitsReport && activeUserInputRequestId === null ? (
                       <Animated.View
                         className="shrink-0 px-4"

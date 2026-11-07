@@ -974,6 +974,110 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
+  it("keeps a command the user ran out of the turn fold", () => {
+    const at = "2026-01-01T00:00:00Z";
+    const runId = RunId.make("shell-run");
+    const user: TimelineEntry = {
+      kind: "message",
+      id: "user-entry",
+      createdAt: at,
+      message: {
+        id: MessageId.make("user-1"),
+        role: "user",
+        text: "!ls",
+        runId,
+        createdAt: at,
+        updatedAt: at,
+        streaming: false,
+      },
+    };
+    const shellItem: OrchestrationV2TurnItem = {
+      id: TurnItemId.make("shell"),
+      threadId: ThreadId.make("thread-1"),
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: "You ran",
+      startedAt: DateTime.makeUnsafe(at),
+      completedAt: DateTime.makeUnsafe(at),
+      updatedAt: DateTime.makeUnsafe(at),
+      type: "command_execution",
+      input: "ls",
+      exitCode: 0,
+      userShell: { cwd: "/repo", delivery: "delivered" },
+    };
+    const shell: TimelineEntry = {
+      kind: "work",
+      id: "shell-entry",
+      createdAt: at,
+      entry: {
+        id: "shell",
+        runId,
+        createdAt: at,
+        label: "You ran",
+        tone: "tool",
+        command: "ls",
+        toolLifecycleStatus: "completed",
+        projectedItem: {
+          position: 1,
+          visibility: "local",
+          sourceThreadId: shellItem.threadId,
+          sourceItemId: shellItem.id,
+          item: shellItem,
+        },
+      },
+    };
+    const agentWork: TimelineEntry = {
+      kind: "work",
+      id: "agent-work-entry",
+      createdAt: "2026-01-01T00:00:02Z",
+      entry: {
+        id: "agent-work",
+        runId,
+        createdAt: "2026-01-01T00:00:02Z",
+        label: "Ran command",
+        tone: "tool",
+      },
+    };
+    const reply: TimelineEntry = {
+      kind: "message",
+      id: "reply-entry",
+      createdAt: "2026-01-01T00:00:05Z",
+      message: {
+        id: MessageId.make("reply"),
+        role: "assistant",
+        text: "Two files.",
+        runId,
+        createdAt: "2026-01-01T00:00:05Z",
+        updatedAt: "2026-01-01T00:00:05Z",
+        streaming: false,
+      },
+    };
+    const rowIds = (timelineEntries: ReadonlyArray<TimelineEntry>) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      }).map((row) => (row.kind === "work" ? `${row.id}:${row.displayLabel ?? ""}` : row.id));
+
+    // Responding off: the run holds only the command, so nothing folds.
+    expect(rowIds([user, shell])).toEqual(["user-entry", "shell-entry:You ran ls"]);
+    // The agent's reply folds below the command it answers.
+    expect(rowIds([user, shell, agentWork, reply])).toEqual([
+      "user-entry",
+      "shell-entry:You ran ls",
+      "turn-fold:shell-run",
+      "reply-entry",
+    ]);
+  });
+
   it("folds the first assistant message and settled work before the terminal response", () => {
     const timelineEntries = [
       {

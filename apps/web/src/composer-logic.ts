@@ -318,6 +318,11 @@ export function composerStateAtPromptEnd(
   };
 }
 
+/** Sends trim the prompt, so leading whitespace before `!` still makes a shell command. */
+export function isShellModePrompt(prompt: string): boolean {
+  return prompt.trimStart().startsWith("!");
+}
+
 export function parseStandaloneComposerSlashCommand(
   text: string,
 ): Exclude<ComposerSlashCommand, "model" | "side" | "btw" | "clear"> | null {

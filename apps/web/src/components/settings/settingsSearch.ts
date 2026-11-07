@@ -728,6 +728,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "respond-to-shell-commands",
+    title: "Respond to shell commands",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["! bang shell command terminal run result agent reply respond composer"],
+  },
+  {
     id: "background-activity",
     title: "Background activity",
     to: "/settings/maintenance",

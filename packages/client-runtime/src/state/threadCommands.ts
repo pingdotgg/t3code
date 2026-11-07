@@ -16,6 +16,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
+  provideRpcPermissionGuard,
 } from "./runtime.ts";
 import {
   type InterruptThreadTurnInput,
@@ -48,6 +49,7 @@ import {
   settleThread,
   snoozeThread,
   startThreadTurn,
+  type StartThreadTurnInput,
   stopThreadSession,
   unarchiveThread,
   unlinkThreadPullRequest,
@@ -259,7 +261,9 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     startTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:start-turn",
-      execute: startThreadTurn,
+      // A `!` message needs the terminal grant, so the send path checks guarded scopes.
+      execute: (input: StartThreadTurnInput, registry) =>
+        startThreadTurn(input).pipe(provideRpcPermissionGuard(runtime, registry)),
       scheduler,
       concurrency,
     }),

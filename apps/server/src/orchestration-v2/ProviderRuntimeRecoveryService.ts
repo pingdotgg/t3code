@@ -293,6 +293,10 @@ export const make = Effect.gen(function* () {
           ),
         );
       const events: Array<OrchestrationV2DomainEvent> = [];
+      const respondToShellCommands = yield* settings.getSettings.pipe(
+        Effect.map((value) => value.respondToShellCommands),
+        Effect.orElseSucceed(() => false),
+      );
       const cancelledBackgroundWork = new Map<
         ProviderThreadId,
         Array<OrchestrationV2RestartCancelledBackgroundWork>
@@ -323,7 +327,12 @@ export const make = Effect.gen(function* () {
           ownProviderThread?.nativeThreadRef?.nativeId ?? undefined,
         );
         if (work === undefined) return;
-        recordCancelledBackgroundWork(awaitingId, work);
+        recordCancelledBackgroundWork(
+          awaitingId,
+          item.type === "command_execution" && item.userShell !== undefined
+            ? { ...work, ...(respondToShellCommands ? { awaited: true as const } : {}) }
+            : work,
+        );
         if (item.nativeItemRef?.nativeId != null) {
           cancelledBackgroundNativeIds.add(item.nativeItemRef.nativeId);
         }
@@ -620,7 +629,11 @@ export const make = Effect.gen(function* () {
               candidate.status === "waiting"),
         )) {
           // Cut native subagents do not resume; record them for the continuation to restart.
-          if (run.status === "waiting") recordCancelledBackgroundItem(item);
+          if (
+            run.status === "waiting" ||
+            (item.type === "command_execution" && item.userShell !== undefined)
+          )
+            recordCancelledBackgroundItem(item);
           else if (item.type === "subagent" && item.origin === "provider_native")
             recordCancelledBackgroundItem(item);
           events.push({
@@ -807,6 +820,7 @@ export const make = Effect.gen(function* () {
           ? restartContinuationRun(
               { ...projection, providerSessions: sessionsLiveAtStart(projection, stoppedThisPass) },
               now,
+              respondToShellCommands,
             )
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
@@ -979,7 +993,11 @@ export const make = Effect.gen(function* () {
               .continueThreadsAfterServerUpdate
           )
             return;
-          const run = restartContinuationRun(projection, yield* DateTime.now);
+          const run = restartContinuationRun(
+            projection,
+            yield* DateTime.now,
+            enabled.respondToShellCommands,
+          );
           if (!run) return;
           const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
           yield* eventSink.writeWithEffects({

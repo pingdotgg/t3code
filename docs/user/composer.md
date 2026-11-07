@@ -408,3 +408,11 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## Run a shell command
+
+Start a message with `!` to run a command on the connected environment, in the thread’s working directory. For example, `!git status` runs directly and shares the result with the agent. It requires terminal permission as well as permission to operate threads. Commands sent during an active turn wait in the queue.
+
+**Respond to shell commands** is on by default in **Settings › Threads**. Turn it off to collect results without starting an agent response; pending results accompany your next message. Remove a pending result to exclude it, or choose **Include in next message** on its timeline item to include it again.
+
+Commands still running after two minutes continue in the background and can be stopped from their timeline item. When responding is enabled, completion queues an agent response. Background commands stop when the server restarts or the thread is archived or deleted. Large outputs remain in a file until the thread is archived or deleted.

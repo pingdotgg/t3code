@@ -6,6 +6,7 @@ import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/tu
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import { isUserShellItem } from "@t3tools/client-runtime/state/user-shell-commands";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
   turnItemDetailRevision,
@@ -257,6 +258,9 @@ function compactWorkEntryText(value: string): string {
 
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (entry.itemType === "fork") return entry.label;
+  const payload = entry.structuredPayload;
+  if (payload !== undefined && isUserShellItem(payload))
+    return compactWorkEntryText(`${entry.label} ${commandDisplayText(payload.input)}`);
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
   const presentation = resolveWorkEntryToolPresentation(entry);
@@ -841,7 +845,11 @@ function toFeedActivity(
     icon: workEntry.toolSurface ?? itemIcon(item),
     logo: toolPresentation?.logo ?? null,
     toolLike: itemIsToolLike(item),
-    prominent: itemIsProminent(item) || (item.type === "error" && item.status === "failed"),
+    // A command the user ran with `!` stands alone, so the agent's work never folds it away.
+    prominent:
+      itemIsProminent(item) ||
+      isUserShellItem(item) ||
+      (item.type === "error" && item.status === "failed"),
     status:
       item.type === "error" && item.failure.class === "usage_limit"
         ? itemStatus(item)

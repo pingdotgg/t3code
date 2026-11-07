@@ -24,6 +24,7 @@ import {
   type ProviderInteractionMode,
   type ServerConfig as T3ServerConfig,
   type UsageLimitsReport,
+  parseShellCommand,
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
@@ -102,6 +103,12 @@ import { compactEditorInsets } from "./compactEditorInsets";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
+import { ComposerShellModeBanner } from "./ComposerShellMode";
+import {
+  isShellModePrompt,
+  shellCommandPermissionAtom,
+  withoutShellPrefix,
+} from "./userShellCommands";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import type { ComposerEnvironmentCandidate } from "@t3tools/client-runtime/composerThreadItems";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
@@ -480,10 +487,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       serverConfig: props.serverConfig,
       states: uploadStates,
     });
+  const isShellMode = isShellModePrompt(draftMessage);
+  const canRunShellCommands = useAtomValue(shellCommandPermissionAtom(props.environmentId));
   const sendPresentation = resolveComposerSendPresentation({
     editingQueuedMessage: queuedEdit !== null,
     running: props.activeThreadBusy,
-    canSteer: props.canSteerActiveTurn,
+    // The server queues a shell command behind an active run; it never steers.
+    canSteer: props.canSteerActiveTurn && !isShellMode,
     followUpBehavior: props.followUpBehavior,
     deliveryDeferred:
       props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
@@ -611,6 +621,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     (queuedEdit?.saving === true ? "Saving…" : null) ??
     props.sendBlockedReason ??
     (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
+    (props.connectionState === "connected" &&
+    !canRunShellCommands &&
+    parseShellCommand(draftMessage.trim()) !== null
+      ? "Shell commands need terminal access"
+      : null) ??
     attachmentBlockReason;
   const canSend =
     (props.canOperateThread || props.connectionState !== "connected") &&
@@ -729,6 +744,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     ) ?? null;
   const openSettings = () => {
     settingsSheetPresentation.open();
+  };
+  const exitShellMode = () => {
+    const current = getComposerDraftSnapshot(composerDraftKey).text;
+    if (isSubmissionLocked || !isShellModePrompt(current)) return;
+    const { text, bangIndex } = withoutShellPrefix(current);
+    const shift = (offset: number) => (offset > bangIndex ? offset - 1 : offset);
+    onChangeDraftMessage(text);
+    composerMenu.onSelectionChange({
+      start: shift(composerMenu.selection.start),
+      end: shift(composerMenu.selection.end),
+    });
   };
 
   useFocusEffect(() => {
@@ -878,6 +904,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             label="Model unavailable. Open model settings."
             tone="text"
             onPress={openSettings}
+          />
+        ) : null}
+        {isShellMode ? (
+          <ComposerShellModeBanner
+            canRun={canRunShellCommands || props.connectionState !== "connected"}
+            onExit={exitShellMode}
           />
         ) : null}
 

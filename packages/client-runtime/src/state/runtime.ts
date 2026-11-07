@@ -959,6 +959,18 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
   });
 }
 
+/** Lets a command check guarded RPC grants against each destination session. */
+export const provideRpcPermissionGuard =
+  <R, E>(
+    runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
+    registry: AtomRegistry.AtomRegistry,
+  ) =>
+  <A, E2, R2>(effect: Effect.Effect<A, E2, R2>) =>
+    Effect.provideService(effect, RpcPermissionGuard, {
+      authorize: (id, method, payload) =>
+        createCommandPermissions(runtime, method).authorize(registry, id, payload),
+    });
+
 export function createEnvironmentRpcCommand<
   R,
   ER,
@@ -1026,10 +1038,7 @@ export function createEnvironmentRpcCommand<
           started = options.onStart?.(target, registry);
           return options.execute?.(input) ?? requestGuarded(options.tag, input);
         }),
-        Effect.provideService(RpcPermissionGuard, {
-          authorize: (id, method, payload) =>
-            createCommandPermissions(runtime, method).authorize(registry, id, payload),
-        }),
+        provideRpcPermissionGuard(runtime, registry),
         Effect.tap(
           (result) => options.onSuccess?.(target, registry, result, started) ?? Effect.void,
         ),

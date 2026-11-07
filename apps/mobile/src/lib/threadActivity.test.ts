@@ -1074,6 +1074,49 @@ describe("buildThreadFeed", () => {
     expect(finished.map((entry) => entry.type)).toEqual(["message", "run-fold", "message"]);
   });
 
+  it("keeps a user-run shell command apart from the agent's work, folded or not", () => {
+    const agentCommand = (id: string, at: string, ordinal: number) => ({
+      ...command(at),
+      id: TurnItemId.make(id),
+      ordinal,
+    });
+    const shell: OrchestrationV2TurnItem = {
+      ...base("item-shell", "2026-06-20T00:00:02.500Z", 2),
+      title: "You ran",
+      status: "running",
+      completedAt: null,
+      type: "command_execution",
+      input: "bun run build",
+      userShell: { cwd: "/repo", delivery: "pending", backgrounded: true },
+    };
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed([
+        projected(userMessage(), 0),
+        projected(agentCommand("item-before", "2026-06-20T00:00:02.000Z", 1), 1),
+        projected(shell, 2),
+        projected(agentCommand("item-after", "2026-06-20T00:00:03.000Z", 3), 3),
+        projected(assistantMessage("2026-06-20T00:00:04.000Z"), 4),
+      ]),
+      {
+        runId,
+        status: "completed",
+        startedAt: "2026-06-20T00:00:01.000Z",
+        completedAt: "2026-06-20T00:00:04.000Z",
+      },
+      new Set(),
+    );
+    const visibleGroups = presented.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? [entry.activities.map((activity) => activity.projectedItem.item.id)]
+        : [],
+    );
+    expect(visibleGroups).toEqual([["item-shell"]]);
+    const shellActivity = presented.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0]!;
+    expect(workEntryRowLabel(shellActivity.workEntry)).toBe("You ran bun run build");
+  });
+
   it("folds each run of a provider-native subagent thread like a normal turn", () => {
     const runless = <T extends OrchestrationV2TurnItem>(item: T, id: string, ordinal: number) => ({
       ...item,
