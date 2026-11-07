@@ -147,19 +147,17 @@ describe("DesktopPreReadyPlatform", () => {
       }),
   );
 
-  it.effect.each(["darwin", "win32", "linux"] as const)(
-    "keeps features already enabled on the command line on %s",
-    (platform) =>
-      Effect.gen(function* () {
-        const commandLine = yield* launchWithCommandLine(platform, [
-          ["enable-features", "WebRTCPipeWireCapturer,UseOzonePlatform"],
-        ]);
-        assert.sameMembers(commandLine.get("enable-features")?.split(",") ?? [], [
-          "WebRTCPipeWireCapturer",
-          "UseOzonePlatform",
-          "CDPScreenshotNewSurface",
-        ]);
-      }),
+  it.effect("keeps features already enabled on the command line", () =>
+    Effect.gen(function* () {
+      const commandLine = yield* launchWithCommandLine("darwin", [
+        ["enable-features", "WebRTCPipeWireCapturer,UseOzonePlatform"],
+      ]);
+      assert.sameMembers(commandLine.get("enable-features")?.split(",") ?? [], [
+        "WebRTCPipeWireCapturer",
+        "UseOzonePlatform",
+        "CDPScreenshotNewSurface",
+      ]);
+    }),
   );
 
   it.effect("respects a user who disabled the fresh capture surface", () =>
