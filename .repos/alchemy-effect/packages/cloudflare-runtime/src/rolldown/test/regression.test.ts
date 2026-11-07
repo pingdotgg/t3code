@@ -1,5 +1,5 @@
-import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import { assert, describe, expect, it } from "vitest";
+import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import { buildFixture } from "./utils/build-fixture.ts";
 
 describe("regression", () => {

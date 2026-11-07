@@ -170,7 +170,7 @@ export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<PendingUserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
 ): Record<string, PendingUserInputAnswer> | null {
-  const answers: Record<string, PendingUserInputAnswer> = {};
+  const entries: Array<[string, PendingUserInputAnswer]> = [];
 
   for (const question of questions) {
     const draft = draftAnswers[question.id];
@@ -179,8 +179,8 @@ export function buildPendingUserInputAnswers(
       if (canSkipPendingUserInputQuestion(question, draft)) continue;
       return null;
     }
-    answers[question.id] = answer;
+    entries.push([question.id, answer]);
   }
 
-  return answers;
+  return Object.fromEntries(entries);
 }

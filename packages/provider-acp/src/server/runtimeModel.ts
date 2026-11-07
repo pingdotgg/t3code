@@ -1067,9 +1067,9 @@ function acpMcpFallbackInput(value: string | undefined): Record<string, unknown>
   return undefined;
 }
 
-// Known T3 inventory gates matches, so server-name separators can stay loose.
+// Known T3 inventory gates matches, so server-name separators can stay loose. Kiro titles "@t3-code/<tool>".
 const T3_MCP_TITLE_CALL =
-  /^(?:mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
+  /^(?:@|mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
 
 const T3_MCP_TITLE_SUFFIX_CALL =
   /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(t3[-_ ]?code MCP Server\)(?::|$)|[-_.]t3[-_ ]?code$)/i;
@@ -1094,6 +1094,18 @@ export function extractMcpToolCallIdentity(
   const tool = typeof rawInput?.tool === "string" ? rawInput.tool.trim() : "";
   if (meta?.is_mcp_tool_call === true && server.length > 0 && tool.length > 0) {
     return { server, tool };
+  }
+  // Kiro names the server in `_meta.kiro.serverName` and the call in `rawInput.tool_id`
+  // ("<server>::<tool>"), with the tool's own input under `rawInput.arguments`.
+  const kiroServer = isRecord(meta?.kiro) ? meta.kiro.serverName : undefined;
+  const kiroToolId = typeof rawInput?.tool_id === "string" ? rawInput.tool_id.trim() : "";
+  if (
+    typeof kiroServer === "string" &&
+    kiroServer.length > 0 &&
+    kiroToolId.startsWith(`${kiroServer}::`) &&
+    kiroToolId.length > kiroServer.length + 2
+  ) {
+    return { server: kiroServer, tool: kiroToolId.slice(kiroServer.length + 2) };
   }
   const claudeCode = isRecord(meta?.claudeCode) ? meta.claudeCode : undefined;
   const gooseToolCall = isRecord(meta?.goose)

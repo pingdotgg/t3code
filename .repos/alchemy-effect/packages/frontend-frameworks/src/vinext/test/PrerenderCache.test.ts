@@ -17,22 +17,13 @@ const fixture = Effect.gen(function* () {
   const server = yield* fs.makeTempDirectoryScoped({
     prefix: "vinext-prerender-",
   });
-  const build = Effect.tryPromise(() =>
-    buildVinextPrerenderKVPairs(root, server),
-  );
+  const build = Effect.tryPromise(() => buildVinextPrerenderKVPairs(root, server));
   return { fs, path, server, build };
 });
 
 const run = <A, E>(
-  effect: Effect.Effect<
-    A,
-    E,
-    FileSystem.FileSystem | Path.Path | import("effect/Scope").Scope
-  >,
-) =>
-  Effect.runPromise(
-    effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | import("effect/Scope").Scope>,
+) => Effect.runPromise(effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer)));
 
 describe("vinext prerender cache", () => {
   it("returns no seeds for missing manifests or prerender output", () =>
@@ -62,14 +53,8 @@ describe("vinext prerender cache", () => {
         const { fs, path, server, build } = yield* fixture;
         const output = path.join(server, "prerendered-routes");
         yield* fs.makeDirectory(output);
-        yield* fs.writeFileString(
-          path.join(output, "index.html"),
-          "<h1>prerendered</h1>",
-        );
-        yield* fs.writeFileString(
-          path.join(output, "index.rsc"),
-          "rsc payload",
-        );
+        yield* fs.writeFileString(path.join(output, "index.html"), "<h1>prerendered</h1>");
+        yield* fs.writeFileString(path.join(output, "index.rsc"), "rsc payload");
         yield* fs.writeFileString(
           path.join(server, "vinext-prerender.json"),
           JSON.stringify({
@@ -104,12 +89,8 @@ describe("vinext prerender cache", () => {
           expect(entry.expireAt - entry.lastModified).toBe(120_000);
           expect(pair.expirationTtl).toBe(30 * 24 * 3600);
         }
-        expect(JSON.parse(result.pairs[0]!.value).value.html).toBe(
-          "<h1>prerendered</h1>",
-        );
-        expect(JSON.parse(result.pairs[1]!.value).value.rscData).toBe(
-          "cnNjIHBheWxvYWQ=",
-        );
+        expect(JSON.parse(result.pairs[0]!.value).value.html).toBe("<h1>prerendered</h1>");
+        expect(JSON.parse(result.pairs[1]!.value).value.rscData).toBe("cnNjIHBheWxvYWQ=");
       }),
     ));
 });

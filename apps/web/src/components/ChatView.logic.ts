@@ -4,6 +4,7 @@ import {
   deriveThreadRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-window";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
@@ -834,10 +835,6 @@ export function shouldShowPlanFollowUpPrompt(input: {
   );
 }
 
-// A typed `/compact`, with or without instructions, is already the compaction. Queueing a
-// bare one ahead of it would run an uninstructed compaction first and charge for two.
-const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s|$)/i;
-
 const sessionDismissedBranchMismatchKeys = new Set<string>();
 
 export function dismissBranchMismatchForSession(key: string): void {
@@ -1166,7 +1163,7 @@ export function shouldRefocusComposerOnWindowFocus(
   }
   return (
     activeElement.closest(
-      '[data-workspace-area]:focus-visible, [role="treeitem"]:focus-visible, [role="dialog"], [role="alertdialog"], [role="application"], [role="menu"], [role="listbox"], [data-slot$="-popup"], [data-terminal-owner]',
+      '[data-workspace-area]:focus-visible, [data-sidebar-row]:focus-visible, [role="dialog"], [role="alertdialog"], [role="application"], [role="menu"], [role="listbox"], [data-slot$="-popup"], [data-terminal-owner]',
     ) === null
   );
 }
@@ -1180,8 +1177,13 @@ export interface PlanFollowUpComposerSnapshot {
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
 }
 
+// A draft typed while the send was in flight is newer and stays. Composer refs and the cursor
+// belong to the thread on screen, so they follow only while the follow-up's route is current.
 export function restorePlanFollowUpComposer(input: {
   readonly snapshot: PlanFollowUpComposerSnapshot;
+  readonly draftHasUserContent: boolean;
+  readonly routeIsCurrent: boolean;
+  readonly writeComposerRefs: (snapshot: PlanFollowUpComposerSnapshot) => void;
   readonly writePrompt: (prompt: string) => void;
   readonly writeTerminalContexts: (contexts: ReadonlyArray<TerminalContextDraft>) => void;
   readonly writeReviewComments: (comments: ReadonlyArray<ReviewCommentContext>) => void;
@@ -1194,12 +1196,15 @@ export function restorePlanFollowUpComposer(input: {
     detectTrigger: boolean;
   }) => void;
 }): void {
+  if (input.draftHasUserContent) return;
+  if (input.routeIsCurrent) input.writeComposerRefs(input.snapshot);
   input.writePrompt(input.snapshot.prompt);
   input.writeTerminalContexts(input.snapshot.terminalContexts);
   input.writeReviewComments(input.snapshot.reviewComments);
   input.writePreviewAnnotations(input.snapshot.previewAnnotations);
   input.writeThreadContexts(input.snapshot.threadContexts);
   input.writeEnvironmentContexts(input.snapshot.environmentContexts);
+  if (!input.routeIsCurrent) return;
   input.resetCursor({
     cursor: collapseExpandedComposerCursor(input.snapshot.prompt, input.snapshot.prompt.length),
     prompt: input.snapshot.prompt,
@@ -1406,6 +1411,8 @@ export function planComposerTurn(input: {
   readonly keepFullHistory: boolean;
   readonly phase: SessionPhase;
   readonly dispatchMode: ComposerDispatchMode;
+  /** The turn starts a new provider session, so it neither compacts first nor steers. */
+  readonly freshContext: boolean;
 }) {
   const isFirstMessage =
     !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
@@ -1415,9 +1422,14 @@ export function planComposerTurn(input: {
   // old history. The message queues behind the /compact run, since steering into it is
   // rejected.
   const compactBeforeSend =
+    !input.freshContext &&
     input.resumeCompactionTokens !== null &&
     !input.keepFullHistory &&
     !COMPACT_COMMAND_PATTERN.test(input.messageText);
+  const dispatchMode =
+    input.freshContext && (input.dispatchMode === "steer" || input.dispatchMode === "restart")
+      ? "queue"
+      : input.dispatchMode;
   return {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
@@ -1425,11 +1437,11 @@ export function planComposerTurn(input: {
     baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
     compactBeforeSend,
     turnDispatchMode:
-      compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : input.dispatchMode,
+      compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : dispatchMode,
     shouldQueueBehindActiveRun:
       compactBeforeSend ||
       input.sendQueuesBehindSetup ||
-      (input.phase === "running" && input.dispatchMode === "queue"),
+      (input.phase === "running" && dispatchMode === "queue"),
   };
 }
 
@@ -1609,29 +1621,4 @@ export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | nu
     if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
   }
   return available;
-}
-
-/**
- * Changes when the agent may have changed the workspace, so file views refresh. File tools are
- * explicit; completed commands are included because a shell command can mutate the workspace
- * without reporting the paths it touched.
- */
-export function deriveWorkspaceMutationId(
-  visibleTurnItems: ReadonlyArray<ThreadStructureRow>,
-  latestCheckpointCompletedAt: string | null,
-) {
-  let itemId: string | null = null;
-  for (let index = visibleTurnItems.length - 1; index >= 0; index -= 1) {
-    const item = visibleTurnItems[index]?.item;
-    if (!item) continue;
-    if (item.type !== "command_execution" && item.type !== "file_change") continue;
-    if (item.status === "pending" || item.status === "running" || item.status === "waiting") {
-      continue;
-    }
-    itemId = item.id;
-    break;
-  }
-  return itemId === null && latestCheckpointCompletedAt === null
-    ? null
-    : JSON.stringify([itemId, latestCheckpointCompletedAt]);
 }
