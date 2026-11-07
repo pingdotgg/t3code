@@ -18,13 +18,16 @@ on:
     # diff, so the label can be cleared without installing Expo dependencies.
     types: [opened, synchronize, reopened, edited]
 
+# A title or body edit cannot change the result, so it skips the job. Its own
+# group keeps it from cancelling a running or queued check for a push.
 concurrency:
-  group: mobile-fingerprint-check-${{ github.event.pull_request.number }}
+  group: mobile-fingerprint-check-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && github.event.changes.base == null && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   fingerprint:
     name: Native fingerprint diff
+    if: github.event.action != 'edited' || github.event.changes.base != null
     runs-on: blacksmith-8vcpu-ubuntu-2404
     permissions:
       contents: read
