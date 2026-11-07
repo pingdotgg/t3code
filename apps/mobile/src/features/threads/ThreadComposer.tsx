@@ -823,7 +823,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
   const interactionMode = props.selectedThread.interactionMode;
   const modeControl =
-    legacyPlanModeEnabled && onUpdateInteractionMode ? (
+    legacyPlanModeEnabled && onUpdateInteractionMode && queuedEdit === null ? (
       <ComposerInlineControl
         size={usesLargeControls ? "large" : "regular"}
         accessibilityHint={`Switches to ${interactionMode === "plan" ? "Build" : "Plan"} mode`}
