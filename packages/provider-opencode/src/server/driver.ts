@@ -223,6 +223,7 @@ export const OpenCodeDriver: ProviderDriver<
       // The instance registry has already read a referenced password from its secret provider.
       serverPassword: settingsSecretLiteral(config.serverPassword),
     } satisfies OpenCodeSettings;
+    const isExternalServer = effectiveConfig.serverUrl.trim().length > 0;
     const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
       probeOpenCodeRuntime(effectiveConfig, processEnv).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -240,10 +241,15 @@ export const OpenCodeDriver: ProviderDriver<
         Effect.flatMap((generation) =>
           Option.isNone(generation)
             ? Effect.succeed(noUpdate)
-            : resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
-                binaryPath: effectiveConfig.binaryPath,
-                env: processEnv,
-              }),
+            : isExternalServer
+              ? // Even loopback URLs can point to another installation or a forwarded server.
+                resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
+                  binaryPath: null,
+                }).pipe(Effect.provideService(HostProcess.Environment, processEnv))
+              : resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
+                  binaryPath: effectiveConfig.binaryPath,
+                  env: processEnv,
+                }),
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -473,7 +479,19 @@ export const OpenCodeDriver: ProviderDriver<
           ),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-          Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+          Effect.flatMap((enrichedSnapshot) =>
+            publishSnapshot(
+              isExternalServer && enrichedSnapshot.versionAdvisory?.status === "behind_latest"
+                ? {
+                    ...enrichedSnapshot,
+                    versionAdvisory: {
+                      ...enrichedSnapshot.versionAdvisory,
+                      message: `Version ${enrichedSnapshot.versionAdvisory.latestVersion} is out. Update the configured OpenCode server with the app or tool that started it. Restart that server when active sessions can be interrupted, then refresh provider status.`,
+                    },
+                  }
+                : enrichedSnapshot,
+            ),
+          ),
         ),
     }).pipe(
       Effect.mapError(
