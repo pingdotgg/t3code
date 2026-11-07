@@ -130,6 +130,12 @@ it.each(["Cancel", "Delete citation"])("%s on a fresh citation", async (action) 
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByRole("button", { name: "Edit citation comment", exact: true }).click();
     await expect.element(comment).toHaveValue("saved comment");
+  } else {
+    await userEvent.keyboard("{Control>}z{/Control}");
+    await expect
+      .poll(() => screen.container.querySelector("output")?.dataset.prompt)
+      .toBe(promptBefore);
+    await expect.element(comment).not.toBeInTheDocument();
   }
 });
 

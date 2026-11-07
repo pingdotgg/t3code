@@ -429,6 +429,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     const end = pos + current.nodeSize;
     const from = removeOnCancel?.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
     const to = removeOnCancel?.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
+    commentContext.onOpenChange(citeKey, false);
     editor.chain().focus().deleteRange({ from, to }).run();
   };
 
