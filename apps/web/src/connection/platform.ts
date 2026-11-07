@@ -805,11 +805,11 @@ const layerRpcRequestObserver = Layer.succeed(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
     // Every RPC passes through this observer; the request owns its span.
-    observe: Effect.fnUntraced(function* ({ environmentId, environmentLabel, method }) {
+    observe: Effect.fnUntraced(function* ({ environmentId, environmentLabel, method, input }) {
       return yield* Effect.sync(() => {
         nextObservedRpcRequestId += 1;
         const requestId = `${environmentId}:${nextObservedRpcRequestId}`;
-        trackRpcRequestSent(requestId, method, `${method} · ${environmentLabel}`);
+        trackRpcRequestSent(requestId, method, input, `${method} · ${environmentLabel}`);
         return Effect.sync(() => {
           acknowledgeRpcRequest(requestId);
         });

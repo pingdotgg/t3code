@@ -33,6 +33,7 @@ export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
   readonly environmentLabel: string;
   readonly method: string;
+  readonly input: unknown;
 }
 
 export class EnvironmentRpcRequestObserver extends Context.Reference<{
@@ -204,6 +205,7 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
     environmentId: supervisor.target.environmentId,
     environmentLabel: supervisor.target.label,
     method: tag,
+    input,
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });

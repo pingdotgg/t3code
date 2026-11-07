@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "./atomRegistry";
@@ -54,11 +54,23 @@ function getSlowRpcAckRequestsValue(): ReadonlyArray<SlowRpcAckRequest> {
   return appAtomRegistry.get(slowRpcAckRequestsAtom);
 }
 
-function shouldTrackRpcAck(method: string): boolean {
+// Thread visits are recorded without waiting for their ack.
+function isThreadVisitDispatch(method: string, input: unknown): boolean {
+  return (
+    method === ORCHESTRATION_V2_WS_METHODS.dispatchCommand &&
+    typeof input === "object" &&
+    input !== null &&
+    "type" in input &&
+    input.type === "thread.visit"
+  );
+}
+
+function shouldTrackRpcAck(method: string, input: unknown): boolean {
   return (
     !method.includes("subscribe") &&
     !method.startsWith("pullRequests.") &&
-    !untrackedRpcAckMethods.has(method)
+    !untrackedRpcAckMethods.has(method) &&
+    !isThreadVisitDispatch(method, input)
   );
 }
 
@@ -68,8 +80,13 @@ function rpcAckThresholdMs(method: string): number {
     : slowRpcAckThresholdMs;
 }
 
-export function trackRpcRequestSent(requestId: string, method: string, tag = method): void {
-  if (!shouldTrackRpcAck(method)) {
+export function trackRpcRequestSent(
+  requestId: string,
+  method: string,
+  input: unknown,
+  tag = method,
+): void {
+  if (!shouldTrackRpcAck(method, input)) {
     return;
   }
 
