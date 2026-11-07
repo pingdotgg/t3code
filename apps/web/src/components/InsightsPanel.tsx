@@ -348,7 +348,12 @@ function FlameChartPanel({
   const zoomFactor = Math.max(1, Math.max(MIN_VIEW_MS, axis.displayTotalMs) / view.durationMs);
 
   function commitView(next: ViewWindow | null) {
-    setViewByKey({ key: traceKey, view: next });
+    // A no-op zoom that still fills the axis must stay in Fit so live runs keep expanding.
+    const stored =
+      next !== null && next.startMs === fitView.startMs && next.durationMs === fitView.durationMs
+        ? null
+        : next;
+    setViewByKey({ key: traceKey, view: stored });
   }
 
   function setClampedView(startMs: number, durationMs: number) {
