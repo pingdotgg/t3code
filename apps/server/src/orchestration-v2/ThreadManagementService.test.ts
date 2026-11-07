@@ -582,7 +582,6 @@ it.effect.each([
     const replayRejected = yield* Deferred.make<void>();
     let sequence = 0;
     let sequenceReads = 0;
-    let recordReads = 0;
     let rejectedCommandId: CommandId | undefined;
     const runs = [{ id: runId, ordinal: 1, status, userMessageId: MessageId.make("original") }];
     const nextRun = {
@@ -615,9 +614,9 @@ it.effect.each([
                 ({
                   thread: {
                     id: threadId,
-                    // A deferred move can land right after the wait's entry check.
+                    // A deferred move can land before the settle's first read.
                     projectId:
-                      followUp === "moved" && recordReads++ > 0
+                      followUp === "moved"
                         ? ProjectId.make("project:thread-management:settle-moved")
                         : projectId,
                     deletedAt: null,

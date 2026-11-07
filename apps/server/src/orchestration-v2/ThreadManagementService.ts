@@ -919,9 +919,10 @@ const make = Effect.gen(function* () {
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
   });
 
-  const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
-    "ThreadManagementService.waitForThread",
-  )(function* (input) {
+  const waitForThreadReadingFirst = Effect.fn("ThreadManagementService.waitForThread")(function* (
+    input: ThreadManagementWaitInput,
+    readFirst: ThreadManagementServiceShape["getProjectThreadRecords"],
+  ) {
     const loadError = (cause: unknown) =>
       new ThreadManagementProjectionLoadError({
         projectId: input.projectId,
@@ -933,7 +934,7 @@ const make = Effect.gen(function* () {
     const afterSequence = yield* orchestrator
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
-    const target = yield* getProjectThreadRecords(input, ["runs"]);
+    const target = yield* readFirst(input, ["runs"]);
     const selectedRun =
       input.runId === undefined
         ? latestRun(target)
@@ -1059,10 +1060,17 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const waitForThread: ThreadManagementServiceShape["waitForThread"] = (input) =>
+    waitForThreadReadingFirst(input, getProjectThreadRecords);
+
   const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
     "orchestrationV2.threadManagement.settleAfterRun",
   )(function* (input) {
-    const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
+    // The settle was authorized when requested; a move can land before the first read.
+    const { run } = yield* waitForThreadReadingFirst(
+      { ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS },
+      readThreadRecordsInAnyProject,
+    );
     if (run?.status !== "completed") return;
     const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
     const trySettle = Effect.gen(function* () {
