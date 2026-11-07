@@ -1307,6 +1307,45 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           next.providerInstances[instanceId]?.environment?.find((v) => v.sensitive)?.value,
           sensitiveLast ? "secret-last" : "",
         );
+        const client = ServerSettingsModule.redactServerSettingsForClient(next, {
+          secretReferences: true,
+        });
+        const echoed = yield* service.updateSettings({
+          providerInstances: client.providerInstances,
+        });
+        assert.equal(
+          echoed.providerInstances[instanceId]?.environment?.find((v) => v.sensitive)?.value,
+          sensitiveLast ? "secret-last" : "",
+        );
+        if (sensitiveLast) {
+          const redacted = client.providerInstances[instanceId]!.environment![1]!;
+          const save = (
+            environment: NonNullable<
+              NonNullable<(typeof client.providerInstances)[typeof instanceId]>["environment"]
+            >,
+          ) =>
+            service.updateSettings({
+              providerInstances: {
+                [instanceId]: { driver: ProviderDriverKind.make("codex"), environment, config: {} },
+              },
+            });
+          const replaced = yield* save([{ ...secret, value: "replacement" }, redacted]);
+          assert.equal(
+            replaced.providerInstances[instanceId]?.environment?.[1]?.value,
+            "replacement",
+          );
+          const cleared = yield* save([{ ...secret, value: "another" }, plain, redacted]);
+          assert.equal(cleared.providerInstances[instanceId]?.environment?.[2]?.value, "");
+          yield* save([secret]);
+          const explicitlyCleared = yield* save([redacted, plain]);
+          assert.equal(
+            explicitlyCleared.providerInstances[instanceId]?.environment?.[0]?.value,
+            "",
+          );
+          yield* save([secret]);
+          const emptyCleared = yield* save([redacted, { ...secret, value: "" }]);
+          assert.equal(emptyCleared.providerInstances[instanceId]?.environment?.[0]?.value, "");
+        }
       }).pipe(Effect.provide(layerServerSettings())),
   );
 

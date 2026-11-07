@@ -1053,6 +1053,18 @@ const make = Effect.gen(function* () {
           old?.sensitive && !old.redacted && old.value.length > 0 ? old.value : undefined;
         const value = secret.redacted ? inlineValue : secret.value;
         if (value === undefined) {
+          // An echoed stored environment secret must survive earlier duplicate rows.
+          // Keep the original ordering when this update also contains an explicit write.
+          if (
+            secret.kind === "environment" &&
+            !changes.some(
+              (change) => change.secretName === secret.secretName && change.kind === "write",
+            )
+          ) {
+            for (let i = changes.length - 1; i >= 0; i--) {
+              if (changes[i]?.secretName === secret.secretName) changes.splice(i, 1);
+            }
+          }
           nextSecretNames.add(secret.secretName);
           return { value: "", redacted: true };
         }
