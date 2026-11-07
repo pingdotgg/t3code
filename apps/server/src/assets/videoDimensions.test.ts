@@ -40,6 +40,21 @@ function tkhd(
   return box("tkhd", body);
 }
 
+// Handler `vide`, `soun`, or a text type such as `sbtl` or `text`.
+const hdlr = (handler: string) => {
+  const body = new Uint8Array(25);
+  body.set(new TextEncoder().encode(handler), 8);
+  return box("hdlr", body);
+};
+
+function trak(
+  width: number,
+  height: number,
+  options: Parameters<typeof tkhd>[2] & { handler?: string } = {},
+) {
+  return box("trak", tkhd(width, height, options), box("mdia", hdlr(options.handler ?? "vide")));
+}
+
 const ftyp = box("ftyp", new TextEncoder().encode("isom"));
 const mdat = box("mdat", new Uint8Array(4096));
 
@@ -76,7 +91,7 @@ describe("readVideoDimensions", () => {
   it.each([
     {
       name: "an MP4 whose moov follows the media data",
-      bytes: concat(ftyp, mdat, box("moov", box("trak", tkhd(1080, 1920)))),
+      bytes: concat(ftyp, mdat, box("moov", trak(1080, 1920))),
       expected: { width: 1080, height: 1920 },
     },
     {
@@ -86,25 +101,30 @@ describe("readVideoDimensions", () => {
         box(
           "moov",
           box("mvhd", new Uint8Array(100)),
-          box("trak", tkhd(0, 0)),
-          box("trak", tkhd(1920, 1080)),
+          trak(0, 0, { handler: "soun" }),
+          trak(1920, 1080),
         ),
       ),
       expected: { width: 1920, height: 1080 },
     },
     {
+      name: "the video track after a subtitle track with its own size",
+      bytes: concat(ftyp, box("moov", trak(1920, 200, { handler: "sbtl" }), trak(1080, 1920))),
+      expected: { width: 1080, height: 1920 },
+    },
+    {
       name: "a version 1 track header",
-      bytes: concat(ftyp, box("moov", box("trak", tkhd(640, 480, { version: 1 })))),
+      bytes: concat(ftyp, box("moov", trak(640, 480, { version: 1 }))),
       expected: { width: 640, height: 480 },
     },
     {
       name: "a track header that declares a large body",
-      bytes: concat(ftyp, box("moov", box("trak", tkhd(1080, 1920, { padding: 1 << 20 })))),
+      bytes: concat(ftyp, box("moov", trak(1080, 1920, { padding: 1 << 20 }))),
       expected: { width: 1080, height: 1920 },
     },
     {
       name: "a phone recording rotated a quarter turn",
-      bytes: concat(ftyp, box("moov", box("trak", tkhd(1920, 1080, { matrix: QUARTER_TURN })))),
+      bytes: concat(ftyp, box("moov", trak(1920, 1080, { matrix: QUARTER_TURN }))),
       expected: { width: 1080, height: 1920 },
     },
     {
@@ -142,12 +162,12 @@ describe("readVideoDimensions", () => {
     },
     {
       name: "an MP4 with no video track",
-      bytes: concat(ftyp, box("moov", box("trak", tkhd(0, 0)))),
+      bytes: concat(ftyp, box("moov", trak(0, 0, { handler: "soun" }))),
       expected: null,
     },
     {
       name: "a box that claims more bytes than the file holds",
-      bytes: concat(ftyp, box("moov", box("trak", tkhd(1080, 1920))).subarray(0, 40)),
+      bytes: concat(ftyp, box("moov", trak(1080, 1920)).subarray(0, 40)),
       expected: null,
     },
     {

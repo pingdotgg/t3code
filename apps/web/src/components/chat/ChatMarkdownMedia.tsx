@@ -285,11 +285,12 @@ export function ChatMarkdownVideo(props: {
   readonly mediaIdentity?: string | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
   readonly onRetry?: (() => Promise<unknown>) | undefined;
+  /** The server's read of the file header; the loaded video's own size replaces it. */
+  readonly knownSize?: { readonly width: number; readonly height: number } | undefined;
 }) {
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
-  const style =
-    props.style ??
-    (videoSize ? authoredImageSizeStyle(videoSize.width, videoSize.height) : undefined);
+  const size = videoSize ?? props.knownSize;
+  const style = props.style ?? (size ? authoredImageSizeStyle(size.width, size.height) : undefined);
   return (
     <MediaVideoPlayer
       key={props.mediaIdentity ?? props.copyMarkdown ?? props.src}
@@ -380,13 +381,13 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         : fallbackSrc + (props.srcFragment ?? "");
   const knownSize = assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined;
   const maxHeightRem = props.maxHeightRem ?? 30;
-  const sizedStyle =
+  const style =
     props.style ??
     (knownSize
       ? authoredImageSizeStyle(knownSize.width, knownSize.height, maxHeightRem)
-      : undefined);
-  const style =
-    sizedStyle ?? (maxHeightRem !== 30 ? { maxHeight: `${maxHeightRem}rem` } : undefined);
+      : maxHeightRem !== 30
+        ? { maxHeight: `${maxHeightRem}rem` }
+        : undefined);
   const actionsSource: MediaActionSource = {
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
@@ -416,7 +417,8 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         originalUrl={props.originalUrl}
-        style={sizedStyle}
+        style={props.style}
+        knownSize={knownSize}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
         onRetry={refreshAssetUrl}
         actionsSource={actionsSource}

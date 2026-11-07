@@ -65,16 +65,31 @@ async function readIsoBmff(read: ReadAt, fileSize: number): Promise<ImageDimensi
     if (box.type !== "moov") continue;
     for await (const track of isoBoxes(read, box.bodyStart, box.end)) {
       if (track.type !== "trak") continue;
+      let dimensions: ImageDimensions | null = null;
+      let handler: string | null = null;
       for await (const child of isoBoxes(read, track.bodyStart, track.end)) {
-        if (child.type !== "tkhd") continue;
-        const dimensions = readTrackHeader(
-          await read(child.bodyStart, Math.min(TRACK_HEADER_BYTES, child.end - child.bodyStart)),
-        );
-        if (dimensions) return dimensions;
-        break;
+        if (child.type === "tkhd") {
+          dimensions = readTrackHeader(
+            await read(child.bodyStart, Math.min(TRACK_HEADER_BYTES, child.end - child.bodyStart)),
+          );
+        } else if (child.type === "mdia") {
+          handler = await readHandlerType(read, child);
+        }
       }
+      // Subtitle and chapter text tracks can carry a nonzero size of their own.
+      if (handler === "vide" && dimensions) return dimensions;
     }
     return null;
+  }
+  return null;
+}
+
+async function readHandlerType(read: ReadAt, media: Box): Promise<string | null> {
+  for await (const child of isoBoxes(read, media.bodyStart, media.end)) {
+    if (child.type !== "hdlr") continue;
+    // Version and flags, then `pre_defined`, then the four-character handler type.
+    const handler = await read(child.bodyStart + 8, 4);
+    return handler.length === 4 ? ascii(handler, 0, 4) : null;
   }
   return null;
 }

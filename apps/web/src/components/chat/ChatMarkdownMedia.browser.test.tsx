@@ -93,12 +93,23 @@ class HiddenIntersectionObserver {
 }
 
 describe("ChatMarkdownVideo", () => {
-  it("sizes a portrait video to its own shape within the height cap", async () => {
+  it("sizes a video from the server's size, then from its own loaded size", async () => {
     using _observer = stubGlobal("IntersectionObserver", HiddenIntersectionObserver);
+    // A file overwritten in place can load with a shape the server no longer describes.
     await using screen = await render(
-      <ChatMarkdownVideo src="/asset/portrait.mp4" alt="portrait" copyMarkdown={undefined} />,
+      <ChatMarkdownVideo
+        src="/asset/portrait.mp4"
+        alt="portrait"
+        copyMarkdown={undefined}
+        knownSize={{ width: 1920, height: 1080 }}
+      />,
     );
     const video = screen.getByLabelText("portrait").element() as HTMLVideoElement;
+    const knownBox = video.getBoundingClientRect();
+    expect({ width: knownBox.width, height: knownBox.height }).toEqual({
+      width: 414,
+      height: 232.875,
+    });
     Object.defineProperties(video, {
       videoWidth: { value: 1080 },
       videoHeight: { value: 1920 },
