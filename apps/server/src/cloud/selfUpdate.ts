@@ -10,7 +10,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import type { GracefulShutdownId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
@@ -29,6 +31,7 @@ import {
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as GracefulShutdown from "../orchestration-v2/GracefulShutdown.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
@@ -48,6 +51,8 @@ import { isExactServiceVersion, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProto
 
 // A staged runtime's cold start can take over a minute on a loaded, swapping host.
 const PREFLIGHT_TIMEOUT = Duration.minutes(3);
+/** Prepared desktop installs keep the drain until commit; abandon releases it. */
+const DESKTOP_ABANDONED_PREPARE_DRAIN_TIMEOUT = Duration.minutes(20);
 
 export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
@@ -125,6 +130,7 @@ export function trackSwitchBlockReason(input: {
 export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const desktopAppUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
+  const gracefulShutdown = yield* GracefulShutdown.GracefulShutdown;
   const policy = yield* ManagedPolicy.ManagedPolicy;
   const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -138,6 +144,14 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     mirror?.feedUrl ??
     Option.getOrUndefined(yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option));
   const inFlight = yield* Ref.make(false);
+  // Desktop prepare keeps the drain until commit/restart; ownership is keyed by shutdown ID
+  // (and prepare token) so a stale commit/watchdog cannot clear a newer prepare's drain.
+  type OwnedDesktopDrain = {
+    readonly shutdownId: GracefulShutdownId;
+    readonly prepareToken: string | null;
+    readonly watchdog: Fiber.Fiber<void, never> | null;
+  };
+  const ownedDesktopDrain = yield* Ref.make<OwnedDesktopDrain | null>(null);
 
   yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
     Effect.forkScoped,
@@ -149,6 +163,51 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     cause === undefined
       ? new ServerSelfUpdateError({ reason })
       : new ServerSelfUpdateError({ reason, cause });
+
+  const interruptWatchdog = (fiber: Fiber.Fiber<void, never> | null) =>
+    fiber === null ? Effect.void : Fiber.interrupt(fiber).pipe(Effect.ignore);
+
+  /** Release whichever drain this server currently owns (intentional supersede). */
+  const releaseOwnedDesktopDrain = Effect.fn("ServerSelfUpdate.releaseOwnedDesktopDrain")(
+    function* () {
+      const previous = yield* Ref.getAndSet(ownedDesktopDrain, null);
+      if (previous === null) return;
+      yield* interruptWatchdog(previous.watchdog);
+      yield* gracefulShutdown.complete(previous.shutdownId).pipe(Effect.ignore({ log: true }));
+    },
+  );
+
+  /** Atomically claim+clear only when the active ownership still matches `shutdownId`. */
+  const claimDesktopDrainIfOwned = (shutdownId: GracefulShutdownId) =>
+    Ref.modify(ownedDesktopDrain, (current) => {
+      if (current === null || current.shutdownId !== shutdownId) {
+        return [null, current] as const;
+      }
+      return [current, null] as const;
+    });
+
+  const releaseDesktopDrainIfOwned = Effect.fn("ServerSelfUpdate.releaseDesktopDrainIfOwned")(
+    function* (shutdownId: GracefulShutdownId) {
+      const claimed = yield* claimDesktopDrainIfOwned(shutdownId);
+      if (claimed === null) return false;
+      yield* interruptWatchdog(claimed.watchdog);
+      yield* gracefulShutdown.complete(shutdownId).pipe(Effect.ignore({ log: true }));
+      return true;
+    },
+  );
+
+  /** Cancel the abandoned-prepare watchdog when a matching commit starts. */
+  const disarmDesktopDrainWatchdog = Effect.fn("ServerSelfUpdate.disarmDesktopDrainWatchdog")(
+    function* (shutdownId: GracefulShutdownId) {
+      const previous = yield* Ref.modify(ownedDesktopDrain, (current) => {
+        if (current === null || current.shutdownId !== shutdownId || current.watchdog === null) {
+          return [null, current] as const;
+        }
+        return [current.watchdog, { ...current, watchdog: null }] as const;
+      });
+      yield* interruptWatchdog(previous);
+    },
+  );
 
   const crossesTrackUnsafely = (input: ServerSelfUpdateInput) =>
     trackSwitchBlockReason({
@@ -172,12 +231,74 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       const unsafeCrossing = input.channel === undefined ? null : crossesTrackUnsafely(input);
       if (unsafeCrossing !== null) return yield* failWith(unsafeCrossing);
       if (desktopAppUpdate.available) {
-        return yield* desktopAppUpdate.run(
-          reportProgress,
-          input.channel === undefined
-            ? undefined
-            : { channel: input.channel, targetVersion: input.targetVersion },
-        );
+        yield* reportProgress("draining");
+        // A prior prepare that never committed still owns the drain.
+        yield* releaseOwnedDesktopDrain();
+        const drain = yield* gracefulShutdown
+          .beginAndAwait({
+            scope: { type: "environment" },
+            reason: "server-update",
+          })
+          .pipe(
+            Effect.mapError((error) => failWith(error.reason, error)),
+            Effect.tap((result) =>
+              result.timedOut
+                ? Effect.logWarning(
+                    "Graceful shutdown timed out before desktop update; continuing.",
+                    { activeRunCount: result.activeRunCount },
+                  )
+                : Effect.void,
+            ),
+          );
+        yield* Ref.set(ownedDesktopDrain, {
+          shutdownId: drain.shutdownId,
+          prepareToken: null,
+          watchdog: null,
+        });
+        return yield* desktopAppUpdate
+          .run(
+            reportProgress,
+            input.channel === undefined
+              ? undefined
+              : { channel: input.channel, targetVersion: input.targetVersion },
+          )
+          .pipe(
+            Effect.tap((result) => {
+              if (result.desktopUpdateToken === undefined) {
+                return releaseDesktopDrainIfOwned(drain.shutdownId).pipe(Effect.asVoid);
+              }
+              const shutdownId = drain.shutdownId;
+              const prepareToken = result.desktopUpdateToken;
+              // Commit is a separate RPC; if it never arrives, release this owned drain only.
+              return Effect.gen(function* () {
+                const watchdog = yield* Effect.sleep(DESKTOP_ABANDONED_PREPARE_DRAIN_TIMEOUT).pipe(
+                  Effect.andThen(
+                    Effect.gen(function* () {
+                      // Claim without interrupting this fiber; external releasers interrupt us.
+                      const claimed = yield* claimDesktopDrainIfOwned(shutdownId);
+                      if (claimed === null) return;
+                      yield* Effect.logWarning(
+                        "Releasing desktop update drain after abandoned prepare.",
+                        { shutdownId },
+                      );
+                      yield* gracefulShutdown
+                        .complete(shutdownId)
+                        .pipe(Effect.ignore({ log: true }));
+                    }),
+                  ),
+                  Effect.forkDetach,
+                );
+                const armed = yield* Ref.modify(ownedDesktopDrain, (current) => {
+                  if (current === null || current.shutdownId !== shutdownId) {
+                    return [false, current] as const;
+                  }
+                  return [true, { shutdownId, prepareToken, watchdog }] as const;
+                });
+                if (!armed) yield* interruptWatchdog(watchdog);
+              });
+            }),
+            Effect.onError(() => releaseDesktopDrainIfOwned(drain.shutdownId).pipe(Effect.asVoid)),
+          );
       }
       return yield* failWith(
         "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
@@ -200,129 +321,176 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     }
 
     return yield* Effect.gen(function* () {
-      yield* reportProgress("downloading");
-      const paths = yield* ensurePinnedRuntimeInstalled({
-        baseDir: serverConfig.baseDir,
-        version: targetVersion,
-        fs,
-        path,
-        runner,
-        httpClient,
-        platform,
-        arch,
-        releaseBaseUrl,
-        requirePublishedRelease: mirror !== undefined,
-        validate: (runtime) =>
-          runner
-            .run({
-              command: pinnedRuntimeCommand(runtime).command,
-              args: [
-                ...pinnedRuntimeCommand(runtime).args,
-                "__service-preflight",
-                "--database-path",
-                serverConfig.dbPath,
-                "--launcher-protocol",
-                String(SERVICE_LAUNCHER_PROTOCOL),
-              ],
-              timeout: PREFLIGHT_TIMEOUT,
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PinnedRuntimeInstallError({
-                    step: "running the staged service preflight",
-                    cause,
-                  }),
-              ),
-              Effect.flatMap(
-                (
-                  result,
-                ): Effect.Effect<
-                  void,
-                  PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
-                > => {
-                  if (result.code !== 0) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "running the staged service preflight",
-                        exitCode: Number(result.code),
-                        stdoutLength: result.stdout.length,
-                        stderrLength: result.stderr.length,
-                      }),
-                    );
-                  }
-                  let parsed: unknown;
-                  try {
-                    parsed = JSON.parse(result.stdout.trim());
-                  } catch (cause) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "decoding the staged service preflight",
-                        cause,
-                      }),
-                    );
-                  }
-                  const preflight = decodeServicePreflightResult(parsed);
-                  if (preflight === undefined || preflight.version !== targetVersion) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "verifying the staged service preflight",
-                      }),
-                    );
-                  }
-                  return preflight.status === "ready"
-                    ? Effect.void
-                    : Effect.fail(
-                        new PinnedRuntimePreflightBlockedError({
-                          version: targetVersion,
-                          reason: preflight.reason,
+      yield* reportProgress("draining");
+      const drainShutdownId = yield* Ref.make<GracefulShutdownId | null>(null);
+      const drainFiber = yield* gracefulShutdown
+        .beginAndAwait({
+          scope: { type: "environment" },
+          reason: "server-update",
+        })
+        .pipe(
+          Effect.tap((result) => Ref.set(drainShutdownId, result.shutdownId)),
+          Effect.forkChild,
+        );
+
+      return yield* Effect.gen(function* () {
+        yield* reportProgress("downloading");
+        const paths = yield* ensurePinnedRuntimeInstalled({
+          baseDir: serverConfig.baseDir,
+          version: targetVersion,
+          fs,
+          path,
+          runner,
+          httpClient,
+          platform,
+          arch,
+          releaseBaseUrl,
+          requirePublishedRelease: mirror !== undefined,
+          validate: (runtime) =>
+            runner
+              .run({
+                command: pinnedRuntimeCommand(runtime).command,
+                args: [
+                  ...pinnedRuntimeCommand(runtime).args,
+                  "__service-preflight",
+                  "--database-path",
+                  serverConfig.dbPath,
+                  "--launcher-protocol",
+                  String(SERVICE_LAUNCHER_PROTOCOL),
+                ],
+                timeout: PREFLIGHT_TIMEOUT,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new PinnedRuntimeInstallError({
+                      step: "running the staged service preflight",
+                      cause,
+                    }),
+                ),
+                Effect.flatMap(
+                  (
+                    result,
+                  ): Effect.Effect<
+                    void,
+                    PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
+                  > => {
+                    if (result.code !== 0) {
+                      return Effect.fail(
+                        new PinnedRuntimeInstallError({
+                          step: "running the staged service preflight",
+                          exitCode: Number(result.code),
+                          stdoutLength: result.stdout.length,
+                          stderrLength: result.stderr.length,
                         }),
                       );
-                },
+                    }
+                    let parsed: unknown;
+                    try {
+                      parsed = JSON.parse(result.stdout.trim());
+                    } catch (cause) {
+                      return Effect.fail(
+                        new PinnedRuntimeInstallError({
+                          step: "decoding the staged service preflight",
+                          cause,
+                        }),
+                      );
+                    }
+                    const preflight = decodeServicePreflightResult(parsed);
+                    if (preflight === undefined || preflight.version !== targetVersion) {
+                      return Effect.fail(
+                        new PinnedRuntimeInstallError({
+                          step: "verifying the staged service preflight",
+                        }),
+                      );
+                    }
+                    return preflight.status === "ready"
+                      ? Effect.void
+                      : Effect.fail(
+                          new PinnedRuntimePreflightBlockedError({
+                            version: targetVersion,
+                            reason: preflight.reason,
+                          }),
+                        );
+                  },
+                ),
+              ),
+        }).pipe(
+          Effect.mapError((error) =>
+            error._tag === "PinnedRuntimePreflightBlockedError"
+              ? failWith(error.reason, error)
+              : mirror !== undefined && isUnpublishedRelease(error)
+                ? failWith(
+                    `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
+                    error,
+                  )
+                : failWith(`Could not prepare t3@${targetVersion}.`, error),
+          ),
+        );
+
+        yield* reportProgress("installing");
+        const drainResult = yield* Fiber.join(drainFiber).pipe(
+          Effect.mapError((error) => failWith(error.reason, error)),
+        );
+        if (drainResult.timedOut) {
+          yield* Effect.logWarning(
+            "Graceful shutdown timed out before server update handoff; continuing.",
+            { activeRunCount: drainResult.activeRunCount },
+          );
+        }
+        const updateId = yield* Effect.uninterruptible(
+          launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
+            Effect.mapError((error) =>
+              failWith(
+                error._tag === "ServiceLauncherRejectedError"
+                  ? error.reason
+                  : "Could not ask the service launcher to activate the prepared update.",
+                error,
               ),
             ),
-      }).pipe(
-        Effect.mapError((error) =>
-          error._tag === "PinnedRuntimePreflightBlockedError"
-            ? failWith(error.reason, error)
-            : mirror !== undefined && isUnpublishedRelease(error)
-              ? failWith(
-                  `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
-                  error,
-                )
-              : failWith(`Could not prepare t3@${targetVersion}.`, error),
-        ),
-      );
-
-      yield* reportProgress("installing");
-      const updateId = yield* Effect.uninterruptible(
-        launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
-          Effect.mapError((error) =>
-            failWith(
-              error._tag === "ServiceLauncherRejectedError"
-                ? error.reason
-                : "Could not ask the service launcher to activate the prepared update.",
-              error,
-            ),
+            Effect.tap(() => onHandoffAccepted()),
           ),
-          Effect.tap(() => onHandoffAccepted()),
+        );
+
+        yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
+          updateId,
+          targetVersion,
+          runtimePath: paths.entryPath,
+        });
+        return { targetVersion, method: "boot-service" as const, updateId };
+      }).pipe(
+        Effect.onError(() =>
+          Effect.gen(function* () {
+            yield* Fiber.interrupt(drainFiber);
+            const shutdownId = yield* Ref.get(drainShutdownId);
+            if (shutdownId !== null) {
+              yield* gracefulShutdown.complete(shutdownId).pipe(Effect.ignore({ log: true }));
+            }
+          }).pipe(Effect.ignore({ log: true })),
         ),
       );
-
-      yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
-        updateId,
-        targetVersion,
-        runtimePath: paths.entryPath,
-      });
-      return { targetVersion, method: "boot-service" as const, updateId };
     }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
   });
 
   return ServerSelfUpdate.of({
     update,
     commitDesktopUpdate: Effect.fn("ServerSelfUpdate.commitDesktopUpdate")(
-      function (requestId, onHandoffAccepted) {
-        return desktopAppUpdate.commit(requestId, onHandoffAccepted);
+      function* (requestId, onHandoffAccepted) {
+        const owned = yield* Ref.get(ownedDesktopDrain);
+        const matchingShutdownId =
+          owned !== null && owned.prepareToken === requestId ? owned.shutdownId : null;
+        if (matchingShutdownId !== null) {
+          yield* disarmDesktopDrainWatchdog(matchingShutdownId);
+        }
+        return yield* desktopAppUpdate
+          .commit(requestId, onHandoffAccepted)
+          .pipe(
+            Effect.onError(() =>
+              matchingShutdownId === null
+                ? Effect.void
+                : releaseDesktopDrainIfOwned(matchingShutdownId).pipe(Effect.asVoid),
+            ),
+          );
       },
     ),
   });

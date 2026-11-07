@@ -62,7 +62,7 @@ import {
 
 export type { ServerConfigProjection } from "./serverConfigProjection.ts";
 
-export type ServerUpdateStage = "downloading" | "installing" | "resuming";
+export type ServerUpdateStage = "draining" | "downloading" | "installing" | "resuming";
 
 export type ServerUpdateState =
   | { readonly status: "idle" }

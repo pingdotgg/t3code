@@ -131,6 +131,7 @@ import {
   isUndeliveredMailboxSteer,
 } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import * as GracefulShutdownGate from "./GracefulShutdownGate.ts";
 import {
   decideGuestMessageSend,
   guestShareAfterCancelledSend,
@@ -822,12 +823,6 @@ function worktreeSetupPending(
   );
 }
 
-function nextQueuedRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
-): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
-}
-
 function followsCurrentConversation(
   message: OrchestrationV2ConversationMessage | undefined,
 ): boolean {
@@ -1127,6 +1122,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const gracefulShutdownGate = yield* GracefulShutdownGate.GracefulShutdownGate;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -1596,6 +1592,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  // Drain may skip blocked candidates; only save-work may bypass an earlier blocked run.
+  const selectStartableQueuedRun = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "messages" | "providerSessions" | "runs"
+    >,
+    queuedCandidates: ReadonlyArray<OrchestrationV2Run>,
+  ) {
+    let blockedCandidate = false;
+    for (const candidate of queuedCandidates) {
+      const candidateSelection = queuedRunModelSelection(projection, candidate);
+      if (
+        yield* gracefulShutdownGate.shouldQueueNewTurns({
+          threadId,
+          providerInstanceId: candidateSelection.instanceId,
+          providerSessionIds: projection.providerSessions.map((session) => session.id),
+          messageId: candidate.userMessageId,
+        })
+      ) {
+        blockedCandidate = true;
+        continue;
+      }
+      if (
+        blockedCandidate &&
+        !(yield* gracefulShutdownGate.isSaveWorkMessage(candidate.userMessageId))
+      ) {
+        continue;
+      }
+      return {
+        storedQueuedRun: candidate,
+        modelSelection: candidateSelection,
+      } as const;
+    }
+    return undefined;
+  });
+
   const failQueuedRunStart = Effect.fn("Orchestrator.failQueuedRunStart")(function* (
     threadId: ThreadId,
     cause: unknown,
@@ -1603,12 +1636,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
-      ["runs", "nodes", "attempts", "providerThreads", "turnItems", "messages"],
+      ["runs", "nodes", "attempts", "providerThreads", "providerSessions", "turnItems", "messages"],
       { turnItemTypes: [], messageRoles: ["user"] },
     );
     const queuedRun =
       queuedRunId === undefined
-        ? nextQueuedRun(projection)
+        ? (yield* selectStartableQueuedRun(
+            threadId,
+            projection,
+            queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true),
+          ))?.storedQueuedRun
         : projection.runs.find((run) => run.id === queuedRunId && run.status === "queued");
     if (queuedRun === undefined) return;
     const now = yield* DateTime.now;
@@ -1707,38 +1744,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
   });
 
-  const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(
-    function* (
-      threadId: ThreadId,
-      options?: {
-        readonly failedRunId?: RunId;
-        readonly endedRunId?: RunId;
-        readonly queuedRunId?: RunId;
-      },
+  const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(function* (
+    threadId: ThreadId,
+    options?: {
+      readonly failedRunId?: RunId;
+      readonly endedRunId?: RunId;
+      readonly queuedRunId?: RunId;
+    },
+  ) {
+    if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
+    const projection = yield* readCommandProjection(threadId);
+    if (
+      projection.thread.archivedAt !== null ||
+      projection.thread.deletedAt !== null ||
+      projection.runs.some(isActiveRun)
     ) {
-      if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
-      const projection = yield* readCommandProjection(threadId);
-      if (
-        projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null ||
-        projection.runs.some(isActiveRun)
-      ) {
-        return;
-      }
+      return;
+    }
 
-      const storedQueuedRun =
-        options?.queuedRunId === undefined
-          ? nextQueuedRun(projection)
-          : projection.runs.find(
-              (run) => run.id === options.queuedRunId && run.status === "queued",
-            );
-      if (storedQueuedRun === undefined) {
-        return;
-      }
+    const selectedQueuedRun =
+      options?.queuedRunId === undefined
+        ? undefined
+        : projection.runs.find((run) => run.id === options.queuedRunId && run.status === "queued");
+    const queuedCandidates =
+      selectedQueuedRun === undefined
+        ? queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true)
+        : [selectedQueuedRun];
+    const selected = yield* selectStartableQueuedRun(threadId, projection, queuedCandidates);
+    if (selected === undefined) {
+      return;
+    }
+    const { storedQueuedRun, modelSelection } = selected;
+    // Capture the selected id for failure attribution; the gate may clear before catch runs.
+    yield* Effect.gen(function* () {
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
-      const modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
       const queuedRun = {
         ...storedQueuedRun,
         modelSelection,
@@ -2488,12 +2529,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         ],
       );
-    },
-    (effect, threadId, options?) =>
-      effect.pipe(
-        Effect.catch((cause) => failQueuedRunStart(threadId, cause, options?.queuedRunId)),
-      ),
-  );
+    }).pipe(Effect.catch((cause) => failQueuedRunStart(threadId, cause, storedQueuedRun.id)));
+  });
 
   // Under load a resumed provider can time out before taking the prompt; the restart still owes the turn.
   const retryContinuationStart = Effect.fn("Orchestrator.retryContinuationStart")(function* (
@@ -5831,6 +5868,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.dispatchMode,
       command.deliveryIntent,
     );
+    // Keep defer_start so workspace preparation still runs; prepared-run.release
+    // re-checks the gate before starting the provider turn.
+    if (
+      dispatchMode.type === "start_immediately" &&
+      (yield* gracefulShutdownGate.shouldQueueNewTurns({
+        threadId: command.threadId,
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionIds: projection.providerSessions.map((session) => session.id),
+        messageId: command.messageId,
+      }))
+    ) {
+      dispatchMode = { type: "queue_after_active" };
+    }
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -5849,6 +5899,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         dispatchMode = { type: "start_immediately" };
       }
+    }
+    if (
+      dispatchMode.type === "start_immediately" &&
+      (yield* gracefulShutdownGate.shouldQueueNewTurns({
+        threadId: command.threadId,
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionIds: projection.providerSessions.map((session) => session.id),
+        messageId: command.messageId,
+      }))
+    ) {
+      dispatchMode = { type: "queue_after_active" };
     }
     // Stop leaves the run reading as running until its provider stops. A plain
     // send in that window queues behind the stopped queue instead of steering
@@ -6110,7 +6171,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
-    const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
+    const drainBlocksStart =
+      startsOrQueuesRun &&
+      (yield* gracefulShutdownGate.shouldQueueNewTurns({
+        threadId: command.threadId,
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionIds: projection.providerSessions.map((session) => session.id),
+        messageId: command.messageId,
+      }));
+    // defer_start still prepares the workspace during drain; release re-checks the gate.
+    const shouldQueue =
+      startsOrQueuesRun &&
+      (queueBehindRun !== undefined || (drainBlocksStart && dispatchMode.type !== "defer_start"));
     // Client messages resume held queues; server continuations and scheduled tasks do not.
     // Provider failure or usage limits re-hold the queue.
     const worktreeSetupUnresolved = worktreeSetupPending(projection);
@@ -6146,10 +6218,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const queueProviderThread =
         activeProviderThread ??
-        projection.providerThreads.find(
-          (candidate) => candidate.id === queueBehindRun.providerThreadId,
-        );
-      if (queueProviderThread === undefined) {
+        (queueBehindRun === undefined
+          ? undefined
+          : projection.providerThreads.find(
+              (candidate) => candidate.id === queueBehindRun.providerThreadId,
+            ));
+      if (queueProviderThread === undefined && queueBehindRun !== undefined) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -6161,7 +6235,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
       const targetProviderThread = freshContext
         ? undefined
-        : modelSelection.instanceId === queueProviderThread.providerInstanceId
+        : queueProviderThread !== undefined &&
+            modelSelection.instanceId === queueProviderThread.providerInstanceId
           ? queueProviderThread
           : rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0];
       const queuedAdapter = yield* providerAdapters
@@ -6208,7 +6283,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
       const rootNodeId = idAllocator.derive.rootNode({ runId });
       const checkpointScope =
-        queueBehindRun.status === "preparing" || worktreeMissingRun !== undefined
+        queueBehindRun?.status === "preparing" || worktreeMissingRun !== undefined
           ? null
           : yield* runtimePolicy.resolve({ thread: projection.thread, modelSelection }).pipe(
               Effect.flatMap((resolvedRuntimePolicy) =>
@@ -10357,7 +10432,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       const projection = yield* loadProjectionForCommand(
         command,
-        ["runs", "attempts", "nodes", "providerThreads", "turnItems"],
+        ["runs", "attempts", "nodes", "providerThreads", "providerSessions", "turnItems"],
         { turnItemTypes: ["command_execution"], turnItemRunId: command.runId },
       );
       const state = preparedRunState(command, projection);
@@ -10418,6 +10493,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
         },
       });
+      const drainBlocksStart = yield* gracefulShutdownGate.shouldQueueNewTurns({
+        threadId: command.threadId,
+        providerInstanceId: state.run.providerInstanceId,
+        providerSessionIds: projection.providerSessions.map((session) => session.id),
+        messageId: state.run.userMessageId,
+      });
+      if (drainBlocksStart) {
+        const queuePosition =
+          Math.max(
+            0,
+            ...projection.runs
+              .filter((candidate) => candidate.status === "queued")
+              .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
+          ) + 1;
+        yield* emitEvent({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: state.run.id,
+          nodeId: state.rootNode.id,
+          providerInstanceId: state.run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...state.run,
+            status: "queued",
+            queuePosition,
+            startedAt: null,
+          },
+        });
+        return;
+      }
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
@@ -14593,6 +14698,7 @@ export const layer: Layer.Layer<
   | ContextHandoffServiceV2
   | EffectOutbox.EffectOutboxV2
   | EventSinkV2
+  | GracefulShutdownGate.GracefulShutdownGate
   | IdAllocator.IdAllocatorV2
   | ProjectStore.ProjectStoreV2
   | ProviderAdapterRegistryV2

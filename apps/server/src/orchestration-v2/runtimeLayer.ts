@@ -28,6 +28,8 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
+import * as GracefulShutdown from "./GracefulShutdown.ts";
+import * as GracefulShutdownGate from "./GracefulShutdownGate.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -211,6 +213,8 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
   Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
 );
 
+const layerGracefulShutdownGate = GracefulShutdownGate.layer;
+
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -220,6 +224,7 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       layerEventSink,
       layerCommandReceiptStoreProvided,
       layerContextHandoffServiceProvided,
+      layerGracefulShutdownGate,
       IdAllocator.layer,
       ProjectStore.layer,
       ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
@@ -255,6 +260,15 @@ const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImp
       layerLegacyV1ThreadImporterProvided,
       layerCommandReceiptStoreProvided,
       layerProviderSessionManagerProvided,
+    ),
+  ),
+);
+const layerGracefulShutdownProvided = GracefulShutdown.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerGracefulShutdownGate,
+      layerThreadManagementProvided,
+      layerOrchestratorProvided,
     ),
   ),
 );
@@ -358,6 +372,7 @@ const layerMcpAppRequestsProvided = McpAppRequests.layer.pipe(
 export const layer = Layer.mergeAll(
   layerCommandOutputHubProvided,
   layerOrchestratorProvided,
+  layerGracefulShutdownProvided,
   layerMcpAppRequestsProvided,
   layerThreadManagementProvided,
   layerEffectWorkerProvided,
