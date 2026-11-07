@@ -101,9 +101,7 @@ export function SidebarThreadHeader({
           onFocus={(event) => {
             if (event.currentTarget.clientWidth === 0) setSearchExpanded(true);
           }}
-          onBlur={() => {
-            if (searchQuery === "") setSearchExpanded(false);
-          }}
+          onBlur={() => setSearchExpanded(false)}
           placeholder="Search"
           aria-label="Search threads"
           role="combobox"
