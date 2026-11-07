@@ -3,6 +3,7 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/c
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import { toVisualViewportPoint } from "./lib/visualViewport";
 
 let cachedApi: LocalApi | undefined;
 
@@ -45,7 +46,10 @@ export function createLocalApi(): LocalApi {
         position?: { x: number; y: number },
       ): Promise<T | null> => {
         if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+          return window.desktopBridge.showContextMenu(
+            items,
+            position && toVisualViewportPoint(position),
+          ) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },
