@@ -6,17 +6,22 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { vi } from "vite-plus/test";
 import type { AppImageUpdater as AppImageUpdaterType } from "electron-updater";
 
 const { getUpdater } = vi.hoisted(() => ({ getUpdater: vi.fn<() => AppImageUpdaterType>() }));
-vi.mock("electron-updater", () => ({
-  get autoUpdater() {
-    return getUpdater();
-  },
-}));
+vi.mock("electron-updater", async (importOriginal) => {
+  const { AppImageUpdater } = await importOriginal<typeof import("electron-updater")>();
+  return {
+    AppImageUpdater,
+    get autoUpdater() {
+      return getUpdater();
+    },
+  };
+});
 
 import * as ElectronUpdater from "./ElectronUpdater.ts";
 
@@ -40,15 +45,6 @@ class FixtureUpdater extends AppImageUpdater {
   override quitAndInstall(isSilent = false, isForceRunAfter = false) {
     this.doInstall({ isSilent, isForceRunAfter, isAdminRightsRequired: false });
   }
-
-  protected override spawnLog(destination: string) {
-    assert.equal(
-      NodeChildProcess.execFileSync(process.env.APPIMAGE!, { encoding: "utf8" }),
-      "updated\n",
-    );
-    assert.equal(NodeChildProcess.execFileSync(destination, { encoding: "utf8" }), "updated\n");
-    return Promise.resolve(true);
-  }
 }
 
 function fixture(oldName: string, newName: string) {
@@ -64,6 +60,17 @@ function fixture(oldName: string, newName: string) {
   NodeFS.symlinkSync(oldPath, launcher);
   const updater = new FixtureUpdater(download);
   getUpdater.mockReturnValue(updater);
+  const prototype = AppImageUpdater.prototype as unknown as {
+    spawnLog: (destination: string, args?: Array<string>) => Promise<boolean>;
+  };
+  const spawnLog = vi.spyOn(prototype, "spawnLog").mockImplementation((destination, args = []) => {
+    assert.equal(NodeChildProcess.execFileSync(oldPath, { encoding: "utf8" }), "updated\n");
+    assert.equal(
+      NodeChildProcess.execFileSync(destination, args, { encoding: "utf8" }),
+      "updated\n",
+    );
+    return Promise.resolve(true);
+  });
   const originalAppImage = process.env.APPIMAGE;
   process.env.APPIMAGE = oldPath;
   return {
@@ -74,6 +81,7 @@ function fixture(oldName: string, newName: string) {
     launcher,
     updater,
     [Symbol.dispose]() {
+      spawnLog.mockRestore();
       if (originalAppImage === undefined) delete process.env.APPIMAGE;
       else process.env.APPIMAGE = originalAppImage;
       NodeFS.rmSync(directory, { recursive: true, force: true });
@@ -98,10 +106,10 @@ describe.skipIf(process.platform !== "linux")("AppImage launch paths", () => {
     Effect.gen(function* () {
       using f = fixture("My T3-0.1.7.AppImage", "T3-Code-x86_64.AppImage");
       yield* ElectronUpdater.make.quitAndInstall({ isSilent: true, isForceRunAfter: true });
-      process.env.APPIMAGE = f.newPath;
+      const env = yield* HostProcess.Environment;
+      env.APPIMAGE = f.newPath;
       const nextDownload = NodePath.join(f.directory, "cache", "T3-Code-x86_64.AppImage");
       NodeFS.writeFileSync(nextDownload, "#!/bin/sh\necho updated\n", { mode: 0o755 });
-      process.env.APPIMAGE = NodePath.join(f.directory, "T3-Code-x86_64.AppImage");
       getUpdater.mockReturnValue(new FixtureUpdater(nextDownload));
       yield* ElectronUpdater.make.quitAndInstall({ isSilent: true, isForceRunAfter: true });
       assert.equal(NodeChildProcess.execFileSync(f.launcher, { encoding: "utf8" }), "updated\n");
