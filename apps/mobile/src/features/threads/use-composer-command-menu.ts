@@ -106,6 +106,7 @@ export function buildComposerSlashCommandItems(input: {
   readonly offersUsageLimits?: boolean;
   /** T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live. */
   readonly offersFreshSession?: boolean;
+  readonly offersSideChat?: boolean;
   readonly allowInteractionMode: boolean;
   readonly selectedProviderStatus: Pick<
     ServerProvider,
@@ -145,6 +146,21 @@ export function buildComposerSlashCommandItems(input: {
   // Providers expand commands only at the start of a message. T3 commands
   // change local state and do not have this restriction, except `/clear`.
   if (!input.atMessageStart) return items;
+  if (input.offersSideChat) {
+    for (const [command, description] of [
+      ["side", "Ask a side question in a new side chat"],
+      ["btw", "Same as /side"],
+    ] as const) {
+      if (!command.includes(query)) continue;
+      items.push({
+        id: `cmd:${command}`,
+        type: "slash-command",
+        command,
+        label: `/${command}`,
+        description,
+      });
+    }
+  }
   if (input.offersFreshSession && "clear".includes(query)) {
     items.push({
       id: "cmd:clear",
@@ -238,6 +254,7 @@ export function useComposerCommandMenu({
   onUpdateInteractionMode,
   onUsageLimits,
   onFreshSession,
+  offersSideChat = false,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -261,6 +278,7 @@ export function useComposerCommandMenu({
   readonly onUsageLimits?: () => void;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
+  readonly offersSideChat?: boolean;
 }) {
   const [localSelection, setLocalSelection] = useState(() => ({
     ownerKey,
@@ -365,6 +383,7 @@ export function useComposerCommandMenu({
         hasCompactableConversation,
         offersUsageLimits,
         offersFreshSession: onFreshSession !== undefined,
+        offersSideChat,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
         selectedProviderStatus: selectedProviderStatus
           ? {
