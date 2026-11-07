@@ -2663,6 +2663,66 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(layerIsolatedOutbox)),
   );
 
+  it.effect("fails an effect this build cannot decode and claims the thread's next effect", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sql = yield* SqlClient.SqlClient;
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const workerId = "undecodable-worker";
+      const commandId = CommandId.make("command:foundation-undecodable");
+      const threadId = ThreadId.make("thread:foundation-undecodable");
+      yield* sql`
+        INSERT INTO orchestration_v2_effect_outbox (
+          effect_id, command_id, thread_id, effect_type, payload_json, status,
+          available_at, created_at, updated_at
+        )
+        VALUES (
+          'effect:foundation-undecodable:a', ${commandId}, ${threadId}, 'future-effect.kind',
+          '{"type":"future-effect.kind"}', 'pending', ${nowIso}, ${nowIso}, ${nowIso}
+        )
+      `;
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-undecodable:b",
+          commandId,
+          threadId,
+          request: { type: "provider-turn.start", runId: RunId.make("run:foundation-undecodable") },
+        },
+      ]);
+
+      const claimed = yield* Effect.exit(outbox.claimNext({ workerId }));
+
+      const rows = yield* sql<{
+        readonly effect_id: string;
+        readonly status: string;
+        readonly lease_owner: string | null;
+        readonly last_error: string | null;
+      }>`
+        SELECT effect_id, status, lease_owner, last_error
+        FROM orchestration_v2_effect_outbox
+        ORDER BY effect_id
+      `;
+      assert.deepEqual(rows, [
+        {
+          effect_id: "effect:foundation-undecodable:a",
+          status: "failed",
+          lease_owner: null,
+          last_error: "This server build cannot decode the future-effect.kind effect.",
+        },
+        {
+          effect_id: "effect:foundation-undecodable:b",
+          status: "running",
+          lease_owner: workerId,
+          last_error: null,
+        },
+      ]);
+      assert.equal(
+        Exit.isSuccess(claimed) ? Option.getOrUndefined(claimed.value)?.id : undefined,
+        "effect:foundation-undecodable:b",
+      );
+    }).pipe(Effect.provide(layerIsolatedOutbox)),
+  );
+
   it.effect("wakes claimers when cancellation unblocks same-thread work", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;

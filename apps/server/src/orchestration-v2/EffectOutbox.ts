@@ -23,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -541,13 +542,31 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             )
             RETURNING *
           `;
-          const rows = yield* claimStatement.pipe(Effect.withTracerEnabled(false));
-          const row = rows[0];
-          if (row === undefined) return Option.none();
-          cancellationSignals.set(row.effect_id, Deferred.makeUnsafe<void>());
-          return Option.some(yield* rowToEffect(row));
+          while (true) {
+            const rows = yield* claimStatement.pipe(Effect.withTracerEnabled(false));
+            const row = rows[0];
+            if (row === undefined) return Option.none();
+            const decoded = yield* Effect.result(rowToEffect(row));
+            if (Result.isSuccess(decoded)) {
+              cancellationSignals.set(row.effect_id, Deferred.makeUnsafe<void>());
+              return Option.some(decoded.success);
+            }
+            // Left running, an unreadable row would block every later effect on its thread.
+            yield* Effect.logWarning("Failing an orchestration effect this build cannot decode", {
+              effectId: row.effect_id,
+              effectType: row.effect_type,
+              cause: decoded.failure,
+            });
+            yield* service.fail({
+              effectId: row.effect_id,
+              workerId,
+              error: `This server build cannot decode the ${row.effect_type} effect.`,
+            });
+          }
         },
-        Effect.mapError((cause) => new EffectOutboxError({ operation: "claim", cause })),
+        Effect.mapError((cause) =>
+          isEffectOutboxError(cause) ? cause : new EffectOutboxError({ operation: "claim", cause }),
+        ),
       ),
       nextClaimableAt: Effect.gen(function* () {
         const rows = yield* sql<{ readonly available_at: string | null }>`
