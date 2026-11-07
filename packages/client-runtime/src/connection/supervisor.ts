@@ -367,9 +367,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       Stream.changesWith((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
       Stream.runForEach((reported) =>
         Effect.gen(function* () {
+          // learnRoutes writes currentEntry under the registry lease lock. Do not
+          // set it from the returned snapshot here: a gateway update can land
+          // between unlock and this write and would be overwritten.
           const updated = yield* learn({ activeRoute, reported });
           if (Option.isSome(updated)) {
-            yield* Ref.set(currentEntry, updated.value);
             yield* requestBetterRouteCheck(lease);
           }
         }),

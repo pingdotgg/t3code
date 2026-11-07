@@ -987,6 +987,9 @@ export const make = Effect.gen(function* () {
           yield* SubscriptionRef.update(serviceScopes, (current) =>
             new Map(current).set(input.environmentId, { ...lease, entry: next }),
           );
+          // Under the lease lock, like persistRouteUpdate: a post-return write in the
+          // supervisor could otherwise clobber a concurrent gateway route update.
+          yield* Ref.set(lease.currentEntry, next);
         }
         yield* SubscriptionRef.update(entries, (current) =>
           new Map(current).set(input.environmentId, next),
