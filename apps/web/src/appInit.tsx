@@ -75,8 +75,16 @@ function startClientAppearance(): void {
     if (previous?.diffColorScheme !== settings.diffColorScheme) {
       root.dataset.diffColorScheme = settings.diffColorScheme;
     }
-    if (previous?.chatWidth !== settings.chatWidth) {
+    if (
+      previous?.chatWidth !== settings.chatWidth ||
+      previous.chatCustomWidthRem !== settings.chatCustomWidthRem
+    ) {
       root.dataset.chatWidth = settings.chatWidth;
+      if (settings.chatWidth === "custom") {
+        root.style.setProperty("--chat-content-max-width", `${settings.chatCustomWidthRem}rem`);
+      } else {
+        root.style.removeProperty("--chat-content-max-width");
+      }
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);

@@ -2278,7 +2278,8 @@ code {
 }
 
 /* Chat width setting. Comfortable keeps the default --chat-content-max-width,
-   which sizes the timeline lane, the composer, and ChatCanvas's width probe. */
+   which sizes the timeline lane, the composer, and ChatCanvas's width probe.
+   Custom sets it inline from appInit.tsx. */
 :root[data-chat-width="wide"] {
   --chat-content-max-width: 72rem;
 }
