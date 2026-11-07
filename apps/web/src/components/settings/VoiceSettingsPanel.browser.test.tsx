@@ -214,7 +214,7 @@ it("preserves the model test transcript when its model is filtered out", async (
 
 // A fresh destination has not downloaded its selected model, and a French browser filters an
 // English-only model out of the catalog. Setup must still be one click away.
-it("opens the selected model's setup wizard before it is downloaded or listed", async () => {
+it("keeps first-run setup open when its language recommendation replaces the selected model", async () => {
   using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-first-run"),
@@ -239,6 +239,7 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
     active: false,
     state: "downloadable",
   };
+  const recommended = { ...model, id: "both", name: "Bilingual", languages: ["en", "fr"] };
   const status = {
     supported: true,
     state: "missing-model",
@@ -254,13 +255,20 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
   const fetch = globalThis.fetch;
   using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
-    if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
+    if (url.pathname === "/api/voice/status")
+      return Promise.resolve(
+        Response.json(
+          installed
+            ? { ...status, state: "ready", modelId: recommended.id, model: recommended.name }
+            : status,
+        ),
+      );
     if (url.pathname === "/api/voice/models")
       return Promise.resolve(
         Response.json({
           models: [
-            installed ? { ...model, state: "installed", active: true } : model,
-            { ...model, id: "both", name: "Bilingual", languages: ["en", "fr"] },
+            model,
+            installed ? { ...recommended, state: "installed", active: true } : recommended,
           ],
         }),
       );
@@ -289,7 +297,10 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
       setup: {
         open,
         step: ready ? 1 : 0,
-        model,
+        model: recommended,
+        language: "fr",
+        catalogFailed: false,
+        retryCatalog: null,
         downloading: false,
         error: null,
         setOpen,
@@ -325,11 +336,11 @@ it("opens the selected model's setup wizard before it is downloaded or listed", 
   await userEvent.click(screen.getByRole("button", { name: /set up voice input/i }));
   await expect.element(screen.getByRole("dialog", { name: "Set up voice input" })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Download model" }));
+  await expect.element(screen.getByText("Selected", { exact: true })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Start dictating" }));
   await expect
     .element(screen.getByRole("status", { name: "Test transcript" }))
     .toHaveTextContent("microphone test");
-  await expect.element(screen.getByText("Selected", { exact: true })).toBeVisible();
 });
 
 it("loads the models of a relay-connected destination", async () => {

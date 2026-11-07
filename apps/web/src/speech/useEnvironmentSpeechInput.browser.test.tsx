@@ -388,12 +388,18 @@ it.each([
     });
   } else {
     mocks.modelState = target;
+    mocks.settings = { speechLanguage: "fr" };
+    mocks.models = [
+      catalogModel(mocks.statusModelId, ["en"], true),
+      catalogModel("bilingual", ["en", "fr"], true),
+    ];
   }
   await using _screen = await render(<Probe />);
   expect(mocks.voice.available).toBe(true);
   await act(() => mocks.voice.start({ setupOnly: true }));
   expect(mocks.microphoneRequests).toEqual([]);
   expect(mocks.voice.setup.open ? mocks.voice.setup.step : null).toBe(wizardStep);
+  if (target === "missing-model") expect(mocks.voice.setup.model?.id).toBe("bilingual");
 });
 
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {

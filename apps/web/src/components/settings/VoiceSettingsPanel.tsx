@@ -948,10 +948,10 @@ function SpeechModelBrowser(props: {
                   };
                   return model === activeModel ? (
                     <TranscriptionTest
-                      key={model.id}
+                      key="active-model-test"
                       card={card}
-                      onDownload={(download) =>
-                        void run("Could not download the model", download, model.id)
+                      onDownload={(modelId, download) =>
+                        void run("Could not download the model", download, modelId)
                       }
                       hidden={!sortedModels.includes(model)}
                       revealModel={() => {
@@ -978,13 +978,15 @@ function SpeechModelBrowser(props: {
 
 function TranscriptionTest(props: {
   readonly card: ModelCardProps;
-  readonly onDownload: (download: () => Promise<void>) => void;
+  readonly onDownload: (modelId: string, download: () => Promise<void>) => void;
   readonly hidden: boolean;
   readonly revealModel: () => void;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId | null;
   readonly projectName: string | null;
 }) {
+  const modelId = props.card.model.id;
+  const [testSession, setTestSession] = useState({ modelId, revision: 0 });
   const [transcript, setTranscript] = useState<string | null>(null);
   const draft = transcript ?? "";
   const [showTranscript, setShowTranscript] = useState(false);
@@ -997,7 +999,7 @@ function TranscriptionTest(props: {
     environmentId: props.environmentId,
     projectId: props.projectId,
     projectName: props.projectName,
-    ownerKey: JSON.stringify([props.environmentId, props.projectId]),
+    ownerKey: JSON.stringify([props.environmentId, props.projectId, testSession.revision]),
     draftText: draft,
     cleanup: false,
     readDraft: () => ({
@@ -1006,6 +1008,17 @@ function TranscriptionTest(props: {
     }),
     commitDraft: (text) => setTranscript(text),
   });
+  if (testSession.modelId !== modelId) {
+    const continuesSetup = speech.setup.open && speech.setup.model?.id === modelId;
+    setTestSession({
+      modelId,
+      revision: continuesSetup ? testSession.revision : testSession.revision + 1,
+    });
+    if (!continuesSetup) {
+      setTranscript(null);
+      setShowTranscript(false);
+    }
+  }
   return (
     <>
       {speech.available && speech.state.phase === "idle" ? (
@@ -1103,7 +1116,9 @@ function TranscriptionTest(props: {
         error={speech.setup.error}
         onOpenChange={speech.setup.setOpen}
         onRetryCatalog={speech.setup.retryCatalog}
-        onDownload={() => props.onDownload(speech.setup.download)}
+        onDownload={() => {
+          if (speech.setup.model) props.onDownload(speech.setup.model.id, speech.setup.download);
+        }}
         onCancelDownload={() => void speech.setup.cancelDownload()}
         onStartRecording={() => {
           if (props.hidden) props.revealModel();
