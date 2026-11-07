@@ -4028,7 +4028,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live.each(["termination", "rollback"] as const)(
+  it.live.each(["termination", "active termination", "external termination", "rollback"] as const)(
     "retires Copilot runtime tasks on %s",
     (replacement) =>
       Effect.gen(function* () {
@@ -4040,6 +4040,11 @@ describe("AcpAdapterV2", () => {
         );
         const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
         let runtimeOrdinalSeen = 0;
+        const owned = replacement !== "external termination";
+        const activeTermination = replacement === "active termination" || !owned;
+        let prompts = 0;
+        const activePrompt = yield* Deferred.make<void>();
+        const releaseActivePrompt = yield* Deferred.make<void>();
         const handlers: Array<
           Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
         > = [];
@@ -4065,6 +4070,23 @@ describe("AcpAdapterV2", () => {
                 }).pipe(Effect.andThen(runtime.handleExtNotification(method, schema, handler))),
               prompt: () =>
                 Effect.gen(function* () {
+                  prompts += 1;
+                  if (activeTermination && prompts === 2) {
+                    yield* handlers[0]!({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate: "tool_call",
+                        toolCallId: "root-command",
+                        title: "Detached root command",
+                        kind: "execute",
+                        status: "in_progress",
+                        rawInput: { command: "sleep 80" },
+                      },
+                    });
+                    yield* Deferred.succeed(activePrompt, undefined);
+                    yield* Deferred.await(releaseActivePrompt);
+                    return { stopReason: "end_turn" as const };
+                  }
                   if (runtimeOrdinalSeen === 1) {
                     yield* handlers[0]!({
                       sessionId: "mock-session-1",
@@ -4126,7 +4148,7 @@ describe("AcpAdapterV2", () => {
             registerExtensions: routing.registerExtensions,
             normalizeSessionUpdate: routing.normalizeSessionUpdate,
             extractSubagentUpdate: extractCopilotSubagentUpdate,
-            subagentsOwnedByRuntime: true,
+            subagentsOwnedByRuntime: owned,
             enablePostSettleContinuation: true,
             makeRuntime: (runtimeInput) =>
               Effect.sync(() => {
@@ -4184,7 +4206,20 @@ describe("AcpAdapterV2", () => {
         );
         assert.equal(runtimeOrdinalSeen, 1);
         assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-        if (replacement === "termination") {
+        if (activeTermination) {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal: 2,
+            }),
+          );
+          yield* Deferred.await(activePrompt);
+        }
+        if (replacement !== "rollback") {
           yield* runtimeInputs[0]!.onTermination!(
             new EffectAcpErrors.AcpTransportError({
               detail: "Injected unexpected writer termination",
@@ -4203,7 +4238,38 @@ describe("AcpAdapterV2", () => {
           });
           providerThread = rolledBack.providerThread;
         }
-        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        assert.equal(
+          yield* runtime.hasPendingBackgroundWork!,
+          !owned,
+          "termination must retire only runtime-owned tasks rehydrated into the active turn",
+        );
+        if (activeTermination) {
+          yield* Deferred.succeed(releaseActivePrompt, undefined);
+          const activeEvents: ProviderAdapter.ProviderAdapterV2Event[] = [];
+          while (true) {
+            const event = yield* Queue.take(events);
+            activeEvents.push(event);
+            if (event.type === "turn.terminal") break;
+          }
+          assert.deepEqual(
+            activeEvents.flatMap((event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === "task-bg"
+                ? [event.subagent.status]
+                : [],
+            ),
+            owned ? ["interrupted"] : [],
+          );
+          assert.isFalse(
+            activeEvents.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.nativeItemRef?.nativeId === "root-command" &&
+                event.turnItem.status === "interrupted",
+            ),
+            "runtime-owned retirement must leave root commands alone",
+          );
+        }
 
         yield* runtime.startTurn(
           makeTurnInput({
@@ -4212,6 +4278,7 @@ describe("AcpAdapterV2", () => {
             instanceId,
             runtimePolicy,
             now: yield* DateTime.now,
+            ordinal: 3,
           }),
         );
         const observed: ProviderAdapter.ProviderAdapterV2Event[] = [];
@@ -4225,7 +4292,7 @@ describe("AcpAdapterV2", () => {
             ? [event.subagent.status]
             : [],
         );
-        assert.deepEqual(statuses, ["interrupted"]);
+        assert.deepEqual(statuses, activeTermination ? [] : ["interrupted"]);
         const replacementMessages = observed.flatMap((event) =>
           event.type === "message.updated" && event.message.role === "assistant"
             ? [event.message.text]

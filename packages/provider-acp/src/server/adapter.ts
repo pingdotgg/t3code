@@ -2320,6 +2320,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
               yield* retireRuntimeSubagents();
+              if (flavor.subagentsOwnedByRuntime === true) {
+                const context = yield* Ref.get(activeTurn);
+                if (context !== null) {
+                  yield* terminalizeCarryoverSubagents({
+                    sessionId: context.nativeThreadId,
+                    projectsLateTerminals: false,
+                    subagents: [...context.subagents.values()],
+                  });
+                }
+              }
               if (!followsAgentWorkState) return;
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
