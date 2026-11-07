@@ -14,6 +14,7 @@ import {
   parseComposerContextHref,
   projectComposerContextForProvider,
   restoreAttachmentOnlyBootstrapPrompt,
+  restoreComposerContextReferences,
   stripAttachmentOnlyBootstrapPrompt,
   threadContextRecord,
   threadContextsOutsideEnvironment,
@@ -358,6 +359,49 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="terminal" id="ctx_t" unavailable="true"/>');
     expect(projected).not.toContain("another payload");
     expect(projected).not.toContain("boom");
+  });
+
+  it("restores escaped envelope tags in reference labels", () => {
+    const text = "Report to [<context> review](t3-context://v1/thread/thread_abc).";
+    const projected = projectComposerContextForProvider({ text, records: [] });
+    expect(restoreComposerContextReferences(projected)).toBe(text);
+  });
+
+  it("restores echoed projections to reference links without their envelope", () => {
+    const text =
+      "Watch ![shot.png](t3-context://v1/image/ctx_i), [T1](t3-context://v1/terminal/ctx_t) and [Checkout](t3-context://v1/preview-annotation/ctx_p).";
+    const projected = projectComposerContextForProvider({ text, records: [terminal, image] });
+    expect(restoreComposerContextReferences(projected)).toBe(text);
+    expect(restoreComposerContextReferences(`Stop hook feedback:\n[${projected}]: Not yet.`)).toBe(
+      `Stop hook feedback:\n[${text}]: Not yet.`,
+    );
+    const envelope = projected.slice(projected.indexOf("\n\n<t3_context"));
+    expect(restoreComposerContextReferences(`Watch the attached files.${envelope}`)).toBe(
+      "Watch the attached files.",
+    );
+    const uppercaseReference = "Report to [Hub](t3-context://v1/thread/thread_ABC).";
+    expect(
+      restoreComposerContextReferences(
+        projectComposerContextForProvider({ text: uppercaseReference, records: [] }),
+      ),
+    ).toBe(uppercaseReference);
+    const literalEnvelope = '<t3_context version="1">\nexample\n</t3_context>';
+    expect(restoreComposerContextReferences(literalEnvelope)).toBe(literalEnvelope);
+    const literalContext =
+      '<t3_context version="1">\n<context kind="note">example</context>\n</t3_context>';
+    expect(restoreComposerContextReferences(literalContext)).toBe(literalContext);
+    const literalEntry =
+      '<t3_context version="1">\n<context kind="note" id="example">example</context>\n</t3_context>';
+    expect(restoreComposerContextReferences(literalEntry)).toBe(literalEntry);
+    const mixedEntries =
+      '<t3_context version="1">\n<context kind="note" id="a">\nfirst\n</context>\n<context kind="note">\nsecond\n</context>\n</t3_context>';
+    expect(restoreComposerContextReferences(mixedEntries)).toBe(mixedEntries);
+    const literalProse =
+      '<t3_context version="1">\n<context kind="note" id="a">\nfirst\n</context>\nkeep this prose\n</t3_context>';
+    expect(restoreComposerContextReferences(`${literalProse}\nKeep this too.${envelope}`)).toBe(
+      `${literalProse}\nKeep this too.`,
+    );
+    expect(restoreComposerContextReferences("Plain [Note: x] text")).toBe("Plain [Note: x] text");
   });
 });
 
