@@ -23,6 +23,7 @@ import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -76,6 +77,7 @@ export const layerExecutor: Layer.Layer<
   | CheckpointRollbackService.CheckpointRollbackServiceV2
   | ProviderTurnControlService.ProviderTurnControlServiceV2
   | ProviderTurnStartService.ProviderTurnStartServiceV2
+  | RunExecutionService.RunExecutionServiceV2
   | RuntimeRequestService.RuntimeRequestServiceV2
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
@@ -89,6 +91,7 @@ export const layerExecutor: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
     const providerTurnStart = yield* ProviderTurnStartService.ProviderTurnStartServiceV2;
+    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimeRequests = yield* RuntimeRequestService.RuntimeRequestServiceV2;
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
@@ -151,6 +154,49 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-turn.interrupt-start": {
+            const request = effect.request;
+            return runExecution
+              .interruptOwnedStart({
+                threadId: effect.threadId,
+                runId: request.runId,
+                attemptId: request.attemptId,
+              })
+              .pipe(
+                Effect.map((target) => ({ unresponsive: false, target }) as const),
+                Effect.catchIf(
+                  (cause) => cause.unresponsive,
+                  () => Effect.succeed({ unresponsive: true, target: undefined } as const),
+                ),
+                Effect.andThen(({ unresponsive, target }) =>
+                  unresponsive
+                    ? threads.dispatch({
+                        type: "run.interrupt.unresponsive",
+                        commandId: CommandId.make(`${effect.id}:unresponsive`),
+                        threadId: effect.threadId,
+                        runId: request.runId,
+                        attemptId: request.attemptId,
+                      })
+                    : target === undefined
+                      ? Effect.void
+                      : threads.dispatch({
+                          type: "thread.background-work.settle",
+                          commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                          threadId: effect.threadId,
+                          providerThreadId: target.providerThreadId,
+                          providerTurnId: target.providerTurnId,
+                        }),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: request.type,
+                      cause,
+                    }),
+                ),
+              );
+          }
           case "provider-turn.interrupt": {
             const request = effect.request;
             return providerTurnControl

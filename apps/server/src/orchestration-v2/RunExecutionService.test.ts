@@ -53,8 +53,15 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
+const layerRunExecution = RunExecutionService.layer.pipe(
+  Layer.provide(
+    Layer.merge(ThreadCommandExecutor.layer, Layer.mock(ProjectionStore.ProjectionStoreV2)({})),
+  ),
+);
 const mockEventSink = (implementation: Partial<EventSink.EventSinkV2["Service"]>) =>
   Layer.mock(EventSink.EventSinkV2)({
     consumeProviderEvents: (source, process, after) =>
@@ -77,7 +84,7 @@ const layerTurnItemPositionsTest = Layer.mock(TurnItemPositionStore.TurnItemPosi
   allocate: () => Effect.succeed(1),
 });
 
-const layerRunExecutionTest = RunExecutionService.layer.pipe(
+const layerRunExecutionTest = layerRunExecution.pipe(
   Layer.provide(
     Layer.mergeAll(
       McpAppModelContext.layerEmpty,
@@ -892,7 +899,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
     ]);
   }).pipe(
     Effect.provide(
-      RunExecutionService.layer.pipe(
+      layerRunExecution.pipe(
         Layer.provide(
           Layer.mergeAll(
             PreviewAgentActivity.layer,
@@ -933,7 +940,7 @@ it.effect("fails the run when its ownership check cannot be read before calling 
     const runId = RunId.make("run:run-execution-start-guard-read");
     const attemptId = RunAttemptId.make("attempt:run-execution-start-guard-read");
     const providerInstanceId = ProviderInstanceId.make("codex");
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
@@ -1135,7 +1142,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
         effects: ReadonlyArray<PendingOrchestrationEffectV2>;
       }>
     >([]);
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
@@ -1255,7 +1262,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
       const refreshes = yield* Ref.make(0);
       const guardedWrites = yield* Ref.make(0);
       const writes = yield* Ref.make<ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>>>([]);
-      const layerTest = RunExecutionService.layer.pipe(
+      const layerTest = layerRunExecution.pipe(
         Layer.provide(
           Layer.mergeAll(
             McpAppModelContext.layerEmpty,
@@ -1428,7 +1435,7 @@ it.effect("ingests new member threads of an owned child after the root turn term
     const order = yield* Ref.make<ReadonlyArray<string>>([]);
     const origins = yield* Ref.make<ReadonlyArray<readonly [string, unknown, unknown]>>([]);
     const requests = yield* Ref.make<ReadonlyArray<string>>([]);
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
@@ -1698,7 +1705,7 @@ it.effect("ends a nested native subagent and its thread when the root run is int
     const nestedId = NodeId.make(`node:${key}:nested`);
     const grandchildRootId = NodeId.make(`node:${key}:grandchild-root`);
     const finalized = yield* Deferred.make<ReadonlyArray<OrchestrationV2DomainEvent>>();
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
@@ -2109,7 +2116,7 @@ it.effect(
       const written = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
       const ingested = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>([]);
       const ingestionDone = yield* Deferred.make<void>();
-      const layerTest = RunExecutionService.layer.pipe(
+      const layerTest = layerRunExecution.pipe(
         Layer.provide(
           Layer.mergeAll(
             McpAppModelContext.layerEmpty,
@@ -3196,7 +3203,7 @@ function captureRootRunTermination(input: {
           }
         }
       });
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(McpAppModelContext.McpAppModelContext)({
@@ -3719,7 +3726,7 @@ function runBackgroundItemScenario(
     const previewActivity = yield* PreviewAgentActivity.PreviewAgentActivity.pipe(
       Effect.provide(PreviewAgentActivity.layer),
     );
-    const layerTest = RunExecutionService.layer.pipe(
+    const layerTest = layerRunExecution.pipe(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
