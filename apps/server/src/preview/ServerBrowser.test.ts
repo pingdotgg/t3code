@@ -805,6 +805,30 @@ it.live("enforces provider ownership and explicit targets when a session has mul
       });
       expect(result).toBe("evaluated");
       expect(contexts).toHaveLength(2);
+
+      const manager = yield* Manager.PreviewManager;
+      const unclaimed = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+      });
+      const closeUnclaimed = yield* broker
+        .invoke<void>({
+          scope,
+          tabId: PreviewTabId.make(unclaimed.tabId),
+          operation: "close",
+          input: {},
+        })
+        .pipe(Effect.flip);
+      expect(closeUnclaimed).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "unclaimedTab",
+      });
+      expect(closeUnclaimed.message).toBe(
+        "This tab has no agent owner. Ask the user to close it in the browser panel.",
+      );
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toContainEqual(
+        expect.objectContaining({ tabId: unclaimed.tabId }),
+      );
     }),
   ).pipe(Effect.provide(layer)),
 );
