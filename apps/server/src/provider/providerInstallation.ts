@@ -3,12 +3,17 @@ import {
   CodexSettings,
   ProviderDriverKind,
   type ProviderInstallCancelInput,
+  type ProviderInstallState,
   type ProviderInstanceId,
   ProviderSetupError,
   type ProviderSetupInput,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -26,12 +31,32 @@ const hasBinaryPath = Schema.is(Schema.Struct({ binaryPath: Schema.String }));
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 const decodeAntigravitySettings = Schema.decodeUnknownEffect(AntigravitySettings);
 
-export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(function* () {
+export class ProviderInstallation extends Context.Service<
+  ProviderInstallation,
+  {
+    readonly start: (
+      input: ProviderSetupInput,
+    ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
+    readonly cancel: (
+      input: ProviderInstallCancelInput,
+    ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
+    readonly subscribe: (
+      input: ProviderSetupInput,
+    ) => Stream.Stream<ProviderInstallState, ProviderSetupError>;
+    readonly remove: (
+      input: ProviderSetupInput,
+    ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
+  }
+>()("t3/provider/providerInstallation") {}
+
+const make = Effect.fn("makeProviderInstallation")(function* () {
   const antigravityInstallation = yield* AntigravityInstallation.AntigravityInstallation;
   const codexInstallation = yield* CodexInstallation.CodexInstallation;
   const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const scope = yield* Effect.scope;
   const accountCheckOperations = new Map<ProviderInstanceId, string>();
 
@@ -184,7 +209,10 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
         const binaryPath = entry.config.binaryPath.trim();
         const resolved = yield* resolveCommandPath(binaryPath, {
           env: yield* mergeProviderInstanceEnvironment(entry.environment),
-        });
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
         return resolved === null ? [binaryPath] : [binaryPath, resolved];
       }),
     );
@@ -202,3 +230,5 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
 
   return { start, cancel, subscribe, remove };
 });
+
+export const layer = Layer.effect(ProviderInstallation, make());
