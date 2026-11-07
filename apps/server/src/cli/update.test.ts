@@ -2,6 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { ManagedUpdatesPolicy } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
+import * as ConfigProvider from "effect/ConfigProvider";
+import { Command } from "effect/cli";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -26,6 +30,7 @@ import {
   resolveMirrorVersion,
   resolveNewestVersion,
   runUpdate,
+  updateCommand,
 } from "./update.ts";
 
 // lsof listing one process, so prune sees a process list in which no runtime is running.
@@ -45,27 +50,38 @@ const unrelatedLsof = ProcessRunner.ProcessRunner.of({
 
 afterEach(() => vi.restoreAllMocks());
 
-it.effect("authenticates each release page until the requested channel is found", () =>
-  Effect.gen(function* () {
-    const pages: string[] = [];
-    const httpClient = HttpClient.make((request) => {
-      const url = new URL(request.url);
-      assert.equal(url.origin, "https://api.github.com");
-      assert.equal(url.pathname, "/repos/pingdotgg/t3code/releases");
-      assert.equal(request.headers.accept, "application/vnd.github+json");
-      assert.equal(request.headers.authorization, "Bearer gh-token");
-      const page = url.searchParams.get("page") ?? "";
-      pages.push(page);
-      const tag_name = page === "1" ? "v1.2.4-preview.20260101.1" : "v1.2.3";
-      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json([{ tag_name }])));
-    });
-    const version = yield* resolveNewestVersion("stable").pipe(
-      Effect.provideService(HostProcess.Environment, { GH_TOKEN: "gh-token" }),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
-    assert.equal(version, "1.2.3");
-    assert.deepStrictEqual(pages, ["1", "2"]);
-  }),
+it.effect.each([undefined, " https://mirror.example/releases/ ", "   "])(
+  "authenticates public release pages and keeps credentials off index mirrors",
+  (indexBaseUrl) =>
+    Effect.gen(function* () {
+      const pages: string[] = [];
+      const httpClient = HttpClient.make((request) => {
+        const url = new URL(request.url);
+        assert.equal(
+          url.origin,
+          indexBaseUrl?.trim() ? "https://mirror.example" : "https://api.github.com",
+        );
+        assert.equal(
+          url.pathname,
+          indexBaseUrl?.trim() ? "/releases/index.json" : "/repos/pingdotgg/t3code/releases",
+        );
+        assert.equal(request.headers.accept, "application/vnd.github+json");
+        assert.equal(
+          request.headers.authorization,
+          indexBaseUrl?.trim() ? undefined : "Bearer gh-token",
+        );
+        const page = url.searchParams.get("page") ?? "";
+        pages.push(page);
+        const tag_name = page === "1" ? "v1.2.4-preview.20260101.1" : "v1.2.3";
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json([{ tag_name }])));
+      });
+      const version = yield* resolveNewestVersion("stable", indexBaseUrl).pipe(
+        Effect.provideService(HostProcess.Environment, { GH_TOKEN: "gh-token" }),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      assert.equal(version, "1.2.3");
+      assert.deepStrictEqual(pages, ["1", "2"]);
+    }),
 );
 
 it.effect("reads the newest version from the update feed file a mirror publishes", () =>
@@ -115,6 +131,69 @@ it.effect("reads the newest version from the update feed file a mirror publishes
     assert.include(yield* resolve("preview", "win32", "x64", ""), "has no preview builds");
   }),
 );
+
+it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update discovery", (it) => {
+  it.effect("keeps release index discovery separate from the download mirror across pages", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-feed-" });
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.mock(BootService.BootService)({
+          status: Effect.succeed({
+            supported: true,
+            installed: false,
+            current: false,
+            unitPath: "",
+            logPath: "",
+          }),
+        }),
+      );
+      for (const indexBaseUrl of [" http://127.0.0.1:4321/releases/ ", undefined]) {
+        const indexUrl = indexBaseUrl
+          ? "http://127.0.0.1:4321/releases/index.json"
+          : "https://api.github.com/repos/pingdotgg/t3code/releases";
+        const requests: Array<string> = [];
+        const error = yield* Command.runWith(updateCommand, { version: packageJson.version })([
+          "--base-dir",
+          baseDir,
+          "--channel",
+          "stable",
+        ]).pipe(
+          Effect.provideService(HostProcess.Environment, {
+            T3CODE_RELEASE_BASE_URL: "http://127.0.0.1:9876/downloads",
+            ...(indexBaseUrl === undefined ? {} : { T3CODE_RELEASE_INDEX_BASE_URL: indexBaseUrl }),
+          }),
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+          Effect.provideService(FetchHttpClient.Fetch, async (input) => {
+            const url = String(input);
+            requests.push(url);
+            if (url === `${indexUrl}?per_page=100&page=1`) {
+              return Response.json([
+                { tag_name: "v999.0.0", draft: true },
+                { tag_name: "v999.0.0-nightly.20261019.1" },
+              ]);
+            }
+            if (url === `${indexUrl}?per_page=100&page=2`) {
+              return Response.json([{ tag_name: "v0.0.0" }]);
+            }
+            throw new Error(`Unexpected release request: ${url}`);
+          }),
+          Effect.flip,
+        );
+
+        assert.deepEqual(requests, [
+          `${indexUrl}?per_page=100&page=1`,
+          `${indexUrl}?per_page=100&page=2`,
+        ]);
+        assert.equal(error._tag, "CliUpdateError");
+        assert.equal(
+          error.message,
+          `t3@0.0.0 is older than the installed ${packageJson.version}. Pass --allow-downgrade to install it anyway.`,
+        );
+      }
+    }),
+  );
+});
 
 it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
   const runWithPolicy = (
