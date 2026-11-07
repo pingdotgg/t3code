@@ -19,6 +19,7 @@ type SwipeGesture =
       deltas: number[];
       y: number;
       bounds: SwipeBounds;
+      target: EventTarget | undefined;
     }
   // Not a swipe, or one already decided: the rest of its events are ignored.
   | { kind: "ignored" };
@@ -37,30 +38,25 @@ function readMainContentBounds(): SwipeBounds {
   return { left, top, width, height };
 }
 
-// `event.target` stops at a shadow host; the composed path also reaches scrollers inside it.
-function canScrollHorizontally(path: readonly EventTarget[], deltaX: number): boolean {
-  for (const element of path) {
-    if (!(element instanceof Element) || element.scrollWidth <= element.clientWidth) continue;
+// The composed path reaches scrollers inside shadow roots, such as the diff viewer's.
+// A scroller at its edge still owns the gesture, so history never takes a content scroll.
+function isInHorizontalScroller(path: readonly EventTarget[]): boolean {
+  return path.some((element) => {
+    if (!(element instanceof Element) || element.scrollWidth <= element.clientWidth) return false;
     const { overflowX } = getComputedStyle(element);
-    if (overflowX !== "auto" && overflowX !== "scroll") continue;
-    const canScroll =
-      deltaX < 0
-        ? element.scrollLeft > 0
-        : element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
-    if (canScroll) return true;
-  }
-  return false;
+    return overflowX === "auto" || overflowX === "scroll";
+  });
 }
 
 function lockSwipeAxis(
   pending: Extract<SwipeGesture, { kind: "pending" }>,
+  target: EventTarget | undefined,
 ): Exclude<SwipeGesture, { kind: "pending" }> {
   const { path, sumX, sumY } = pending;
   if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
   if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
     return { kind: "ignored" };
   }
-  if (canScrollHorizontally(path, sumX)) return { kind: "ignored" };
   const direction = sumX < 0 ? "back" : "forward";
   if (!canNavigateHistory(direction)) return { kind: "ignored" };
   return {
@@ -70,6 +66,7 @@ function lockSwipeAxis(
     deltas: [],
     y: pending.y,
     bounds: readMainContentBounds(),
+    target,
   };
 }
 
@@ -121,15 +118,29 @@ export function HistorySwipeNavigation() {
             : { kind: "pending", path: event.composedPath(), y: event.clientY, sumX: 0, sumY: 0 };
       }
       if (gesture.kind === "ignored") return;
+      if (event.deltaX === 0 && event.deltaY === 0) {
+        if (gesture.kind === "tracking") release();
+        return;
+      }
+      const path = event.composedPath();
+      // Pending wheels are checked while a scroller is still laid out, before it can be removed.
+      // Tracking rechecks only a new target, so overflow gained under a swipe stays history.
+      if (
+        (gesture.kind === "pending" || path[0] !== gesture.target) &&
+        isInHorizontalScroller(path)
+      ) {
+        gesture = { kind: "ignored" };
+        return hideIndicator();
+      }
       if (gesture.kind === "pending") {
         gesture.sumX += event.deltaX;
         gesture.sumY += event.deltaY;
         if (Math.abs(gesture.sumX) + Math.abs(gesture.sumY) < SWIPE_AXIS_LOCK_DISTANCE) return;
-        gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...event.composedPath()] });
+        gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...path] }, path[0]);
         if (gesture.kind === "ignored") return;
       } else {
+        gesture.target = path[0];
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
-        if (event.deltaX === 0 && event.deltaY === 0) return release();
         gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
         if (isMomentumTail(gesture.deltas)) return release();
         gesture.distance = Math.max(0, gesture.distance + delta);
