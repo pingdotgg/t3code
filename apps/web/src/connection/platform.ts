@@ -145,6 +145,17 @@ const layerWakeups = Wakeups.layer({
       managedRelayAccountChanges(appAtomRegistry).pipe(
         Stream.map(() => "credentials-changed" as const),
       ),
+      // A system wake follows a long suspension even when the window stayed visible.
+      Stream.callback<"application-active-long">((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() =>
+            window.desktopBridge?.onSystemResume?.(() => {
+              Queue.offerUnsafe(queue, "application-active-long");
+            }),
+          ),
+          (unsubscribe) => Effect.sync(() => unsubscribe?.()),
+        ).pipe(Effect.asVoid),
+      ),
       networkPathChanges,
     ],
     { concurrency: "unbounded" },

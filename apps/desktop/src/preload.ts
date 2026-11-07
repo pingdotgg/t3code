@@ -92,6 +92,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
     return () => ipcRenderer.removeListener(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
   },
+  onSystemResume: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on(IpcChannels.SYSTEM_RESUME_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.SYSTEM_RESUME_CHANNEL, handler);
+  },
   onTrackpadScrollBegin: (listener) => {
     const handler = () => listener();
     ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_BEGIN_CHANNEL, handler);
