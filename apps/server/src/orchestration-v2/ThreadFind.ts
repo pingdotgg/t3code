@@ -36,6 +36,7 @@ interface FindPayload extends FindRow {
   readonly runId: OrchestrationV2TurnItem["runId"];
   readonly type: OrchestrationV2TurnItem["type"];
   readonly emptyText: boolean;
+  readonly retried: boolean;
 }
 interface FindDocument extends FindRow {
   readonly entryId: string;
@@ -234,12 +235,14 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       run_id: OrchestrationV2TurnItem["runId"];
       item_type: OrchestrationV2TurnItem["type"];
       empty_text: number | null;
+      retried: number;
     }>`
       SELECT item.thread_id, item.turn_item_id, item.payload_json,
         COALESCE(json_extract(item.payload_json, '$.messageId'), item.turn_item_id) AS entry_id,
         json_extract(item.payload_json, '$.runId') AS run_id,
         json_extract(item.payload_json, '$.type') AS item_type,
-        json_extract(item.payload_json, '$.text') = '' AS empty_text
+        json_extract(item.payload_json, '$.text') = '' AS empty_text,
+        json_extract(item.payload_json, '$.retryOfRunId') IS NOT NULL AS retried
       FROM orchestration_v2_projection_turn_items AS item
       JOIN json_each(${sources}) AS wanted
         ON item.thread_id = json_extract(wanted.value, '$.threadId')
@@ -262,6 +265,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             runId: payload.run_id,
             type: payload.item_type,
             emptyText: payload.empty_text === 1,
+            retried: payload.retried === 1,
           });
     });
   });
@@ -438,7 +442,10 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           payloads.filter(
             (row) =>
               row.type !== "user_input_request" &&
-              !(row.type === "user_message" && foldedAnswerRunIds.get(row.entryId) === row.runId),
+              !(
+                row.type === "user_message" &&
+                (row.retried || foldedAnswerRunIds.get(row.entryId) === row.runId)
+              ),
           );
         const documents = new Map<number, FindDocument & RenderedDocument>();
         const count = Effect.fnUntraced(function* (row: FindPayload | RenderedDocument) {

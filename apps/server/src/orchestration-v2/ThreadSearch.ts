@@ -280,6 +280,7 @@ export const messageHitsQuery = (
       -- Answers to an agent's question show inside its question card, where
       -- neither find nor a jump can reach them.
       AND messages.message_id NOT LIKE 'async-answer:%'
+      AND json_extract(messages.payload_json, '$.retryOfRunId') IS NULL
       -- Nor can they reach a rolled-back turn, or a message of a stopped turn
       -- that no shown item carries, such as a queued prompt that never ran.
       AND NOT EXISTS (
