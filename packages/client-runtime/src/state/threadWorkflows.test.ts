@@ -137,6 +137,31 @@ describe("thread workflows", () => {
     expect(state.canSendNow).toBe(false);
   });
 
+  it("marks queued runs the server refuses to steer", () => {
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs: [
+        { id: "goal", status: "queued", userMessageId: "message-goal", ordinal: 1 },
+        { id: "plain", status: "queued", userMessageId: "message-plain", ordinal: 2 },
+        { id: "loading", status: "queued", userMessageId: "message-loading", ordinal: 3 },
+      ],
+      messages: [
+        { id: "message-goal", text: "/goal finish the refactor", attachments: [] },
+        { id: "message-plain", text: "Also update the docs", attachments: [] },
+      ],
+      providerTurns: [],
+      providerThreads: [],
+      providerSessions: [],
+    } as never);
+
+    expect(
+      state.queuedRuns.map(({ run, steerRejectionReason }) => [run.id, steerRejectionReason]),
+    ).toEqual([
+      ["goal", "Goal commands must run as a separate turn."],
+      ["plain", null],
+      ["loading", "Queued message is still loading."],
+    ]);
+  });
   it.each(["completed", "interrupted", "cancelled", "failed"])(
     "allows sending a held message after a %s turn without a live session",
     (status) => {

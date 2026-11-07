@@ -1,8 +1,9 @@
 import {
   type ChatAttachment,
-  isCompactionCommandMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
+  orchestrationV2SteerRejectionReason,
+  isCompactionCommandMessage,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
@@ -27,6 +28,8 @@ export interface QueuedThreadRun {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly messageId: Message["id"];
   readonly context?: Message["context"];
+  /** Set when the server would reject promoting this run to a steer. */
+  readonly steerRejectionReason: string | null;
   /** Carries the attribution a sent message shows: automation, agent sender, or guest. */
   readonly message?: Message;
 }
@@ -155,6 +158,13 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       // A queued guest message shows the guest's words; the agent still gets the attributed text.
       text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
       attachments: message?.attachments ?? [],
+      steerRejectionReason:
+        message === undefined
+          ? "Queued message is still loading."
+          : orchestrationV2SteerRejectionReason({
+              text: message.text,
+              attachments: message.attachments ?? [],
+            }),
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
       ...(message ? { message } : {}),

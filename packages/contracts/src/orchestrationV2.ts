@@ -1328,6 +1328,33 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
 });
 export type OrchestrationV2ConversationMessage = typeof OrchestrationV2ConversationMessage.Type;
 
+type OrchestrationV2CommandMessage = Pick<
+  OrchestrationV2ConversationMessage,
+  "text" | "attachments"
+>;
+
+/** A bare `/compact` or `/logout`: a provider maintenance turn, not conversation. */
+export function isNativeMaintenanceCommand(message: OrchestrationV2CommandMessage): boolean {
+  return (
+    message.attachments.length === 0 &&
+    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
+  );
+}
+
+export function orchestrationV2SteerRejectionReason(
+  message: OrchestrationV2CommandMessage,
+): string | null {
+  if (isNativeMaintenanceCommand(message)) {
+    return message.text.trim().toLowerCase() === "/compact"
+      ? "Context compaction must run as a separate turn."
+      : "Signing out must run as a separate turn.";
+  }
+  if (parseGoalCommand(message) !== null) {
+    return "Goal commands must run as a separate turn.";
+  }
+  return null;
+}
+
 export const OrchestrationV2PlanStep = Schema.Struct({
   id: TrimmedNonEmptyString,
   text: TrimmedNonEmptyString,
