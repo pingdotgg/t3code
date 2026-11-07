@@ -109,6 +109,7 @@ import {
   isActiveRun,
   isNativeMaintenanceCommand,
   isSlashCommand,
+  resolveActiveRunDispatchIntent,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
@@ -4922,7 +4923,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : "Signing out must run as a separate turn. Queue it or wait for the active turn to finish.",
       });
     }
-    if (isSlashCommand(input)) {
+    if (parseGoalCommand(input) !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause:
+          "Goal commands must run as a separate turn. Queue it or wait for the active turn to finish.",
+      });
+    }
+    // An explicit restart already gives up the turn, so only steering holds commands back.
+    if (!input.forceRestart && isSlashCommand(input)) {
       return yield* new OrchestratorDispatchError({
         commandId: input.command.commandId,
         commandType: input.command.type,
@@ -5827,7 +5837,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
     const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-    let dispatchMode = resolveMessageDispatchIntent(projection, command);
+    // Codex and Claude own /goal; elsewhere it is ordinary text that cannot steer.
+    const parsedGoalCommand = parseGoalCommand(command);
+    const goalCommand =
+      parsedGoalCommand === null ||
+      (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
+        ? null
+        : parsedGoalCommand;
+    // A goal command keeps the run it was sent at; the goal handling below queues it.
+    let dispatchMode =
+      goalCommand === null
+        ? resolveMessageDispatchIntent(projection, command)
+        : resolveActiveRunDispatchIntent(projection, command.dispatchMode, command.deliveryIntent);
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -5865,27 +5886,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // Codex and Claude own /goal; elsewhere it is ordinary text that cannot steer.
-    const parsedGoalCommand = parseGoalCommand(command);
-    const goalCommand =
-      parsedGoalCommand === null ||
-      (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
-        ? null
-        : parsedGoalCommand;
     let goalStopRunId: RunId | undefined;
     if (goalCommand !== null) {
       yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
       // A goal command never joins a running turn. One that starts or ends goal
       // work stops the run and goes first in the queue; the rest wait. A send
-      // that asked to be queued only queues, and a run that is only finishing
-      // or running background work is never stopped.
+      // that asked to be queued (no delivery intent) only queues, and a run
+      // that is only finishing or running background work is never stopped.
       const resolvedMode = dispatchMode;
       const target =
-        resolvedMode.type === "restart_active"
+        resolvedMode.type === "steer_active" || resolvedMode.type === "restart_active"
           ? projection.runs.find((run) => run.id === resolvedMode.targetRunId)
-          : resolvedMode.type === "queue_after_active" &&
-              (command.deliveryIntent !== undefined ||
-                command.dispatchMode.type !== "queue_after_active")
+          : resolvedMode.type === "queue_after_active" && command.deliveryIntent !== undefined
             ? projection.runs.findLast(isLiveRun)
             : undefined;
       if (target !== undefined) {
@@ -9866,8 +9878,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "A message that starts a fresh session can't steer the current turn.",
       });
     }
-    if (goalCommand !== null) {
-      yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
+    // A steered command replaces the turn's task, so promoting one only moves it first.
+    if (goalCommand !== null || isSlashCommand(queuedMessage)) {
+      if (goalCommand !== null) {
+        yield* ensureGoalCommandSupported(command, queuedMessage, queuedRun.providerInstanceId);
+      }
       const goal = projection.providerThreads.find(
         (candidate) => candidate.id === target?.providerThreadId,
       )?.goal;
@@ -9881,6 +9896,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...queuedRun, queuePosition: 1 },
       });
       const stops =
+        goalCommand !== null &&
         target !== undefined &&
         isLiveRun(target) &&
         goalCommandStopsActiveRun(goalCommand, goal?.status ?? null) &&

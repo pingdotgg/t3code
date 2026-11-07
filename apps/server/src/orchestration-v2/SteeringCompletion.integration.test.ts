@@ -1617,7 +1617,7 @@ it.effect("queues a slash command sent into a running turn instead of steering i
   ),
 );
 
-it.effect("keeps a queued slash command queued when promoted to steer", () =>
+it.effect("promoting a queued /context moves it first and does not steer", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { started, steered, layer, startFirstTurn, send, read } =
@@ -1626,28 +1626,60 @@ it.effect("keeps a queued slash command queued when promoted to steer", () =>
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const threadId = yield* startFirstTurn;
+        yield* send("queued", "queued", "queue");
         yield* send("context", "/context", "queue");
         const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
           (run) => run.userMessageId === MessageId.make("message:context"),
         )!;
-        const promoteError = yield* orchestrator
-          .dispatch({
-            type: "queued-message.promote-to-steer",
-            commandId: CommandId.make("promote"),
-            threadId,
-            queuedRunId: queuedRun.id,
-            targetRunId: started[0]!.runId,
-          })
-          .pipe(Effect.flip);
+        yield* orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote"),
+          threadId,
+          queuedRunId: queuedRun.id,
+          targetRunId: started[0]!.runId,
+        });
         yield* worker.drain();
 
-        assert.include(String(promoteError.cause), "Commands must run as a separate turn");
         assert.deepEqual(steered, []);
         assert.deepEqual(yield* read(threadId), {
-          queue: ["/context"],
+          queue: ["/context", "queued"],
           started: ["first"],
           stopRequested: false,
         });
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("restarts the turn for a slash command sent as an explicit restart", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, interrupted, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("slash-restart", true);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart-context"),
+          threadId,
+          messageId: MessageId.make("message:restart-context"),
+          text: "/context",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "restart_active", targetRunId: started[0]!.runId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+
+        assert.deepEqual(steered, []);
+        assert.lengthOf(interrupted, 1);
+        assert.deepEqual(
+          started.map((turn) => turn.message.text),
+          ["first", "/context"],
+        );
       }).pipe(Effect.provide(layer));
     }),
   ),
@@ -1682,6 +1714,96 @@ it.effect("promotes a queued goal by stopping the running turn", () =>
           started: ["first", "/goal ship it"],
           stopRequested: true,
         });
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("queues a goal aimed at a finished turn without stopping the next one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { events, started, steered, layer, startFirstTurn, send } =
+        yield* goalHarness("goal-stale-target");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* send("second", "second", "queue");
+        const settled = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === started[0]!.runId &&
+              event.payload.status === "waiting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const secondRunning = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "provider-turn.updated" &&
+              event.payload.status === "running" &&
+              event.payload.runAttemptId !== started[0]!.attemptId,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+        });
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: turn.providerThreadId,
+          providerTurnId: turn.id,
+          runOrdinal: started[0]!.runOrdinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        yield* orchestrator.resumeQueuedRuns;
+        yield* worker.drain();
+        yield* Fiber.join(secondRunning);
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("goal"),
+          threadId,
+          messageId: MessageId.make("message:goal"),
+          text: "/goal ship it",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "steer_active", targetRunId: started[0]!.runId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(steered, []);
+        assert.deepEqual(
+          started.map((turn) => turn.message.text),
+          ["first", "second"],
+        );
+        assert.isFalse(
+          projection.turnItems.some(
+            (item) => item.type === "run_interrupt_request" && item.runId === started[1]!.runId,
+          ),
+        );
+        assert.deepEqual(
+          projection.runs
+            .filter((run) => run.status === "queued")
+            .map((run) => projection.messages.find((m) => m.id === run.userMessageId)?.text),
+          ["/goal ship it"],
+        );
       }).pipe(Effect.provide(layer));
     }),
   ),

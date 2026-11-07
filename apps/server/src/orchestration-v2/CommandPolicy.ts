@@ -104,10 +104,25 @@ export function resolveMessageDispatchIntent(
     "dispatchMode" | "deliveryIntent" | "text" | "attachments"
   >,
 ): MessageDispatchMode {
-  const mode = resolveDeliveryIntent(projection, message.dispatchMode, message.deliveryIntent);
-  if (mode.type !== "steer_active") return mode;
+  const mode = resolveActiveRunDispatchIntent(
+    projection,
+    message.dispatchMode,
+    message.deliveryIntent,
+  );
   // A provider runs a steered command in place of the turn's task, so commands wait.
-  if (isSlashCommand(message)) return { type: "queue_after_active" };
+  return mode.type === "steer_active" && isSlashCommand(message)
+    ? { type: "queue_after_active" }
+    : mode;
+}
+
+/** How a message joins active work when it is free to steer. */
+export function resolveActiveRunDispatchIntent(
+  projection: OrchestrationV2ThreadProjection,
+  requestedMode: MessageDispatchMode,
+  deliveryIntent?: "auto" | "steer" | "restart",
+): MessageDispatchMode {
+  const mode = resolveDeliveryIntent(projection, requestedMode, deliveryIntent);
+  if (mode.type !== "steer_active") return mode;
   // Compaction and sign-out cannot accept steers; queue follow-ups.
   const target = projection.runs.find((run) => run.id === mode.targetRunId);
   const targetMessage = projection.messages.find((message) => message.id === target?.userMessageId);
