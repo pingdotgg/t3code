@@ -138,6 +138,7 @@ const ALL_PROJECTS_VALUE = "all";
 const ALL_HOSTS_VALUE = "";
 const ALL_SERVERS_VALUE = "";
 const UNFILTERED_VALUE = "all";
+const VIEWER_AUTHOR_VALUE = "me";
 /** Project ids are unique only within an environment. */
 export const pullRequestProjectKey = (project: {
   readonly id: ProjectId;
@@ -283,7 +284,10 @@ function PullRequestAuthorChoices({
   const [query, setQuery] = useState("");
   const hosted = useHostedFilterOptions(scope, "authors", query);
   const login = value?.toLowerCase() ?? "";
-  const selected = selectedPullRequestAuthor(options, hosted.authors, value);
+  const selected =
+    value === VIEWER_AUTHOR_VALUE
+      ? undefined
+      : selectedPullRequestAuthor(options, hosted.authors, value);
   const visible = [
     ...(selected ? [selected] : []),
     ...pullRequestAuthorChoices(options, hosted.authors, query).filter(
@@ -306,6 +310,12 @@ function PullRequestAuthorChoices({
           <span className="flex min-w-0 items-center gap-2">
             <LayersIcon aria-hidden className="size-3.5" />
             Anyone
+          </span>
+        </MenuRadioItem>
+        <MenuRadioItem value={VIEWER_AUTHOR_VALUE}>
+          <span className="flex min-w-0 items-center gap-2">
+            <UserRoundIcon aria-hidden className="size-3.5" />
+            Me
           </span>
         </MenuRadioItem>
         {visible.map((option) => (
@@ -348,7 +358,7 @@ function PullRequestAuthorFilter({
         <UserRoundIcon aria-hidden className="size-3.5" />
         <span className="flex-1">Author</span>
         <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
-          {value ?? "Anyone"}
+          {value === VIEWER_AUTHOR_VALUE ? "Me" : (value ?? "Anyone")}
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
