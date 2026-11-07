@@ -549,7 +549,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // Turn failures can leave Pi alive; pump termination retires the runtime.
       let runtimeRetired = false;
       let pendingWake: PiWake | null = null;
-      // threadState is cleared during a session switch; this thread still lists the roster.
+      // The thread listing the background roster; it outlives threadState through a session switch.
       let backgroundTaskOwner: PiThreadState | null = null;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
@@ -660,8 +660,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const syncBackgroundTasks = Effect.fnUntraced(function* () {
         // A lifecycle reset clears statuses until its outcome; the thread keeps listing its work.
         if (extensionStatusReset !== null) return;
-        const owner = threadState ?? backgroundTaskOwner;
-        backgroundTaskOwner = owner;
+        const owner = backgroundTaskOwner;
         if (owner === null) return;
         const tasks = backgroundTasks();
         const listed = owner.providerThread.pendingBackgroundTasks ?? [];
