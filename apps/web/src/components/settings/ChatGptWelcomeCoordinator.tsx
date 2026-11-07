@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { environmentPresentations } from "../../state/presentation";
 import { OpenAI } from "../Icons";
 import { Button } from "../ui/button";
@@ -30,6 +30,7 @@ export function ChatGptWelcomeCoordinator() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const [acknowledged, setAcknowledged] = useState(readAcknowledgedProfiles);
+  const continueRef = useRef<HTMLButtonElement>(null);
   const profiles = [...presentations].flatMap(([environmentId, presentation]) =>
     presentation.connection.phase !== "connected"
       ? []
@@ -61,21 +62,27 @@ export function ChatGptWelcomeCoordinator() {
         if (!open) dismiss();
       }}
     >
-      <DialogPopup>
+      <DialogPopup className="sm:max-w-100" showCloseButton={false} initialFocus={continueRef}>
         <DialogHeader>
-          <OpenAI className="mb-2 size-8" aria-hidden="true" />
+          <div className="mb-2 flex size-9 items-center justify-center rounded-control surface-well">
+            <OpenAI aria-hidden className="size-4.5 text-foreground" />
+          </div>
           <DialogTitle>Your ChatGPT plan is connected</DialogTitle>
           <DialogDescription>
-            Eligible usage in T3 Code uses your ChatGPT plan. Manage your shared usage and any
-            credit settings in ChatGPT.
+            Eligible T3 Code usage now counts toward your ChatGPT plan. Manage usage and credits in
+            ChatGPT.
           </DialogDescription>
-          <p className="text-meta text-muted-foreground">
+        </DialogHeader>
+        <DialogFooter className="sm:items-center sm:justify-between">
+          <p className="min-w-0 truncate text-meta text-dim-foreground max-sm:order-last">
             {next?.providerName} on {next?.environmentLabel}
           </p>
-        </DialogHeader>
-        <DialogFooter>
-          <ChatGptUsageButton />
-          <Button onClick={dismiss}>Continue</Button>
+          <div className="flex shrink-0 flex-col-reverse gap-2 sm:flex-row">
+            <ChatGptUsageButton size="standard" variant="secondary" />
+            <Button ref={continueRef} size="standard" onClick={dismiss}>
+              Continue
+            </Button>
+          </div>
         </DialogFooter>
       </DialogPopup>
     </Dialog>
