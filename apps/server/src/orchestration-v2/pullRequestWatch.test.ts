@@ -122,7 +122,30 @@ describe("evaluatePullRequestWatch", () => {
     assert.isFalse(unlisted.next.passed);
     assert.deepEqual(evaluatePullRequestWatch(unlisted.next, named, noRemarks).changes, []);
     const dropped = evaluatePullRequestWatch(alone.next, detail({ checks: [bot] }), noRemarks);
+    assert.deepEqual(dropped.changes, []);
+    assert.isFalse(dropped.next.passed);
+    assert.deepEqual(dropped.next.awaitingApproval, [unnamed.name]);
     assert.deepEqual(evaluatePullRequestWatch(dropped.next, named, noRemarks).changes, []);
+    const namedPending = evaluatePullRequestWatch(
+      dropped.next,
+      detail({
+        checks: [
+          { ...bot, required: true },
+          { ...unnamed, status: "pending" },
+        ],
+      }),
+      noRemarks,
+    );
+    assert.deepEqual(namedPending.changes, []);
+    assert.isFalse(namedPending.next.passed);
+    const namedDone = detail({ checks: [bot, { ...unnamed, status: "success" }] });
+    const namedFinished = evaluatePullRequestWatch(namedPending.next, namedDone, noRemarks);
+    assert.deepEqual(namedFinished.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(namedFinished.next.awaitingApproval, []);
+    assert.deepEqual(
+      evaluatePullRequestWatch(namedFinished.next, namedDone, noRemarks).changes,
+      [],
+    );
     const pushed = detail({ headSha: "bbbbbbbbbb", checks: [bot] });
     assert.deepEqual(evaluatePullRequestWatch(missing.next, pushed, noRemarks).changes, [
       { kind: "checks-passed", count: 1, required: false },

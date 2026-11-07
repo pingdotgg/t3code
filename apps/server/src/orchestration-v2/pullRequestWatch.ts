@@ -75,9 +75,15 @@ export function evaluatePullRequestWatch(
 
     // GitHub lists runs awaiting approval in a separate read that can come back empty, so a run
     // stays awaited through reads that miss it until all reported jobs finish. One known only by
-    // name stays only while listed, or through a read beside a placeholder that does not list it.
+    // name needs a completed check with that name before its hold can clear.
     const awaitingNow = [...new Set(awaiting.map(approvalKey))];
-    const missed = (name: string) => unread && !checks.some((check) => check.name === name);
+    const nameUnfinished = (name: string) => {
+      const matching = checks.filter((check) => check.name === name);
+      return (
+        matching.length === 0 ||
+        matching.some((check) => check.status === "pending" || check.status === "action-required")
+      );
+    };
     const pending = new Set(
       checks.filter((check) => check.status === "pending").map((check) => workflowRunOf(check.url)),
     );
@@ -92,7 +98,7 @@ export function evaluatePullRequestWatch(
       ...awaitingApproval.filter(
         (key) =>
           !awaitingNow.includes(key) &&
-          (workflowRunOf(key) === key ? !finished.has(key) : missed(key)),
+          (workflowRunOf(key) === key ? !finished.has(key) : nameUnfinished(key)),
       ),
     ];
   }
