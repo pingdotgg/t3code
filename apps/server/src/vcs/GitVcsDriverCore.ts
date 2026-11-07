@@ -4220,6 +4220,62 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input, options) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
+    const repositoryRoot = yield* readWorktreeRoot(input.cwd);
+    if (repositoryRoot === null) {
+      const bare = yield* executeGit("GitVcsDriver.createWorktree", input.cwd, [
+        "rev-parse",
+        "--is-bare-repository",
+      ]);
+      if (bare.stdout.trim() !== "true") {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.createWorktree",
+          command: "git worktree add",
+          cwd: input.cwd,
+          detail:
+            "Could not determine the Git repository root. Worktree creation stopped without changing the repository.",
+        });
+      }
+    } else {
+      const sameDirectory = yield* Effect.gen(function* () {
+        const [project, root] = yield* Effect.all([
+          fileSystem.stat(input.cwd),
+          fileSystem.stat(repositoryRoot),
+        ]);
+        // Directory identity also matches Windows 8.3 paths, which JS realpath can leave unexpanded.
+        if (
+          Option.isSome(project.ino) &&
+          project.ino.value > 0n &&
+          Option.isSome(root.ino) &&
+          root.ino.value > 0n
+        ) {
+          return project.dev === root.dev && project.ino.value === root.ino.value;
+        }
+        const [physicalCwd, physicalRoot] = yield* Effect.all([
+          fileSystem.realPath(input.cwd),
+          fileSystem.realPath(repositoryRoot),
+        ]);
+        return path.relative(physicalRoot, physicalCwd) === "";
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.createWorktree",
+              command: "git worktree add",
+              cwd: input.cwd,
+              detail: "Could not compare the project folder with its Git repository root.",
+              cause,
+            }),
+        ),
+      );
+      if (!sameDirectory) {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.createWorktree",
+          command: "git worktree add",
+          cwd: input.cwd,
+          detail: `Cannot create a worktree from "${input.cwd}" because its Git repository root is "${repositoryRoot}". Add the repository root as a project to create a worktree of that repository, or run git init in the project folder to give it its own repository.`,
+        });
+      }
+    }
     const targetBranch = input.newRefName ?? input.refName;
     // Resolve sub/.. before taking the basename.
     const repoName = path.basename(path.resolve(input.cwd));
