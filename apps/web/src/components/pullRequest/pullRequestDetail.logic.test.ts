@@ -974,13 +974,13 @@ describe("asking about a change rather than working on it", () => {
     const otherUrl = "https://github.com/acme/other/pull/42";
     const first = buildAddSelectionToAgentHandoff({
       ...base,
-      comment: selection("pull-request-selection:t3code:page.tsx:12:18"),
+      comment: selection("pull-request-selection:page.tsx:12:18"),
       request: "why?",
     });
     const second = buildAddSelectionToAgentHandoff({
       ...base,
       url: otherUrl,
-      comment: selection("pull-request-selection:other:page.tsx:12:18"),
+      comment: selection("pull-request-selection:page.tsx:12:18"),
       request: "and here?",
     });
     const draft = appendHandoff(appendHandoff({ prompt: "", reviewComments: [] }, first), second);
