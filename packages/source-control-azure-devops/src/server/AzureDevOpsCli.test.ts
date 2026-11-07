@@ -233,6 +233,26 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("checks out a pull request with only the flags az accepts for that command", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.checkoutPullRequest({ cwd: "/repo", reference: "42" });
+
+      assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0].args, [
+        "repos",
+        "pr",
+        "checkout",
+        "--only-show-errors",
+        "--id",
+        "42",
+        "--remote-name",
+        "origin",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("percent-encodes the source branch while preserving recognized ref prefixes", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
