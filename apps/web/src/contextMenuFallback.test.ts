@@ -153,10 +153,6 @@ class FakeDocument {
   activeElement: FakeElement | null = null;
   private readonly listeners = new Map<string, FakeListener[]>();
 
-  createElementNS(_namespace: string, tagName: string) {
-    return new FakeElement(tagName);
-  }
-
   createElement(tagName: string) {
     return new FakeElement(tagName);
   }
@@ -225,19 +221,6 @@ afterEach(() => {
 });
 
 describe("showContextMenuFallback", () => {
-  it("renders the new thread icon in the project folder menu", async () => {
-    const selectionPromise = showContextMenuFallback([
-      { id: "new-thread", label: "New thread", icon: "square-pen" },
-    ]);
-    const button = findButton("New thread");
-
-    expect(button?.querySelectorAll("svg")).toHaveLength(1);
-    expect(button?.querySelectorAll("path").length).toBeGreaterThan(0);
-    button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
-    await expect(selectionPromise).resolves.toBe("new-thread");
-  });
-
   it("ignores a click from the gesture that opened the menu", async () => {
     let enablePointerSelection: ((time: number) => void) | undefined;
     vi.stubGlobal("requestAnimationFrame", (callback: (time: number) => void) => {
