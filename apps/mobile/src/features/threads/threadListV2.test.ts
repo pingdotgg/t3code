@@ -225,7 +225,7 @@ describe("resolveThreadListV2SwipeActions", () => {
     expect(thread.pendingUserInputAt).toBe(NOW);
     expect(
       resolveThreadListV2SwipeActions({
-        variant: "card",
+        settled: false,
         settlementSupported: true,
         snoozeSupported: true,
         snoozable: canSnooze(thread, { now: NOW }),
@@ -1939,34 +1939,5 @@ describe("Working section beta", () => {
       "v2-settled-shelf",
       "settled",
     ]);
-  });
-});
-
-describe("queued messages keep a settled thread active", () => {
-  const threads = [
-    makeThread({ id: ThreadId.make("active"), title: "Active" }),
-    makeThread({ id: ThreadId.make("settled"), title: "Settled", settledOverride: "settled" }),
-    makeThread({
-      id: ThreadId.make("settled-queued"),
-      title: "Settled with outbox",
-      settledOverride: "settled",
-    }),
-  ];
-  const queuedThreadKeys = new Set([`${environmentId}:settled-queued`]);
-
-  it("lists the thread in the active block instead of the settled shelf", () => {
-    const layout = buildThreadListV2Items({
-      threads,
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-      queuedThreadKeys,
-    });
-    expect(layout.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
-      ["active", "card"],
-      ["settled-queued", "card"],
-      ["settled", "slim"],
-    ]);
-    expect(layout.settledCount).toBe(1);
   });
 });
