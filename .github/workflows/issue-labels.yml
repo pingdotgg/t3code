@@ -16,6 +16,7 @@ jobs:
   sync:
     name: Sync issue labels
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Ensure managed issue labels exist
         uses: actions/github-script@v7

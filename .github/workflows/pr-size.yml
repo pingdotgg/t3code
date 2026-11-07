@@ -11,6 +11,7 @@ jobs:
   prepare-config:
     name: Prepare PR size config
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       labels_json: ${{ steps.config.outputs.labels_json }}
     steps:
@@ -59,6 +60,7 @@ jobs:
     needs: prepare-config
     if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
       issues: write
@@ -116,6 +118,7 @@ jobs:
     needs: prepare-config
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: read
