@@ -321,7 +321,8 @@ class SpawnWorker {
       id,
       command,
       args: [...args],
-      options: { ...options, stdio },
+      // A worker's process.env is a copy from when it started; children get the server's current one.
+      options: { ...options, stdio, env: options.env ?? { ...process.env } },
     });
     return child;
   }

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - fixtures need real paths and the process resource list.
+// @effect-diagnostics nodeBuiltinImport:off processEnvInEffect:off - fixtures need real paths, the process resource list and the live environment.
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -80,6 +80,13 @@ describe("SpawnWorker", () => {
         expect(stderr).toBe("b".repeat(1024 * 1024));
         expect(code).toBe(0);
       }
+      // The launcher threads already exist, so this needs the server's environment at launch time.
+      process.env.SPAWN_WORKER_LATE = "set after start";
+      const late = yield* spawner.spawn(
+        node("process.stdout.write(process.env.SPAWN_WORKER_LATE)"),
+      );
+      expect(yield* text(late.stdout)).toBe("set after start");
+      delete process.env.SPAWN_WORKER_LATE;
       const extra = yield* spawner.spawn(
         node("require('node:fs').writeSync(3, 'fd3 value')", [], {
           additionalFds: { fd3: { type: "output" } },
