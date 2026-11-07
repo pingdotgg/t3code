@@ -3,11 +3,16 @@ import {
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  type EnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { resolveRemoteOpenState } from "./remoteOpen";
+import { readDesktopHomeEnvironmentId, resolveRemoteOpenState } from "./remoteOpen";
+import { appAtomRegistry } from "./rpc/atomRegistry";
+import { environmentPresentations } from "./state/presentation";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -220,4 +225,54 @@ describe("buildRemoteOpenUrl", () => {
       ).toBe(expected);
     }
   });
+});
+
+it("recognizes a same-home service after a missing ID without reloading the page", async () => {
+  const target = new BearerConnectionTarget({
+    environmentId,
+    label: "laptop service",
+    connectionId: "paired-1",
+  });
+  const presentation: EnvironmentPresentation = {
+    entry: { target, profile: Option.none(), enabled: true },
+    connection: { phase: "connecting", error: null, traceId: null },
+    serverConfig: null,
+  };
+  const presentationAtom = Atom.make<EnvironmentPresentation | null>(presentation);
+  using _presentation = vi
+    .spyOn(environmentPresentations, "presentationAtom")
+    .mockReturnValue(presentationAtom);
+  const getHomeEnvironmentId = vi.fn<() => Promise<string | null>>().mockResolvedValue(null);
+  vi.stubGlobal("window", { desktopBridge: { getHomeEnvironmentId } });
+  try {
+    expect(readDesktopHomeEnvironmentId(environmentId)).toBeNull();
+    await vi.waitFor(() => expect(getHomeEnvironmentId).toHaveResolvedWith(null));
+
+    getHomeEnvironmentId.mockResolvedValue(environmentId);
+    appAtomRegistry.set(presentationAtom, {
+      ...presentation,
+      connection: { phase: "connected", error: null, traceId: null },
+    });
+    await vi.waitFor(() => {
+      expect(readDesktopHomeEnvironmentId(environmentId)).toBe(environmentId);
+    });
+
+    const callsAfterConnecting = getHomeEnvironmentId.mock.calls.length;
+    appAtomRegistry.set(presentationAtom, { ...presentation, serverConfig: null });
+    expect(readDesktopHomeEnvironmentId(environmentId)).toBe(environmentId);
+    expect(getHomeEnvironmentId).toHaveBeenCalledTimes(callsAfterConnecting);
+
+    appAtomRegistry.set(presentationAtom, {
+      ...presentation,
+      entry: {
+        ...presentation.entry,
+        target: new SshConnectionTarget({ environmentId, label: "remote", connectionId: "ssh-1" }),
+      },
+    });
+    expect(readDesktopHomeEnvironmentId(environmentId)).toBeNull();
+    expect(getHomeEnvironmentId).toHaveBeenCalledTimes(callsAfterConnecting);
+  } finally {
+    appAtomRegistry.dispose();
+    vi.unstubAllGlobals();
+  }
 });

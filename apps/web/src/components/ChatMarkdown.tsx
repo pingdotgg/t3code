@@ -608,7 +608,10 @@ function useChatMarkdownState({
               sshTarget: null,
               remoteOpenTargets: undefined,
               isDesktopRenderer: window.desktopBridge !== undefined,
-              desktopHomeEnvironmentId: readDesktopHomeEnvironmentId(),
+              desktopHomeEnvironmentId:
+                target._tag === "BearerConnectionTarget"
+                  ? readDesktopHomeEnvironmentId(environmentId)
+                  : null,
             }).mode !== "local-exec"
           ) {
             description = `The file was not found on ${target.label} at ${error.checkedPath ?? error.resource.path}.`;

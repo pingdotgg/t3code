@@ -102,20 +102,32 @@ export function resolveRemoteOpenState(input: {
   return REMOTE_UNAVAILABLE;
 }
 
-// Read once per page: the id is permanent once a server has written it to the home.
-const desktopHomeEnvironmentIdAtom = Atom.make((get): string | null => {
-  const read = window.desktopBridge?.getHomeEnvironmentId;
-  read?.().then(
-    (id) => {
-      if (id !== null) get.setSelf(id);
-    },
-    () => undefined,
-  );
-  return null;
-}).pipe(Atom.keepAlive, Atom.withLabel("desktop-home-environment-id"));
+const desktopHomeEnvironmentIdAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): string | null => {
+    const presentation = get(environmentPresentations.presentationAtom(environmentId));
+    if (presentation?.entry.target._tag !== "BearerConnectionTarget") return null;
 
-export function readDesktopHomeEnvironmentId(): string | null {
-  return appAtomRegistry.get(desktopHomeEnvironmentIdAtom);
+    const previous = Option.getOrNull(get.self<string | null>());
+    if (previous !== null) return previous;
+
+    // Connection changes retry a missing file; a written home ID is permanent.
+    let active = true;
+    get.addFinalizer(() => {
+      active = false;
+    });
+    const read = window.desktopBridge?.getHomeEnvironmentId;
+    read?.().then(
+      (id) => {
+        if (active && id !== null) get.setSelf(id);
+      },
+      () => undefined,
+    );
+    return null;
+  }).pipe(Atom.keepAlive, Atom.withLabel(`desktop-home-environment-id:${environmentId}`)),
+);
+
+export function readDesktopHomeEnvironmentId(environmentId: EnvironmentId): string | null {
+  return appAtomRegistry.get(desktopHomeEnvironmentIdAtom(environmentId));
 }
 
 function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState): boolean {
@@ -145,7 +157,9 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
         desktopHomeEnvironmentId:
-          entry.target._tag === "BearerConnectionTarget" ? get(desktopHomeEnvironmentIdAtom) : null,
+          entry.target._tag === "BearerConnectionTarget"
+            ? get(desktopHomeEnvironmentIdAtom(environmentId))
+            : null,
       }),
       isResolved: true,
     };
