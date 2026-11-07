@@ -24,6 +24,12 @@ setting you are editing, the layers icon counts them and the chain lists each on
 click a project to jump to it, or **Reset all** to make those projects follow the environment
 again.
 
+On desktop, choose a project in **Settings → Browser** to pick the **Browser profile** its new
+tabs open in, including tabs agents open. It is saved on this device and covers every checkout of
+the repository on every environment. A tab opened from a profile in the new-tab menu, or an agent
+that names a profile, still uses that profile. The choice appears once you have more than one
+profile, and a removed profile falls back to the default.
+
 Providers and diagnostics are per machine: they show one environment at a time, the primary
 one until you pick another. Every other setting fans out to the selection.
 

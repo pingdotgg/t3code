@@ -807,7 +807,13 @@ const layerMakeRoutes = Layer.mergeAll(
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(
     ServerBrowser.layer.pipe(
-      Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          DesktopBrowserChannel.layer,
+          PreviewAgentActivity.layer,
+          ProjectionStoreV2.layer,
+        ),
+      ),
     ),
   ),
   Layer.provide(PreviewBrowser.layer),

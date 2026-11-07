@@ -1000,6 +1000,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "browser-profiles",
   },
   {
+    id: "project-browser-profile",
+    title: "Browser profile",
+    to: "/settings/browser",
+    scope: "project",
+    desktopOnly: true,
+    searchTerms: ["default profile project repository new tabs agent cookies logins work personal"],
+  },
+  {
     id: "browser-default-viewport",
     title: "Default browser viewport",
     to: "/settings/browser",

@@ -449,6 +449,11 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_PROFILE_ID)),
   ),
 
+  // Keyed by projectBrowserProfileKey (apps/web/src/browser/browserDefaults.ts).
+  browserProjectProfileIds: Schema.Record(TrimmedNonEmptyString, BrowserProfileId).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+
   confirmQuit: QuitConfirmationModeSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_QUIT_CONFIRMATION_MODE)),
   ),
@@ -1881,6 +1886,9 @@ export const ClientSettingsPatch = Schema.Struct({
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),
+  browserProjectProfileIds: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, BrowserProfileId),
+  ),
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),

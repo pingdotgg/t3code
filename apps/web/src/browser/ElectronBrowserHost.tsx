@@ -5,6 +5,7 @@ import {
   type DesktopPreviewOpenLinkEvent,
   type EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
@@ -168,14 +169,17 @@ function AuthorizedBrowserWebview(props: ComponentProps<typeof HostedBrowserWebv
     props.threadRef.environmentId,
     AuthPreviewOperateScope,
   );
-  const profileId = useTabProfileId(props.profileId);
+  const profileId = useTabProfileId(props.threadRef, props.profileId);
   return canOperatePreview ? <HostedBrowserWebview {...props} profileId={profileId} /> : null;
 }
 
 // Latch after hydration: Electron fixes the partition when the guest attaches.
-function useTabProfileId(profileId: string | undefined): string | undefined {
+function useTabProfileId(
+  threadRef: ScopedThreadRef,
+  profileId: string | undefined,
+): string | undefined {
   const hydrated = useClientSettingsHydrated();
-  const defaultProfileId = useBrowserDefaults().profileId;
+  const defaultProfileId = useBrowserDefaults(threadRef).profileId;
   const [fallback, setFallback] = useState<string | undefined>(undefined);
   if (profileId === undefined && hydrated && fallback === undefined) {
     setFallback(defaultProfileId);

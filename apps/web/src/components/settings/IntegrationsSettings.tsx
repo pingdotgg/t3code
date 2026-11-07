@@ -43,6 +43,7 @@ import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useRef, useState } from "react";
 
+import { projectBrowserProfileKey, useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -1107,6 +1108,90 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
+const USE_GLOBAL_BROWSER_PROFILE = "\u0000global";
+
+function ProjectBrowserProfileSetting({ disabled }: { readonly disabled: boolean }) {
+  const { scope } = useSettingsScope();
+  const profiles = useClientSettings((settings) =>
+    resolveBrowserProfiles(settings.browserProfiles).filter(
+      (profile) => profile.kind !== "incognito",
+    ),
+  );
+  const choices = useClientSettings((settings) => settings.browserProjectProfileIds);
+  const globalDefault = useBrowserDefaults();
+  const updateSettings = useUpdatePrimarySettings();
+  // Like the new-tab menu, the choice appears once there is more than one profile to pick.
+  if ((scope.kind !== "project" && scope.kind !== "checkout") || profiles.length < 2) return null;
+
+  const keys = [...new Set(scope.members.map(projectBrowserProfileKey))];
+  const chosen = keys.map((key) => {
+    const id = choices[key];
+    return profiles.some((profile) => profile.id === id) ? id! : USE_GLOBAL_BROWSER_PROFILE;
+  });
+  const mixed = chosen.some((id) => id !== chosen[0]);
+  const value = mixed ? null : chosen[0]!;
+  const globalName = previewProfileLabel(profiles, globalDefault.profileId);
+  const labelFor = (id: string | null) =>
+    id === null
+      ? "Mixed"
+      : id === USE_GLOBAL_BROWSER_PROFILE
+        ? `Use default (${globalName})`
+        : previewProfileLabel(profiles, id);
+  const choose = (id: string) => {
+    const next = { ...getClientSettings().browserProjectProfileIds };
+    for (const key of keys) {
+      if (id === USE_GLOBAL_BROWSER_PROFILE) delete next[key];
+      else next[key] = id;
+    }
+    updateSettings({ browserProjectProfileIds: next });
+  };
+
+  return (
+    <SettingsRow
+      {...searchableSetting("project-browser-profile")}
+      description={
+        keys.every((key) => key.startsWith("repository:"))
+          ? "New tabs for this repository open in this profile, on every checkout and machine, including tabs agents open."
+          : "New tabs for this project open in this profile, including tabs agents open."
+      }
+      resetAction={
+        !disabled && value !== USE_GLOBAL_BROWSER_PROFILE ? (
+          <SettingResetButton
+            label="project browser profile"
+            onClick={() => choose(USE_GLOBAL_BROWSER_PROFILE)}
+          />
+        ) : null
+      }
+      control={
+        <Select
+          disabled={disabled}
+          value={value}
+          onValueChange={(next) => {
+            if (next !== null) choose(next);
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-48" aria-label="Project browser profile">
+            <SelectValue>{labelFor(value)}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem value={USE_GLOBAL_BROWSER_PROFILE}>
+              {labelFor(USE_GLOBAL_BROWSER_PROFILE)}
+            </SelectItem>
+            {profiles.map((profile) => (
+              <SelectItem key={profile.id} value={profile.id}>
+                {profile.name}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
+const previewProfileLabel = (profiles: ReadonlyArray<BrowserProfile>, id: string) =>
+  profiles.find((profile) => profile.id === id)?.name ?? "Default";
+
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
@@ -1236,6 +1321,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       ...(currentSettings.browserDefaultProfileId === id
         ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
         : {}),
+      browserProjectProfileIds: Object.fromEntries(
+        Object.entries(currentSettings.browserProjectProfileIds).filter(
+          ([, profileId]) => profileId !== id,
+        ),
+      ),
     });
     setProfileRemovalInFlight(false);
     setProfilePendingRemoval(null);
@@ -1587,6 +1677,7 @@ export function BrowserSettingsPanel() {
       </SettingsSection>
       <SettingsSection id="browser" title="Browsing">
         <SettingsUnavailableGroup message={desktopOnlyMessage}>
+          <ProjectBrowserProfileSetting disabled={desktopOnly} />
           <BrowserProfilesSetting disabled={desktopOnly} />
           <BrowserLinkTargetSetting disabled={desktopOnly} />
           <BrowserAutoShowFloatingPreviewSetting disabled={desktopOnly} />

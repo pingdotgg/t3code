@@ -11,8 +11,10 @@ import {
   type BrowserRecordingFrameRate,
   EnvironmentId,
   PreviewTabId,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationV2ThreadShell,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -34,6 +36,7 @@ import { beforeEach, expect, vi } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
+import * as ProjectionStoreV2 from "../orchestration-v2/ProjectionStore.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
@@ -342,6 +345,10 @@ const asSession = (providerSessionId: string) => ({
   ...scope,
   thread: { ...testThread, providerSessionId },
 });
+const projectThread = ThreadId.make("browser-project-thread");
+const browserProject = ProjectId.make("browser-project");
+/** The project each test thread belongs to, as the projection store reports it. */
+const threadProjects: ReadonlyMap<string, ProjectId> = new Map([[projectThread, browserProject]]);
 const dependencies = Layer.mergeAll(
   Broker.layer,
   Manager.layer,
@@ -393,6 +400,14 @@ const dependencies = Layer.mergeAll(
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
   PreviewAgentActivity.layer,
+  Layer.mock(ProjectionStoreV2.ProjectionStoreV2)({
+    getThreadShell: (threadId) =>
+      Effect.succeed(
+        threadProjects.has(threadId)
+          ? ({ projectId: threadProjects.get(threadId) } as OrchestrationV2ThreadShell)
+          : null,
+      ),
+  }),
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -2118,6 +2133,41 @@ it.live(
         });
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.live("preview_open defaults to the profile a client reported for the thread's project", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker } = yield* ready;
+      contextRequests.length = 0;
+      const projectScope = { ...scope, thread: { ...testThread, threadId: projectThread } };
+      yield* (yield* browser.profileReporter)({
+        profiles: [
+          { id: "profile-work", name: "Work", kind: "persistent" },
+          { id: "profile-client", name: "Client", kind: "persistent" },
+        ],
+        defaultProfileId: "profile-work",
+        projectProfileIds: { [browserProject]: "profile-client" },
+      });
+      const open = (target: typeof scope, profileId?: string) =>
+        broker.invoke<PreviewAutomationStatus>({
+          scope: target,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false, ...(profileId ? { profileId } : {}) },
+        });
+
+      expect(yield* open(projectScope)).toMatchObject({ defaultProfileId: "profile-client" });
+      expect(yield* open(projectScope, "Work")).toMatchObject({
+        defaultProfileId: "profile-client",
+      });
+      expect(yield* open(scope)).toMatchObject({ defaultProfileId: "profile-work" });
+      expect(contextRequests).toEqual([
+        { profileId: "profile-client", isolated: false },
+        { profileId: "profile-work", isolated: false },
+        { profileId: "profile-work", isolated: false },
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.live("profiles reported by one client survive another client's report", () =>
