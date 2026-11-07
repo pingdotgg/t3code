@@ -120,6 +120,55 @@ describe("DesktopPreReadyPlatform", () => {
     );
   });
 
+  const launchWithCommandLine = (
+    platform: NodeJS.Platform,
+    initialSwitches: ReadonlyArray<readonly [string, string]>,
+  ) => {
+    const commandLine = new Map(initialSwitches);
+    hasSwitchMock.mockImplementation((name: string) => commandLine.has(name));
+    getSwitchValueMock.mockImplementation((name: string) => commandLine.get(name) ?? "");
+    appendSwitchMock.mockImplementation((name: string, value: string) => {
+      commandLine.set(name, value);
+    });
+    return DesktopPreReadyPlatform.make.pipe(
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.as(commandLine),
+    );
+  };
+
+  it.effect.each(["darwin", "win32", "linux"] as const)(
+    "enables a fresh capture surface for CDP screenshots on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const commandLine = yield* launchWithCommandLine(platform, []);
+        assert.sameMembers(commandLine.get("enable-features")?.split(",") ?? [], [
+          "CDPScreenshotNewSurface",
+        ]);
+      }),
+  );
+
+  it.effect("keeps features already enabled on the command line", () =>
+    Effect.gen(function* () {
+      const commandLine = yield* launchWithCommandLine("darwin", [
+        ["enable-features", "WebRTCPipeWireCapturer,UseOzonePlatform"],
+      ]);
+      assert.sameMembers(commandLine.get("enable-features")?.split(",") ?? [], [
+        "WebRTCPipeWireCapturer",
+        "UseOzonePlatform",
+        "CDPScreenshotNewSurface",
+      ]);
+    }),
+  );
+
+  it.effect("respects a user who disabled the fresh capture surface", () =>
+    Effect.gen(function* () {
+      const commandLine = yield* launchWithCommandLine("darwin", [
+        ["disable-features", "CDPScreenshotNewSurface"],
+      ]);
+      assert.isFalse(commandLine.has("enable-features"));
+    }),
+  );
+
   it.effect.each([
     { previousEntry: undefined, label: "missing" },
     { previousEntry: 'Exec="/Applications/deleted-previous.AppImage" %U', label: "stale" },
@@ -243,7 +292,10 @@ describe("DesktopPreReadyPlatform", () => {
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);
         assert.equal(registerSchemesMock.mock.calls.length, 1);
-        assert.equal(appendSwitchMock.mock.calls.length, 0);
+        assert.deepEqual(
+          appendSwitchMock.mock.calls.map(([name]) => name),
+          ["enable-features"],
+        );
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );

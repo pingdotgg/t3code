@@ -138,6 +138,25 @@ export function resolveLinuxDisableFeaturesSwitch(input: {
     : `${input.disableFeatures},${WAYLAND_COLOR_MANAGER_FEATURE}`;
 }
 
+// Playwright enables this when it launches Chromium; T3 launches Electron itself and attaches
+// over CDP, so preview snapshots would otherwise use the legacy capture path that can stall.
+const CDP_SCREENSHOT_NEW_SURFACE_FEATURE = "CDPScreenshotNewSurface";
+
+export function resolveEnableFeaturesSwitch(input: {
+  readonly enableFeatures: string | null;
+  readonly disableFeatures: string | null;
+}): string | null {
+  if (featureListNames(input.enableFeatures).includes(CDP_SCREENSHOT_NEW_SURFACE_FEATURE)) {
+    return null;
+  }
+  if (featureListNames(input.disableFeatures).includes(CDP_SCREENSHOT_NEW_SURFACE_FEATURE)) {
+    return null;
+  }
+  return input.enableFeatures === null
+    ? CDP_SCREENSHOT_NEW_SURFACE_FEATURE
+    : `${input.enableFeatures},${CDP_SCREENSHOT_NEW_SURFACE_FEATURE}`;
+}
+
 export function resolveEarlyLinuxElectronOptions(
   input: EarlyLinuxElectronOptionsInput,
 ): EarlyLinuxElectronOptions {
