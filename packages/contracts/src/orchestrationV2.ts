@@ -698,6 +698,8 @@ export const OrchestrationV2Run = Schema.Struct({
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
   ),
+  /** Queued runs a restart held when it cut this run, as opposed to holds already in place. */
+  restartHeldRunIds: Schema.optional(Schema.Array(RunId)),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,

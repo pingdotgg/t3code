@@ -710,6 +710,8 @@ it.effect(
           providerThreadId,
           providerInstanceId: ProviderInstanceId.make("codex"),
         },
+        { id: RunId.make("run_recovery_queued"), status: "queued", ordinal: 2 },
+        { id: RunId.make("run_recovery_held"), status: "queued", ordinal: 3, queueHeld: true },
       ],
       attempts: [
         {
@@ -746,6 +748,8 @@ it.effect(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
             getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+            getMessagesById: () => Effect.succeed(new Map()),
+            getThreadRecords: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             commitCommand: (input) => {
@@ -784,6 +788,7 @@ it.effect(
           "status" in event.payload ? event.payload.status : null,
         ]),
         [
+          ["run.updated", "queued"],
           ["run.updated", "cancelled"],
           ["run-attempt.updated", "cancelled"],
           ["node.updated", "cancelled"],
@@ -797,6 +802,13 @@ it.effect(
           ["provider-session.updated", "stopped"],
         ],
       );
+      // Only the hold this restart added is recorded on the run it cut.
+      const cutRun = events.find(
+        (event) => event.type === "run.updated" && event.payload.status === "cancelled",
+      );
+      assert.deepEqual(cutRun?.type === "run.updated" ? cutRun.payload.restartHeldRunIds : null, [
+        RunId.make("run_recovery_queued"),
+      ]);
       const messageEvent = events.find((event) => event.type === "message.updated");
       assert.isFalse(messageEvent?.type === "message.updated" && messageEvent.payload.streaming);
       const stoppedSession = events.find((event) => event.type === "provider-session.updated");

@@ -1077,14 +1077,17 @@ it.effect("does not continue a run the user asked to stop before the restart", (
   }),
 );
 
-it.effect("does not continue a cut /compact or /logout turn", () =>
+it.effect("compacts again after a cut /compact turn, and does not continue a cut /logout", () =>
   Effect.gen(function* () {
-    for (const text of ["/compact", " /LOGOUT "]) {
+    for (const [text, expected] of [
+      [" /Compact ", ["/compact"]],
+      [" /LOGOUT ", []],
+    ] as const) {
       const texts = yield* continuationTexts({
         ...cutMidTurn(),
-        messages: [{ id: MessageId.make("message:user"), text, attachments: [] }],
+        messages: [{ id: MessageId.make("message:user"), role: "user", text, attachments: [] }],
       } as unknown as OrchestrationV2ThreadProjection);
-      assert.deepEqual(texts, [], text);
+      assert.deepEqual(texts, [...expected], text);
     }
     const texts = yield* continuationTexts({
       ...cutMidTurn(),

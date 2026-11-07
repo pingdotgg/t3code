@@ -5,6 +5,7 @@ import {
   isProviderNativeSubagentThread,
   type OrchestrationV2DomainEvent,
   type ProviderThreadId,
+  type RunId,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -421,12 +422,14 @@ export const make = Effect.gen(function* () {
         ...retryableRuns,
         ...queuedRunsInDeliveryOrder({ runs: queuedRuns, messages: queuedMessages }),
       ];
+      const restartHeldRunIds: Array<RunId> = [];
       for (const [index, run] of heldRuns.entries()) {
         if (bufferedMessageIds.has(run.userMessageId)) {
           runs.push(run);
           continue;
         }
         if (run.queueHeld === true && retryableRuns.length === 0) continue;
+        if (run.queueHeld !== true) restartHeldRunIds.push(run.id);
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -536,7 +539,13 @@ export const make = Effect.gen(function* () {
           runId: run.id,
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
-          payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
+          payload: {
+            ...run,
+            status: "cancelled",
+            queuePosition: null,
+            completedAt: now,
+            ...(restartHeldRunIds.length > 0 ? { restartHeldRunIds } : {}),
+          },
         });
         for (const attempt of projection.attempts.filter(
           (candidate) =>
