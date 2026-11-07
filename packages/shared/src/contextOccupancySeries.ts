@@ -17,7 +17,7 @@ export type ContextOccupancyPoint = {
 
 export type ContextOccupancySeries = {
   readonly points: readonly ContextOccupancyPoint[];
-  /** Highest maxTokens seen, for the chart ceiling. */
+  /** Highest model window seen; chart may use peak fill instead when far below. */
   readonly maxTokens: number | null;
   readonly peakUsedTokens: number;
 };
