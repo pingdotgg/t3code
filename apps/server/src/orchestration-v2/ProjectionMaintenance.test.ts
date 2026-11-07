@@ -6,6 +6,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -94,8 +95,8 @@ function itemEvent(
   spec: (typeof itemSpecs)[number],
   revision: number,
   eventId = `event:turn-item-compaction:${spec.key}:${revision}`,
+  id = TurnItemId.make(`turn-item:compaction:${spec.key}`),
 ): OrchestrationV2DomainEvent {
-  const id = TurnItemId.make(`turn-item:compaction:${spec.key}`);
   const growing = `${spec.key}:${revision}:` + "x".repeat((revision + 1) * 192);
   const completed = revision === 69;
   const base = {
@@ -382,4 +383,139 @@ it.effect("keeps an anchor that a row appended during the pass borrows from", ()
       );
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+const countContent = (threadId: ThreadId) =>
+  Effect.flatMap(
+    SqlClient.SqlClient,
+    (sql) => sql<{
+      readonly items: number;
+      readonly positions: number;
+      readonly messages: number;
+      readonly found: number;
+      readonly threads: number;
+    }>`
+      SELECT
+        (SELECT COUNT(*) FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}) AS items,
+        (SELECT COUNT(*) FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId}) AS positions,
+        (SELECT COUNT(*) FROM orchestration_v2_projection_messages WHERE thread_id = ${threadId}) AS messages,
+        (SELECT COUNT(*) FROM orchestration_v2_message_search WHERE orchestration_v2_message_search MATCH ${`purgeable${threadId.replace(/\W/g, "")}`}) AS found,
+        (SELECT COUNT(*) FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}) AS threads
+    `,
+  ).pipe(Effect.map((rows) => rows[0]));
+
+it.effect("purges content of threads deleted beyond the retained history", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const seed = Effect.fnUntraced(function* (name: string) {
+      const threadId = ThreadId.make(`thread:purge-${name}`);
+      const thread = makeThread(threadId, now);
+      yield* sink.write({
+        events: [{ ...threadCreated(thread, now), id: EventId.make(`event:purge:${name}:thread`) }],
+      });
+      yield* sink.write({
+        events: [
+          itemEvent(
+            threadId,
+            now,
+            itemSpecs[0],
+            0,
+            `event:purge:${name}:item`,
+            TurnItemId.make(`turn-item:purge:${name}`),
+          ),
+        ],
+      });
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`event:purge:${name}:message`),
+            type: "message.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make(`message:purge:${name}`),
+              threadId,
+              runId: null,
+              nodeId: null,
+              createdBy: "agent",
+              creationSource: "provider",
+              role: "assistant",
+              text: `purgeable${threadId.replace(/\W/g, "")}`,
+              streaming: false,
+              attachments: [],
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      return thread;
+    });
+    const remove = (thread: OrchestrationV2AppThread, at: DateTime.Utc) =>
+      sink.write({
+        events: [
+          {
+            id: EventId.make(`event:purge:${thread.id}:deleted`),
+            type: "thread.deleted",
+            threadId: thread.id,
+            occurredAt: at,
+            payload: { ...thread, deletedAt: at, updatedAt: at },
+          },
+        ],
+      });
+
+    const old = yield* seed("old");
+    const live = yield* seed("live");
+    yield* remove(old, now);
+    yield* TestClock.adjust("1 day");
+    const recent = yield* seed("recent");
+    const recentDeletedAt = yield* DateTime.now;
+    yield* remove(recent, recentDeletedAt);
+    const liveBefore = yield* projections.getThreadProjection(live.id);
+    const beforeOld = yield* countContent(old.id);
+    assert.isAbove(beforeOld?.items ?? 0, 0);
+    assert.isAbove(beforeOld?.positions ?? 0, 0);
+    assert.equal(beforeOld?.found, 1);
+
+    const first = yield* maintenance.pruneEventStore();
+    assert.isAbove(first.purgedProjectionRowCount, 0);
+    const afterOld = yield* countContent(old.id);
+    assert.deepEqual(afterOld, { items: 0, positions: 0, messages: 0, found: 0, threads: 1 });
+    assert.equal((yield* countContent(recent.id))?.items, 1);
+    assert.equal((yield* countContent(recent.id))?.found, 1);
+    assert.deepEqual(yield* projections.getThreadProjection(live.id), liveBefore);
+
+    assert.equal((yield* maintenance.pruneEventStore()).purgedProjectionRowCount, 0);
+    yield* TestClock.adjust("1 day");
+    assert.isAbove((yield* maintenance.pruneEventStore()).purgedProjectionRowCount, 0);
+    assert.equal((yield* countContent(recent.id))?.items, 0);
+    assert.equal((yield* countContent(live.id))?.items, 1);
+    assert.equal((yield* countContent(live.id))?.found, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("lists every thread-scoped projection table or names why it is kept", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const scoped = yield* sql<{ readonly name: string }>`
+      SELECT m.name FROM sqlite_master AS m, pragma_table_info(m.name) AS c
+      WHERE m.type = 'table' AND c.name = 'thread_id'
+        AND (m.name LIKE 'orchestration_v2_projection_%' OR m.name LIKE 'orchestration_v2_turn_item_%')
+    `;
+    const kept = [
+      "orchestration_v2_projection_threads",
+      "orchestration_v2_projection_provider_sessions",
+      "orchestration_v2_projection_provider_session_bindings",
+    ];
+    assert.deepEqual(
+      scoped
+        .map((row) => row.name)
+        .filter((name) => !kept.includes(name))
+        .toSorted(),
+      [...ProjectionMaintenance.THREAD_CONTENT_TABLES].toSorted(),
+    );
+  }).pipe(Effect.provide(layerTest)),
 );

@@ -64,7 +64,12 @@ const compactionLayer = (
 
 const minute = 60_000;
 const startupTime = Date.UTC(2026, 9, 19);
-const emptyCompaction = { deletedEventCount: 0, deletedReceiptCount: 0, reclaimableBytes: 0 };
+const emptyCompaction = {
+  deletedEventCount: 0,
+  deletedReceiptCount: 0,
+  purgedProjectionRowCount: 0,
+  reclaimableBytes: 0,
+};
 
 it.effect("remembers completion only after the paced pass finishes", () =>
   Effect.gen(function* () {
