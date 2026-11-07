@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeModule from "node:module";
 
+import { fromYaml } from "@t3tools/shared/schemaYaml";
+import * as Schema from "effect/Schema";
 import type { Plugin } from "vite-plus";
 
 const THIRD_PARTY_LICENSES_FILE_NAME = "third-party-licenses.json";
@@ -579,8 +581,30 @@ async function isTypeOnlyPackage(packageJson: PackageJson, packageRoot: string):
   return true;
 }
 
+const decodeWorkspaceOverrides = Schema.decodeUnknownSync(
+  fromYaml(
+    Schema.Struct({ overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+  ),
+);
+
+/** `"parent>dep": "-"` overrides in the workspace beside the config: pnpm never installs that edge. */
+async function readRemovedDependencies(directory: string): Promise<ReadonlySet<string>> {
+  let source: string;
+  try {
+    source = await NodeFSP.readFile(NodePath.join(directory, "pnpm-workspace.yaml"), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+    throw error;
+  }
+  const { overrides = {} } = decodeWorkspaceOverrides(source);
+  return new Set(
+    Object.entries(overrides).flatMap(([selector, value]) => (value === "-" ? [selector] : [])),
+  );
+}
+
 async function collectProductionDependencyPackages(
   packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>,
+  removed: ReadonlySet<string>,
 ): Promise<PackageCollection> {
   const collection: PackageCollection = {
     byIdentity: new Map(),
@@ -590,6 +614,11 @@ async function collectProductionDependencyPackages(
   const visitManifest = async (packageJsonPath: string, bundle: string): Promise<void> => {
     const packageJson = await readPackageJson(packageJsonPath);
     for (const dependencyName of dependencyNames(packageJson)) {
+      if (
+        removed.has(dependencyName) ||
+        removed.has(`${String(packageJson.name)}>${dependencyName}`)
+      )
+        continue;
       const resolved = await resolveDependencyPackage(dependencyName, packageJsonPath);
       if (!resolved) continue;
       const visitKey = `${bundle}:${resolved.packageRoot}`;
@@ -970,10 +999,11 @@ export async function generateThirdPartyLicenseManifest(input: {
   readonly bundledModuleIds?: ReadonlyArray<string>;
   readonly bundleName?: string;
 }): Promise<ThirdPartyLicenseManifest> {
-  const [{ config, directory }, collection] = await Promise.all([
-    readConfig(input.configFile),
-    collectProductionDependencyPackages(input.packageManifests),
-  ]);
+  const { config, directory } = await readConfig(input.configFile);
+  const collection = await collectProductionDependencyPackages(
+    input.packageManifests,
+    input.configFile === undefined ? new Set() : await readRemovedDependencies(directory),
+  );
   if (input.bundledModuleIds && input.bundleName) {
     await addBundledModulePackages(collection, input.bundledModuleIds, input.bundleName);
   }

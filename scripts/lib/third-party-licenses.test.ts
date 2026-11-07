@@ -295,7 +295,7 @@ describe("third-party license generation", () => {
     expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
   });
 
-  it("fails when a production package has no distributable notice text", async () => {
+  it("requires notice text unless a workspace override removes the package", async () => {
     const fixture = await createFixture();
     await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
 
@@ -305,6 +305,18 @@ describe("third-party license generation", () => {
         packageManifests: [{ bundle: "web", path: fixture.appManifest }],
       }),
     ).rejects.toThrow("does not include a license or notice file");
+
+    // A pnpm override removal keeps that package out of the install, so it needs no notice.
+    await NodeFSP.writeFile(
+      NodePath.join(fixture.root, "pnpm-workspace.yaml"),
+      'overrides:\n  "fixture-app>demo-dependency": "-"\n',
+      "utf8",
+    );
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+    expect(manifest.entries.map((entry) => entry.name)).not.toContain("demo-dependency");
   });
 
   it("collects nested notices even when a package also has a root license", async () => {
