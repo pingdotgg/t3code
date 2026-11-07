@@ -260,6 +260,18 @@ export function AppearanceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("typing-with-selection")}
           description="Choose what typing or pasting does while Cite is available."
+          resetAction={
+            settings.typingWithSelection !== DEFAULT_UNIFIED_SETTINGS.typingWithSelection ? (
+              <SettingResetButton
+                label="typing with text selected"
+                onClick={() =>
+                  updateSettings({
+                    typingWithSelection: DEFAULT_UNIFIED_SETTINGS.typingWithSelection,
+                  })
+                }
+              />
+            ) : null
+          }
           control={
             <Select
               value={settings.typingWithSelection}

@@ -323,7 +323,7 @@ export function createCitationCommentInput(initialText: string) {
     },
     subscribe(listener: (text: string) => void) {
       onChange = listener;
-      if (cancelled) listener(text);
+      listener(text);
       return () => {
         pending = false;
         onChange = undefined;

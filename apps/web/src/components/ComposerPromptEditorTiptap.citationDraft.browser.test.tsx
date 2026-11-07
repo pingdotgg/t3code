@@ -94,33 +94,39 @@ function Composer({
   );
 }
 
-it("keeps an unsaved citation comment when a question takes the composer", async () => {
-  const editorRef = createRef<ComposerPromptEditorHandle>();
-  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
-  const drafts = () => screen.container.querySelector("output")?.dataset;
+it.each(["typed", "seeded"])(
+  "keeps an unsaved %s citation comment when a question takes the composer",
+  async (input) => {
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+    const drafts = () => screen.container.querySelector("output")?.dataset;
 
-  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
-  if (!sourceAnchor) throw new Error("Citation source did not resolve");
-  await act(async () =>
-    editorRef.current?.requestCitationComment({
-      previousValue: "See ",
-      value: promptBefore,
-      citationStart: "See ".length,
-      sourceAnchor,
-      insertedSpaces: { before: false, after: true },
-    }),
-  );
-  const comment = page.getByLabelText("Comment on selected text");
-  await expect.element(comment).toBeVisible();
-  await comment.click();
-  await userEvent.keyboard("check this");
+    const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+    if (!sourceAnchor) throw new Error("Citation source did not resolve");
+    if (input === "seeded") sourceAnchor.commentInput = createCitationCommentInput("check this");
+    await act(async () =>
+      editorRef.current?.requestCitationComment({
+        previousValue: "See ",
+        value: promptBefore,
+        citationStart: "See ".length,
+        sourceAnchor,
+        insertedSpaces: { before: false, after: true },
+      }),
+    );
+    const comment = page.getByLabelText("Comment on selected text");
+    await expect.element(comment).toBeVisible();
+    if (input === "typed") {
+      await comment.click();
+      await userEvent.keyboard("check this");
+    }
 
-  await screen.rerender(<Composer question editorRef={editorRef} />);
-  expect(drafts()?.answer).toBe("");
-  await screen.rerender(<Composer question={false} editorRef={editorRef} />);
+    await screen.rerender(<Composer question editorRef={editorRef} />);
+    expect(drafts()?.answer).toBe("");
+    await screen.rerender(<Composer question={false} editorRef={editorRef} />);
 
-  expect(drafts()?.prompt).toBe(
-    `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "check this"))} `,
-  );
-  await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
-});
+    expect(drafts()?.prompt).toBe(
+      `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "check this"))} `,
+    );
+    await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
+  },
+);
