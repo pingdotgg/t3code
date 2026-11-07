@@ -837,9 +837,26 @@ export function themeSourceForEditing(
   if (source) return source;
   const colors =
     getThemeColorsForAppearance(theme, appearance) ?? getStandardThemeColors(appearance);
-  return theme.managed === true
-    ? { version: 2, seed: { canvas: colors.canvas, accent: colors.accent } }
-    : themeSourceFromColors(colors);
+  if (theme.managed !== true) return themeSourceFromColors(colors);
+  const guided = { version: 2, seed: { canvas: colors.canvas, accent: colors.accent } } as const;
+  const generated = resolveThemeSource(guided, appearance);
+  // Legacy guided saves could retain advanced edits without recording their provenance.
+  const overrides = Object.fromEntries(
+    THEME_COLOR_ROLES.filter((role) => colors[role] !== generated[role]).map((role) => [
+      role,
+      colors[role],
+    ]),
+  );
+  if (!Object.keys(overrides).length) return guided;
+  const resolved = resolveThemeSource({ ...guided, overrides }, appearance);
+  return {
+    ...guided,
+    overrides: Object.fromEntries(
+      THEME_COLOR_ROLES.filter((role) => role in overrides || colors[role] !== resolved[role]).map(
+        (role) => [role, colors[role]],
+      ),
+    ),
+  };
 }
 
 /** Authors one role in the palette, or with `null` resets it to inherit; both drop its override. */

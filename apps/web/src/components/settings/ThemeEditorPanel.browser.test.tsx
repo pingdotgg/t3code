@@ -113,7 +113,10 @@ describe("ThemeEditorPanel", () => {
           name: "Legacy",
           appearance: "light",
           colors: managed
-            ? createVividThemeColors("light", "#fafafa", "#123456")
+            ? {
+                ...createVividThemeColors("light", "#fafafa", "#123456"),
+                terminalBackground: "#abcdef",
+              }
             : { canvas: "#fafafa", accent: "#123456", terminalBackground: "#abcdef" },
         }),
         ...(managed ? { managed: true } : {}),
