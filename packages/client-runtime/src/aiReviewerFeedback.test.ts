@@ -257,10 +257,51 @@ describe("parseAiReviewerFeedback", () => {
     expect(aiReviewerOneLine(parsed!)).toContain("High ·");
   });
 
+  it("reads Gemini severity from a priority badge image", () => {
+    const body = `![high](https://www.gstatic.com/codereviewagent/high.svg)
+
+Null check missing before dereference.
+
+\`\`\`suggestion
+if (user.profile == null) return;
+\`\`\`
+`;
+    const parsed = parseAiReviewerFeedback(body);
+    expect(parsed?.severity).toBe("High");
+    expect(parsed?.summary).toContain("Null check missing");
+    expect(aiReviewerOneLine(parsed!)).toContain("High ·");
+  });
+
+  it("keeps legitimate anchors inside suggestions", () => {
+    const body = `<!-- devin-review-comment {"id":"1"} -->
+
+🟡 **Link stays in the suggestion**
+
+See the docs.
+
+\`\`\`suggestion
+<a href="https://example.com/docs">docs</a>
+\`\`\`
+`;
+    const parsed = parseAiReviewerFeedback(body);
+    expect(parsed?.suggestion).toContain('<a href="https://example.com/docs">docs</a>');
+  });
+
   it("returns null for ordinary human remarks", () => {
     expect(parseAiReviewerFeedback("Please rename this helper.")).toBeNull();
     expect(
       parseAiReviewerFeedback("**Important**\n\nPlease rename this helper before merge."),
+    ).toBeNull();
+    expect(parseAiReviewerFeedback("@coderabbitai review")).toBeNull();
+    expect(
+      parseAiReviewerFeedback(
+        "🔴 **Blocker**\n\nPlease rename this helper — CodeRabbit also flagged it.",
+      ),
+    ).toBeNull();
+    expect(
+      parseAiReviewerFeedback(
+        "Mentioning CodeRabbit.\n\n<details><summary>Steps</summary>\nReproduce locally.\n</details>",
+      ),
     ).toBeNull();
     expect(hasAiReviewerEasyFix("Please rename this helper.")).toBe(false);
   });

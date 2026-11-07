@@ -43,7 +43,9 @@ const BUGBOT_FIX_CHROME =
   /<p>\s*<a\b[^>]*href=["']https?:\/\/(?:www\.)?cursor\.com\/[^"']*["'][\s\S]*?<\/p>/giu;
 const DEVIN_BADGE_CHROME =
   /<!--\s*devin-review-badge-begin\s*-->[\s\S]*?<!--\s*devin-review-badge-end\s*-->/giu;
-const PICTURE_OR_ANCHOR_CHROME = /<(?:picture|a)\b[\s\S]*?<\/(?:picture|a)\s*>/giu;
+// Only strip <a>/<picture> chrome that points at known bot badge / fix-link hosts.
+const REVIEWER_BADGE_HTML =
+  /<(?:picture|a)\b[^>]*(?:href|src)=["'][^"']*(?:cursor\.com\/(?:open|assets\/images\/fix-in)|static\.devin\.ai\/assets\/|coderabbit_public_assets|greptile-static-assets|gstatic\.com\/codereviewagent|cubic\.dev\/buttons|qodo\.ai\/)[^"']*["'][\s\S]*?<\/(?:picture|a)\s*>/giu;
 const SEVERITY_FROM_EMOJI: Record<string, string> = {
   "🟢": "Low",
   "🟡": "Medium",
@@ -53,8 +55,9 @@ const SEVERITY_FROM_EMOJI: Record<string, string> = {
   "🔵": "Info",
 };
 
+// Bot-specific artifacts only — bare product names would match human "@coderabbitai review".
 const AI_REVIEWER_MARKER =
-  /coderabbit|devin-review-comment|devin-review-badge|fingerprinting:phantom|macroscope|BUGBOT_BUG_ID|DESCRIPTION START|LOCATIONS START|cursor\.com\/(?:open|assets\/images\/fix-in)|app\.greptile\.com|greptile-static-assets|gstatic\.com\/codereviewagent|gemini-code-assist|graphite\.dev\/|cubic\.dev\/buttons|qodo\.ai\/|agents-vade-review\.vercel\.sh|vercel-agent-view-suggestion|copilot-code-review\//iu;
+  /auto-generated comment[^>]*coderabbit|coderabbit_public_assets|fingerprinting:phantom|devin-review-comment|devin-review-badge|BUGBOT_BUG_ID|DESCRIPTION START|LOCATIONS START|cursor\.com\/(?:open|assets\/images\/Fix-in)|app\.greptile\.com|greptile-static-assets|gstatic\.com\/codereviewagent|graphite\.dev\/|cubic\.dev\/buttons|qodo\.ai\/|agents-vade-review\.vercel\.sh|vercel-agent-view-suggestion|copilot-code-review\//iu;
 
 function stripHtmlComments(text: string): string {
   return text.replace(HTML_COMMENT, "");
@@ -247,6 +250,8 @@ function dropBadgeLines(text: string): string {
   return text
     .split("\n")
     .filter((line) => {
+      // Keep Gemini severity badges so parseHeader can read them.
+      if (GEMINI_BADGE_LINE.test(line)) return true;
       const match = BADGE_IMAGE_LINE.exec(line);
       if (match === null) return true;
       const href = match[1] ?? match[2];
@@ -262,7 +267,7 @@ function stripReviewerChrome(text: string): string {
     .replace(GREPTILE_REMEMBER, "")
     .replace(GREPTILE_CONTEXT, "")
     .replace(/\(?(?:\[source\]\()?https?:\/\/(?:www\.)?app\.greptile\.com\/[^\s)]+\)?/giu, "")
-    .replace(PICTURE_OR_ANCHOR_CHROME, "")
+    .replace(REVIEWER_BADGE_HTML, "")
     .replace(/<\/?p\b[^>]*>/giu, "")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
@@ -288,7 +293,8 @@ function isAiReviewerSignal(
     title: string | null;
   },
 ): boolean {
-  if (header.severity !== null || header.category !== null) return true;
+  // Category comes from CodeRabbit's `_issue_ | _severity_` header, not a lone emoji title.
+  if (header.category !== null) return true;
   if (details.some((block) => AGENT_PROMPT_SUMMARY.test(block.summary))) return true;
   if (details.some((block) => COMMITTABLE_SUMMARY.test(block.summary))) return true;
   if (AI_REVIEWER_MARKER.test(body)) return true;

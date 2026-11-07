@@ -29,7 +29,8 @@ export function PullRequestCommentBody({
   const feedback = parseAiReviewerFeedback(text);
   const compact = feedback === null ? null : aiReviewerDisplayBody(feedback);
   const oneLine = feedback === null ? null : aiReviewerOneLine(feedback);
-  const original = visibleBody(text) ?? text;
+  // visibleBody trims; keep leading spaces on ordinary comments so indented fences stay code.
+  const original = feedback === null ? text : (visibleBody(text) ?? text);
   const optimized = compact !== null;
   const rendered = showOriginal || compact === null ? original : compact;
 

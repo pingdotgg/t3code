@@ -698,7 +698,7 @@ function readableBody(raw: string): string | null {
 /** Prefer a reviewer's agent prompt when present; otherwise the readable remark. */
 function findingBody(raw: string): string | null {
   const parsed = parseAiReviewerFeedback(raw);
-  if (parsed !== null) {
+  if (parsed?.agentPrompt != null) {
     const text = aiReviewerFixText(parsed);
     return text === "" ? null : text;
   }

@@ -21,12 +21,22 @@ import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequest
 
 const BADGE_MARKDOWN_IMAGE = /^\s*!?\[[^\]]*\]\((https?:\/\/[^)\s]+)\)\s*$/u;
 
-function withoutBotBadgeMarkdown(text: string): string {
+/** Blank badge lines in place so task-list marker offsets still index the original text. */
+export function withoutBotBadgeMarkdown(text: string): string {
+  let inFence = false;
   return text
     .split("\n")
-    .filter((line) => {
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
       const match = BADGE_MARKDOWN_IMAGE.exec(line);
-      return match?.[1] === undefined || !isBotBadgeImage(match[1]);
+      if (match?.[1] !== undefined && isBotBadgeImage(match[1])) {
+        return " ".repeat(line.length);
+      }
+      return line;
     })
     .join("\n");
 }
