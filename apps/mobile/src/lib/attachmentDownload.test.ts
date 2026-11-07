@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   available: vi.fn(),
   open: vi.fn(),
   uuid: vi.fn(),
+  platformOS: "android",
 }));
 
 vi.mock("expo-file-system", () => {
@@ -61,6 +62,14 @@ vi.mock("expo-file-system", () => {
   return { Directory, File, Paths: { cache: "file:///cache" } };
 });
 
+vi.mock("react-native", () => ({
+  Platform: {
+    get OS() {
+      return mocks.platformOS;
+    },
+  },
+}));
+
 vi.mock("expo", () => ({ requireNativeModule: () => ({ openFile: mocks.open }) }));
 
 vi.mock("expo-sharing", () => ({
@@ -86,6 +95,7 @@ const input = {
 };
 
 beforeEach(() => {
+  mocks.platformOS = "android";
   mocks.open.mockReset();
   mocks.open.mockResolvedValue(undefined);
   mocks.directories.clear();
@@ -138,6 +148,7 @@ describe("downloadAndShareAttachment", () => {
     ["C:\\folder\\clip.mp4", "clip.mp4"],
     ["..", "attachment"],
     ["\ud800file\u0000.txt", "_file_.txt"],
+    ['Oxford [Oxfordshire] a|b^c{d}e`f"g<h>.pdf', "Oxford _Oxfordshire_ a_b_c_d_e_f_g_h_.pdf"],
   ])("uses a safe basename for %j", async (name, expected) => {
     await downloadAndShareAttachment({
       ...input,
@@ -146,6 +157,17 @@ describe("downloadAndShareAttachment", () => {
     });
     const file = mocks.download.mock.calls[0]![1] as { uri: string };
     expect(decodeURIComponent(file.uri.split("/").at(-1)!)).toBe(expected);
+  });
+
+  it("keeps names valid on iOS that only Android's URI parser rejects", async () => {
+    mocks.platformOS = "ios";
+    await downloadAndShareAttachment({
+      ...input,
+      attachment: { ...input.attachment, name: "Report [draft].pdf" },
+      signal: new AbortController().signal,
+    });
+    const file = mocks.download.mock.calls[0]![1] as { uri: string };
+    expect(decodeURIComponent(file.uri.split("/").at(-1)!)).toBe("Report [draft].pdf");
   });
 
   it("bounds the UTF-8 filename length while preserving its extension", async () => {
