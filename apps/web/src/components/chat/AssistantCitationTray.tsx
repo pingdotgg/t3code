@@ -1,11 +1,12 @@
 import type { AssistantCitation } from "@t3tools/contracts";
 import { withAssistantCitationComment } from "@t3tools/shared/assistantCitations";
-import { QuoteIcon, XIcon } from "lucide-react";
+import { PencilIcon, QuoteIcon, TextCursorInputIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { AssistantCitationQuote } from "./AssistantCitationChip";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 export function AssistantCitationTray(props: Parameters<typeof CitationTrayContents>[0]) {
@@ -86,35 +87,56 @@ function CitationTrayContents({
                       }
                     />
                   ) : (
-                    <div className="flex gap-2">
-                      <Button
-                        aria-label={`Edit annotation ${index + 1}`}
-                        variant="outline"
-                        size="xs"
-                        onClick={() => setEditing(index)}
-                      >
-                        Edit
-                      </Button>
-                      {onInsertInline ? (
-                        <Button
-                          variant="outline"
-                          size="xs"
-                          aria-label={`Insert annotation ${index + 1} inline`}
-                          onClick={() => {
-                            if (onInsertInline(citation)) remove(index);
-                          }}
+                    <div className="flex items-center justify-end gap-2">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              aria-label={`Edit annotation ${index + 1}`}
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => setEditing(index)}
+                            />
+                          }
                         >
-                          Insert inline
-                        </Button>
+                          <PencilIcon />
+                        </TooltipTrigger>
+                        <TooltipPopup>Edit comment</TooltipPopup>
+                      </Tooltip>
+                      {onInsertInline ? (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label={`Insert annotation ${index + 1} inline`}
+                                onClick={() => {
+                                  if (onInsertInline(citation)) remove(index);
+                                }}
+                              />
+                            }
+                          >
+                            <TextCursorInputIcon />
+                          </TooltipTrigger>
+                          <TooltipPopup>Insert inline</TooltipPopup>
+                        </Tooltip>
                       ) : null}
-                      <Button
-                        aria-label={`Delete annotation ${index + 1}`}
-                        variant="outline"
-                        size="xs"
-                        onClick={() => remove(index)}
-                      >
-                        Delete
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              aria-label={`Delete annotation ${index + 1}`}
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => remove(index)}
+                            />
+                          }
+                        >
+                          <Trash2Icon />
+                        </TooltipTrigger>
+                        <TooltipPopup>Delete annotation</TooltipPopup>
+                      </Tooltip>
                     </div>
                   )}
                 </div>
