@@ -23,6 +23,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
@@ -154,26 +155,32 @@ const runCopilotVersion = Effect.fn("GitHubCopilotProvider.runCopilotVersion")(f
   );
 });
 
+const CLIENT_STOP_TIMEOUT_MS = 2_000;
+
 /** Reads everything without opening a session, so a status check leaves no Copilot history. */
-const readAccount = (client: CopilotSdkClient) => {
+export const readGitHubCopilotAccount = (client: CopilotSdkClient) => {
   const probe = <A>(run: () => Promise<A>) =>
     Effect.tryPromise({
       try: run,
       catch: (cause) => new GitHubCopilotProbeError({ cause }),
     });
-  return Effect.acquireUseRelease(
-    probe(() => client.start()),
-    () =>
-      probe(async () => {
-        const auth = await client.authStatus();
-        if (!auth.isAuthenticated) return { auth, models: [], commands: [] };
-        const [models, commands] = await Promise.all([
-          client.listModels(),
-          client.serverCommands(),
-        ]);
-        return { auth, models, commands };
-      }),
-    () => probe(() => client.stop()).pipe(Effect.ignore),
+  const forceStop = probe(() => client.forceStop()).pipe(Effect.ignore);
+  const stop = probe(() => client.stop()).pipe(
+    Effect.timeoutOption(CLIENT_STOP_TIMEOUT_MS),
+    Effect.flatMap(Option.match({ onNone: () => forceStop, onSome: () => Effect.void })),
+    Effect.ignore,
+    Effect.interruptible,
+  );
+  // A CLI that never finishes its handshake leaves `start` pending, and only `forceStop` ends it.
+  return probe(async () => {
+    await client.start();
+    const auth = await client.authStatus();
+    if (!auth.isAuthenticated) return { auth, models: [], commands: [] };
+    const [models, commands] = await Promise.all([client.listModels(), client.serverCommands()]);
+    return { auth, models, commands };
+  }).pipe(
+    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+    Effect.onExit((exit) => (Exit.isSuccess(exit) && Option.isSome(exit.value) ? stop : forceStop)),
   );
 };
 
@@ -241,9 +248,9 @@ export const checkGitHubCopilotProviderStatus = Effect.fn("checkGitHubCopilotPro
 
     // The SDK only checks that the file exists, so it never searches PATH itself.
     const resolved = yield* resolveCommandPath(command, { env: environment });
-    const account = yield* readAccount(
+    const account = yield* readGitHubCopilotAccount(
       makeClient({ command: resolved ?? command, args: [], env: environment }),
-    ).pipe(Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS), Effect.result);
+    ).pipe(Effect.result);
     if (Result.isFailure(account) || Option.isNone(account.success)) {
       return snapshot(settings, checkedAt, {
         installed: true,

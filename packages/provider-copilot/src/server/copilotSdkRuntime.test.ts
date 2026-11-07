@@ -22,11 +22,13 @@ import {
   copilotSdkClosesAssistantMessage,
   copilotSdkForkBoundary,
   copilotSdkForkFromTurn,
+  copilotSdkHistoryMessage,
   copilotSdkInjectedSteerId,
   copilotSdkMcpAppDocument,
   copilotSdkMcpServers,
   copilotSdkProposedPlan,
   copilotSlashCommand,
+  generateCopilotText,
   makeCopilotSdkEventTranslator,
   makeCopilotSdkRuntime,
   type CopilotSdkClient,
@@ -42,6 +44,8 @@ function makeFakes() {
   const sent: Array<unknown> = [];
   let listener: (event: SessionEvent) => void = () => undefined;
   let pingFailure: Error | undefined;
+  let pingHangs = false;
+  let sourceHistory: ReadonlyArray<SessionEvent> = [];
   let compactSucceeds = true;
   let history: ReadonlyArray<SessionEvent> = [];
   let sessionConfig: Parameters<CopilotSdkClient["createSession"]>[0] | undefined;
@@ -101,6 +105,7 @@ function makeFakes() {
     start: async () => undefined,
     ping: async () => {
       if (pingFailure !== undefined) throw pingFailure;
+      if (pingHangs) await new Promise(() => undefined);
     },
     authStatus: async () => ({ isAuthenticated: true }),
     serverCommands: async () => [],
@@ -110,6 +115,10 @@ function makeFakes() {
       return session;
     },
     resumeSession: async () => session,
+    sessionHistory: async (sessionId) => {
+      calls.push(`sessionHistory:${sessionId}`);
+      return sourceHistory;
+    },
     generateText: async () => "",
     fork: async (sessionId, toEventId) => {
       calls.push(`fork:${sessionId}:${toEventId ?? "head"}`);
@@ -124,6 +133,12 @@ function makeFakes() {
     emit: (next: SessionEvent) => listener(next),
     failPing: (error: Error) => {
       pingFailure = error;
+    },
+    hangPing: () => {
+      pingHangs = true;
+    },
+    setSourceHistory: (events: ReadonlyArray<SessionEvent>) => {
+      sourceHistory = events;
     },
     sessionConfig: () => sessionConfig!,
     sentAttachments: () => sent,
@@ -569,6 +584,164 @@ it.effect("fails an open prompt and reports termination when the runtime dies", 
   }).pipe(Effect.scoped),
 );
 
+it.effect("reports termination when the runtime stops answering pings", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    const terminated = yield* Deferred.make<AcpErrors.AcpError>();
+    const runtime = yield* makeCopilotSdkRuntime({
+      cwd: "/repo",
+      client: fakes.client,
+      onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+    });
+    const prompt = yield* startPrompt(runtime);
+
+    fakes.hangPing();
+    yield* TestClock.adjust("40 seconds");
+
+    const failure = yield* Fiber.join(prompt).pipe(Effect.flip);
+    assert.strictEqual(failure, yield* Deferred.await(terminated));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps the prompt open when only a sub-agent fails", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
+    const prompt = yield* startPrompt(runtime);
+
+    fakes.emit(event("session.error", { errorType: "query", message: "agent failed" }, "agent-1"));
+    fakes.emit(event("session.idle"));
+
+    assert.strictEqual((yield* Fiber.join(prompt)).stopReason, "end_turn");
+  }).pipe(Effect.scoped),
+);
+
+it("replays complete messages from history, leaving out sub-agents", () => {
+  assert.deepEqual(
+    copilotSdkHistoryMessage(
+      event("user.message", {
+        content: "<t3_code_instructions>\nrules\n</t3_code_instructions>\n\nhi",
+      }),
+    ),
+    { sessionUpdate: "user_message_chunk", content: { type: "text", text: "hi" } },
+  );
+  assert.deepEqual(copilotSdkHistoryMessage(event("user.message", { content: "hi" })), {
+    sessionUpdate: "user_message_chunk",
+    content: { type: "text", text: "hi" },
+  });
+  assert.deepEqual(
+    copilotSdkHistoryMessage(event("assistant.message", { content: "yo", messageId: "m1" })),
+    {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "yo" },
+      messageId: "m1",
+    },
+  );
+  assert.deepEqual(
+    copilotSdkHistoryMessage(event("assistant.reasoning", { content: "hm", reasoningId: "r1" })),
+    {
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "hm" },
+      messageId: "r1",
+    },
+  );
+  for (const hidden of [
+    event("assistant.message", { content: "", messageId: "m2" }),
+    event("assistant.message", { content: "x", messageId: "m3", parentToolCallId: "t" }),
+    event("user.message", { content: "task" }, "agent-1"),
+  ]) {
+    assert.isUndefined(copilotSdkHistoryMessage(hidden));
+  }
+});
+
+it.effect("rebuilds messages when resuming a session", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    fakes.setHistory([
+      event("user.message", { content: "hi" }),
+      event("assistant.message", { content: "yo", messageId: "m1" }),
+    ]);
+    const runtime = yield* makeCopilotSdkRuntime({
+      cwd: "/repo",
+      client: fakes.client,
+      resumeSessionId: "session-1",
+    });
+    const seen: Array<AcpSchema.SessionUpdate> = [];
+    yield* runtime.handleSessionUpdate((notification) =>
+      Effect.sync(() => {
+        seen.push(notification.update);
+      }),
+    );
+
+    yield* runtime.start();
+
+    assert.deepEqual(
+      seen.flatMap((update) =>
+        update.sessionUpdate === "user_message_chunk" ||
+        update.sessionUpdate === "agent_message_chunk"
+          ? [update.sessionUpdate]
+          : [],
+      ),
+      ["user_message_chunk", "agent_message_chunk"],
+    );
+  }).pipe(Effect.scoped),
+);
+
+it.effect("forks another session using that session's own history", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    fakes.setSourceHistory([
+      { id: "u1", type: "user.message" } as SessionEvent,
+      { id: "u2", type: "user.message" } as SessionEvent,
+    ]);
+    const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
+    yield* runtime.start();
+
+    yield* runtime.forkSession("source", undefined, copilotSdkForkFromTurn.forkMeta("u1"));
+
+    assert.deepEqual(fakes.calls, ["sessionHistory:source", "fork:source:u2"]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("refuses to fork from a turn its session does not have", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
+    yield* runtime.start();
+
+    const failure = yield* runtime
+      .forkSession("source", undefined, copilotSdkForkFromTurn.forkMeta("gone"))
+      .pipe(Effect.flip);
+
+    assert.include(failure.message, "gone");
+    assert.deepEqual(fakes.calls, ["sessionHistory:source"]);
+  }).pipe(Effect.scoped),
+);
+
+it("stops the client when a text generation session cannot start", async () => {
+  let stopped = false;
+  const generated = generateCopilotText(
+    {
+      start: async () => undefined,
+      createSession: async () => {
+        throw new Error("no session");
+      },
+      deleteSession: async () => undefined,
+      stop: async () => {
+        stopped = true;
+        return [];
+      },
+    },
+    { cwd: "/repo", model: "m", prompt: "p", timeoutMs: 1 },
+  );
+
+  await generated.then(
+    () => assert.fail("expected generation to fail"),
+    (error) => assert.include(String(error), "no session"),
+  );
+  assert.isTrue(stopped);
+});
+
 it.effect("runs a known slash command through invoke and shows its output", () =>
   Effect.gen(function* () {
     const fakes = makeFakes();
@@ -600,13 +773,24 @@ it.effect("sends the prompt a slash command expands to", () =>
     yield* runtime.start();
     const dispatched = yield* Deferred.make<void>();
     const prompt = yield* runtime
-      .prompt({ prompt: [{ type: "text", text: "/usage" }] }, { dispatched })
+      .prompt(
+        {
+          prompt: [
+            { type: "text", text: "/usage" },
+            { type: "image", data: "aGk=", mimeType: "image/png" },
+          ],
+        },
+        { dispatched },
+      )
       .pipe(Effect.forkChild);
     yield* Deferred.await(dispatched);
     fakes.emit(event("session.idle"));
     yield* Fiber.join(prompt);
 
     assert.deepEqual(fakes.calls, ["invoke:usage:", "send:expanded"]);
+    assert.deepEqual(fakes.sentAttachments(), [
+      [{ type: "blob", data: "aGk=", mimeType: "image/png" }],
+    ]);
   }).pipe(Effect.scoped),
 );
 

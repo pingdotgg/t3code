@@ -71,6 +71,7 @@ const REASONING_DESCRIPTIONS: Record<string, string> = {
 
 // The SDK exposes no connection-closed hook, so a dead runtime would otherwise hang the prompt.
 const CONNECTION_WATCHDOG_INTERVAL = Duration.seconds(10);
+const CONNECTION_PING_TIMEOUT = Duration.seconds(30);
 const STOP_TIMEOUT = Duration.seconds(10);
 
 const INITIALIZE_RESULT = {
@@ -176,6 +177,8 @@ export interface CopilotSdkClient {
     config: CopilotSdkSessionConfig,
   ) => Promise<CopilotSdkSession>;
   readonly fork: (sessionId: string, toEventId: string | undefined) => Promise<string>;
+  /** A session's saved events, without resuming it. */
+  readonly sessionHistory: (sessionId: string) => Promise<ReadonlyArray<SessionEvent>>;
   /** One prompt in a throwaway session with no tools, removed afterwards to keep history clean. */
   readonly generateText: (input: {
     readonly cwd: string;
@@ -243,6 +246,34 @@ function wrapSession(session: Awaited<ReturnType<CopilotClient["createSession"]>
   } satisfies CopilotSdkSession;
 }
 
+export async function generateCopilotText(
+  client: Pick<CopilotClient, "start" | "createSession" | "deleteSession" | "stop">,
+  input: {
+    readonly cwd: string;
+    readonly model: string;
+    readonly prompt: string;
+    readonly timeoutMs: number;
+  },
+) {
+  try {
+    await client.start();
+    const session = await client.createSession({
+      model: input.model,
+      workingDirectory: input.cwd,
+      availableTools: [],
+      onPermissionRequest: () => ({ kind: "reject" }),
+    });
+    try {
+      return (await session.sendAndWait(input.prompt, input.timeoutMs))?.data.content ?? "";
+    } finally {
+      await session.disconnect().catch(() => undefined);
+      await client.deleteSession(session.sessionId).catch(() => undefined);
+    }
+  } finally {
+    await client.stop();
+  }
+}
+
 function definedEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   return Object.fromEntries(
     Object.entries(env).flatMap(([key, value]) => (value === undefined ? [] : [[key, value]])),
@@ -279,22 +310,24 @@ export function makeCopilotSdkClient(input: {
           ...(toEventId === undefined ? {} : { toEventId }),
         })
       ).sessionId,
-    generateText: async ({ cwd, model, prompt, timeoutMs }) => {
-      await client.start();
-      const session = await client.createSession({
-        model,
-        workingDirectory: cwd,
-        availableTools: [],
-        onPermissionRequest: () => ({ kind: "reject" }),
-      });
-      try {
-        return (await session.sendAndWait(prompt, timeoutMs))?.data.content ?? "";
-      } finally {
-        await session.disconnect().catch(() => undefined);
-        await client.deleteSession(session.sessionId).catch(() => undefined);
-        await client.stop();
-      }
+    sessionHistory: async (sessionId) => {
+      const events: Array<SessionEvent> = [];
+      let cursor: string | undefined;
+      do {
+        const page = await client.rpc.sessions.readPersistedEvents({
+          sessionId,
+          direction: "forward",
+          max: 1000,
+          ...(cursor === undefined ? {} : { cursor }),
+        });
+        // An expired cursor ends in an empty page, which would pass for the end of the history.
+        if (page.cursorStatus !== "ok") throw new Error(`Copilot session ${sessionId} expired.`);
+        events.push(...page.events);
+        cursor = page.hasMore ? page.cursor : undefined;
+      } while (cursor !== undefined);
+      return events;
     },
+    generateText: (input) => generateCopilotText(client, input),
     stop: () => client.stop(),
     forceStop: () => client.forceStop(),
   };
@@ -494,6 +527,39 @@ export function makeCopilotSdkEventTranslator() {
         return [];
     }
   };
+}
+
+const withoutT3Instructions = (prompt: string) =>
+  prompt.replace(/^<t3_code_instructions>[\s\S]*?<\/t3_code_instructions>\s*/, "");
+
+/** History leaves out streaming deltas, so a replay renders each complete message instead. */
+export function copilotSdkHistoryMessage(event: SessionEvent): AcpSchema.SessionUpdate | undefined {
+  if (event.agentId !== undefined) return undefined;
+  const content = { type: "text", text: "" } as const;
+  switch (event.type) {
+    case "user.message":
+      return {
+        sessionUpdate: "user_message_chunk",
+        content: { ...content, text: withoutT3Instructions(event.data.content) },
+        ...(event.data.messageId === undefined ? {} : { messageId: event.data.messageId }),
+      };
+    case "assistant.message":
+      return event.data.parentToolCallId === undefined && event.data.content.length > 0
+        ? {
+            sessionUpdate: "agent_message_chunk",
+            content: { ...content, text: event.data.content },
+            messageId: event.data.messageId,
+          }
+        : undefined;
+    case "assistant.reasoning":
+      return {
+        sessionUpdate: "agent_thought_chunk",
+        content: { ...content, text: event.data.content },
+        messageId: event.data.reasoningId,
+      };
+    default:
+      return undefined;
+  }
 }
 
 const decodeUserMessageMeta = Schema.decodeUnknownOption(
@@ -804,7 +870,7 @@ function copilotSdkPrompt(prompt: ReadonlyArray<AcpSchema.ContentBlock>) {
 
 /** T3 prepends its instructions to a session's first prompt; a command is what follows them. */
 export function copilotSlashCommand(prompt: string) {
-  const text = prompt.replace(/^<t3_code_instructions>[\s\S]*?<\/t3_code_instructions>\s*/, "");
+  const text = withoutT3Instructions(prompt);
   const match = /^\/([\w-]+)(?:\s+([\s\S]*\S))?\s*$/.exec(text);
   return match === null ? undefined : { name: match[1]!, input: match[2] };
 }
@@ -992,7 +1058,7 @@ export const makeCopilotSdkRuntime = Effect.fn("makeCopilotSdkRuntime")(function
         }),
       );
     }
-    if (event.type === "session.error") {
+    if (event.type === "session.error" && event.agentId === undefined) {
       yield* settlePrompt(
         Effect.fail(
           new AcpErrors.AcpRequestError({
@@ -1155,6 +1221,8 @@ export const makeCopilotSdkRuntime = Effect.fn("makeCopilotSdkRuntime")(function
     const result = yield* adopt(next);
     const replay = makeCopilotSdkEventTranslator();
     for (const event of yield* sdk("session/load", () => next.history())) {
+      const message = copilotSdkHistoryMessage(event);
+      if (message !== undefined) yield* emit(sessionId, message);
       for (const update of replay(event)) yield* emit(sessionId, update);
     }
     return result;
@@ -1230,10 +1298,21 @@ export const makeCopilotSdkRuntime = Effect.fn("makeCopilotSdkRuntime")(function
   ) {
     const turnEventId = stringField(record(meta), FORK_EVENT_META_KEY);
     const active = yield* requireSession;
-    const boundary =
-      turnEventId === undefined
-        ? undefined
-        : copilotSdkForkBoundary(yield* sdk("session/fork", () => active.history()), turnEventId);
+    let boundary: string | undefined;
+    if (turnEventId !== undefined) {
+      // After an earlier fork the active session is that fork, not the one being forked.
+      const history = yield* sdk("session/fork", () =>
+        active.sessionId === sessionId ? active.history() : client.sessionHistory(sessionId),
+      );
+      if (!history.some((event) => event.id === turnEventId)) {
+        return yield* new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: `Copilot session ${sessionId} has no turn ${turnEventId}.`,
+          method: "session/fork",
+        });
+      }
+      boundary = copilotSdkForkBoundary(history, turnEventId);
+    }
     const forked = yield* sdk("session/fork", () => client.fork(sessionId, boundary));
     return yield* resume(forked, activation);
   });
@@ -1320,7 +1399,21 @@ export const makeCopilotSdkRuntime = Effect.fn("makeCopilotSdkRuntime")(function
 
   const watchConnection = (prompt: ActivePrompt) =>
     Effect.sleep(CONNECTION_WATCHDOG_INTERVAL).pipe(
-      Effect.andThen(sdk("session/prompt", () => client.ping())),
+      Effect.andThen(
+        sdk("session/prompt", () => client.ping()).pipe(
+          Effect.timeoutOrElse({
+            duration: CONNECTION_PING_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new AcpErrors.AcpRequestError({
+                  code: -32603,
+                  errorMessage: "Copilot stopped responding.",
+                  method: "session/prompt",
+                }),
+              ),
+          }),
+        ),
+      ),
       Effect.forever,
       Effect.catch((error) =>
         // Settling ends the prompt, and with it this fiber: termination has to finish first.
@@ -1363,7 +1456,7 @@ export const makeCopilotSdkRuntime = Effect.fn("makeCopilotSdkRuntime")(function
         }
         return { stopReason: "end_turn" } satisfies AcpSchema.PromptResponse;
       }
-      outgoing = { prompt: result.prompt };
+      outgoing = { ...message, prompt: result.prompt };
     }
     const done = yield* Deferred.make<AcpSchema.PromptResponse, AcpErrors.AcpError>();
     const current: ActivePrompt = { done, steered: false };

@@ -50,7 +50,11 @@ export const layer = Layer.effect(
       snapshotMcpApp: Effect.fn("ProviderHost.snapshotMcpApp")(function (input) {
         return snapshotMcpApp({ ...input, attachmentsDir: config.attachmentsDir }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.orElseSucceed(() => undefined),
+          Effect.catch((error) =>
+            Effect.logWarning("MCP App snapshot failed; showing the tool output instead", {
+              reason: error._tag,
+            }).pipe(Effect.as(undefined)),
+          ),
         );
       }),
       credentials: Effect.fn("ProviderHost.credentials")(function (namespace, bindingId) {
