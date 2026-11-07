@@ -6,8 +6,10 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
 import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -15,7 +17,9 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 }));
 
 import { act, fakeTimers, render } from "../../../test/render";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { toastManager } from "../ui/toast";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -72,31 +76,33 @@ function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]
   } satisfies OrchestrationV2ThreadProjection;
 }
 
-let requests: ReturnType<typeof usePendingThreadRequests>;
-
-function PendingRequestsProbe({
-  environmentId,
-  projection,
-  loading = false,
-}: {
+interface ProbeProps {
   environmentId: EnvironmentId;
   projection: OrchestrationV2ThreadProjection;
   loading?: boolean;
-}) {
+}
+
+function useProbeRequests({ environmentId, projection, loading = false }: ProbeProps) {
   const promptRef = useRef("");
   const composerRef = useRef(null);
-  const state = usePendingThreadRequests({
+  return usePendingThreadRequests({
     environmentId,
     activeThreadId: projection.thread.id,
-    activeThread: projection.thread,
     serverProjection: loading ? null : projection,
     supportsQuestionAttachments: false,
     composerDraftTarget: { environmentId, threadId: projection.thread.id },
-    setComposerDraftPrompt: () => {},
+    setComposerDraftPrompt: (target, prompt) =>
+      useComposerDraftStore.getState().setPrompt(target, prompt),
     promptRef,
     composerRef,
     setThreadError: () => {},
   });
+}
+
+let requests: ReturnType<typeof usePendingThreadRequests>;
+
+function PendingRequestsProbe(props: ProbeProps) {
+  const state = useProbeRequests(props);
   useLayoutEffect(() => {
     requests = state;
   });
@@ -138,6 +144,77 @@ it("retains answers, selections and question position after leaving chat, includ
   expect(requests).toMatchObject(expected);
 });
 
+it("tells the user when an option click moves their typed answer into the hidden composer draft", async () => {
+  using _timers = fakeTimers();
+  const environmentId = EnvironmentId.make("displaced-environment");
+  const draftTarget = { environmentId, threadId: threadRef.threadId };
+  const draftPrompt = () => useComposerDraftStore.getState().getComposerDraft(draftTarget)?.prompt;
+  using toast = vi.spyOn(toastManager, "add");
+  await using _screen = await render(
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={questionProjection(threadRef.threadId)}
+    />,
+  );
+
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  expect(toast).not.toHaveBeenCalled();
+
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "first try"));
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  expect(draftPrompt()).toBe("first try");
+  expect(toast).toHaveBeenCalledTimes(1);
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "info",
+      title: "Your typed text was set aside",
+      description: "It will be back in the composer once the question is answered.",
+      data: { threadRef: draftTarget },
+    }),
+  );
+
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "second try"));
+  expect(draftPrompt()).toBe("first try");
+  expect(requests.activePendingDraftAnswers["question-0"]).toMatchObject({
+    customAnswer: "second try",
+  });
+  expect(toast).toHaveBeenCalledTimes(1);
+});
+
+function QuestionPositionProbe(props: ProbeProps) {
+  const state = useProbeRequests(props);
+  return (
+    <>
+      <output>Question {state.activePendingQuestionIndex + 1}</output>
+      <button
+        type="button"
+        onClick={() => state.onSelectActivePendingUserInputOption("question-0", "Incremental")}
+      >
+        Choose Incremental
+      </button>
+      <button type="button" onClick={() => state.onAdvanceActivePendingUserInput()}>
+        Submit
+      </button>
+    </>
+  );
+}
+
+it("stays on an unanswered question when the composer submits", async () => {
+  await using screen = await render(
+    <QuestionPositionProbe
+      environmentId={EnvironmentId.make("unanswered-environment")}
+      projection={questionProjection(threadRef.threadId)}
+    />,
+  );
+  const submit = screen.getByRole("button", { name: "Submit" });
+  await userEvent.click(submit);
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Question 1");
+
+  await userEvent.click(screen.getByRole("button", { name: "Choose Incremental" }));
+  await userEvent.click(submit);
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Question 2");
+});
+
 it("isolates drafts by environment, thread and request and discards only resolved requests", async () => {
   using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("scope-environment");
@@ -161,6 +238,7 @@ it("isolates drafts by environment, thread and request and discards only resolve
     await act(() => requests.onAdvanceActivePendingUserInput());
   }
 
+  // "first" was answered on another device.
   await show({
     environmentId,
     projection: {
@@ -173,6 +251,12 @@ it("isolates drafts by environment, thread and request and discards only resolve
     },
   });
   expect(requests.activePendingUserInput?.requestId).toBe("second");
+  await act(() =>
+    makeThreadRequestsResolvedAnnouncer(
+      environmentId,
+      threadRef.threadId,
+    )([RuntimeRequestId.make("second")]),
+  );
   for (const [index, scope] of scopes.entries()) {
     await show(scope);
     expect(requests.activePendingQuestionIndex).toBe(index === 0 ? 0 : 1);

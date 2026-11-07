@@ -46,10 +46,7 @@ export const stronglyConnectedComponents = (
           continue;
         }
         if (onStack.has(child)) {
-          lowlink.set(
-            frame.node,
-            Math.min(lowlink.get(frame.node)!, indexOf.get(child)!),
-          );
+          lowlink.set(frame.node, Math.min(lowlink.get(frame.node)!, indexOf.get(child)!));
         }
         continue;
       }
@@ -87,14 +84,9 @@ export const stronglyConnectedComponents = (
  * component (SCC) of size > 1, or has a self-edge (size-1 SCC that loops
  * back to itself).
  */
-export const findCycleMembers = (
-  edges: Record<string, readonly string[]>,
-): Set<string> => {
+export const findCycleMembers = (edges: Record<string, readonly string[]>): Set<string> => {
   const cycleMembers = new Set<string>();
-  for (const scc of stronglyConnectedComponents(
-    Object.keys(edges),
-    (node) => edges[node] ?? [],
-  )) {
+  for (const scc of stronglyConnectedComponents(Object.keys(edges), (node) => edges[node] ?? [])) {
     if (scc.length > 1) {
       for (const fqn of scc) cycleMembers.add(fqn);
     } else {

@@ -1,10 +1,7 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2ProjectedTurnItem,
-  RunId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { ToolCallDiffTarget } from "../../diffPanelStore";
+import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import {
+  isJsonToolText,
   toolCallLines,
   turnItemDetailRevision,
   turnItemNeedsDetailFetch,
@@ -13,7 +10,7 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
-import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
+import { ExternalLinkIcon } from "lucide-react";
 import { memo, type ReactNode, Suspense, use } from "react";
 
 import { useRenderedAppearance } from "../../hooks/useTheme";
@@ -21,7 +18,6 @@ import { cn } from "../../lib/utils";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 import { useTurnItemDetail } from "../../state/queries";
-import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
@@ -38,12 +34,7 @@ interface V2ItemInspectorProps {
   readonly environmentId: EnvironmentId;
   readonly cwd?: string | undefined;
   readonly workspaceRoot?: string | undefined;
-  readonly onOpenThread: (threadId: ThreadId) => void;
-  readonly onOpenTurnDiff?: ((runId: RunId, filePath?: string) => void) | undefined;
-  readonly onRollbackCheckpoint?: (input: {
-    readonly checkpointId: string;
-    readonly scopeId: string;
-  }) => void;
+  readonly onOpenToolDiff?: ((target: ToolCallDiffTarget) => void) | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   readonly source?: TurnItemSource | undefined;
 }
@@ -53,7 +44,7 @@ function SyntaxTokens({
   language,
 }: {
   readonly text: string;
-  readonly language: "json" | "typescript";
+  readonly language: "json" | "typescript" | "html";
 }) {
   const resolvedTheme = useRenderedAppearance();
   const highlighter = use(getSyntaxHighlighterPromise(language));
@@ -74,16 +65,6 @@ function SyntaxTokens({
 const monoClassName =
   "font-mono text-(length:--font-size-code,var(--text-2xs)) leading-relaxed whitespace-pre-wrap break-words select-text";
 
-function isJsonText(text: string): boolean {
-  if (!text) return false;
-  try {
-    JSON.parse(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function StructuredValue({
   value,
   highlightJson = false,
@@ -91,10 +72,10 @@ function StructuredValue({
 }: {
   readonly value: unknown;
   readonly highlightJson?: boolean;
-  readonly language?: "typescript";
+  readonly language?: "typescript" | "html" | "json";
 }) {
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  const isJson = highlightJson && isJsonText(text);
+  const isJson = highlightJson && isJsonToolText(text);
   if (!text) return null;
   return (
     <pre className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}>
@@ -160,8 +141,8 @@ interface ToolOutputState {
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }
 
-function ToolOutput(props: ToolOutputState) {
-  const images = props.images.map((resource) => (
+function ToolOutputImages(props: ToolOutputState) {
+  return props.images.map((resource) => (
     <ChatMarkdownAssetImage
       key={resource.index}
       environmentId={props.environmentId}
@@ -171,21 +152,18 @@ function ToolOutput(props: ToolOutputState) {
       onImageExpand={props.onImageExpand}
     />
   ));
-  const text = props.output ? (
-    <div className="max-h-80 overflow-auto text-muted-foreground">{props.output}</div>
+}
+
+function ToolOutput(props: ToolOutputState) {
+  return props.output ? (
+    <StructuredValue value={props.output} highlightJson />
   ) : props.pending ? (
     <div className="text-muted-foreground italic">Loading output…</div>
   ) : props.error ? (
     <div className="text-destructive">Couldn&apos;t load output: {props.error}</div>
-  ) : props.empty && images.length === 0 ? (
+  ) : props.empty && props.images.length === 0 ? (
     <div className="text-muted-foreground italic">No output.</div>
   ) : null;
-  return (
-    <>
-      {images}
-      {text}
-    </>
-  );
 }
 
 export function FetchedToolOutput(props: {
@@ -197,6 +175,7 @@ export function FetchedToolOutput(props: {
   const { output } = useFetchedTurnItem(props.projectedItem, props.environmentId, props.source);
   return (
     <div className={cn("mt-1.5 space-y-1.5", monoClassName)}>
+      <ToolOutputImages {...output} onImageExpand={props.onImageExpand} />
       <ToolOutput {...output} onImageExpand={props.onImageExpand} />
     </div>
   );
@@ -215,14 +194,19 @@ function ToolCallBody(
   const call = toolCallLines({ command: props.command, args: props.args });
   return (
     <div className={cn("space-y-1.5", monoClassName)}>
+      <ToolOutputImages {...props} />
       {call.command ? <ShellCommandBlock command={call.command} /> : null}
       {call.args ? (
         <div className="text-foreground/85">
           {call.args.map(([key, value]) => (
             <div key={key}>
               <span className="text-muted-foreground">{key} </span>
-              {key === "code" && isJavaScriptReplTool(props.toolName) ? (
+              {key === "html" ? (
+                <StructuredValue value={value} language="html" />
+              ) : key === "code" && isJavaScriptReplTool(props.toolName) ? (
                 <StructuredValue value={value} language="typescript" />
+              ) : isJsonToolText(value) ? (
+                <StructuredValue value={value} language="json" />
               ) : (
                 value
               )}
@@ -253,11 +237,6 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   );
   const item = fetched.item;
   const outputState = fetched.output;
-  const support = useV2ItemSupport({
-    environmentId: props.environmentId,
-    sourceThreadId: props.projectedItem.sourceThreadId,
-    sourceItemId: props.projectedItem.sourceItemId,
-  });
   return (
     <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
       {item.type === "reasoning" && item.text ? (
@@ -305,11 +284,17 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
                 <span className="text-diff-deletion">-{formatDiffCount(item.deletions ?? 0)}</span>
               </span>
             ) : null}
-            {item.runId !== null && props.onOpenTurnDiff ? (
+            {props.onOpenToolDiff ? (
               <Button
                 size="xs"
                 variant="outline"
-                onClick={() => props.onOpenTurnDiff?.(item.runId!, item.fileName)}
+                onClick={() =>
+                  props.onOpenToolDiff?.({
+                    threadId: props.projectedItem.sourceThreadId,
+                    itemId: props.projectedItem.sourceItemId,
+                    revision: turnItemDetailRevision(item),
+                  })
+                }
               >
                 Open diff
               </Button>
@@ -411,66 +396,15 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "notification" ? <StructuredValue value={item.detail} /> : null}
       {item.type === "system_notice" ? <StructuredValue value={item.message} /> : null}
       {item.type === "error" ? <StructuredValue value={item.failure.message} /> : null}
-      {item.type === "proposed_plan" ? <StructuredValue value={item.markdown} /> : null}
       {item.type === "todo_list" ? (
         <StructuredValue
           value={item.steps
-            .map((step) => `${step.status === "completed" ? "✓" : "○"} ${step.text}`)
+            .map(
+              (step) =>
+                `${step.status === "completed" ? "✓" : step.status === "running" ? "◉" : "○"} ${step.text}`,
+            )
             .join("\n")}
         />
-      ) : null}
-
-      {item.type === "checkpoint" ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground">
-            {support.checkpoint?.status ?? item.status} · {item.files.length} files
-          </span>
-          {props.onRollbackCheckpoint && support.checkpoint?.status === "ready" ? (
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() =>
-                props.onRollbackCheckpoint?.({
-                  checkpointId: item.checkpointId,
-                  scopeId: item.scopeId,
-                })
-              }
-            >
-              <RotateCcwIcon className="size-3" />
-              Roll back
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {item.type === "fork" ? (
-        <Button size="xs" variant="outline" onClick={() => props.onOpenThread(item.targetThreadId)}>
-          <GitBranchIcon className="size-3" />
-          Open fork
-        </Button>
-      ) : null}
-
-      {item.type === "subagent" && item.childThreadId !== null ? (
-        <Button size="xs" variant="outline" onClick={() => props.onOpenThread(item.childThreadId!)}>
-          Open subagent thread
-        </Button>
-      ) : null}
-
-      {item.type === "handoff" ? (
-        <div className="space-y-1 text-muted-foreground">
-          <p>
-            {item.fromProviderInstanceIds.join(", ")} → {item.toProviderInstanceId}
-          </p>
-          <p>
-            {item.strategy.replaceAll("_", " ")} · {support.contextHandoff?.status ?? item.status}
-          </p>
-          {support.contextTransfer ? (
-            <p>
-              Transfer {support.contextTransfer.type.replaceAll("_", " ")} ·{" "}
-              {support.contextTransfer.status}
-            </p>
-          ) : null}
-        </div>
       ) : null}
     </div>
   );

@@ -26,17 +26,10 @@ import type { RepoContext } from "./Repo.tsx";
 // ── shared PR presentation atoms (also used by Pull.tsx) ────────────────────
 
 /** `refs/heads/main` → `main` (display only; API calls keep full names). */
-export const shortRef = (ref: string): string =>
-  ref.replace(/^refs\/(heads|tags)\//, "");
+export const shortRef = (ref: string): string => ref.replace(/^refs\/(heads|tags)\//, "");
 
 /** The octicon for a PR state (uncolored — callers pick the tone). */
-export const PullStateGlyph = ({
-  state,
-  className,
-}: {
-  state: PullState;
-  className?: string;
-}) =>
+export const PullStateGlyph = ({ state, className }: { state: PullState; className?: string }) =>
   state === "open" ? (
     <PullRequestIcon className={className} />
   ) : state === "merged" ? (
@@ -74,10 +67,7 @@ const PullRow = ({ context, pull }: { context: RepoContext; pull: Pull }) => {
   const { owner, name } = context.repo;
   return (
     <li className="flex items-start gap-3 border-b border-border-muted px-4 py-3 last:border-b-0 hover:bg-canvas-subtle">
-      <PullStateGlyph
-        state={pull.state}
-        className={`mt-0.5 shrink-0 ${stateTone[pull.state]}`}
-      />
+      <PullStateGlyph state={pull.state} className={`mt-0.5 shrink-0 ${stateTone[pull.state]}`} />
       <div className="min-w-0 grow">
         <Link
           to={href(owner, name, "pulls", String(pull.number))}
@@ -180,23 +170,11 @@ const NewPullForm = ({
       }}
     >
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <BranchSelect
-          label="base"
-          value={base}
-          onChange={setBase}
-          branches={branches}
-        />
+        <BranchSelect label="base" value={base} onChange={setBase} branches={branches} />
         <span className="text-fg-muted">←</span>
-        <BranchSelect
-          label="compare"
-          value={head}
-          onChange={setHead}
-          branches={branches}
-        />
+        <BranchSelect label="compare" value={head} onChange={setHead} branches={branches} />
         {head === base && (
-          <span className="text-xs text-attention">
-            choose two different branches
-          </span>
+          <span className="text-xs text-attention">choose two different branches</span>
         )}
       </div>
       <Input value={title} onChange={setTitle} placeholder="Title" />
@@ -240,9 +218,7 @@ export const PullsTab = ({ context }: { context: RepoContext }) => {
         limit: 50,
         ...(nextCursor ? { cursor: nextCursor } : {}),
       });
-      setPulls((existing) =>
-        nextCursor ? [...(existing ?? []), ...page.items] : page.items,
-      );
+      setPulls((existing) => (nextCursor ? [...(existing ?? []), ...page.items] : page.items));
       setCursor(page.hasMore ? page.nextCursor : null);
     } catch (cause) {
       setError(cause);
@@ -291,9 +267,7 @@ export const PullsTab = ({ context }: { context: RepoContext }) => {
       {showNew && (
         <NewPullForm
           context={context}
-          onCreated={(pull) =>
-            navigate(href(repo.owner, repo.name, "pulls", String(pull.number)))
-          }
+          onCreated={(pull) => navigate(href(repo.owner, repo.name, "pulls", String(pull.number)))}
         />
       )}
 
@@ -314,9 +288,7 @@ export const PullsTab = ({ context }: { context: RepoContext }) => {
           </ul>
           {cursor !== null && (
             <div className="mt-4 flex justify-center">
-              <Button onClick={() => void load(filter, cursor)}>
-                Load more
-              </Button>
+              <Button onClick={() => void load(filter, cursor)}>Load more</Button>
             </div>
           )}
         </>

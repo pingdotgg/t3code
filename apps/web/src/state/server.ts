@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import {
   AVAILABLE_CONNECTION_STATE,
-  presentEnvironmentConnection,
+  presentConnectionState,
   type EnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
@@ -26,7 +26,7 @@ import { isConnectedWithConfig } from "../components/settings/scopedSettings";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList } from "./environmentAtomList";
-import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
+import { primaryEnvironmentIdAtom, themeEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
 import { reuseProvidersIgnoringCheckedAt } from "./serverProviders.logic";
 
@@ -68,10 +68,11 @@ const primaryServerStateAtom = Atom.make((get): PrimaryServerState => {
   }
 
   const target = { environmentId, input: {} };
-  const configProjection = Option.getOrNull(
-    AsyncResult.value(get(serverEnvironment.configProjection(target))),
+  const configProjection = AsyncResult.getOrElse(
+    get(serverEnvironment.configProjection(target)),
+    () => null,
   );
-  const welcome = Option.getOrNull(AsyncResult.value(get(serverEnvironment.welcome(target))));
+  const welcome = AsyncResult.getOrElse(get(serverEnvironment.welcome(target)), () => null);
 
   return {
     config: get(serverEnvironment.configValueAtom(environmentId)),
@@ -98,8 +99,9 @@ export const primaryServerLegacyThreadMigrationAtom = Atom.make(
     if (environmentId === null) {
       return null;
     }
-    return Option.getOrNull(
-      AsyncResult.value(get(serverEnvironment.legacyThreadMigration({ environmentId, input: {} }))),
+    return AsyncResult.getOrElse(
+      get(serverEnvironment.legacyThreadMigration({ environmentId, input: {} })),
+      () => null,
     );
   },
 ).pipe(Atom.withLabel("web-primary-server-legacy-thread-migration"));
@@ -143,14 +145,14 @@ const environmentConnectionsAtom = Atom.make((get) => {
     Pick<EnvironmentPresentation, "connection" | "serverConfig">
   >();
   for (const [environmentId, entry] of get(environmentCatalog.catalogValueAtom).entries) {
-    const state = Option.getOrElse(
-      AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))),
+    const state = AsyncResult.getOrElse(
+      get(environmentCatalog.stateAtom(environmentId)),
       () => AVAILABLE_CONNECTION_STATE,
     );
     environments.set(environmentId, {
       connection:
         entry.unsupportedReason === undefined
-          ? presentEnvironmentConnection(state)
+          ? presentConnectionState(state)
           : { phase: "unsupported", error: entry.unsupportedReason, traceId: null },
       serverConfig: get(serverEnvironment.configValueAtom(environmentId)),
     });
@@ -171,10 +173,19 @@ export const primaryServerAvailableEditorsAtom = Atom.make(
 
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 
-export const primaryServerEnvironmentThemesAtom = Atom.make(
+const themeServerConfigAtom = Atom.make((get): ServerConfig | null => {
+  const environmentId = get(themeEnvironmentIdAtom);
+  return environmentId === null ? null : get(serverEnvironment.configValueAtom(environmentId));
+}).pipe(Atom.withLabel("web-theme-server-config"));
+
+export const themeServerEnvironmentThemesAtom = Atom.make(
   (get): ReadonlyArray<EnvironmentTheme> =>
-    get(primaryServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
-).pipe(Atom.withLabel("web-primary-server-environment-themes"));
+    get(themeServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
+).pipe(Atom.withLabel("web-theme-server-environment-themes"));
+
+export const themeServerSettingsAtom = Atom.make(
+  (get): ServerSettings => get(themeServerConfigAtom)?.settings ?? DEFAULT_SERVER_SETTINGS,
+).pipe(Atom.withLabel("web-theme-server-settings"));
 
 export const providersIgnoringCheckedAtAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ServerProvider> =>

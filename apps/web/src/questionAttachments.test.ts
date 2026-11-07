@@ -1,4 +1,5 @@
-import { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
+import { ApprovalRequestId, EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import { useComposerDraftStore } from "./composerDraftStore";
 import {
@@ -113,4 +114,25 @@ it("counts files, images, and pending preparation across the shared question bud
   expect(countQuestionAttachments([second])).toBe(7);
   changeQuestionAttachmentPreparation(second, -1);
   expect(countQuestionAttachments([first, second])).toBe(7);
+});
+
+it("clears attachment drafts for requests the thread resolved, wherever they were answered", () => {
+  const store = useComposerDraftStore.getState();
+  const pending = RuntimeRequestId.make("pending");
+  const resolved = RuntimeRequestId.make("resolved");
+  const otherThread = ThreadId.make("thread-2");
+  const keep = questionAttachmentDraftId(environmentId, threadId, pending, "first");
+  const drop = questionAttachmentDraftId(environmentId, threadId, resolved, "first");
+  const elsewhere = questionAttachmentDraftId(environmentId, otherThread, resolved, "first");
+  for (const key of [keep, drop, elsewhere]) store.setPrompt(key, "Answer context");
+  changeQuestionAttachmentPreparation(drop, 1);
+
+  // The thread's projection synchronizes with only `pending` left, e.g. after
+  // `resolved` was answered on another device while no composer showed it.
+  makeThreadRequestsResolvedAnnouncer(environmentId, threadId)([pending]);
+
+  expect(store.getComposerDraft(keep)?.prompt).toBe("Answer context");
+  expect(store.getComposerDraft(drop)).toBeNull();
+  expect(store.getComposerDraft(elsewhere)?.prompt).toBe("Answer context");
+  expect(useQuestionAttachmentPreparation.getState().counts[drop]).toBeUndefined();
 });

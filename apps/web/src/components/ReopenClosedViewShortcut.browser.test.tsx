@@ -47,7 +47,10 @@ vi.mock(import("../connection/catalog"), async (original) => {
     ...actual,
     environmentCatalog: {
       ...actual.environmentCatalog,
-      catalogValueAtom: Atom.make({ isReady: true, entries: new Map([["remote", {}]]) }) as never,
+      catalogValueAtom: Atom.make({
+        isReady: true,
+        entries: new Map([["remote", { target: { _tag: "DirectConnectionTarget" } }]]),
+      }) as never,
     },
   };
 });
@@ -262,4 +265,11 @@ describe("root reopen shortcut", () => {
       expect(useClosedViewStore.getState().entries).toEqual([]);
     },
   );
+  it("forwards address-bar focus from a focused desktop page", async () => {
+    setup();
+    await using _shortcut = await renderShortcut();
+    expect(state.setShortcuts).toHaveBeenLastCalledWith(
+      expect.arrayContaining([expect.objectContaining({ command: "preview.focusUrl" })]),
+    );
+  });
 });

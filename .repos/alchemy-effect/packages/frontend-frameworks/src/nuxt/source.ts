@@ -1,9 +1,12 @@
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
+import { fileURLToPath } from "node:url";
 /**
  * `@alchemy.run/frontend-frameworks/nuxt/source` — alchemy Worker source provider for Nuxt
  * projects.
  *
  * The default export satisfies alchemy's `WorkerSourceModule` contract
- * (`packages/alchemy/src/Cloudflare/Workers/Source.ts`) **structurally**:
+ * (`packages/cloudflare/src/Workers/Source.ts`) **structurally**:
  * the `Source*` shapes below mirror alchemy's `SourceProvider` /
  * `SourceContext` / `SourceBuildOutput` interfaces rather than importing
  * them, so this package carries no dependency on alchemy. Version skew
@@ -37,10 +40,7 @@ import type { PlatformError } from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
 import { glob } from "tinyglobby";
-import * as NodeCrypto from "node:crypto";
-import * as NodePath from "node:path";
-import { fileURLToPath } from "node:url";
-import { runBuildChild } from "../core/BuildChild.ts";
+import { resolveBuildEnv, runBuildChild } from "../core/BuildChild.ts";
 import { makeCloudflareTarget } from "./cloudflare.ts";
 import { make as makeNuxt, type NuxtOptions } from "./Nuxt.ts";
 
@@ -48,7 +48,7 @@ const PROVIDER = "@alchemy.run/frontend-frameworks/nuxt/source";
 
 // ─────────────────────────────────────────────────────────────────────
 // Structural mirror of alchemy's Worker source contract
-// (packages/alchemy/src/Cloudflare/Workers/Source.ts). Do not import
+// (packages/cloudflare/src/Workers/Source.ts). Do not import
 // alchemy here — the contract is structural by design.
 // ─────────────────────────────────────────────────────────────────────
 
@@ -112,6 +112,8 @@ export interface SourceDevContext extends SourceContext {
   readonly worker: {
     readonly name: string;
     readonly bindings: ReadonlyArray<unknown>;
+    /** The Worker's runtime settings; `workerd` reaches the dev platform proxy. */
+    readonly options: { readonly workerd?: unknown };
   };
   /**
    * The host's pre-built `Context<RuntimeServices>` (opaque here). Handed
@@ -148,6 +150,7 @@ type SourceServices = FileSystem.FileSystem | Path.Path;
 /** Mirror of alchemy's `SourceProvider` (structural). */
 export interface SourceProvider {
   readonly ownsAssets: boolean;
+  readonly devAssetsBinding?: boolean;
   readonly build: (
     ctx: SourceContext,
   ) => Effect.Effect<SourceBuildOutput, SourceError, SourceServices>;
@@ -157,11 +160,7 @@ export interface SourceProvider {
   ) => Effect.Effect<Partial<SourceHash>, SourceError, SourceServices>;
   readonly dev: (
     ctx: SourceDevContext,
-  ) => Effect.Effect<
-    SourceDevHandle,
-    SourceError,
-    SourceServices | Scope.Scope
-  >;
+  ) => Effect.Effect<SourceDevHandle, SourceError, SourceServices | Scope.Scope>;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -208,9 +207,7 @@ export interface NuxtSourceOptions {
 // ─────────────────────────────────────────────────────────────────────
 
 const sha256Hex = (input: string | Uint8Array): Effect.Effect<string> =>
-  Effect.sync(() =>
-    NodeCrypto.createHash("sha256").update(input).digest("hex"),
-  );
+  Effect.sync(() => NodeCrypto.createHash("sha256").update(input).digest("hex"));
 
 /** Recursively sort object keys so JSON.stringify is order-stable. */
 const stableValue = (value: unknown): unknown => {
@@ -293,14 +290,10 @@ const readGitIgnoreRules = (
   cwd: string,
 ): Effect.Effect<Array<string>, PlatformError> =>
   Effect.gen(function* () {
-    const rules = yield* fs
-      .readFileString(NodePath.join(cwd, ".gitignore"))
-      .pipe(
-        Effect.map((file) => file.split("\n")),
-        Effect.catchTag("PlatformError", () =>
-          Effect.succeed([] as Array<string>),
-        ),
-      );
+    const rules = yield* fs.readFileString(NodePath.join(cwd, ".gitignore")).pipe(
+      Effect.map((file) => file.split("\n")),
+      Effect.catchTag("PlatformError", () => Effect.succeed([] as Array<string>)),
+    );
     const parent = NodePath.dirname(cwd);
     if (parent === cwd || (yield* fs.exists(NodePath.join(cwd, ".git")))) {
       return rules;
@@ -313,10 +306,7 @@ const readGitIgnoreRules = (
  * Deterministic content hash of the files in `cwd` matched by `memo` —
  * mirror of alchemy's `hashDirectory` (`Command/Memo.ts`).
  */
-const hashDirectory = Effect.fnUntraced(function* (
-  cwd: string,
-  memo: NuxtMemoOptions | undefined,
-) {
+const hashDirectory = Effect.fnUntraced(function* (cwd: string, memo: NuxtMemoOptions | undefined) {
   const fs = yield* FileSystem.FileSystem;
   const include = memo?.include ?? ["**/*"];
   const exclude = memo?.exclude ?? [
@@ -346,7 +336,7 @@ const hashDirectory = Effect.fnUntraced(function* (
             ]),
             (file) => (file ? NodePath.relative(cwd, file) : undefined),
           )
-        : Effect.succeed(undefined),
+        : Effect.undefined,
     ],
     { concurrency: "unbounded" },
   );
@@ -369,9 +359,7 @@ const hashDirectory = Effect.fnUntraced(function* (
 const packageVersion = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const dir = NodePath.dirname(fileURLToPath(import.meta.url));
-  const content = yield* fs.readFileString(
-    NodePath.join(dir, "../../package.json"),
-  );
+  const content = yield* fs.readFileString(NodePath.join(dir, "../../package.json"));
   return (JSON.parse(content) as { version: string }).version;
 });
 
@@ -389,16 +377,10 @@ const hashNuxtInput = Effect.fnUntraced(function* (
   const version = yield* packageVersion;
   const hashWorkspace = (cwd: string, memo?: NuxtMemoOptions) =>
     hashDirectory(NodePath.resolve(rootDir, cwd), memo).pipe(
-      Effect.map(
-        (hash) =>
-          `${NodePath.relative(rootDir, NodePath.resolve(rootDir, cwd))}:${hash}`,
-      ),
+      Effect.map((hash) => `${NodePath.relative(rootDir, NodePath.resolve(rootDir, cwd))}:${hash}`),
     );
   const [root, ...workspaceHashes] = yield* Effect.all(
-    [
-      hashWorkspace(rootDir, options.memo),
-      ...Array.from(workspaces, (cwd) => hashWorkspace(cwd)),
-    ],
+    [hashWorkspace(rootDir, options.memo), ...Array.from(workspaces, (cwd) => hashWorkspace(cwd))],
     { concurrency: "unbounded" },
   );
   const hash = yield* sha256Stable({
@@ -433,9 +415,7 @@ const maybeReadString = (fs: FileSystem.FileSystem, file: string) =>
     .readFileString(file)
     .pipe(
       Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "NotFound"
-          ? Effect.succeed(undefined)
-          : Effect.fail(error),
+        error.reason._tag === "NotFound" ? Effect.undefined : Effect.fail(error),
       ),
     );
 
@@ -464,12 +444,10 @@ const readAssetsDirectory = Effect.fnUntraced(function* (
     }),
   );
   if (files.length > MAX_ASSET_COUNT) {
-    return yield* Effect.fail(
-      new SourceProviderError({
-        provider: PROVIDER,
-        message: `Too many assets in ${directory} (maximum is ${MAX_ASSET_COUNT}, found ${files.length})`,
-      }),
-    );
+    return yield* new SourceProviderError({
+      provider: PROVIDER,
+      message: `Too many assets in ${directory} (maximum is ${MAX_ASSET_COUNT}, found ${files.length})`,
+    });
   }
   const entries = yield* Effect.forEach(
     files.sort(),
@@ -477,24 +455,17 @@ const readAssetsDirectory = Effect.fnUntraced(function* (
       const file = NodePath.join(directory, name);
       const content = yield* fs.readFile(file);
       if (content.byteLength > MAX_ASSET_SIZE) {
-        return yield* Effect.fail(
-          new SourceProviderError({
-            provider: PROVIDER,
-            message: `Asset ${name} is too large (the maximum size is 25 MB)`,
-          }),
-        );
+        return yield* new SourceProviderError({
+          provider: PROVIDER,
+          message: `Asset ${name} is too large (the maximum size is 25 MB)`,
+        });
       }
       const hash = (yield* sha256Hex(content)).slice(0, 32);
-      return [
-        `/${name.replaceAll("\\", "/")}`,
-        { hash, size: content.byteLength },
-      ] as const;
+      return [`/${name.replaceAll("\\", "/")}`, { hash, size: content.byteLength }] as const;
     }),
     { concurrency: 16 },
   );
-  const manifest = Object.fromEntries(
-    [...entries].sort((a, b) => a[0].localeCompare(b[0])),
-  );
+  const manifest = Object.fromEntries([...entries].sort((a, b) => a[0].localeCompare(b[0])));
   const hash = yield* sha256Stable({ config, manifest, _headers, _redirects });
   return {
     directory,
@@ -510,19 +481,14 @@ const readAssetsDirectory = Effect.fnUntraced(function* (
 // The provider
 // ─────────────────────────────────────────────────────────────────────
 
-const wrapFrameworkError = (error: {
-  readonly message: string;
-  readonly cause?: unknown;
-}) =>
+const wrapFrameworkError = (error: { readonly message: string; readonly cause?: unknown }) =>
   new SourceProviderError({
     provider: PROVIDER,
     message: error.message,
     cause: error.cause ?? error,
   });
 
-const assetsConfig = (
-  assets: SourceContext["assets"],
-): Record<string, unknown> | undefined => {
+const assetsConfig = (assets: SourceContext["assets"]): Record<string, unknown> | undefined => {
   if (assets === undefined || typeof assets === "string") {
     return undefined;
   }
@@ -544,10 +510,7 @@ const resolveDevEnvOverrides = (
   for (const [key, value] of Object.entries(env ?? {})) {
     if (typeof value === "string") {
       out[key] = value;
-    } else if (
-      Redacted.isRedacted(value) &&
-      typeof Redacted.value(value) === "string"
-    ) {
+    } else if (Redacted.isRedacted(value) && typeof Redacted.value(value) === "string") {
       out[key] = Redacted.value(value);
     }
   }
@@ -586,10 +549,7 @@ export const buildInChild = (config: NuxtBuildChildConfig) =>
 
 export const makeNuxtSource = (options: NuxtSourceOptions): SourceProvider => {
   const rootDir = NodePath.resolve(options.rootDir ?? process.cwd());
-  const frameworkOptions = (
-    ctx: SourceContext,
-    dev?: NuxtOptions["dev"],
-  ): NuxtOptions => ({
+  const frameworkOptions = (ctx: SourceContext, dev?: NuxtOptions["dev"]): NuxtOptions => ({
     root: rootDir,
     // This module is Cloudflare-specific by contract (it implements alchemy's
     // Cloudflare Worker source), so it passes the target factory directly
@@ -604,11 +564,14 @@ export const makeNuxtSource = (options: NuxtSourceOptions): SourceProvider => {
   });
   return {
     ownsAssets: true,
+    // The dev platform proxy serves the public directory to `ASSETS`.
+    devAssetsBinding: true,
     build: Effect.fnUntraced(function* (ctx) {
       const output = yield* runBuildChild({
         module: import.meta.url,
         rootDir,
         framework: "nuxt",
+        env: resolveBuildEnv(ctx.env),
         config: {
           rootDir,
           compatibilityDate: ctx.compatibility.date,
@@ -617,24 +580,17 @@ export const makeNuxtSource = (options: NuxtSourceOptions): SourceProvider => {
           nuxt: options.nuxt,
         } satisfies NuxtBuildChildConfig,
       }).pipe(Effect.mapError(wrapFrameworkError));
-      if (
-        output.serverModules === undefined ||
-        output.serverModules.length === 0
-      ) {
-        return yield* Effect.fail(
-          new SourceProviderError({
-            provider: PROVIDER,
-            message: "The Nuxt build produced no server modules",
-          }),
-        );
+      if (output.serverModules === undefined || output.serverModules.length === 0) {
+        return yield* new SourceProviderError({
+          provider: PROVIDER,
+          message: "The Nuxt build produced no server modules",
+        });
       }
       if (output.clientDirectory === undefined) {
-        return yield* Effect.fail(
-          new SourceProviderError({
-            provider: PROVIDER,
-            message: "The Nuxt build produced no client directory",
-          }),
-        );
+        return yield* new SourceProviderError({
+          provider: PROVIDER,
+          message: "The Nuxt build produced no client directory",
+        });
       }
       const files = output.serverModules.map((module): SourceBundleFile => ({
         path: module.name,
@@ -681,6 +637,7 @@ export const makeNuxtSource = (options: NuxtSourceOptions): SourceProvider => {
           // credential-free internal layer, so `Alchemy.remote()` bindings
           // resolve in dev.
           services: ctx.runtimeContext,
+          workerd: ctx.worker.options.workerd,
         }),
       );
       const server = yield* framework
@@ -700,9 +657,7 @@ export const makeNuxtSource = (options: NuxtSourceOptions): SourceProvider => {
  * and calls `make(descriptor.options)`.
  */
 const sourceModule = {
-  make: (
-    options: unknown,
-  ): Effect.Effect<SourceProvider, SourceProviderError> =>
+  make: (options: unknown): Effect.Effect<SourceProvider, SourceProviderError> =>
     Effect.succeed(makeNuxtSource((options ?? {}) as NuxtSourceOptions)),
 };
 

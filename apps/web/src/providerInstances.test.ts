@@ -8,12 +8,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
+  brandProviderInstanceEntries,
   deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   resolveDefaultProviderModelSelection,
-  resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
 } from "./providerInstances";
@@ -70,46 +70,6 @@ describe("isProviderInstancePickerReady", () => {
 
     expect(entry?.status).toBe("ready");
     expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
-  });
-});
-
-describe("resolveProviderCatalogAvailability", () => {
-  const [entry] = deriveProviderInstanceEntries([
-    provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
-  ]);
-
-  it("keeps the initial reactive config state distinct from an empty catalogue", () => {
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: false,
-        entries: [],
-        selectedEntry: undefined,
-      }),
-    ).toBe("loading");
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: true,
-        entries: [],
-        selectedEntry: undefined,
-      }),
-    ).toBe("unconfigured");
-  });
-
-  it("distinguishes a selected provider from configured but unusable providers", () => {
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: true,
-        entries: entry ? [entry] : [],
-        selectedEntry: entry,
-      }),
-    ).toBe("ready");
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: true,
-        entries: entry ? [entry] : [],
-        selectedEntry: undefined,
-      }),
-    ).toBe("unavailable");
   });
 });
 
@@ -292,6 +252,32 @@ describe("deriveProviderEntriesByEnvironment", () => {
     const personal = entries?.get("codex");
 
     expect(personal && shouldShowInstanceBadge(personal, entries?.values() ?? [])).toBe(true);
+  });
+});
+
+describe("brandProviderInstanceEntries", () => {
+  it("keeps an instance a project turns on as a sibling for the instance badge", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const settings = {
+      providerInstances: {
+        [ProviderInstanceId.make("codex_work")]: { driver: codex, enabled: false },
+      },
+      projectSettingsOverrides: {
+        [ProjectId.make("project-work")]: {
+          providerInstances: { [ProviderInstanceId.make("codex_work")]: { enabled: true } },
+        },
+      },
+    };
+    const entries = brandProviderInstanceEntries(
+      deriveProviderInstanceEntries([
+        provider({ provider: codex, instanceId: "codex" }),
+        provider({ provider: codex, instanceId: "codex_work" }),
+      ]),
+      settings,
+    );
+    const personal = entries.find((entry) => entry.instanceId === "codex");
+
+    expect(personal && shouldShowInstanceBadge(personal, entries)).toBe(true);
   });
 });
 
