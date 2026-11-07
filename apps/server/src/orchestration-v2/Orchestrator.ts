@@ -12891,19 +12891,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const startMessageId = taskRuns.toSorted((a, b) => a.ordinal - b.ordinal)[0]?.userMessageId;
       const startMessage = childControls.messages.find((message) => message.id === startMessageId);
-      // Queued follow-ups can run out of start order, so the last result is the last to complete.
-      const lastResult = parentProjection.subagents.reduce<OrchestrationV2Subagent | undefined>(
-        (latest, candidate) =>
-          candidate.childThreadId !== childThreadId ||
-          candidate.id === task.id ||
-          candidate.result === null ||
-          (latest?.completedAt != null &&
-            (candidate.completedAt === null ||
-              DateTime.toEpochMillis(candidate.completedAt) <
-                DateTime.toEpochMillis(latest.completedAt)))
-            ? latest
-            : candidate,
-        undefined,
+      // Queued follow-ups can run out of start order, so the last results are the last to complete.
+      const completedMillis = (candidate: OrchestrationV2Subagent) =>
+        candidate.completedAt === null
+          ? Number.NEGATIVE_INFINITY
+          : DateTime.toEpochMillis(candidate.completedAt);
+      const priorResults = parentProjection.subagents.filter(
+        (candidate) =>
+          candidate.childThreadId === childThreadId &&
+          candidate.id !== task.id &&
+          candidate.result !== null,
+      );
+      const lastCompletedMillis = Math.max(...priorResults.map(completedMillis));
+      const lastResults = priorResults.filter(
+        (candidate) => completedMillis(candidate) === lastCompletedMillis,
       );
       // A follow-up the child started on its own that only repeats what the parent already got stays readable but silent.
       const repeatsUnprompted =
@@ -12911,9 +12912,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         startMessage !== undefined &&
         startMessage.createdBy !== "user" &&
         startMessage.senderThreadId !== parentThreadId &&
-        lastResult?.status === terminalStatus &&
-        lastResult.result === result.text &&
-        lastResult.completionDelivery?.state !== "disposed";
+        lastResults.length > 0 &&
+        lastResults.every(
+          (candidate) =>
+            candidate.status === terminalStatus &&
+            candidate.result === result.text &&
+            candidate.completionDelivery?.state !== "disposed",
+        );
       const updatedTask: OrchestrationV2Subagent = {
         ...task,
         providerThreadId: childRun.providerThreadId,

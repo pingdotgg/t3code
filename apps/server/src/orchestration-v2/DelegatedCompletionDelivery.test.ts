@@ -2404,8 +2404,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       readonly name: string;
       readonly startedBy: "background-command" | "parent";
       readonly result: "repeat" | "new";
-      /** Rewrites the original before the follow-up: disposed, or out-finished by a task that started earlier. */
-      readonly prior?: "disposed" | "reordered";
+      /** Rewrites the original before the follow-up: disposed, or out-finished (or tied) by a task that started earlier. */
+      readonly prior?: "disposed" | "reordered" | "tied";
     }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2456,13 +2456,16 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                 ...original,
                 completionDelivery: { state: "disposed" as const, observedByRunId: null },
               }
-            : input.prior === "reordered"
+            : input.prior === "reordered" || input.prior === "tied"
               ? {
                   ...original,
                   id: NodeId.make(`node:${name}-later`),
                   result: "A later run found something else.",
                   startedAt: DateTime.subtract(now, { minutes: 1 }),
-                  completedAt: DateTime.add(now, { seconds: 1 }),
+                  completedAt:
+                    input.prior === "tied"
+                      ? original.completedAt
+                      : DateTime.add(now, { seconds: 1 }),
                 }
               : undefined;
         yield* eventSink.write({
@@ -2643,7 +2646,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
-    it.effect.each(["disposed", "reordered"] as const)(
+    it.effect.each(["disposed", "reordered", "tied"] as const)(
       "a self-started repeat wakes when the last result is %s",
       (prior) =>
         Effect.gen(function* () {
