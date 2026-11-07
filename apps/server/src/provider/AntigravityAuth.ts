@@ -31,8 +31,10 @@ import {
 import type { ProviderAuthController } from "./ProviderAuthService.ts";
 
 const AUTH_TIMEOUT_MS = 300_000;
-// A healthy agent shows the Google link or finishes within seconds. Its bundled Python has no
-// IPv4 fallback race, so a host with broken IPv6 waits about two minutes per Google request.
+// Once initialized, a healthy agent shows the Google link or finishes within seconds. Its bundled
+// Python has no IPv4 fallback race, so a host with broken IPv6 waits about two minutes per Google
+// request. The hint is timed from initialize, not spawn: the one-file runtime unpacks itself on
+// every launch, which can take about a minute on Windows before it answers at all.
 const NO_RESPONSE_HINT_MS = 30_000;
 const NO_RESPONSE_MESSAGE =
   "Antigravity has not reached Google after 30 seconds. Check this machine's network connection. Broken IPv6 is a common cause.";
@@ -210,7 +212,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
         );
         // Propagate interruption after the exit wait so concurrent stop waiters stay attached.
         return yield* restore(Fiber.await(fiber)).pipe(
-          Effect.flatMap((result) => result),
+          Effect.flatten,
           Effect.ensuring(Fiber.interrupt(fiber)),
           Effect.ensuring(
             Effect.sync(() => {
@@ -271,6 +273,11 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   const runSignIn = Effect.fn("AntigravityAuth.runSignIn")(
     function* (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) {
       yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
+      const runtime = yield* options.makeRuntime({
+        onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
+      });
+      // `start` reuses this memoized handshake.
+      yield* runtime.initialize();
       yield* Effect.sleep(NO_RESPONSE_HINT_MS).pipe(
         Effect.andThen(
           lock.withPermits(1)(
@@ -282,9 +289,6 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
         ),
         Effect.forkScoped,
       );
-      const runtime = yield* options.makeRuntime({
-        onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
-      });
       const started = yield* runtime.start();
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
@@ -540,7 +544,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
         }),
       );
       const worker = yield* task.pipe(Effect.forkIn(instanceScope));
-      return yield* Fiber.await(worker).pipe(Effect.flatMap((result) => result));
+      return yield* Fiber.await(worker).pipe(Effect.flatten);
     }),
     subscribe: (ownerSessionId) =>
       SubscriptionRef.changes(snapshot).pipe(
