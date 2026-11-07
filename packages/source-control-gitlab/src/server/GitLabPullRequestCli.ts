@@ -41,6 +41,7 @@ import {
   decodeCommitDiffRefsJson,
   decodeCommitsJson,
   decodeDiffRefsJson,
+  decodeRevertTargetJson,
   decodeDiscussionsJson,
   decodeMaintainerEditsPermissionJson,
   decodeLabelNameJson,
@@ -138,6 +139,26 @@ export class GitLabDiffRefsUnavailableError extends Schema.TaggedError<GitLabDif
 
   override get message(): string {
     return `GitLab CLI failed in getDiffRefs: ${this.detail}`;
+  }
+}
+
+export class GitLabRevertUnavailableError extends Schema.TaggedError<GitLabRevertUnavailableError>()(
+  "GitLabRevertUnavailableError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    number: Schema.Int,
+    reason: Schema.Literals(["not-merged", "several-commits"]),
+  },
+) {
+  get detail(): string {
+    return this.reason === "not-merged"
+      ? "Only a merged merge request can be reverted."
+      : "This merge request landed as several commits, so there is no single commit to revert.";
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in runMergeRequestAction: ${this.detail}`;
   }
 }
 
@@ -300,6 +321,7 @@ export type GitLabPullRequestCliError =
   | GitLabDiffCommitParentUnavailableError
   | GitLabDiffFileContentsUnavailableError
   | GitLabDiffRefsUnavailableError
+  | GitLabRevertUnavailableError
   | GitLabViewerUnavailableError
   | GitLabMutationRefusedError;
 
@@ -903,6 +925,7 @@ function actionArgs(
     case "reopen":
       return ["reopen"];
     case "revert":
+      return [];
     case "approve-workflows":
     case "delete-branch":
       throw new Error(`GitLab merge request action ${action} is unsupported`);
@@ -1233,6 +1256,110 @@ export const make = Effect.gen(function* () {
             });
       }),
     );
+
+  /** GitLab reverts a fast-forward merge without squash only when it landed as one commit. */
+  const soleCommitSha = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
+    api({
+      cwd: input.cwd,
+      host: input.host,
+      path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/commits?per_page=2`,
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = decodeCommitsJson(result.stdout.trim());
+        if (!Result.isSuccess(decoded)) {
+          return Effect.fail(
+            new GitLabMergeRequestReadError({
+              command: "glab",
+              cwd: input.cwd,
+              operation: "runMergeRequestAction",
+              cause: decoded.failure,
+            }),
+          );
+        }
+        const [only, ...rest] = decoded.success;
+        return Effect.succeed(only !== undefined && rest.length === 0 ? only.oid : null);
+      }),
+    );
+
+  /** What GitLab's own Revert button does: revert onto a new branch and open a merge request. */
+  const revertMergeRequest = Effect.fn("GitLabPullRequestCli.revertMergeRequest")(
+    function* (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    }) {
+      const project = `projects/${projectPath(input.repository)}`;
+      const write = (path: string, body: object) =>
+        api({
+          cwd: input.cwd,
+          host: input.host,
+          path: `${project}/${path}`,
+          method: "POST",
+          stdin: JSON.stringify(body),
+        });
+      const raw = yield* api({
+        cwd: input.cwd,
+        host: input.host,
+        path: `${project}/merge_requests/${input.number}`,
+      });
+      const decoded = decodeRevertTargetJson(raw.stdout.trim());
+      if (!Result.isSuccess(decoded)) {
+        return yield* new GitLabMergeRequestReadError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "runMergeRequestAction",
+          cause: decoded.failure,
+        });
+      }
+      const target = decoded.success;
+      if (!target.merged) {
+        return yield* new GitLabRevertUnavailableError({
+          command: "glab",
+          cwd: input.cwd,
+          number: input.number,
+          reason: "not-merged",
+        });
+      }
+      const commitSha = target.commitSha ?? (yield* soleCommitSha(input));
+      if (commitSha === null) {
+        return yield* new GitLabRevertUnavailableError({
+          command: "glab",
+          cwd: input.cwd,
+          number: input.number,
+          reason: "several-commits",
+        });
+      }
+      const branch = `revert-${commitSha.slice(0, 8)}`;
+      yield* write("repository/branches", { branch, ref: target.targetBranch });
+      yield* Effect.andThen(
+        write(`repository/commits/${commitSha}/revert`, { branch }),
+        write("merge_requests", {
+          source_branch: branch,
+          target_branch: target.targetBranch,
+          title: `Revert "${target.title}"`,
+          description: `This reverts merge request !${input.number}`,
+          remove_source_branch: true,
+        }),
+      ).pipe(
+        // Leaving the branch behind would make every retry fail on creating it again. Runs on
+        // interruption too, which a cancelled request or a dropped socket causes.
+        Effect.onError(() =>
+          api({
+            cwd: input.cwd,
+            host: input.host,
+            path: `${project}/repository/branches/${encodeURIComponent(branch)}`,
+            method: "DELETE",
+          }).pipe(Effect.ignore),
+        ),
+      );
+    },
+  );
 
   const getDiffRefs = (input: {
     readonly cwd: string;
@@ -2450,6 +2577,7 @@ export const make = Effect.gen(function* () {
           } = decoded.success;
           return summary;
         }
+        if (input.action === "revert") return yield* revertMergeRequest(input);
         const executeMr = (subcommand: string, ...flags: ReadonlyArray<string>) =>
           gitlab.execute({
             cwd: input.cwd,
