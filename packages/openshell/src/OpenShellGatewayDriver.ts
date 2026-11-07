@@ -115,6 +115,8 @@ export interface FleetDrainOutcome {
   /** `acked`: verified complete; `draining`: still running (resumable); `failed`: sandbox kept. */
   readonly state: "acked" | "draining" | "failed";
   readonly finishedAt: number | null;
+  /** Non-fatal problems, e.g. oversize attachments skipped; surfaced on the fleet row. */
+  readonly warnings?: ReadonlyArray<string>;
 }
 
 /**
@@ -637,18 +639,24 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     if (outcome.state === "acked") {
       // The bundle is verified on disk, so an import problem is a warning on
       // the row, never a drain failure: the copies are already nothing-lost.
-      let warning: string | undefined;
+      const warnings = [...(outcome.warnings ?? [])];
       if (this.bundleImporter !== undefined) {
         try {
           const imported = await this.bundleImporter.import({ environmentId, drainId });
-          if (imported.warnings.length > 0) warning = imported.warnings.join("; ");
+          warnings.push(...imported.warnings);
         } catch (cause) {
-          warning = `Importing drained threads failed: ${
-            cause instanceof Error ? cause.message : String(cause)
-          }`;
+          warnings.push(
+            `Importing drained threads failed: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
+          );
         }
       }
-      await this.index.setState(environmentId, "deleting", warning);
+      await this.index.setState(
+        environmentId,
+        "deleting",
+        warnings.length === 0 ? undefined : warnings.join("; "),
+      );
       return { drainId, progress, state: "deleting" };
     }
     await this.index.setState(

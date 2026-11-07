@@ -18,32 +18,44 @@ const deps = (input: {
   readonly pushExitCode?: number;
   readonly liveThread?: string;
   readonly sequences?: Readonly<Record<string, number>>;
+  readonly attachmentFiles?: Readonly<Record<string, ReadonlyArray<string>>>;
+  readonly oversizeThreads?: ReadonlyArray<string>;
+  readonly dropAttachmentManifest?: boolean;
   readonly seeded?: ReadonlyArray<{
     readonly drainId: string;
     readonly threadId: string;
     readonly snapshotSequence: number | null;
+    readonly attachments?: boolean;
   }>;
 }): DrainDependencies & {
   readonly written: Array<{ drainId: string; threadId: string; body: string }>;
   readonly fetched: Array<string>;
+  readonly fetchedAttachments: Array<string>;
   readonly pushed: Array<string>;
 } => {
+  const manifest = [{ name: "a.bin", hash: "h0", size: 3 }];
+  const envelope = (entry: {
+    threadId: string;
+    snapshotSequence: number | null;
+    attachments?: boolean;
+  }) =>
+    JSON.stringify({
+      threadId: entry.threadId,
+      snapshotSequence: entry.snapshotSequence,
+      body: `{"threadId":"${entry.threadId}","seeded":true}`,
+      ...(entry.attachments === true ? { attachments: manifest } : {}),
+    });
   const files = new Map<string, string>(
-    (input.seeded ?? []).map((entry) => [
-      `${entry.drainId}/${entry.threadId}`,
-      JSON.stringify({
-        threadId: entry.threadId,
-        snapshotSequence: entry.snapshotSequence,
-        body: `{"threadId":"${entry.threadId}","seeded":true}`,
-      }),
-    ]),
+    (input.seeded ?? []).map((entry) => [`${entry.drainId}/${entry.threadId}`, envelope(entry)]),
   );
   const written: Array<{ drainId: string; threadId: string; body: string }> = [];
   const fetched: Array<string> = [];
+  const fetchedAttachments: Array<string> = [];
   const pushed: Array<string> = [];
   return {
     written,
     fetched,
+    fetchedAttachments,
     pushed,
     now: Effect.succeed(input.now ?? 0),
     source: {
@@ -68,26 +80,68 @@ const deps = (input: {
               snapshotSequence: input.sequences?.[threadId] ?? 1,
             });
       },
+      attachments: ({ threadId }) => {
+        fetchedAttachments.push(threadId);
+        if (input.oversizeThreads?.includes(threadId) === true) {
+          return Effect.succeed({ files: [], oversizeSkipped: true });
+        }
+        return Effect.succeed({
+          files: (input.attachmentFiles?.[threadId] ?? []).map((name) => ({
+            name,
+            bytes: Buffer.from(name, "utf8").toString("base64"),
+          })),
+          oversizeSkipped: false,
+        });
+      },
     },
     sink: {
-      write: ({ drainId, threadId, body }) =>
+      write: ({ drainId, threadId, body, snapshotSequence, attachments }) =>
         Effect.sync(() => {
-          files.set(`${drainId}/${threadId}`, body);
+          const stored = JSON.stringify({
+            threadId,
+            snapshotSequence,
+            body,
+            ...(input.dropAttachmentManifest === true
+              ? {}
+              : (attachments?.files ?? []).length > 0
+                ? {
+                    attachments: (attachments?.files ?? []).map((file) => ({
+                      name: file.name,
+                      hash: `h-${file.name}`,
+                      size: file.bytes.length,
+                    })),
+                  }
+                : {}),
+            ...(attachments?.oversizeSkipped === true ? { attachmentsSkipped: true } : {}),
+          });
+          files.set(`${drainId}/${threadId}`, stored);
           written.push({ drainId, threadId, body });
-          return { bytes: body.length };
+          return { bytes: stored.length };
         }),
       read: ({ drainId, threadId }) =>
-        Effect.gen(function* () {
-          const raw = files.get(`${drainId}/${threadId}`);
-          if (raw === undefined) return null;
-          const parsed = JSON.parse(raw) as { threadId: string; snapshotSequence?: number };
-          return {
-            threadId: parsed.threadId,
-            snapshotSequence:
-              typeof parsed.snapshotSequence === "number" ? parsed.snapshotSequence : null,
-            body: raw,
-          };
-        }),
+        Effect.map(
+          Effect.sync(() => files.get(`${drainId}/${threadId}`)),
+          (raw) => {
+            if (raw === undefined) return null;
+            const parsed = JSON.parse(raw) as {
+              threadId: string;
+              snapshotSequence?: number;
+              body: string;
+              attachments?: Array<{ name: string; hash: string; size: number }>;
+              attachmentsSkipped?: boolean;
+            };
+            return {
+              threadId: parsed.threadId,
+              snapshotSequence:
+                typeof parsed.snapshotSequence === "number" ? parsed.snapshotSequence : null,
+              body: parsed.body,
+              ...(parsed.attachments !== undefined && parsed.attachments.length > 0
+                ? { attachments: parsed.attachments }
+                : {}),
+              ...(parsed.attachmentsSkipped === true ? { attachmentsSkipped: true } : {}),
+            };
+          },
+        ),
     },
     git: {
       push: ({ workspaceRoot }) =>
@@ -134,6 +188,7 @@ describe("fleet drain", () => {
           drainId: "drain:environment:worker:1",
           threadId: entry.threadId,
           snapshotSequence: 1,
+          attachments: true,
         })),
       });
       const outcome = yield* drain(retry, { drainId: "drain:environment:worker:2" });
@@ -156,6 +211,7 @@ describe("fleet drain", () => {
           drainId: "drain:environment:worker:1",
           threadId: entry.threadId,
           snapshotSequence: 1,
+          attachments: true,
         })),
       });
       const outcome = yield* drain(retry, { drainId: "drain:environment:worker:2" });
@@ -180,11 +236,13 @@ describe("fleet drain", () => {
             drainId: "drain:environment:worker:1",
             threadId: "thread:a",
             snapshotSequence: 3,
+            attachments: true,
           },
           {
             drainId: "drain:environment:worker:2",
             threadId: "thread:a",
             snapshotSequence: 7,
+            attachments: true,
           },
         ],
       });
@@ -208,6 +266,7 @@ describe("fleet drain", () => {
             drainId: "drain:environment:worker:1",
             threadId: "thread:a",
             snapshotSequence: 3,
+            attachments: true,
           },
         ],
       });
@@ -296,6 +355,67 @@ describe("fleet drain", () => {
       expect(outcome.state).toBe("acked");
       expect(outcome.threads.acked).toBe(1);
       expect(dependencies.pushed).toHaveLength(0);
+    }),
+  );
+
+  it.effect("drains attachments with the thread and verifies the manifest", () =>
+    Effect.gen(function* () {
+      const dependencies = deps({
+        threads: ["thread:a"],
+        attachmentFiles: { "thread:a": ["shot.png", "log.txt"] },
+      });
+      const outcome = yield* drain(dependencies);
+
+      expect(outcome.state).toBe("acked");
+      expect(dependencies.fetchedAttachments).toEqual(["thread:a"]);
+      expect(dependencies.written).toHaveLength(1);
+    }),
+  );
+
+  it.effect("notes an oversize skip in the outcome without failing the drain", () =>
+    Effect.gen(function* () {
+      const dependencies = deps({ threads: ["thread:a"], oversizeThreads: ["thread:a"] });
+      const outcome = yield* drain(dependencies);
+
+      expect(outcome.state).toBe("acked");
+      expect(outcome.warnings).toEqual([
+        "Attachments of thread:a exceeded the drain size cap and were skipped.",
+      ]);
+    }),
+  );
+
+  it.effect("re-copies a thread whose previous copy predates attachment draining", () =>
+    Effect.gen(function* () {
+      const first = deps({ threads: ["thread:a"] });
+      yield* drain(first, { drainId: "drain:environment:worker:1" });
+      const retry = deps({
+        threads: ["thread:a"],
+        attachmentFiles: { "thread:a": ["late.bin"] },
+        // The old copy carries no attachment manifest.
+        seeded: first.written.map((entry) => ({
+          drainId: "drain:environment:worker:1",
+          threadId: entry.threadId,
+          snapshotSequence: 1,
+        })),
+      });
+      const outcome = yield* drain(retry, { drainId: "drain:environment:worker:2" });
+
+      expect(outcome.state).toBe("acked");
+      expect(retry.fetched).toEqual(["thread:a"]);
+    }),
+  );
+
+  it.effect("fails the copy when the stored manifest does not match what was sent", () =>
+    Effect.gen(function* () {
+      const dependencies = deps({
+        threads: ["thread:a"],
+        attachmentFiles: { "thread:a": ["shot.png"] },
+        dropAttachmentManifest: true,
+      });
+      const outcome = yield* drain(dependencies);
+
+      expect(outcome.state).toBe("failed");
+      expect(outcome.threads).toEqual({ total: 1, acked: 0, failed: 1 });
     }),
   );
 });

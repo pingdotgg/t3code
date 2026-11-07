@@ -260,8 +260,30 @@ const make = Effect.gen(function* () {
           })
         : null;
     const executor = OpenShellFleetDrain.makeDrainExecutor({
-      source: OpenShellFleetDrainAdapters.linkDrainSource({ resolve: linkResolve, http }),
-      sink: OpenShellFleetDrainAdapters.fileDrainSink({ stateDir: config.stateDir, fs, path }),
+      source: {
+        ...OpenShellFleetDrainAdapters.linkDrainSource({ resolve: linkResolve, http }),
+        // The worker's environment HTTP API serves no attachment bytes, so
+        // attachment files travel over gateway exec (see execDrainAttachments).
+        attachments: OpenShellFleetDrainAdapters.execDrainAttachments({
+          exec: (sandboxName, command) =>
+            Effect.tryPromise({
+              try: () => client.exec(sandboxName, command),
+              catch: (cause) =>
+                new OpenShellFleetDrain.FleetDrainStepError({
+                  step: "attachments",
+                  message:
+                    cause instanceof Error
+                      ? cause.message
+                      : "The worker's attachments could not be read.",
+                }),
+            }),
+        }),
+      },
+      sink: yield* OpenShellFleetDrainAdapters.fileDrainSink({
+        stateDir: config.stateDir,
+        fs,
+        path,
+      }),
       git: OpenShellFleetDrainAdapters.execDrainGitPush({
         exec: (sandboxName, command) =>
           Effect.tryPromise({
