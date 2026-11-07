@@ -111,8 +111,10 @@ describe("ssh tunnel scripts", () => {
             Effect.tap((pids) =>
               Effect.sync(() => {
                 for (const pid of pids.trim().split("\n")) {
+                  const target = Number(pid);
+                  if (!Number.isInteger(target) || target <= 0) continue;
                   try {
-                    process.kill(Number(pid), "SIGTERM");
+                    process.kill(target, "SIGTERM");
                   } catch {
                     // The fixture may already have exited after a failed launch.
                   }
