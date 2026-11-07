@@ -175,6 +175,8 @@ export interface GitPushResult {
   status: "pushed" | "skipped_up_to_date";
   branch: string;
   upstreamBranch?: string | undefined;
+  /** Set when `upstreamBranch` is on a configured push remote instead of the tracked upstream. */
+  pushRemote?: string | undefined;
   setUpstream?: boolean | undefined;
 }
 
