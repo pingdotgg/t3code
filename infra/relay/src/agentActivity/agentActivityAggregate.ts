@@ -149,7 +149,8 @@ export function makeAggregateState(input: {
     title: "T3 Code",
     subtitle: inboxSubtitle({
       activeCount: activeStates.length,
-      activities,
+      // Count attention across every active thread; the card only shows a capped row list.
+      activities: activeStates.map(aggregateRowForState),
       terminalOnly: false,
       failed: false,
     }),

@@ -264,6 +264,28 @@ function ConfiguredSettingsNotificationsRouteScreen() {
 
   const ensureNotificationPermission = async (): Promise<boolean> => {
     if (notificationStatus === "enabled") {
+      if (getAgentAwarenessRegistrationStatus() === "registered") {
+        return true;
+      }
+      const refreshResult = await settleAsyncResult(() =>
+        runtime.runPromiseExit(refreshAgentAwarenessRegistration()),
+      );
+      if (refreshResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(refreshResult)) {
+          Dialog.alert(
+            "Couldn't finish enabling notifications",
+            "Notification access is granted, but this device could not be registered with T3 Connect. Try again once you are online.",
+          );
+        }
+        return false;
+      }
+      if (getAgentAwarenessRegistrationStatus() !== "registered") {
+        Dialog.alert(
+          "Couldn't finish enabling notifications",
+          "Notification access is granted, but this device could not be registered with T3 Connect. Alerts will start once registration succeeds.",
+        );
+        return false;
+      }
       return true;
     }
     const result = await settleAsyncResult(() =>
@@ -433,7 +455,11 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   }
 
   const selectDeliveryMode = async (mode: AgentActivityDeliveryMode) => {
-    if (choicesDisabled || mode === selectedMode || liveActivityWriteInFlight.current) {
+    if (
+      choicesDisabled ||
+      (mode === selectedMode && !(mode === "off" && canClearLiveActivitiesPreference)) ||
+      liveActivityWriteInFlight.current
+    ) {
       return;
     }
 

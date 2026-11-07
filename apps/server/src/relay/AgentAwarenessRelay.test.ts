@@ -605,6 +605,57 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("republishes the parent when a rolled-up side chat is deleted", () =>
+    Effect.gen(function* () {
+      const sideChatId = ThreadId.make("relay-side-chat");
+      const parentWithAttention = {
+        ...shell({ status: "completed" }),
+        descendantPendingRequest: "user_input" as const,
+      };
+      const parentClear = shell({ status: "completed" });
+      const sideChat = shell({
+        id: sideChatId,
+        status: "waiting",
+        activityRunStatus: "waiting",
+        creationSource: "user",
+        lineage: {
+          rootThreadId: THREAD_ID,
+          parentThreadId: THREAD_ID,
+          relationshipToParent: "fork",
+          sideChat: true,
+        },
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request:input"),
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe(NOW),
+        },
+      });
+      const byId = yield* Ref.make(
+        new Map<ThreadId, typeof parentWithAttention | typeof sideChat>([
+          [THREAD_ID, parentWithAttention],
+          [sideChatId, sideChat],
+        ]),
+      );
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) => Ref.get(byId).pipe(Effect.map((map) => map.get(threadId) ?? null)),
+      });
+      yield* relay.publishThread(sideChatId);
+      assert.equal(publications.length, 1);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_input");
+
+      yield* Ref.update(byId, (map) => {
+        const next = new Map(map);
+        next.delete(sideChatId);
+        next.set(THREAD_ID, parentClear);
+        return next;
+      });
+      yield* relay.publishThread(sideChatId);
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state?.phase, "completed");
+      assert.equal(publications[1]?.state?.threadId, THREAD_ID);
+    }),
+  );
+
   it.effect("republishes unchanged state with fresh credentials after relinking", () =>
     Effect.gen(function* () {
       const { relay, secrets, publications } = yield* makeTestRelay();

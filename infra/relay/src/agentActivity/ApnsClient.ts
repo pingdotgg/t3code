@@ -193,8 +193,9 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
   return {
     token: input.token,
     event: input.event,
-    // Immediate delivery for content-state changes; we already throttle/coalesce upstream.
-    priority: "10",
+    // Content-only updates stay at 5 so they do not burn ActivityKit's hourly
+    // priority-10 budget; alerts and ends still need immediate delivery.
+    priority: input.event === "update" && !input.alert ? "5" : "10",
     payload: {
       aps: {
         timestamp,

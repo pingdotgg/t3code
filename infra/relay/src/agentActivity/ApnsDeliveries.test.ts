@@ -1071,9 +1071,15 @@ describe("ApnsDeliveries", () => {
           title: "Ready to review",
           body: "Thread · Project",
           threadId: "thread",
-          phase: "completed",
         },
       });
+      // Superseded completions omit phase/updatedAt so the push survives resume.
+      const supersededNotification = queuedJobs[0]?.payload;
+      expect(
+        supersededNotification && "notification" in supersededNotification
+          ? supersededNotification.notification.phase
+          : "missing",
+      ).toBeUndefined();
     }).pipe(
       Effect.provide(
         layerFor({

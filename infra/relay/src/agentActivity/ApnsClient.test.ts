@@ -78,6 +78,27 @@ describe("ApnsClient", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("keeps content-only Live Activity updates at priority 5", () =>
+    Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const request = apns.makeLiveActivityRequest({
+        event: "update",
+        token: "token",
+        state,
+        nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+        nowIso: DateTime.formatIso(now),
+      });
+
+      expect(request.priority).toBe("5");
+      expect(request.payload).toMatchObject({
+        aps: {
+          event: "update",
+        },
+      });
+      expect((request.payload as { aps: Record<string, unknown> }).aps.alert).toBeUndefined();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("builds an end payload with a dismissal date", () =>
     Effect.gen(function* () {
       const apns = yield* ApnsClient.ApnsClient;

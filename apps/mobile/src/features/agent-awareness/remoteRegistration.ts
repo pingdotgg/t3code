@@ -155,6 +155,67 @@ function canRegisterRemoteLiveActivities(): boolean {
   return Platform.OS === "ios";
 }
 
+/** Create the Live Activity card as soon as local work starts so locking the phone still shows it. */
+export function armAgentAwarenessLiveActivityForLocalWork(input: {
+  readonly threadTitle: string;
+  readonly projectTitle: string;
+}): void {
+  if (!canRegisterRemoteLiveActivities() || !relayTokenProvider) {
+    return;
+  }
+  void loadPreferences()
+    .catch(() => null)
+    .then((preferences) => {
+      if (preferences?.liveActivitiesEnabled === false) {
+        return;
+      }
+      armAgentAwarenessLiveActivityForLocalWorkNow(input);
+    });
+}
+
+function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
+  readonly threadTitle: string;
+  readonly projectTitle: string;
+}): void {
+  try {
+    if (getAgentLiveActivities().length > 0) {
+      return;
+    }
+    const nowIso = new Date(Date.now()).toISOString();
+    const activity = startAgentLiveActivity(
+      {
+        title: "T3 Code",
+        subtitle: "1 working",
+        activeCount: 1,
+        updatedAt: nowIso,
+        activities: [
+          {
+            environmentId: "",
+            threadId: "",
+            projectTitle: input.projectTitle,
+            threadTitle: input.threadTitle,
+            modelTitle: "",
+            phase: "starting",
+            status: "Connecting",
+            updatedAt: nowIso,
+            deepLink: "/",
+          },
+        ],
+      },
+      liveActivityStaleDate(),
+    );
+    if (!activity) {
+      return;
+    }
+    runRegistrationInBackground(
+      registerLiveActivityPushToken({ activity }).pipe(Effect.asVoid),
+      "live activity arming after local task start failed",
+    );
+  } catch (error) {
+    logRegistrationError("live activity arming failed", error);
+  }
+}
+
 function canRegisterPushNotifications(): boolean {
   return Platform.OS === "ios" || Platform.OS === "android";
 }
@@ -912,8 +973,8 @@ const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
     }).pipe(Effect.orElseSucceed(() => null));
     if (preferences?.liveActivitiesEnabled !== false) {
       const snapshot = yield* readAgentActivitySnapshot();
-      // The snapshot request yields; another foreground path may have created
-      // the card in the meantime. Re-check so two cards are never started.
+      // The snapshot request yields; an arm-on-send may have created the
+      // card in the meantime. Re-check so two cards are never started.
       const armedMeanwhile = yield* Effect.try({
         try: () => getAgentLiveActivities(),
         catch: () => [] as ReadonlyArray<LiveActivity<AgentActivityProps>>,
