@@ -99,7 +99,6 @@ export const isPrivateNetworkHost = (host: string): boolean => {
     isLocalLoopbackHost(normalized) ||
     normalized.endsWith(".localhost") ||
     normalized.endsWith(".local") ||
-    normalized.endsWith(".localdomain") ||
     normalized === "home.arpa" ||
     normalized.endsWith(".home.arpa") ||
     (!normalized.includes(".") && !normalized.includes(":"))
@@ -128,6 +127,7 @@ const PRIVATE_FAVICON_TLDS = [
   ".intranet",
   ".invalid",
   ".lan",
+  ".localdomain",
   ".onion",
   ".private",
   ".test",
