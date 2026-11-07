@@ -10,14 +10,26 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import {
+  HttpClient,
+  HttpClientResponse,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
-import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
+import {
+  descriptorOf,
+  layerLinkingEnvironment,
+  linkTo,
+  servePeer,
+  serveRaw,
+} from "./PeerLinks.testkit.ts";
 
 const Result = Schema.Struct({ modes: Schema.String });
 const toolkit = Toolkit.make(
@@ -134,6 +146,56 @@ it.effect("keeps a link healthy when the peer refuses a call", () =>
       expect(refused).toMatchObject({ code: refusal.code, message: refusal.message });
       const link = yield* links.get(box.environmentId);
       expect(link._tag === "Some" ? link.value.lastError : "missing").toBeNull();
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("never follows a peer's redirect on its MCP endpoint", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const received = yield* Ref.make<ReadonlyArray<string>>([]);
+      const elsewhere = yield* serveRaw((request) =>
+        Ref.update(received, (seen) => [...seen, `${request.method} ${request.url}`]).pipe(
+          Effect.as(HttpServerResponse.empty({ status: 404 })),
+        ),
+      );
+      const redirectMcp = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            return request.url.startsWith("/mcp")
+              ? HttpServerResponse.redirect(`${elsewhere}${request.url}`, { status: 307 })
+              : yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const handlers = McpToolAccess.toLayer(toolkit, {
+        probe: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+        hold: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+        refuse: McpToolAccess.reads(() => Effect.fail(refusal)),
+      });
+      const box = descriptorOf("environment-box", "Box");
+      const b = yield* servePeer(
+        box,
+        Layer.merge(McpHttpServer.toolkitRegistration(toolkit, handlers), redirectMcp),
+      );
+      const context = yield* Layer.build(
+        layerLinkingEnvironment(descriptorOf("environment-a", "A")),
+      );
+      const links = Context.get(context, PeerLinks.PeerLinks);
+      const client = Context.get(context, PeerMcpClient.PeerMcpClient);
+      yield* linkTo(links, b);
+      const failed = yield* client
+        .call({
+          environmentId: box.environmentId,
+          tool: "probe",
+          arguments: {},
+          limits: { runtimeMode: "full-access", interactionMode: "default" },
+          success: Result,
+        })
+        .pipe(Effect.flip);
+      expect(yield* Ref.get(received)).toEqual([]);
+      expect(failed.message).toContain("HTTP 307");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

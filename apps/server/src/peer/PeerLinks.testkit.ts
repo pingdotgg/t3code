@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentHttpApi,
@@ -14,6 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -149,6 +151,25 @@ export const servePeer = <E, R>(
   });
 
 export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
+
+/** A bare HTTP server on a socket of its own, answering with `handle`. */
+export const serveRaw = <E, R>(
+  handle: (
+    request: HttpServerRequest.HttpServerRequest,
+  ) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+) =>
+  Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
+    Effect.flatMap((server) =>
+      Effect.gen(function* () {
+        yield* HttpServer.serve(Effect.flatMap(HttpServerRequest.HttpServerRequest, handle)).pipe(
+          Layer.build,
+        );
+        const address = (yield* HttpServer.HttpServer).address;
+        if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
+        return `http://127.0.0.1:${address.port}`;
+      }).pipe(Effect.provideContext(server)),
+    ),
+  );
 
 /**
  * The environment that links: its own database and secret store, reaching

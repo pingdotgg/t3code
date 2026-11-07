@@ -14,13 +14,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool, Toolkit } from "effect/ai";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpServer,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/http";
+import { FetchHttpClient, HttpClient, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -32,6 +26,7 @@ import {
   descriptorOf,
   layerLinkingEnvironment,
   servePeer,
+  serveRaw,
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
@@ -305,25 +300,6 @@ it.effect("two links racing to one peer leave the stored access matching the tok
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
-
-/** A bare HTTP server on a socket of its own, answering with `handle`. */
-const serveRaw = <E, R>(
-  handle: (
-    request: HttpServerRequest.HttpServerRequest,
-  ) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
-) =>
-  Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
-    Effect.flatMap((server) =>
-      Effect.gen(function* () {
-        yield* HttpServer.serve(Effect.flatMap(HttpServerRequest.HttpServerRequest, handle)).pipe(
-          Layer.build,
-        );
-        const address = (yield* HttpServer.HttpServer).address;
-        if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
-        return `http://127.0.0.1:${address.port}`;
-      }).pipe(Effect.provideContext(server)),
-    ),
-  );
 
 it.effect("never follows a peer's redirect with the pairing code", () =>
   Effect.scoped(

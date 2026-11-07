@@ -163,6 +163,15 @@ const peerOrigin = (url: string) => {
   return Effect.succeed(parsed.origin);
 };
 
+/**
+ * Only the origin `peerOrigin` checked may receive a pairing code, token or
+ * tool call: a redirect could forward them anywhere, including plain http.
+ */
+export const withoutRedirects = (client: HttpClient.HttpClient) =>
+  HttpClient.transform(client, (response) =>
+    Effect.provideService(response, FetchHttpClient.RequestInit, { redirect: "manual" }),
+  );
+
 /** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
 const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
   peer.capabilities.mcpModeLimitHeader === true && peer.capabilities.linkFence === true;
@@ -186,11 +195,7 @@ const make = Effect.gen(function* () {
     Effect.orDie,
   );
 
-  // Only the origin `peerOrigin` checked may receive a pairing code or token:
-  // a redirect could forward them anywhere, including plain http.
-  const peerHttpClient = HttpClient.transform(httpClient, (response) =>
-    Effect.provideService(response, FetchHttpClient.RequestInit, { redirect: "manual" }),
-  );
+  const peerHttpClient = withoutRedirects(httpClient);
 
   const clientFor = (origin: string) =>
     HttpApiClient.make(PeerHttpApi, { baseUrl: origin }).pipe(

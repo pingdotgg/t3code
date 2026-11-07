@@ -96,7 +96,7 @@ const responseJson = (contentType: string | undefined, text: string) =>
 
 const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
-  const httpClient = yield* HttpClient.HttpClient;
+  const httpClient = PeerLinks.withoutRedirects(yield* HttpClient.HttpClient);
   // One MCP session per peer and address, reused across calls. The peer keeps
   // sessions in memory, so a restart there answers 404 and we start a new one.
   const sessions = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
