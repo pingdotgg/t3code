@@ -244,34 +244,38 @@ export const make = Effect.gen(function* () {
     );
     return permissions(repo, pr, viewer);
   });
-  const readCheckPolicy = (input: ProviderRepositoryRef, base: string) =>
-    read(
-      {
-        ...input,
-        path: `${repoPath(input)}/branches/${base.split("/").map(encodeURIComponent).join("/")}`,
-      },
-      ForgejoBranchStatusChecks,
-    ).pipe(
-      Effect.catchTags({
-        PullRequestProviderError: (error) => {
-          if (
-            isForgejoCliError(error.cause) &&
-            (error.cause.reason === "forbidden" || error.cause.reason === "not-found")
-          ) {
-            return Effect.void;
-          }
-          return Effect.fail(error);
+  const readCheckPolicy = Effect.fn("ForgejoPullRequestProvider.readCheckPolicy")(
+    (input: ProviderRepositoryRef, base: string) =>
+      read(
+        {
+          ...input,
+          path: `${repoPath(input)}/branches/${base.split("/").map(encodeURIComponent).join("/")}`,
         },
-      }),
-    );
-  const readStatuses = (input: ProviderRepositoryRef, sha: string) =>
-    page(
-      {
-        ...input,
-        path: `${repoPath(input)}/statuses/${encodeURIComponent(sha)}?sort=recentupdate`,
-      },
-      ForgejoStatus,
-    ).pipe(Effect.map(({ items }) => items));
+        ForgejoBranchStatusChecks,
+      ).pipe(
+        Effect.catchTags({
+          PullRequestProviderError: (error) => {
+            if (
+              isForgejoCliError(error.cause) &&
+              (error.cause.reason === "forbidden" || error.cause.reason === "not-found")
+            ) {
+              return Effect.void;
+            }
+            return Effect.fail(error);
+          },
+        }),
+      ),
+  );
+  const readStatuses = Effect.fn("ForgejoPullRequestProvider.readStatuses")(
+    (input: ProviderRepositoryRef, sha: string) =>
+      page(
+        {
+          ...input,
+          path: `${repoPath(input)}/statuses/${encodeURIComponent(sha)}?sort=recentupdate`,
+        },
+        ForgejoStatus,
+      ).pipe(Effect.map(({ items }) => items)),
+  );
   const readChecks = Effect.fn("ForgejoPullRequestProvider.readChecks")(function* (
     input: ProviderRepositoryRef,
     pr: typeof ForgejoPullRequest.Type,
@@ -289,7 +293,12 @@ export const make = Effect.gen(function* () {
     input: ProviderRepositoryRef & { readonly number: number },
   ) {
     const pr = yield* getPull(input);
-    const { checks, policyAvailable } = yield* readChecks(input, pr);
+    const { checks, policyAvailable } = yield* readChecks(input, pr).pipe(
+      Effect.catchTags({
+        PullRequestProviderError: () =>
+          Effect.succeed({ checks: undefined, policyAvailable: false }),
+      }),
+    );
     return forgejoChangeRequest(pr, policyAvailable ? checks : undefined);
   });
   const unsupported = (operation: string) =>
