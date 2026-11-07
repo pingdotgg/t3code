@@ -321,6 +321,12 @@ function withPreferredPath(
   };
 }
 
+function newestVersionFirst(left: string, right: string): number {
+  return right.localeCompare(left, undefined, { numeric: true });
+}
+
+const BINARY_TARGET_DIRECTORY = /^(?:darwin|linux|windows)-(?:aarch64|x86_64)$/u;
+
 export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManagedBinaryDirectories")(
   function* (input: {
     readonly cacheDir: string;
@@ -385,7 +391,7 @@ export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManaged
     );
     for (const agent of (yield* listDirectories(installsDirectory)).toSorted()) {
       const versions = (yield* listDirectories(path.join(installsDirectory, agent))).toSorted(
-        (left, right) => right.localeCompare(left, undefined, { numeric: true }),
+        newestVersionFirst,
       );
       for (const version of versions) {
         for (const candidateTarget of resolveAcpRegistryPlatformTargetCandidates(target)) {
@@ -2009,6 +2015,78 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             }),
         }),
       );
+
+  // Sessions run from their version directory, so prune before this process starts any.
+  const pruneOldVersions = Effect.fn("AcpRegistryCatalog.pruneOldVersions")(function* () {
+    const cached = yield* loadCachedRegistry().pipe(Effect.option);
+    if (Option.isNone(cached)) return;
+    const keepVersions = new Map<string, Set<string>>();
+    for (const agent of cached.value.agents) {
+      const versions = keepVersions.get(agent.id) ?? new Set<string>();
+      versions.add(encodeURIComponent(agent.version));
+      keepVersions.set(agent.id, versions);
+    }
+    // A package install creates its directory first, so only its receipt marks it finished.
+    const receiptFiles = yield* fileSystem
+      .readDirectory(packageReceiptsDirectory)
+      .pipe(Effect.orElseSucceed((): Array<string> => []));
+    for (const receiptFile of receiptFiles) {
+      const receipt = yield* fileSystem
+        .readFileString(path.join(packageReceiptsDirectory, receiptFile))
+        .pipe(
+          Effect.map(decodePackageInstallReceipt),
+          Effect.orElseSucceed(() => Option.none()),
+        );
+      if (Option.isSome(receipt)) {
+        keepVersions
+          .get(receipt.value.agentId)
+          ?.add(encodeURIComponent(receipt.value.agentVersion));
+      }
+    }
+    const agentIds = yield* fileSystem
+      .readDirectory(installsDirectory)
+      .pipe(Effect.orElseSucceed((): Array<string> => []));
+    // Other T3 tools share this directory, so only registry agents are pruned.
+    for (const agentId of agentIds) {
+      const keep = keepVersions.get(agentId);
+      if (keep === undefined) continue;
+      const agentRoot = path.join(installsDirectory, agentId);
+      yield* withInstallPermit(agentId)(
+        Effect.gen(function* () {
+          const versions = yield* Effect.filter(
+            yield* fileSystem.readDirectory(agentRoot),
+            (version) =>
+              fileSystem
+                .stat(path.join(agentRoot, version))
+                .pipe(Effect.map((info) => info.type === "Directory")),
+          );
+          // A binary install moves its target directory in only once it succeeds.
+          const binaryVersions = yield* Effect.filter(versions, (version) =>
+            fileSystem
+              .readDirectory(path.join(agentRoot, version))
+              .pipe(
+                Effect.map((entries) =>
+                  entries.some((entry) => BINARY_TARGET_DIRECTORY.test(entry)),
+                ),
+              ),
+          );
+          const newestBinaryVersion = binaryVersions.toSorted(newestVersionFirst)[0];
+          for (const version of versions) {
+            if (version === newestBinaryVersion || keep.has(version)) continue;
+            yield* fileSystem.remove(path.join(agentRoot, version), { recursive: true });
+          }
+        }),
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("could not prune old ACP Registry agent versions", {
+            agentId,
+            cause,
+          }),
+        ),
+      );
+    }
+  });
+  yield* pruneOldVersions();
 
   return AcpRegistryCatalog.of({
     search,

@@ -1465,6 +1465,121 @@ describe("AcpRegistrySupport", () => {
     ),
   );
 
+  it.effect("prunes old agent versions when the catalog starts", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-prune-versions-",
+      });
+      const toolsDir = path.join(cacheDir, "tools");
+      const seed = (...segments: ReadonlyArray<string>) =>
+        fileSystem.makeDirectory(path.join(toolsDir, ...segments), { recursive: true });
+      yield* seed("example-agent", "1.2.3", "linux-x86_64", "bin");
+      yield* seed("example-agent", "1.2.4", "linux-x86_64", "bin");
+      const receiptsDirectory = path.join(cacheDir, "acp-registry", "package-installs");
+      const receipt = (agentId: string, agentVersion: string) => {
+        const binDirectory = path.join(toolsDir, agentId, agentVersion, "npm", "bin");
+        return fileSystem.writeFileString(
+          path.join(receiptsDirectory, `${agentId}.json`),
+          encodeUnknownJson({
+            agentId,
+            agentVersion,
+            distribution: "npx",
+            packageSpec: `@example/${agentId}@${agentVersion}`,
+            managerPath: "/usr/bin/npm",
+            binDirectory,
+            executablePath: path.join(binDirectory, agentId),
+          }),
+        );
+      };
+      yield* fileSystem.makeDirectory(receiptsDirectory, { recursive: true });
+      yield* seed("pinned-agent", "1.8.0", "npm");
+      yield* seed("pinned-agent", "1.9.0", "npm");
+      yield* seed("pinned-agent", "1.10.0", "npm");
+      yield* receipt("pinned-agent", "1.10.0");
+      yield* seed("single-agent", "0.1.0", "npm");
+      yield* receipt("single-agent", "0.1.0");
+      yield* seed("failed-agent", "1.0.0", "linux-x86_64", "bin");
+      yield* seed("failed-agent", "1.1.0", ".failed-agent-install-1");
+      yield* fileSystem.writeFileString(
+        path.join(toolsDir, "failed-agent", "1.1.0", "linux-x86_64.lock"),
+        "",
+      );
+      // A failed package install leaves its npm directory but writes no receipt.
+      yield* seed("package-agent", "1.9.0", "npm");
+      yield* seed("package-agent", "2.0.0", "npm");
+      yield* seed("package-agent", "2.1.0", "npm");
+      yield* receipt("package-agent", "2.0.0");
+      // Other T3 tools share this directory and are not registry agents.
+      yield* seed("expo-device-hub", "0.1.0");
+      yield* seed("expo-device-hub", "0.2.0");
+      yield* fileSystem.writeFileString(
+        path.join(cacheDir, "acp-registry", "registry.json"),
+        encodeUnknownJson({
+          version: "1.0.0",
+          agents: [
+            {
+              ...makeAgent({
+                binary: { "linux-x86_64": { archive: archiveUrl, cmd: "bin/example-agent" } },
+              }),
+              version: "1.2.4",
+            },
+            {
+              ...makeAgent({ npx: { package: "@example/pinned@1.9.0" } }),
+              id: "pinned-agent",
+              version: "1.9.0",
+            },
+            {
+              ...makeAgent({ npx: { package: "@example/single@0.2.0" } }),
+              id: "single-agent",
+              version: "0.2.0",
+            },
+            {
+              ...makeAgent({
+                binary: { "linux-x86_64": { archive: archiveUrl, cmd: "bin/failed-agent" } },
+              }),
+              id: "failed-agent",
+              version: "1.1.0",
+            },
+            {
+              ...makeAgent({ npx: { package: "@example/package-agent@2.1.0" } }),
+              id: "package-agent",
+              version: "2.1.0",
+            },
+          ],
+        }),
+      );
+
+      yield* AcpRegistrySupport.makeAcpRegistryCatalog({ cacheDir, toolsDir, registryUrl });
+
+      const versions = (tool: string) =>
+        fileSystem
+          .readDirectory(path.join(toolsDir, tool))
+          .pipe(Effect.map((entries) => entries.toSorted()));
+      expect(yield* versions("example-agent")).toEqual(["1.2.4"]);
+      expect(yield* versions("pinned-agent")).toEqual(["1.10.0", "1.9.0"]);
+      expect(yield* versions("single-agent")).toEqual(["0.1.0"]);
+      expect(yield* versions("failed-agent")).toEqual(["1.0.0", "1.1.0"]);
+      expect(yield* versions("package-agent")).toEqual(["2.0.0", "2.1.0"]);
+      expect(yield* versions("expo-device-hub")).toEqual(["0.1.0", "0.2.0"]);
+      expect(
+        yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
+          cacheDir,
+          toolsDir,
+          platform: "linux",
+          architecture: "x64",
+        }),
+      ).toEqual([
+        path.join(toolsDir, "example-agent", "1.2.4", "linux-x86_64", "bin"),
+        path.join(toolsDir, "failed-agent", "1.0.0", "linux-x86_64"),
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerResolver(() => Effect.die("unexpected HTTP request"))),
+    ),
+  );
+
   it.effect("keeps a binary prepared by another client while an uninstall is waiting", () => {
     const agent = makeAgent({
       binary: {
