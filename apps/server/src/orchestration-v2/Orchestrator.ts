@@ -10746,11 +10746,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         childThreadIds.add(childThreadId);
         const child = yield* projectionStore
-          .getThreadRecords(childThreadId, ["nodes", "providerTurns", "subagents", "turnItems"], {
-            // Runless items are the subagent's; any run there is the user's own.
-            turnItemRunIds: [null],
-            turnItemStatuses: ["pending", "running", "waiting"],
-          })
+          .getThreadRecords(
+            childThreadId,
+            ["nodes", "providerTurns", "subagents", "turnItems", "runtimeRequests"],
+            {
+              runtimeRequestStatuses: ["pending"],
+              // Runless items are the subagent's; any run there is the user's own.
+              turnItemRunIds: [null],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            },
+          )
           .pipe(
             Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
             mapDispatchError(input.command),
@@ -10766,6 +10771,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           allocateEventId,
         }).pipe(mapDispatchError(input.command));
         yield* Ref.update(input.events, (events) => [...events, ...childEnded]);
+        for (const request of child.runtimeRequests) {
+          if (request.status !== "pending") continue;
+          const node = child.nodes.find((candidate) => candidate.id === request.nodeId);
+          // Runs on a native child's thread belong to the user, not the stopped subagent.
+          if (node === undefined || node.runId !== null) continue;
+          const scope = {
+            threadId: childThreadId,
+            nodeId: node.id,
+            providerInstanceId: subagent.providerInstanceId,
+            occurredAt: input.now,
+          };
+          yield* emitEvent({
+            ...scope,
+            type: "runtime-request.updated",
+            payload: {
+              ...request,
+              status: "cancelled",
+              resolvedAt: input.now,
+              responseCapability: {
+                type: "not_resumable",
+                reason: "The subagent was interrupted.",
+              },
+            },
+          });
+          if (isOrchestrationV2WorkActive(node.status)) {
+            yield* emitEvent({
+              ...scope,
+              type: "node.updated",
+              payload: { ...node, status: "interrupted", completedAt: input.now },
+            });
+          }
+          for (const card of child.turnItems) {
+            if (
+              (card.type !== "approval_request" && card.type !== "user_input_request") ||
+              card.requestId !== request.id ||
+              card.status !== "waiting"
+            )
+              continue;
+            yield* emitEvent({
+              ...scope,
+              type: "turn-item.updated",
+              payload: {
+                ...card,
+                status: "interrupted",
+                completedAt: input.now,
+                updatedAt: input.now,
+              },
+            });
+          }
+        }
         for (const nested of child.turnItems) {
           if (nested.type === "subagent") dying.push({ projection: child, subagent: nested });
         }
