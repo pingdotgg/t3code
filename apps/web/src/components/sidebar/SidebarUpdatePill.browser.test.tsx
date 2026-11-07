@@ -1,16 +1,18 @@
-import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import { EnvironmentId, type DesktopBridge, type DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render, stubGlobal } from "../../../test/render";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { describeUpdateEverything } from "./updateEverything.logic";
 
 const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   return {
     update: null as DesktopUpdateState | null,
     hasUpdates: false,
+    everythingView: null as ReturnType<typeof describeUpdateEverything> | null,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -36,10 +38,12 @@ vi.mock("../../env", async (importOriginal) => ({
 vi.mock("./useUpdateEverything", () => ({
   useUpdateEverything: () => ({
     hasUpdates: mocks.hasUpdates,
-    summary: "Update everything",
-    version: null,
-    providerCount: 0,
-    rows: [],
+    ...(mocks.everythingView ?? {
+      summary: "Update everything",
+      version: null,
+      providerCount: 0,
+      rows: [],
+    }),
     restarts: [],
   }),
 }));
@@ -72,6 +76,7 @@ const RELEASE_NOTES: DesktopUpdateState["releaseNotes"] = [
 function setup(update: DesktopUpdateState | null, { hasUpdates = false } = {}) {
   mocks.update = update;
   mocks.hasUpdates = hasUpdates;
+  mocks.everythingView = null;
 }
 
 function publish(update: DesktopUpdateState | null) {
@@ -267,10 +272,23 @@ describe("SidebarUpdatePill downloads", () => {
 
 describe("SidebarUpdatePill update everything", () => {
   it("does not refocus the update button after a pointer cancel", async () => {
-    setup(null, { hasUpdates: true });
+    const update = nightlyUpdate(RELEASE_NOTES);
+    setup(update, { hasUpdates: true });
+    const local = { environmentId: EnvironmentId.make("local"), label: "This machine" };
+    mocks.everythingView = describeUpdateEverything({
+      localVersion: update.availableVersion,
+      localMachines: [local],
+      servers: [],
+      skipped: [],
+      providerMachines: [{ ...local, providers: ["Codex", "Claude"] }],
+    });
     await using screen = await render(<SidebarUpdatePill />);
-    const button = screen.getByRole("button", { name: "Update everything" });
+    const button = screen.getByRole("button", { name: "Update this app and 2 providers" });
     await userEvent.click(button);
+    const dialog = page.getByRole("alertdialog");
+    await expect.element(dialog.getByText("This app", { exact: false })).toBeVisible();
+    await expect.element(dialog.getByText("Codex", { exact: true })).toBeVisible();
+    await expect.element(dialog.getByText("Claude", { exact: true })).toBeVisible();
     const cancel = page.getByRole("button", { name: "Cancel" });
     await expect.element(cancel).toBeVisible();
 
