@@ -69,9 +69,10 @@ const commandFailure = (result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
 }) => {
   const error = squashAtomCommandFailure(result);
-  return new McpAppHostRefusal(
-    error instanceof Error && error.message.trim() !== "" ? error.message : "Request failed.",
-  );
+  return new McpAppHostRefusal({
+    message:
+      error instanceof Error && error.message.trim() !== "" ? error.message : "Request failed.",
+  });
 };
 
 const confirm = (title: string, message: string, action: string) =>
@@ -320,7 +321,8 @@ export function ThreadMcpApp(props: {
         const { environmentId, input } = scope();
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
-        if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
+        if (!info.value.callable)
+          throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
         if (
           !info.value.readOnly &&
           !(await confirm(
@@ -329,7 +331,7 @@ export function ThreadMcpApp(props: {
             "Allow",
           ))
         ) {
-          throw new McpAppHostRefusal("Declined by the user.");
+          throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
         const result = await latest.current.callTool({
           environmentId,
@@ -350,15 +352,15 @@ export function ThreadMcpApp(props: {
       openLink: async (url) => {
         // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of T3.
         if (!(await confirm(`Open a link from ${app.server}?`, url, "Open"))) {
-          throw new McpAppHostRefusal("Declined by the user.");
+          throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
         if (!(await tryOpenExternalUrl(url, "mcp-app"))) {
-          throw new McpAppHostRefusal("The link could not be opened.");
+          throw new McpAppHostRefusal({ message: "The link could not be opened." });
         }
       },
       sendMessage: async (text) => {
         if (!(await confirm(`Send this message from ${app.server}?`, text, "Send"))) {
-          throw new McpAppHostRefusal("Declined by the user.");
+          throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
         await enqueueThreadOutboxMessage({
           environmentId: latest.current.props.environmentId,
@@ -422,7 +424,7 @@ export function ThreadMcpApp(props: {
       downloadFile: async (files) => {
         const names = files.map((file) => file.name).join(", ");
         if (!(await confirm(`Save a file from ${app.server}?`, names, "Save"))) {
-          throw new McpAppHostRefusal("Declined by the user.");
+          throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
         for (const file of files) {
           let bytes: Uint8Array | undefined;
@@ -441,16 +443,18 @@ export function ThreadMcpApp(props: {
             const declared = (content as { readonly mimeType?: unknown } | undefined)?.mimeType;
             if (typeof declared === "string") mimeType = declared;
           }
-          if (bytes === undefined) throw new McpAppHostRefusal(`${file.name} has no contents.`);
+          if (bytes === undefined)
+            throw new McpAppHostRefusal({ message: `${file.name} has no contents.` });
           if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
-            throw new McpAppHostRefusal(`${file.name} is too large to save.`);
+            throw new McpAppHostRefusal({ message: `${file.name} is too large to save.` });
           }
           const shared = await shareGeneratedAttachment({
             bytes,
             attachment: { name: file.name, mimeType },
             signal: new AbortController().signal,
           });
-          if (!shared) throw new McpAppHostRefusal("Sharing is not available on this device.");
+          if (!shared)
+            throw new McpAppHostRefusal({ message: "Sharing is not available on this device." });
         }
       },
       onRequestTeardown: () => {
