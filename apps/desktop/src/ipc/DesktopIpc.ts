@@ -4,11 +4,16 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-export interface DesktopIpcInvokeEvent {
+export interface DesktopIpcSenderEvent {
+  readonly sender?: { readonly id: number };
+  readonly senderFrame?: { readonly url: string } | null;
+}
+
+export interface DesktopIpcInvokeEvent extends DesktopIpcSenderEvent {
   readonly sender: { readonly id: number };
 }
 
-export interface DesktopIpcSyncEvent {
+export interface DesktopIpcSyncEvent extends DesktopIpcSenderEvent {
   returnValue: unknown;
 }
 
@@ -65,7 +70,7 @@ export interface DesktopIpcMethod<E, R> {
 
 export interface DesktopSyncIpcMethod<E, R> {
   readonly channel: string;
-  readonly handler: () => Effect.Effect<unknown, E, R>;
+  readonly handler: (event?: DesktopIpcSenderEvent) => Effect.Effect<unknown, E, R>;
 }
 
 export class DesktopIpc extends Context.Service<
@@ -131,7 +136,7 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
               event.returnValue = runSync(
                 Effect.gen(function* () {
                   yield* Effect.annotateCurrentSpan({ channel });
-                  return yield* handler();
+                  return yield* handler(event);
                 }).pipe(
                   Effect.annotateLogs({ channel }),
                   Effect.withSpan("desktop.ipc.invokeSync"),
@@ -239,7 +244,7 @@ export interface DesktopSyncIpcMethodRegistration<
     ResultDecodingServices,
     ResultEncodingServices
   >;
-  readonly handler: () => Effect.Effect<Result, E, R>;
+  readonly handler: (event?: DesktopIpcSenderEvent) => Effect.Effect<Result, E, R>;
 }
 
 export const makeSyncIpcMethod = <
@@ -263,9 +268,9 @@ export const makeSyncIpcMethod = <
 
   return {
     channel: method.channel,
-    handler: () =>
+    handler: (event) =>
       method
-        .handler()
+        .handler(event)
         .pipe(
           Effect.flatMap(encode),
           Effect.withSpan("desktop.ipc.method", { attributes: { channel: method.channel } }),
