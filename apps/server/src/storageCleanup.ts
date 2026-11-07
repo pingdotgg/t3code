@@ -739,7 +739,8 @@ const make = Effect.gen(function* () {
     }
     if (pushed.size === 0) return unpushed;
     return yield* reachable(
-      [...pushed].map((line) => `^${line.slice(line.indexOf("\t") + 1)}\n`).join(""),
+      // Exclude the verified objects, not the names: a tag can move after the listing.
+      [...pushed].map((line) => `^${line.slice(0, line.indexOf("\t"))}\n`).join(""),
     );
   });
 
