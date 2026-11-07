@@ -279,7 +279,7 @@ const layerTest = ProviderHostLive.layer.pipe(
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
-    "refreshes through the selected executable and personal Google ACP",
+    "refreshes the selected executable and limits form capabilities to chat",
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
@@ -339,15 +339,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             .map((request) => request.params?.mcpServers),
         ).toEqual([[], []]);
         yield* h.assertClosed;
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect.skipIf(windowsHost)(
-    "offers client files and form questions to chat sessions, and nothing to helpers",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness();
-        yield* h.refresh();
         yield* h.instance.textGeneration
           .generateThreadTitle({
             cwd: h.profileDirectory,
@@ -381,7 +372,8 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             .filter((request) => request.method === "initialize")
             .map((request) => request.params?.clientCapabilities),
         ).toEqual([
-          // Model refresh, then thread title generation.
+          // Two model refreshes, then thread title generation.
+          helper,
           helper,
           helper,
           {
