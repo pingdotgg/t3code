@@ -341,6 +341,25 @@ function normalizeLegacyInboundFrame(value: unknown): unknown {
   return normalized;
 }
 
+// Transcripts recorded before the client read config omit `config/read`; answer as an old Codex.
+function unscriptedConfigReadReply(
+  expected: CodexAppServerReplayEntry | undefined,
+  actual: unknown,
+): unknown {
+  if (typeof actual !== "object" || actual === null) return undefined;
+  const { id, method } = actual as Record<string, unknown>;
+  if (id === undefined || method !== "config/read") return undefined;
+  const expectedFrame = expected?.type === "expect_outbound" ? expected.frame : undefined;
+  if (
+    typeof expectedFrame === "object" &&
+    expectedFrame !== null &&
+    (expectedFrame as Record<string, unknown>).method === method
+  ) {
+    return undefined;
+  }
+  return { id, error: { code: -32601, message: "config/read is not scripted" } };
+}
+
 function encodeInboundFrame(frame: unknown): Uint8Array {
   return encoder.encode(`${JSON.stringify(normalizeLegacyInboundFrame(frame))}\n`);
 }
@@ -399,6 +418,26 @@ const makeReplayClientWithState = Effect.fn(
   const state = driver.state;
   const outboundRemainder = yield* Ref.make("");
   const decoder = new TextDecoder();
+  // Each unscripted config read shifts later request ids past the recorded ones.
+  let unscriptedRequests = 0;
+  const liveRequestIds = new Map<number, number>();
+  const toRecordedRequest = (actual: unknown) => {
+    if (unscriptedRequests === 0 || typeof actual !== "object" || actual === null) return actual;
+    const frame = actual as Record<string, unknown>;
+    if (typeof frame.id !== "number" || typeof frame.method !== "string") return actual;
+    const id = frame.id - unscriptedRequests;
+    liveRequestIds.set(id, frame.id);
+    return { ...frame, id };
+  };
+  const toLiveResponse = (frame: unknown) => {
+    if (typeof frame !== "object" || frame === null) return frame;
+    const record = frame as Record<string, unknown>;
+    const id =
+      typeof record.id === "number" && record.method === undefined
+        ? liveRequestIds.get(record.id)
+        : undefined;
+    return id === undefined ? frame : { ...record, id };
+  };
 
   const failReplay = (error: CodexAppServerReplayError) =>
     Ref.update(state, (current) => ({
@@ -425,7 +464,7 @@ const makeReplayClientWithState = Effect.fn(
         if (entry.afterMs !== undefined && entry.afterMs > 0) {
           yield* Effect.sleep(Duration.millis(entry.afterMs));
         }
-        yield* Queue.offer(input, encodeInboundFrame(entry.frame));
+        yield* Queue.offer(input, encodeInboundFrame(toLiveResponse(entry.frame)));
         yield* Ref.update(state, (latest) => ({ ...latest, cursor: latest.cursor + 1 }));
         continue;
       }
@@ -461,6 +500,12 @@ const makeReplayClientWithState = Effect.fn(
           }
 
           const entry = transcript.entries[current.cursor];
+          const unscriptedReply = unscriptedConfigReadReply(entry, actual);
+          if (unscriptedReply !== undefined) {
+            unscriptedRequests += 1;
+            yield* Queue.offer(input, encodeInboundFrame(unscriptedReply));
+            return;
+          }
           if (!entry) {
             yield* failReplay(
               new CodexAppServerReplayExhaustedError({
@@ -484,7 +529,7 @@ const makeReplayClientWithState = Effect.fn(
             return;
           }
 
-          if (!sameFrame(entry.frame, actual, ignoredThreadConfigKeys)) {
+          if (!sameFrame(entry.frame, toRecordedRequest(actual), ignoredThreadConfigKeys)) {
             yield* failReplay(
               new CodexAppServerReplayFrameMismatchError({
                 scenario: transcript.scenario,

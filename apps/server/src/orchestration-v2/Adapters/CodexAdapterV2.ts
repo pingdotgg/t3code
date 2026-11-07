@@ -81,6 +81,7 @@ import type {
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexSchema from "effect-codex-app-server/schema";
+import type * as CodexProtocol from "effect-codex-app-server/protocol";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -93,6 +94,7 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -199,7 +201,17 @@ export function canReuseCodexContextUsage(previous: ModelSelection, next: ModelS
 export function codexProviderTurnTokenUsage(
   tokenUsage: CodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
   updatedAt: string,
+  configuredAutoCompactLimit?: number,
 ) {
+  const contextWindow = tokenUsage.modelContextWindow;
+  // Codex clamps the limit to 90% of the full window, which is larger than this usable window.
+  const autoCompactThreshold =
+    configuredAutoCompactLimit !== undefined &&
+    contextWindow != null &&
+    contextWindow > 0 &&
+    configuredAutoCompactLimit < (contextWindow * 9) / 10
+      ? configuredAutoCompactLimit
+      : undefined;
   return {
     usedTokens: Math.max(0, tokenUsage.last.totalTokens),
     maxTokens: tokenUsage.modelContextWindow ?? null,
@@ -207,9 +219,31 @@ export function codexProviderTurnTokenUsage(
     cachedInputTokens: Math.max(0, tokenUsage.last.cachedInputTokens),
     outputTokens: Math.max(0, tokenUsage.last.outputTokens),
     reasoningOutputTokens: Math.max(0, tokenUsage.last.reasoningOutputTokens),
+    ...(autoCompactThreshold === undefined ? {} : { autoCompactThreshold }),
     updatedAt,
   };
 }
+
+// A "body_after_prefix" limit excludes the carried prefix, so it is not a point on the full-context meter.
+// An enabled token budget can add a fallback buffer (possibly from model defaults) to the limit.
+export function codexAutoCompactLimit(config: CodexSchema.V2ConfigReadResponse["config"]) {
+  const limit = config.model_auto_compact_token_limit;
+  const tokenBudget = Predicate.isObject(config.features)
+    ? Reflect.get(config.features, "token_budget")
+    : undefined;
+  const tokenBudgetEnabled =
+    tokenBudget != null &&
+    tokenBudget !== false &&
+    !(Predicate.isObject(tokenBudget) && Reflect.get(tokenBudget, "enabled") === false);
+  return config.model_auto_compact_token_limit_scope !== "body_after_prefix" &&
+    !tokenBudgetEnabled &&
+    limit != null &&
+    Number.isSafeInteger(limit) &&
+    limit > 0
+    ? limit
+    : undefined;
+}
+const CODEX_CONFIG_READ_TIMEOUT = "3 seconds";
 const CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS = 50;
 // Plan flushes store three copies; use the client's assistant-text cadence.
 const CODEX_PLAN_DELTA_FLUSH_INTERVAL_MS = 400;
@@ -1502,7 +1536,26 @@ export function makeCodexAppServerProtocolLogger(input: {
     return undefined;
   }
 
-  return (event) => {
+  // config/read results can carry provider credentials (custom headers, env values).
+  const configReadIds = new Set<unknown>();
+  const withoutConfigReadResult = (
+    event: CodexProtocol.CodexAppServerProtocolLogEvent,
+  ): CodexProtocol.CodexAppServerProtocolLogEvent => {
+    if (event.stage !== "decoded" || typeof event.payload !== "object" || event.payload === null) {
+      return event;
+    }
+    const payload = event.payload as Record<string, unknown>;
+    if (event.direction === "outgoing") {
+      if (payload.method === "config/read") configReadIds.add(payload.id);
+      return event;
+    }
+    return payload.method === undefined && configReadIds.delete(payload.id) && "result" in payload
+      ? { ...event, payload: { ...payload, result: "[OMITTED]" } }
+      : event;
+  };
+
+  return (logged) => {
+    const event = withoutConfigReadResult(logged);
     if (!shouldPersistProviderEvent("native", event)) return Effect.void;
     return nativeEventLogger
       .write(
@@ -1873,6 +1926,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
+        // Codex reports the configured limit only through config/read, resolved per cwd.
+        const autoCompactLimitByCwd = new Map<string | null, number | undefined>();
+        const configReadsByCwd = new Map<string | null, Effect.Effect<void>>();
+        const readAutoCompactLimit = Effect.fn("CodexAdapterV2.readAutoCompactLimit")(function* (
+          cwd: string | null,
+        ) {
+          let read = configReadsByCwd.get(cwd);
+          if (read === undefined) {
+            read = yield* client.request("config/read", { includeLayers: false, cwd }).pipe(
+              Effect.timeout(CODEX_CONFIG_READ_TIMEOUT),
+              Effect.flatMap(({ config }) =>
+                Effect.sync(() => autoCompactLimitByCwd.set(cwd, codexAutoCompactLimit(config))),
+              ),
+              Effect.catch((cause) => Effect.logDebug("Codex config read failed.", { cause })),
+              Effect.asVoid,
+              Effect.cached,
+            );
+            configReadsByCwd.set(cwd, read);
+          }
+          yield* read;
+        });
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
           if (!state) {
@@ -4555,6 +4629,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 tokenUsage: codexProviderTurnTokenUsage(
                   payload.tokenUsage,
                   DateTime.formatIso(now),
+                  // Codex can drop the inherited limit for children (subagent_default_context_limits).
+                  context.subagent === null
+                    ? autoCompactLimitByCwd.get(context.input.runtimePolicy.cwd)
+                    : undefined,
                 ),
               },
             });
@@ -6795,6 +6873,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
             });
+            yield* readAutoCompactLimit(turnInput.runtimePolicy.cwd);
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
               updated.set(threadId, turnInput);

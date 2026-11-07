@@ -119,6 +119,241 @@ describe("CodexAdapterV2 context usage", () => {
       updatedAt: "2026-08-29T00:00:00.000Z",
     });
   });
+
+  it("omits a configured limit Codex would clamp to 90% of the full window", () => {
+    const usage = {
+      totalTokens: 1_000,
+      inputTokens: 1_000,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+    };
+    const tokenUsage = { total: usage, last: usage, modelContextWindow: 258_400 };
+    const at = "2026-08-29T00:00:00.000Z";
+
+    assert.notProperty(
+      CodexAdapterV2.codexProviderTurnTokenUsage(tokenUsage, at, 256_000),
+      "autoCompactThreshold",
+    );
+    assert.equal(
+      CodexAdapterV2.codexProviderTurnTokenUsage(tokenUsage, at, 100_000).autoCompactThreshold,
+      100_000,
+    );
+  });
+
+  it("omits a configured limit that a token-budget fallback buffer moves", () => {
+    const config = { model_auto_compact_token_limit: 100_000 };
+
+    assert.equal(CodexAdapterV2.codexAutoCompactLimit(config), 100_000);
+    assert.equal(
+      CodexAdapterV2.codexAutoCompactLimit({ ...config, features: { token_budget: false } }),
+      100_000,
+    );
+    // Model defaults can supply the fallback buffer, which config/read does not show.
+    assert.isUndefined(
+      CodexAdapterV2.codexAutoCompactLimit({ ...config, features: { token_budget: true } }),
+    );
+    assert.isUndefined(
+      CodexAdapterV2.codexAutoCompactLimit({
+        ...config,
+        features: {
+          token_budget: {
+            enabled: true,
+            auto_compact_fallback_prompt: "Finish the remaining work.",
+            auto_compact_fallback_buffer_tokens: 50_000,
+          },
+        },
+      }),
+    );
+  });
+
+  it.effect("reports the auto-compaction limit Codex resolves for the thread's cwd", () =>
+    Effect.gen(function* () {
+      const scenario = "auto-compact-threshold";
+      const nativeThreadId = `native-${scenario}`;
+      const nativeTurnId = `turn-${scenario}`;
+      const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+      const emit = (frame: unknown) =>
+        Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
+      const configRead = yield* Deferred.make<{ readonly id: number; readonly cwd: unknown }>();
+      let configReplied = false;
+      let turnStartedBeforeConfigReply = false;
+      const turnCompleted = yield* Deferred.make<void>();
+      const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+      const usage = {
+        totalTokens: 25_025,
+        inputTokens: 25_000,
+        cachedInputTokens: 0,
+        outputTokens: 25,
+        reasoningOutputTokens: 0,
+      };
+      // Like Codex, usage follows turn/start at once; the config/read reply is held by the test.
+      const respond = (frame: {
+        readonly id?: number;
+        readonly method?: string;
+        readonly params?: unknown;
+      }) => {
+        if (frame.id === undefined) return Effect.void;
+        if (frame.method === "config/read") {
+          const cwd = Predicate.hasProperty(frame.params, "cwd") ? frame.params.cwd : undefined;
+          return Deferred.succeed(configRead, { id: frame.id, cwd });
+        }
+        const response = preamble.find(
+          (entry) =>
+            entry.type === "emit_inbound" &&
+            entry.label === frame.method &&
+            Predicate.isObject(entry.frame) &&
+            "id" in entry.frame,
+        );
+        const reply = response === undefined ? undefined : withReplayRequestId(response, frame.id);
+        if (reply?.type !== "emit_inbound") {
+          return emit({
+            id: frame.id,
+            error: { code: -32601, message: `${frame.method} unsupported` },
+          });
+        }
+        if (frame.method !== "turn/start") return emit(reply.frame);
+        turnStartedBeforeConfigReply ||= !configReplied;
+        return Effect.forEach(
+          [
+            reply.frame,
+            {
+              method: "turn/started",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+              },
+            },
+            {
+              method: "thread/tokenUsage/updated",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                tokenUsage: { total: usage, last: usage, modelContextWindow: 828_000 },
+              },
+            },
+            {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          ],
+          emit,
+          { discard: true },
+        );
+      };
+      const outbound = new TextDecoder();
+      const client = yield* CodexClient.make(
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.fromQueue(input),
+          stdout: () =>
+            Sink.forEach((chunk: string | Uint8Array) =>
+              Effect.forEach(
+                (typeof chunk === "string" ? chunk : outbound.decode(chunk, { stream: true }))
+                  .split("\n")
+                  .filter((line) => line.trim().length > 0),
+                (line) => respond(JSON.parse(line)),
+                { discard: true },
+              ),
+            ),
+          stderr: () => Sink.drain,
+        }),
+        {},
+        Effect.succeed(new CodexError.CodexAppServerProcessExitedError({ code: 0 })),
+      );
+      const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+        clientFactory: { open: () => Effect.succeed(client) },
+        digest: yield* Digest.Digest,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
+          Effect.orDie,
+        ),
+      });
+      const threadId = ThreadId.make(`thread-${scenario}`);
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(`session-${scenario}`),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => events.push(event)).pipe(
+            Effect.andThen(
+              event.type === "turn.terminal"
+                ? Deferred.succeed(turnCompleted, undefined)
+                : Effect.void,
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const startTurn = yield* runtime
+        .startTurn(
+          makeCodexTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "work",
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      // Codex only reports the limit through `config/read`, resolved per cwd (project layers, `-c`).
+      const request = yield* Deferred.await(configRead);
+      configReplied = true;
+      yield* emit({
+        id: request.id,
+        result: {
+          config:
+            request.cwd === CODEX_TEST_RUNTIME_POLICY.cwd
+              ? { model_auto_compact_token_limit: 256_000 }
+              : {},
+          origins: {},
+        },
+      });
+      yield* Fiber.join(startTurn);
+      yield* Deferred.await(turnCompleted);
+
+      const tokenUsage = events
+        .flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined
+            ? [event.providerTurn.tokenUsage]
+            : [],
+        )
+        .at(-1);
+      assert.isFalse(turnStartedBeforeConfigReply, "usage must not race the config/read reply");
+      assert.equal(tokenUsage?.maxTokens, 828_000);
+      assert.equal(
+        tokenUsage?.autoCompactThreshold,
+        256_000,
+        "the context meter should show where Codex auto-compacts this thread",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 });
 
 describe("CodexAdapterV2 assistant message streaming", () => {
@@ -324,6 +559,33 @@ describe("CodexAdapterV2 native protocol logging", () => {
           },
         },
       });
+
+      yield* protocolLogger({
+        direction: "outgoing",
+        stage: "decoded",
+        payload: { id: 7, method: "config/read", params: { includeLayers: false, cwd: "/repo" } },
+      });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          id: 7,
+          result: {
+            config: {
+              model_providers: {
+                x: {
+                  http_headers: { "X-Custom": "dummy-secret" },
+                  env: { CUSTOM_VALUE: "dummy-env-secret" },
+                },
+              },
+            },
+            origins: {},
+          },
+        },
+      });
+      const written = JSON.stringify(writes);
+      assert.notInclude(written, "dummy-secret");
+      assert.notInclude(written, "dummy-env-secret");
     }),
   );
 });
@@ -774,21 +1036,31 @@ describe("CodexAdapterV2 process exit", () => {
           stdin: Stream.fromQueue(input),
           stdout: () =>
             Sink.forEach((chunk: string | Uint8Array) =>
-              Effect.gen(function* () {
-                const frame = JSON.parse(
-                  typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
-                ) as { readonly id?: number; readonly method: string };
-                const response = preamble.find(
-                  (entry) =>
-                    entry.type === "emit_inbound" &&
-                    entry.label === frame.method &&
-                    Predicate.isObject(entry.frame) &&
-                    "id" in entry.frame,
-                );
-                if (response?.type === "emit_inbound") {
-                  yield* emit(response.frame);
-                }
-              }),
+              Effect.forEach(
+                (typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk))
+                  .split("\n")
+                  .filter((line) => line.trim().length > 0),
+                (line) => {
+                  const frame = JSON.parse(line) as {
+                    readonly id?: number;
+                    readonly method: string;
+                  };
+                  const response = preamble.find(
+                    (entry) =>
+                      entry.type === "emit_inbound" &&
+                      entry.label === frame.method &&
+                      Predicate.isObject(entry.frame) &&
+                      "id" in entry.frame,
+                  );
+                  if (frame.id === undefined) return Effect.void;
+                  const reply =
+                    response === undefined ? undefined : withReplayRequestId(response, frame.id);
+                  return reply?.type === "emit_inbound"
+                    ? emit(reply.frame)
+                    : emit({ id: frame.id, error: { code: -32601, message: "unsupported" } });
+                },
+                { discard: true },
+              ),
             ).pipe(Sink.ensuring(Deferred.succeed(outputEnded, undefined))),
           stderr: () => Sink.drain,
         }),
