@@ -517,6 +517,24 @@ export const OrchestrationV2AppThread = Schema.Struct({
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
+/** A visit changes read state only, so its event leaves the rest of the thread out. */
+export const OrchestrationV2ThreadVisit = Schema.Struct({
+  lastVisitedAt: OrchestrationV2AppThread.fields.lastVisitedAt,
+  opens: OrchestrationV2AppThread.fields.opens,
+});
+export type OrchestrationV2ThreadVisit = typeof OrchestrationV2ThreadVisit.Type;
+
+export function applyOrchestrationV2ThreadVisit<Thread extends OrchestrationV2AppThread>(
+  thread: Thread,
+  visit: OrchestrationV2ThreadVisit,
+): Thread {
+  return {
+    ...thread,
+    lastVisitedAt: visit.lastVisitedAt,
+    ...(visit.opens === undefined ? {} : { opens: visit.opens }),
+  };
+}
+
 /** Provider-native children cannot receive messages; T3 delegate_task children can. */
 export function isProviderNativeSubagentThread(
   thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
@@ -1914,6 +1932,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.visit-recorded"),
+    payload: OrchestrationV2ThreadVisit,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run.created"),
     payload: OrchestrationV2Run,
   }),
@@ -2308,6 +2331,11 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.Type;
+
+export const OrchestrationV2ThreadVisitJson = Schema.Struct({
+  lastVisitedAt: OrchestrationV2AppThreadJson.fields.lastVisitedAt,
+  opens: OrchestrationV2AppThreadJson.fields.opens,
+});
 
 export const OrchestrationV2RunJson = OrchestrationV2Run.mapFields((fields) => ({
   ...fields,
@@ -2796,6 +2824,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.pull-request-link-updated"),
     payload: ThreadPullRequestLink,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.visit-recorded"),
+    payload: OrchestrationV2ThreadVisitJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
