@@ -392,7 +392,7 @@ export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListRe
 // Codex hides `minimum` and `maximum` from the model, so a value above the maximum clamps on
 // decode instead of failing the call; pagination returns the rest. Values below 1 still fail:
 // 0 asks for nothing, and answering it with one item would be a different request.
-const clampedPositiveInt = (maximum: number) =>
+export const clampedPositiveInt = (maximum: number) =>
   PositiveInt.pipe(
     Schema.decodeTo(
       PositiveInt.check(Schema.isLessThanOrEqualTo(maximum)),
