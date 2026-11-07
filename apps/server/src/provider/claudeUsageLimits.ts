@@ -192,6 +192,18 @@ export function claudeUsageResponseToLimits(input: {
     if (!window || typeof window.utilization !== "number") continue;
     windows.push(makeWindow(id, window.utilization, isoFromString(window.resets_at)));
   }
+  // An unstarted session has no clock; while the weekly limit is spent, it opens at the weekly reset.
+  const session = windows.find((window) => window.id === "five_hour");
+  const weekly = windows.find((window) => window.id === "seven_day");
+  if (
+    session &&
+    session.usedPercent === 0 &&
+    !session.resetsAt &&
+    weekly?.resetsAt &&
+    weekly.usedPercent >= 100
+  ) {
+    windows[windows.indexOf(session)] = { ...session, resetsAt: weekly.resetsAt };
+  }
   // The CLI's overage allowlist currently has one model; events refer to its first entry.
   let overageIncluded: string | undefined;
   for (const entry of readModelScoped(response.rate_limits)) {
