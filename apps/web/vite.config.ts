@@ -101,6 +101,7 @@ const browserTestProject = {
   extends: true,
   // Pre-bundle lazy browser and worker dependencies to avoid mid-run reloads.
   optimizeDeps: {
+    exclude: ["electron", "react-grab/primitives"],
     include: [
       "vite-plus/test/browser",
       "@base-ui/react/autocomplete",
@@ -125,7 +126,8 @@ const browserTestProject = {
   },
   test: {
     name: "browser",
-    include: ["src/**/*.browser.test.{ts,tsx}"],
+    // Guest preloads use this Chromium lane rather than adding browsers to desktop CI.
+    include: ["src/**/*.browser.test.{ts,tsx}", "../desktop/src/**/*.browser.test.ts"],
     hookTimeout: 15_000,
     testTimeout: 15_000,
     setupFiles: ["./test/browserSetup.ts"],

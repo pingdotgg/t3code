@@ -48,6 +48,16 @@ describe("check:changed", () => {
     assert.deepStrictEqual(decide(["docs/user/install.md"], packages, false).affected, []);
   });
 
+  it("runs guest preload browser tests for desktop preview changes", () => {
+    const packages = readWorkspace();
+    assert.isTrue(
+      decide(["apps/desktop/src/preview/PickPreload.ts"], packages, false).outputs.test_web,
+    );
+    assert.isFalse(
+      decide(["apps/desktop/src/updates/DesktopUpdates.ts"], packages, false).outputs.test_web,
+    );
+  });
+
   it.effect(
     "keeps weighted steps within the budget, in order, and serial steps one at a time",
     () =>
