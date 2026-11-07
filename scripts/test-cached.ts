@@ -5,7 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
-import { matchesTestPath } from "./lib/cached-tests.ts";
+import { matchesTestPath, readRunSummary } from "./lib/cached-tests.ts";
 import { shardedTestFiles } from "./lib/sharded-tests.ts";
 
 const root = NodePath.resolve(import.meta.dirname, "..");
@@ -67,9 +67,11 @@ if (files.length === 0) {
 console.log(
   `Cached tests: ${files.length} files, ${groupSize} per task, concurrency ${concurrency}`,
 );
+const run = NodeCrypto.randomBytes(16).toString("hex");
 const env = {
   ...process.env,
   T3_CACHED_TESTS: JSON.stringify({
+    run,
     files,
     groupSize,
     uncached: values.uncached.map((file) => NodePath.relative(root, NodePath.resolve(file))),
@@ -91,24 +93,18 @@ process.exitCode = result.status ?? 1;
 if (values.report || verifyHits > 0) {
   const cacheRoot =
     process.env.VITE_CACHE_PATH || NodePath.join(root, "node_modules/.vite/task-cache");
-  const summaryFiles = NodeFS.readdirSync(cacheRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => NodePath.join(cacheRoot, entry.name, "last-summary.json"))
-    .filter((file) => NodeFS.existsSync(file))
-    .sort((a, b) => NodeFS.statSync(b).mtimeMs - NodeFS.statSync(a).mtimeMs);
-  const summary: {
-    tasks: Array<{
-      task_name: string;
-      result: { CacheHit?: { source: string; saved_duration_ms: number } };
-    }>;
-  } = JSON.parse(NodeFS.readFileSync(summaryFiles[0]!, "utf8"));
+  const summary = readRunSummary(cacheRoot, run);
+  if (!summary) {
+    console.error(`No task summary from this run in ${cacheRoot}`);
+    process.exitCode ||= 1;
+  }
   const rank = (task: string) =>
     NodeCrypto.createHash("sha256")
       .update(
         `${process.env.GITHUB_RUN_ID || "local"}:${process.env.GITHUB_RUN_ATTEMPT || "1"}:${task}`,
       )
       .digest("hex");
-  const hits = summary.tasks.filter((task) => task.result.CacheHit);
+  const hits = (summary?.tasks ?? []).filter((task) => task.result.CacheHit);
   const verify = hits
     .toSorted((a, b) => rank(a.task_name).localeCompare(rank(b.task_name)))
     .slice(0, verifyHits);
@@ -136,7 +132,7 @@ if (values.report || verifyHits > 0) {
     files,
     cacheRunMs,
     exitCode: result.status,
-    summary,
+    summary: summary ?? null,
     verification,
   };
   if (values.report) {
