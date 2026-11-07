@@ -104,6 +104,7 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import { RightPanelContentBoundary } from "./RightPanelContentBoundary";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -1545,7 +1546,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />
         ) : (
-          props.children
+          <RightPanelContentBoundary surfaceId={props.activeSurfaceId}>
+            {props.children}
+          </RightPanelContentBoundary>
         )}
       </div>
     </PreviewPanelShell>
