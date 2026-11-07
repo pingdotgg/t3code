@@ -1292,6 +1292,7 @@ function listItemTypeAt($pos: ResolvedPos): "listItem" | "taskItem" | null {
  * without touching their indent or marker, so the composer turns it off.
  */
 function backspaceAcrossList(editor: Editor): boolean {
+  if (editor.commands.undoInputRule()) return true;
   const { state } = editor;
   const { $from, empty } = state.selection;
   if (!empty || $from.parentOffset !== 0) return false;
