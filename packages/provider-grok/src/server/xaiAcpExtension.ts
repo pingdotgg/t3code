@@ -33,6 +33,10 @@ const XAiSessionUpdateNotification = Schema.Struct({
     stopReason: Schema.optional(Schema.String),
     agent_result: Schema.optional(Schema.NullOr(Schema.Unknown)),
     child_session_id: Schema.optional(Schema.String),
+    parent_session_id: Schema.optional(Schema.String),
+    description: Schema.optional(Schema.NullOr(Schema.String)),
+    subagent_type: Schema.optional(Schema.NullOr(Schema.String)),
+    model: Schema.optional(Schema.NullOr(Schema.String)),
     status: Schema.optional(Schema.String),
     output: Schema.optional(Schema.NullOr(Schema.String)),
     error: Schema.optional(Schema.NullOr(Schema.String)),
@@ -505,16 +509,49 @@ export function xAiSubagentFinishedNotice(
   };
 }
 
-export const registerXAiSubagentFinished = (
+/** Host-started subagents, such as /goal's planner, arrive only as this notification. */
+export interface XAiSubagentSpawnedNotice {
+  readonly sessionId: string;
+  readonly childSessionId: string;
+  readonly title: string | null;
+  readonly model: string | null;
+}
+
+export function xAiSubagentSpawnedNotice(
+  notification: XAiSessionUpdateNotification,
+): XAiSubagentSpawnedNotice | null {
+  const update = notification.update;
+  const childSessionId = nonEmptyString(update.child_session_id);
+  if (update.sessionUpdate !== "subagent_spawned" || childSessionId === undefined) return null;
+  // Grandchildren keep their own lineage; only direct children of this session project here.
+  const parentSessionId = nonEmptyString(update.parent_session_id);
+  if (parentSessionId !== undefined && parentSessionId !== notification.sessionId) return null;
+  return {
+    sessionId: notification.sessionId,
+    childSessionId,
+    title:
+      nonEmptyString(update.description ?? undefined) ??
+      nonEmptyString(update.subagent_type ?? undefined) ??
+      null,
+    model: nonEmptyString(update.model ?? undefined) ?? null,
+  };
+}
+
+export const registerXAiSubagentLifecycle = (
   runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "handleExtNotification">,
-  finish: (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>,
+  handlers: {
+    readonly spawn: (notice: XAiSubagentSpawnedNotice) => Effect.Effect<void>;
+    readonly finish: (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>;
+  },
 ): Effect.Effect<void> =>
   Effect.forEach(
     xAiSessionNotificationMethods,
     (method) =>
       runtime.handleExtNotification(method, XAiSessionUpdateNotification, (notification) => {
-        const notice = xAiSubagentFinishedNotice(notification);
-        return notice === null ? Effect.void : finish(notice);
+        const spawned = xAiSubagentSpawnedNotice(notification);
+        if (spawned !== null) return handlers.spawn(spawned);
+        const finished = xAiSubagentFinishedNotice(notification);
+        return finished === null ? Effect.void : handlers.finish(finished);
       }),
     { discard: true },
   );

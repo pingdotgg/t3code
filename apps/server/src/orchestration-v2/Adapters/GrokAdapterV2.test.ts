@@ -50,7 +50,11 @@ import {
   GROK_ACP_INITIALIZE_META,
 } from "@t3tools/provider-grok/testing";
 
-import { makeAcpReplayRuntime, type AcpReplayTranscript } from "./AcpAdapterV2.testkit.ts";
+import {
+  makeAcpReplayRuntime,
+  makeTurnInput,
+  type AcpReplayTranscript,
+} from "./AcpAdapterV2.testkit.ts";
 
 const LAUNCH_TEST_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({
   binaryPath: "grok-launch-test",
@@ -366,18 +370,300 @@ describe("Grok launch permission mode", () => {
   );
 });
 
-describe("Grok native questions", () => {
-  const layerHost = TestProviderHost.layer().pipe(
+const layerReplay = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  IdAllocator.layer,
+  McpProviderSessions.layer,
+  TestProviderHost.layer().pipe(
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-  );
-  const layerTest = Layer.mergeAll(
-    NodeServices.layer,
-    NodeCrypto.layer,
-    IdAllocator.layer,
-    McpProviderSessions.layer,
-    layerHost,
-  );
+  ),
+);
 
+const replayHandshake = (sessionId: string): AcpReplayTranscript["entries"] => [
+  {
+    type: "expect_outbound",
+    label: "initialize",
+    frame: { kind: "request", method: "initialize", params: "<any>" },
+  },
+  {
+    type: "emit_inbound",
+    label: "initialized",
+    frame: {
+      kind: "response",
+      method: "initialize",
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: { loadSession: true, promptCapabilities: { image: false } },
+        authMethods: [{ id: "replay", name: "Replay" }],
+      },
+    },
+  },
+  {
+    type: "expect_outbound",
+    label: "session.new",
+    frame: { kind: "request", method: "session/new", params: "<any>" },
+  },
+  {
+    type: "emit_inbound",
+    label: "session.created",
+    frame: {
+      kind: "response",
+      method: "session/new",
+      result: {
+        sessionId,
+        models: {
+          currentModelId: "grok-build",
+          availableModels: [{ modelId: "grok-build", name: "Grok Build" }],
+        },
+      },
+    },
+  },
+  {
+    type: "expect_outbound",
+    label: "prompt",
+    frame: { kind: "request", method: "session/prompt", params: "<any>" },
+  },
+];
+
+describe("Grok native subagents", () => {
+  it.live("projects host-spawned subagents before the reply without duplicating Task tools", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "grok-native-subagent-" });
+      const sessionId = "01a1a0b6-4656-7792-aaab-32b1710dd755";
+      const plannerId = "01a1a0b6-47f5-7641-accd-8b3e6c053b2e";
+      const taskChildId = "01a1a0b6-5000-7641-accd-8b3e6c053b2e";
+      const docsChildId = "01a1a0b6-5100-7641-accd-8b3e6c053b2e";
+      const docsPrompt = "Read the user guides and report any inaccurate setup instructions.";
+      const webChildA = "01a1a0b6-5200-7641-accd-8b3e6c053b2e";
+      const webChildB = "01a1a0b6-5300-7641-accd-8b3e6c053b2e";
+      const xaiNotice = (label: string, update: Record<string, unknown>) => ({
+        type: "emit_inbound" as const,
+        label,
+        frame: {
+          kind: "notification" as const,
+          method: "_x.ai/session_notification",
+          params: { sessionId, update },
+        },
+      });
+      const toolUpdate = (label: string, update: Record<string, unknown>) => ({
+        type: "emit_inbound" as const,
+        label,
+        frame: {
+          kind: "notification" as const,
+          method: "session/update",
+          params: { sessionId, update },
+        },
+      });
+      const spawned = (childId: string, description: string) =>
+        xaiNotice(`spawned:${description}`, {
+          sessionUpdate: "subagent_spawned",
+          subagent_id: childId,
+          attempt_id: "at1.aa14c12b27224775a846fbcd2ee9747f",
+          parent_session_id: sessionId,
+          parent_prompt_id: "goal-probe-1",
+          child_session_id: childId,
+          subagent_type: "general-purpose",
+          description,
+          effective_context_source: "new",
+          model: "grok-4.7",
+        });
+      const finished = (childId: string, output: string) =>
+        xaiNotice(`finished:${output}`, {
+          sessionUpdate: "subagent_finished",
+          subagent_id: childId,
+          child_session_id: childId,
+          status: "completed",
+          output,
+          will_wake: false,
+        });
+      const taskStarted = (toolCallId: string, description: string, prompt = `${description}.`) =>
+        toolUpdate(`task started:${toolCallId}`, {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Task",
+          status: "in_progress",
+          rawInput: { description, prompt, subagent_type: "general-purpose" },
+        });
+      const taskResult = (toolCallId: string, text: string) =>
+        toolUpdate(`task result:${toolCallId}`, {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          content: [{ type: "content", content: { type: "text", text } }],
+        });
+      const backgroundAck = (childId: string) =>
+        `Subagent started in background.\nsubagent_id: ${childId}\ndescription: Audit web`;
+      const transcript: AcpReplayTranscript = {
+        provider: GROK_PROVIDER,
+        protocol: "acp.ndjson-jsonrpc",
+        version: "1",
+        scenario: "grok-native-subagent",
+        entries: [
+          ...replayHandshake(sessionId),
+          spawned(plannerId, "goal plan writer"),
+          { ...spawned(plannerId, "goal plan writer"), label: "spawned again" },
+          xaiNotice("planner progress", {
+            sessionUpdate: "subagent_progress",
+            subagent_id: plannerId,
+            child_session_id: plannerId,
+            parent_session_id: sessionId,
+            duration_ms: 2266,
+            turn_count: 1,
+          }),
+          // The child's spawn can precede the Task call that owns it.
+          spawned(docsChildId, "Review docs"),
+          taskStarted("docs-call", "Review docs", docsPrompt),
+          taskResult("docs-call", `Agent ID: ${docsChildId}\ndocs ok`),
+          taskStarted("task-call", "Audit server"),
+          spawned(taskChildId, "Audit server"),
+          taskResult("task-call", `Agent ID: ${taskChildId}\nserver ok`),
+          toolUpdate("reply", {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Done." },
+          }),
+          finished(plannerId, "Plan written"),
+          // Same-titled Tasks spawn out of order; only their results name each child.
+          taskStarted("web-a-call", "Audit web"),
+          taskStarted("web-b-call", "Audit web"),
+          spawned(webChildB, "Audit web"),
+          spawned(webChildA, "Audit web"),
+          taskResult("web-a-call", backgroundAck(webChildA)),
+          taskResult("web-b-call", backgroundAck(webChildB)),
+          finished(webChildB, "web b"),
+          finished(webChildA, "web a"),
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+        ],
+      };
+      const instanceId = ProviderInstanceId.make("grok-native-subagent");
+      const threadId = ThreadId.make("grok-native-subagent-thread");
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: LAUNCH_TEST_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: "darwin",
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: makeAcpReplayRuntime({
+          transcript,
+          statusPath: path.join(workspace, "status.json"),
+          scriptPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+          ),
+          childProcessSpawner,
+          fileSystem: fs,
+          initializeMeta: GROK_ACP_INITIALIZE_META,
+        }),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const modelSelection = { instanceId, model: "grok-build" };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("grok-native-subagent-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const terminal = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => {
+          events.push(event);
+          return event.type === "turn.terminal"
+            ? Deferred.succeed(terminal, undefined)
+            : Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection,
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* Deferred.await(terminal);
+
+      const subagentItems = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+          ? [event.turnItem]
+          : [],
+      );
+      const firstReply = events.findIndex(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
+      );
+      const plannerRunning = events.findIndex(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "subagent" &&
+          event.turnItem.title === "goal plan writer" &&
+          event.turnItem.status === "running",
+      );
+      assert.isAtLeast(plannerRunning, 0, "the host-spawned planner must be projected");
+      assert.isAbove(firstReply, plannerRunning, "the planner shows before the first reply");
+      assert.deepEqual(
+        [...new Map(subagentItems.map((item) => [item.id, item])).values()].map((item) => [
+          item.title,
+          item.status,
+          item.result,
+        ]),
+        [
+          ["goal plan writer", "completed", "Plan written"],
+          ["Review docs", "completed", "docs ok"],
+          ["Audit server", "completed", "server ok"],
+          ["Audit web", "completed", "web a"],
+          ["Audit web", "completed", "web b"],
+        ],
+      );
+      assert.equal(
+        events.filter((event) => event.type === "app_thread.created").length,
+        5,
+        "native spawn notifications must not duplicate subagent threads",
+      );
+      const docsTask = [...new Map(subagentItems.map((item) => [item.id, item])).values()].find(
+        (item) => item.title === "Review docs",
+      );
+      assert.equal(docsTask?.prompt, docsPrompt);
+      const docsMessages = events.flatMap((event) =>
+        event.type === "message.updated" &&
+        event.message.threadId === docsTask?.childThreadId &&
+        event.message.role === "user"
+          ? [event.message]
+          : [],
+      );
+      assert.deepEqual(
+        [...new Map(docsMessages.map((message) => [message.id, message])).values()].map(
+          (message) => message.text,
+        ),
+        [docsPrompt],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerReplay)),
+  );
+});
+
+describe("Grok native questions", () => {
   it.live("keeps x.ai multi-select questions live and returns all selected answers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -391,49 +677,7 @@ describe("Grok native questions", () => {
         version: "1",
         scenario: "grok-multi-select",
         entries: [
-          {
-            type: "expect_outbound",
-            label: "initialize",
-            frame: { kind: "request", method: "initialize", params: "<any>" },
-          },
-          {
-            type: "emit_inbound",
-            label: "initialized",
-            frame: {
-              kind: "response",
-              method: "initialize",
-              result: {
-                protocolVersion: 1,
-                agentCapabilities: { loadSession: true, promptCapabilities: { image: false } },
-                authMethods: [{ id: "replay", name: "Replay" }],
-              },
-            },
-          },
-          {
-            type: "expect_outbound",
-            label: "session.new",
-            frame: { kind: "request", method: "session/new", params: "<any>" },
-          },
-          {
-            type: "emit_inbound",
-            label: "session.created",
-            frame: {
-              kind: "response",
-              method: "session/new",
-              result: {
-                sessionId: "grok-multi-select-session",
-                models: {
-                  currentModelId: "grok-build",
-                  availableModels: [{ modelId: "grok-build", name: "Grok Build" }],
-                },
-              },
-            },
-          },
-          {
-            type: "expect_outbound",
-            label: "prompt",
-            frame: { kind: "request", method: "session/prompt", params: "<any>" },
-          },
+          ...replayHandshake("grok-multi-select-session"),
           {
             type: "emit_inbound",
             label: "question",
@@ -597,6 +841,6 @@ describe("Grok native questions", () => {
         answers: { changes: ["Tests", "Docs"] },
       });
       yield* Deferred.await(terminal);
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+    }).pipe(Effect.scoped, Effect.provide(layerReplay)),
   );
 });
