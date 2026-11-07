@@ -1457,6 +1457,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : projection.messages.find((candidate) => candidate.id === delivery.messageId);
 
   /** Parent run and wake message events that commit a planDelegatedCompletionDelivery result. */
+  const isUnobservedAcknowledgement = (
+    command: OrchestrationV2Command,
+  ): command is Extract<
+    OrchestrationV2Command,
+    { readonly type: "delegated_task.completion-delivery.acknowledge" }
+  > & { readonly observedByRunId: null } =>
+    command.type === "delegated_task.completion-delivery.acknowledge" &&
+    command.observedByRunId === null;
+
   const delegatedCompletionPlanEvents = (
     threadId: ThreadId,
     plan: {
@@ -2685,10 +2694,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     // A late wait can arrive after finalization held the result for its still-live spawning run.
-    if (
-      command.type === "delegated_task.completion-delivery.acknowledge" &&
-      command.observedByRunId === null
-    ) {
+    if (isUnobservedAcknowledgement(command)) {
       if (
         !isTerminalDelegatedTaskStatus(task.status) ||
         task.completionDelivery?.state !== "pending"
@@ -13902,8 +13908,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.filterOrFail(
         (planned) =>
           planned.events.length > 0 ||
-          (command.type === "delegated_task.completion-delivery.acknowledge" &&
-            command.observedByRunId === null) ||
+          isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
@@ -14080,8 +14085,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "delegated_task.wake-policy" ||
       command.type === "delegated_task.remote.complete" ||
-      (command.type === "delegated_task.completion-delivery.acknowledge" &&
-        command.observedByRunId === null)
+      isUnobservedAcknowledgement(command)
     ) {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.parentThreadId));
     }
