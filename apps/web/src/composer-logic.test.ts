@@ -278,18 +278,25 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger(text, text.length)).toBeNull();
   });
 
-  it("detects a pull request number at a token boundary", () => {
+  it("detects a # number at a token boundary for PRs (and issues when mention index is on)", () => {
     const text = "Compare this with #8737";
-
-    expect(detectComposerTrigger(text, text.length)).toEqual({
-      kind: "pull-request",
+    const range = {
       query: "8737",
       rangeStart: "Compare this with ".length,
       rangeEnd: text.length,
+    };
+
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "pull-request",
+      ...range,
+    });
+    expect(detectComposerTrigger(text, text.length, { mentionIndexEnabled: true })).toEqual({
+      kind: "hash",
+      ...range,
     });
   });
 
-  it("does not keep pull request completion active for headings or embedded hashes", () => {
+  it("does not keep # completion active for headings or embedded hashes", () => {
     expect(detectComposerTrigger("# Heading", "# Heading".length)).toBeNull();
     expect(detectComposerTrigger("issue#123", "issue#123".length)).toBeNull();
   });
@@ -305,6 +312,57 @@ describe("detectComposerTrigger", () => {
       query: "",
       rangeStart: "Please inspect ".length,
       rangeEnd: cursorAfterAt,
+    });
+  });
+
+  it("keeps classic bare @ and # when mention index is off", () => {
+    expect(detectComposerTrigger("@jira:", "@jira:".length)).toMatchObject({
+      kind: "path",
+      query: "jira:",
+    });
+    expect(detectComposerTrigger("#42", "#42".length)).toMatchObject({
+      kind: "pull-request",
+      query: "42",
+    });
+  });
+
+  it("treats @kind: as type filters and # as PRs+issues when mention index is on", () => {
+    const on = { mentionIndexEnabled: true } as const;
+    expect(detectComposerTrigger("@jira:", "@jira:".length, on)).toEqual({
+      kind: "jira",
+      query: "",
+      rangeStart: 0,
+      rangeEnd: "@jira:".length,
+    });
+    expect(detectComposerTrigger("See @jira:ABC-12", "See @jira:ABC-12".length, on)).toEqual({
+      kind: "jira",
+      query: "ABC-12",
+      rangeStart: "See ".length,
+      rangeEnd: "See @jira:ABC-12".length,
+    });
+    expect(detectComposerTrigger("@file:app.ts", "@file:app.ts".length, on)).toMatchObject({
+      kind: "file",
+      query: "app.ts",
+    });
+    expect(detectComposerTrigger("@thread:review", "@thread:review".length, on)).toMatchObject({
+      kind: "thread",
+      query: "review",
+    });
+    expect(detectComposerTrigger("@pr:42", "@pr:42".length, on)).toMatchObject({
+      kind: "pull-request",
+      query: "42",
+    });
+    expect(detectComposerTrigger("@issue:7", "@issue:7".length, on)).toMatchObject({
+      kind: "issue",
+      query: "7",
+    });
+    expect(detectComposerTrigger("@app.ts", "@app.ts".length, on)).toMatchObject({
+      kind: "path",
+      query: "app.ts",
+    });
+    expect(detectComposerTrigger("#42", "#42".length, on)).toMatchObject({
+      kind: "hash",
+      query: "42",
     });
   });
 });

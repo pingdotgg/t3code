@@ -161,6 +161,21 @@ export interface ProviderChangeRequestPage {
   readonly continues: boolean;
 }
 
+export interface ProviderIssue {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly state: "open" | "closed";
+  readonly updatedAt: string;
+}
+
+export interface ProviderIssuePage {
+  readonly items: ReadonlyArray<ProviderIssue>;
+  readonly truncated: boolean;
+  readonly continues: boolean;
+  readonly resumeAfter?: string;
+}
+
 export interface ProviderListCursor {
   /** Inclusive boundary: equal-time rows can span pages and must not be skipped. */
   readonly updatedBefore: string;
@@ -552,6 +567,19 @@ export interface PullRequestProviderApi {
   readonly listRepositoryLabels?: (
     input: ProviderRepositoryRef & { readonly query?: string | undefined },
   ) => Effect.Effect<ProviderFilterOptionPage<PullRequestLabel>, PullRequestProviderError>;
+
+  /**
+   * Issues in the repository (not change requests). Absent on hosts that only expose PRs here.
+   * `state` mirrors the host's open/closed/all filter; pagination uses the same cursor shape as
+   * change-request listing when the host pages that way.
+   */
+  readonly listRepositoryIssues?: (
+    input: ProviderRepositoryRef & {
+      readonly state: "open" | "closed" | "all";
+      readonly limit: number;
+      readonly cursor?: ProviderListCursor | undefined;
+    },
+  ) => Effect.Effect<ProviderIssuePage, PullRequestProviderError>;
 
   /**
    * People who could have opened a change request in the repository, for narrowing a listing by

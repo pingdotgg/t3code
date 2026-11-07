@@ -1,7 +1,10 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { serializeAssistantCitation } from "./assistantCitations.ts";
-import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./composerContextReferences.ts";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  parseExternalComposerContextHref,
+} from "./composerContextReferences.ts";
 import { searchableMessageSegments } from "./threadFindText.ts";
 
 it("excludes review attachments rendered as context chips", () => {
@@ -27,9 +30,29 @@ it("excludes structured context chips without joining text across them", () => {
       role: "user",
       streaming: false,
       text: "before[hidden label](t3-context://v1/terminal/terminal_1)after",
-      context: { version: 1, records: [] },
+      context: { records: [] },
     }),
   ).toEqual(["before", "after"]);
+  const link = "see [the issue](https://github.com/acme/app/issues/7) now";
+  expect(
+    searchableMessageSegments({
+      role: "user",
+      streaming: false,
+      text: link,
+      context: { records: [] },
+    }),
+  ).toEqual(["see the issue now"]);
+  const contextId = parseExternalComposerContextHref(
+    "https://github.com/acme/app/issues/7",
+  )!.contextId;
+  expect(
+    searchableMessageSegments({
+      role: "user",
+      streaming: false,
+      text: link,
+      context: { records: [{ contextId }] },
+    }),
+  ).toEqual(["see ", " now"]);
 });
 
 it("excludes the hidden prompt of an attachment-only message", () => {
@@ -50,7 +73,7 @@ it("does not upgrade literal legacy tags in messages with structured context", (
       role: "user",
       streaming: false,
       text,
-      context: { version: 1, records: [] },
+      context: { records: [] },
     })?.join("\n"),
   ).toContain("visible output");
   expect(searchableMessageSegments({ role: "user", streaming: false, text })).toEqual([]);

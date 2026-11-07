@@ -132,13 +132,20 @@ export function usePullRequestThreads(
         filePath,
       );
       const draft = getComposerDraftSnapshot(draftKey);
-      const attached = draft.context?.records.some(
-        (record) =>
-          record.kind === "review-comment" &&
-          "pullRequest" in record &&
-          record.pullRequest?.url === pr.url &&
-          record.filePath === context.filePath,
-      );
+      const attached = draft.context?.records.some((record) => {
+        if (context.kind === "pull-request" && record.kind === "pull-request") {
+          return "url" in record && record.url === pr.url;
+        }
+        if (context.kind === "review-comment" && record.kind === "review-comment") {
+          return (
+            "pullRequest" in record &&
+            "filePath" in record &&
+            record.pullRequest?.url === pr.url &&
+            record.filePath === context.filePath
+          );
+        }
+        return false;
+      });
       if (
         !attached &&
         !insertComposerDraftContext(

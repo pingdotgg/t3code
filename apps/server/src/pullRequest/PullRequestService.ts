@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -183,6 +184,28 @@ export class PullRequestService extends Context.Service<
     readonly listStats: (
       input: PullRequestListStatsInput,
     ) => Effect.Effect<PullRequestListStatsResult, PullRequestError>;
+    /**
+     * Issues (not change requests) for a project's repositories. Hosts without
+     * `listRepositoryIssues` are skipped; empty when none support it.
+     */
+    readonly listIssues: (input: {
+      readonly projectId: ProjectId;
+      readonly limit?: number;
+    }) => Effect.Effect<
+      {
+        readonly entries: ReadonlyArray<{
+          readonly projectId: ProjectId;
+          readonly repository: string;
+          readonly number: number;
+          readonly title: string;
+          readonly url: string;
+          readonly state: "open" | "closed";
+          readonly updatedAt: string;
+        }>;
+        readonly errors: ReadonlyArray<{ readonly message: string }>;
+      },
+      PullRequestError
+    >;
     readonly filterOptions: (
       input: PullRequestFilterOptionsInput,
     ) => Effect.Effect<PullRequestFilterOptions, PullRequestError>;
@@ -616,6 +639,9 @@ function withRateLimitBackoff(
     ...(api.listRepositoryLabels === undefined
       ? {}
       : { listRepositoryLabels: interactive("listRepositoryLabels", api.listRepositoryLabels) }),
+    ...(api.listRepositoryIssues === undefined
+      ? {}
+      : { listRepositoryIssues: interactive("listRepositoryIssues", api.listRepositoryIssues) }),
     ...(api.searchRepositoryAuthors === undefined
       ? {}
       : {
@@ -2551,6 +2577,75 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const listIssues: PullRequestService["Service"]["listIssues"] = Effect.fn(
+    "PullRequestService.listIssues",
+  )(function* (input) {
+    const limit = Math.max(1, Math.min(input.limit ?? 200, 500));
+    const { supported } = yield* listWorkspaceProjects({
+      projectId: input.projectId,
+    });
+    const errors: Array<{ readonly message: string }> = [];
+    const repositories = [
+      ...new Map(supported.map((project) => [project.cursorKey, project])).values(),
+    ];
+    const entries: Array<{
+      readonly projectId: ProjectId;
+      readonly repository: string;
+      readonly number: number;
+      readonly title: string;
+      readonly url: string;
+      readonly state: "open" | "closed";
+      readonly updatedAt: string;
+    }> = [];
+
+    yield* Effect.forEach(
+      repositories,
+      (project) => {
+        const list = project.api.listRepositoryIssues;
+        if (list === undefined) return Effect.void;
+        return Effect.gen(function* () {
+          let resumeAfter: string | undefined;
+          for (let page = 0; page < 5 && entries.length < limit; page += 1) {
+            const remaining = limit - entries.length;
+            const listed = yield* Effect.result(
+              list({
+                cwd: project.project.workspaceRoot,
+                repository: project.repository,
+                host: project.host,
+                state: "all",
+                limit: remaining,
+                ...(resumeAfter !== undefined
+                  ? { cursor: { updatedBefore: "", delivered: 0, resumeAfter } }
+                  : {}),
+              }),
+            );
+            if (Result.isFailure(listed)) {
+              errors.push({ message: listed.failure.message });
+              return;
+            }
+            for (const item of listed.success.items) {
+              entries.push({
+                projectId: project.project.id,
+                repository: project.repository,
+                number: item.number,
+                title: item.title,
+                url: item.url,
+                state: item.state,
+                updatedAt: item.updatedAt,
+              });
+              if (entries.length >= limit) break;
+            }
+            if (!listed.success.continues || listed.success.resumeAfter === undefined) break;
+            resumeAfter = listed.success.resumeAfter;
+          }
+        });
+      },
+      { concurrency: REPOSITORY_CONCURRENCY, discard: true },
+    );
+
+    return { entries, errors };
+  });
+
   const filterOptions: PullRequestService["Service"]["filterOptions"] = Effect.fn(
     "PullRequestService.filterOptions",
   )(function* (input) {
@@ -3788,6 +3883,7 @@ export const make = Effect.gen(function* () {
     routingIdentity,
     withRoutingCredential,
     list,
+    listIssues,
     filterOptions,
     // The local operation owns the span; this wrapper only canonicalizes refs.
     listStats: Effect.fnUntraced(function* (input) {

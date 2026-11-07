@@ -3,6 +3,7 @@ import {
   createPullRequestStackAtomFamily,
   patchPullRequestListEntries,
 } from "@t3tools/client-runtime/state/pull-requests";
+import { createMentionIndexAtoms } from "@t3tools/client-runtime/state/mentions";
 import type { EnvironmentId, PullRequestListInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -94,3 +95,5 @@ export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,
   composerPullRequests.refreshes,
 );
+
+export const mentionIndexEnvironment = createMentionIndexAtoms(connectionAtomRuntime);

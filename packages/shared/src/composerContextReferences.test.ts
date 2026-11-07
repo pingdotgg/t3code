@@ -10,8 +10,10 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
   formatComposerContextHref,
+  formatComposerContextReference,
   isImageReferencesOnly,
   parseComposerContextHref,
+  parseExternalComposerContextHref,
   projectComposerContextForProvider,
   restoreAttachmentOnlyBootstrapPrompt,
   stripAttachmentOnlyBootstrapPrompt,
@@ -21,6 +23,11 @@ import {
   toComposerContextId,
   toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
+import {
+  figmaContextRecord,
+  issueContextRecord,
+  jiraContextRecord,
+} from "./composerContextExternalLinks.ts";
 
 const ctx = (value: string) => value as ComposerContextId;
 
@@ -348,6 +355,139 @@ describe("provider projection", () => {
     expect(projected).toContain("environmentId: environment-vps");
     expect(projected).toContain("t3_environment_link with this environmentId");
     expect(projected).not.toMatch(/https?:/);
+  });
+
+  it("puts real URLs back inline for jira, figma, issue, and pull-request chips", () => {
+    const records = [
+      {
+        version: 1 as const,
+        kind: "jira" as const,
+        contextId: ctx("jira_1"),
+        label: "APP-1",
+        key: "APP-1",
+        summary: "Fix login",
+        url: "https://acme.atlassian.net/browse/APP-1",
+      },
+      {
+        version: 1 as const,
+        kind: "figma" as const,
+        contextId: ctx("figma_1"),
+        label: "Checkout",
+        fileKey: "abc",
+        name: "Checkout",
+        url: "https://www.figma.com/design/abc/Checkout",
+      },
+      {
+        version: 1 as const,
+        kind: "issue" as const,
+        contextId: ctx("issue_1"),
+        label: "#9 title",
+        number: 9,
+        title: "title",
+        url: "https://github.com/acme/app/issues/9",
+        repository: "acme/app",
+        state: "open" as const,
+      },
+      {
+        version: 1 as const,
+        kind: "pull-request" as const,
+        contextId: ctx("pr_1"),
+        label: "PR #42",
+        number: 42,
+        title: "Fix checkout",
+        url: "https://github.com/acme/app/pull/42",
+        headBranch: "fix",
+        baseBranch: "main",
+        state: "open" as const,
+        isDraft: false,
+      },
+    ];
+    const expectedBody = [
+      "See [APP-1](https://acme.atlassian.net/browse/APP-1),",
+      "[Checkout](https://www.figma.com/design/abc/Checkout),",
+      "[#9 title](https://github.com/acme/app/issues/9),",
+      "and [PR #42](https://github.com/acme/app/pull/42).",
+    ].join(" ");
+
+    const fromOpaque = projectComposerContextForProvider({
+      text: [
+        "See [APP-1](t3-context://v1/jira/jira_1),",
+        "[Checkout](t3-context://v1/figma/figma_1),",
+        "[#9 title](t3-context://v1/issue/issue_1),",
+        "and [PR #42](t3-context://v1/pull-request/pr_1).",
+      ].join(" "),
+      records,
+    });
+    const [opaqueBody, opaqueEnvelope] = fromOpaque.split('\n\n<t3_context version="1">\n');
+    expect(opaqueBody).toBe(expectedBody);
+    expect(opaqueEnvelope).toContain("url: https://acme.atlassian.net/browse/APP-1");
+    expect(opaqueEnvelope).toContain("url: https://www.figma.com/design/abc/Checkout");
+    expect(opaqueEnvelope).toContain("url: https://github.com/acme/app/issues/9");
+    expect(opaqueEnvelope).toContain("url: https://github.com/acme/app/pull/42");
+    expect(opaqueBody).not.toContain("t3-context://");
+    expect(opaqueBody).not.toContain("; ref=");
+
+    const fromRealUrls = projectComposerContextForProvider({
+      text: expectedBody,
+      records,
+    });
+    const [realBody, realEnvelope] = fromRealUrls.split('\n\n<t3_context version="1">\n');
+    expect(realBody).toBe(expectedBody);
+    expect(realEnvelope).toContain("url: https://acme.atlassian.net/browse/APP-1");
+    expect(realEnvelope).toContain("url: https://github.com/acme/app/pull/42");
+    expect(realBody).not.toContain("t3-context://");
+  });
+
+  it("round-trips format/collect for real URL drafts", () => {
+    const jira = jiraContextRecord({
+      key: "APP-1",
+      url: "https://acme.atlassian.net/browse/APP-1",
+    });
+    const figma = figmaContextRecord({
+      fileKey: "abc",
+      url: "https://www.figma.com/design/abc",
+      name: "Checkout",
+    });
+    const issue = issueContextRecord({
+      number: 9,
+      title: "#9",
+      url: "https://github.com/acme/app/issues/9",
+      repository: "acme/app",
+      state: "open",
+    });
+    const prUrl = "https://github.com/acme/app/pull/42";
+    const pr = {
+      version: 1 as const,
+      kind: "pull-request" as const,
+      contextId: toKindScopedComposerContextId("pull-request", `pr-reference:${prUrl}`),
+      label: "#42",
+      number: 42,
+      title: "Fix",
+      url: prUrl,
+      headBranch: "fix",
+      baseBranch: "main",
+      state: "open" as const,
+      isDraft: false,
+    };
+    const text = [jira, figma, issue, pr]
+      .map((record) => formatComposerContextReference(record))
+      .join(" ");
+    expect(text).not.toContain("t3-context://");
+    const occurrences = collectComposerContextReferences(text);
+    expect(occurrences.map((o) => [o.kind, o.contextId, o.url])).toEqual([
+      [jira.kind, jira.contextId, jira.url],
+      [figma.kind, figma.contextId, figma.url],
+      [issue.kind, issue.contextId, issue.url],
+      [pr.kind, pr.contextId, pr.url],
+    ]);
+    expect(parseExternalComposerContextHref(jira.url)).toEqual({
+      kind: "jira",
+      contextId: jira.contextId,
+    });
+    expect(parseExternalComposerContextHref(prUrl)).toEqual({
+      kind: "pull-request",
+      contextId: pr.contextId,
+    });
   });
 
   it("marks duplicate identities unavailable instead of choosing one payload", () => {

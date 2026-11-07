@@ -15,15 +15,30 @@ import {
   replaceComposerContextReferences,
   threadLinkContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import { externalLinkContextReferences } from "@t3tools/shared/composerContextExternalLinks";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { readThreadShell } from "~/state/entities";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
+
+function localEnvironmentId(): EnvironmentId | null {
+  return appAtomRegistry.get(primaryEnvironmentIdAtom);
+}
+
+export type PastedComposerContextOptions = {
+  /** Labs mention index: rewrite pasted Jira/Figma/GitHub issue URLs into chips. */
+  readonly rewriteExternalLinks?: boolean;
+};
 
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
+  options?: PastedComposerContextOptions,
 ): ComposerContextClipboardFragment | null {
+  const rewriteExternalLinks = options?.rewriteExternalLinks === true;
   const pastedText = clipboardData.getData("text/plain");
   const decodedFragment =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
@@ -33,15 +48,27 @@ export function readPastedComposerContext(
     decodedFragment?.records ?? [],
     threadTitle,
   );
+  const external = rewriteExternalLinks
+    ? externalLinkContextReferences(threads.text)
+    : { text: threads.text, records: [] as ComposerContextRecord[] };
+  const localId = localEnvironmentId();
   const source =
     decodedFragment?.source ??
-    (threads.records[0] ? { environmentId: threads.records[0].environmentId } : null);
-  if (source === null) return null;
+    (threads.records[0]
+      ? { environmentId: threads.records[0].environmentId }
+      : external.records[0] && localId !== null
+        ? { environmentId: localId }
+        : null);
+  if (source === null || source.environmentId == null) return null;
   const pastedIds = new Set<string>(
-    collectComposerContextReferences(threads.text).map((occurrence) => occurrence.contextId),
+    collectComposerContextReferences(external.text).map((occurrence) => occurrence.contextId),
   );
   const records = new Map<string, ComposerContextRecord>();
-  for (const record of [...(decodedFragment?.records ?? []), ...threads.records]) {
+  for (const record of [
+    ...(decodedFragment?.records ?? []),
+    ...threads.records,
+    ...external.records,
+  ]) {
     if (
       record.kind === "preview-annotation" &&
       !("payload" in record) &&
@@ -64,9 +91,11 @@ export function importPastedComposerText(
   importContextFragment?: (
     fragment: ComposerContextClipboardFragment,
   ) => ReadonlyMap<string, string>,
+  options?: PastedComposerContextOptions,
 ): string {
+  const rewriteExternalLinks = options?.rewriteExternalLinks === true;
   const pastedText = clipboardData.getData("text/plain");
-  const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
+  const fragment = importContextFragment ? readPastedComposerContext(clipboardData, options) : null;
   const rewrittenIds =
     fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
   if (!rewrittenIds || rewrittenIds.size === 0) return pastedText;
@@ -85,7 +114,13 @@ export function importPastedComposerText(
       : occurrence.source;
   });
   // A thread the import refused, on a machine this agent cannot read, stays the link it was.
-  return threadLinkContextReferences(text, fragment?.records ?? [], threadTitle, (record) =>
-    nextId(record.contextId),
+  const withThreads = threadLinkContextReferences(
+    text,
+    fragment?.records ?? [],
+    threadTitle,
+    (record) => nextId(record.contextId),
   ).text;
+  return rewriteExternalLinks
+    ? externalLinkContextReferences(withThreads, (record) => nextId(record.contextId)).text
+    : withThreads;
 }

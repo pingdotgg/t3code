@@ -100,6 +100,7 @@ import {
   toViewerPermissions,
   decodePullRequestFilesJson,
   decodePullRequestStacksJson,
+  decodeUnknownList,
   buildLabelRequest,
   PULL_REQUEST_SEARCH_MAX_ROWS,
   gitHubReactionContent,
@@ -634,6 +635,29 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly query?: string | undefined;
     }) => Effect.Effect<
       { readonly items: ReadonlyArray<PullRequestLabel>; readonly truncated: boolean },
+      GitHubPullRequestApiError
+    >;
+
+    readonly listRepositoryIssues: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly state: "open" | "closed" | "all";
+      readonly limit: number;
+      readonly cursor?: ProviderListCursor | undefined;
+    }) => Effect.Effect<
+      {
+        readonly items: ReadonlyArray<{
+          readonly number: number;
+          readonly title: string;
+          readonly url: string;
+          readonly state: "open" | "closed";
+          readonly updatedAt: string;
+        }>;
+        readonly truncated: boolean;
+        readonly continues: boolean;
+        readonly resumeAfter?: string;
+      },
       GitHubPullRequestApiError
     >;
 
@@ -2364,6 +2388,59 @@ export const make = Effect.gen(function* () {
           Effect.map(toRepositoryLabels),
           Effect.flatMap(found({ ...input, operation })),
         );
+    }),
+
+    listRepositoryIssues: Effect.fn("GitHubPullRequestApi.listRepositoryIssues")(function* (input) {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const operation = "listRepositoryIssues";
+      const pageSize = 100;
+      const startPage = Math.max(1, Number(input.cursor?.resumeAfter ?? "1") || 1);
+      const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues?state=${input.state}&per_page=${pageSize}&page=${startPage}`;
+      const raw = yield* restRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation,
+        path,
+        decode: decodeUnknownList,
+      });
+      const items: Array<{
+        readonly number: number;
+        readonly title: string;
+        readonly url: string;
+        readonly state: "open" | "closed";
+        readonly updatedAt: string;
+      }> = [];
+      for (const entry of raw) {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
+        const record = entry as Record<string, unknown>;
+        // GitHub's issues list includes pull requests; skip those.
+        if (record.pull_request !== undefined) continue;
+        const number = typeof record.number === "number" ? record.number : Number(record.number);
+        const title = typeof record.title === "string" ? record.title.trim() : "";
+        const url = typeof record.html_url === "string" ? record.html_url.trim() : "";
+        const state =
+          record.state === "closed" ? "closed" : record.state === "open" ? "open" : null;
+        const updatedAt = typeof record.updated_at === "string" ? record.updated_at.trim() : "";
+        if (
+          !Number.isInteger(number) ||
+          number < 1 ||
+          title.length === 0 ||
+          url.length === 0 ||
+          state === null ||
+          updatedAt.length === 0
+        ) {
+          continue;
+        }
+        items.push({ number, title, url, state, updatedAt });
+        if (items.length >= input.limit) break;
+      }
+      const continues = raw.length >= pageSize;
+      return {
+        items: items.slice(0, input.limit),
+        truncated: continues && items.length >= input.limit,
+        continues,
+        ...(continues ? { resumeAfter: String(startPage + 1) } : {}),
+      };
     }),
 
     searchRepositoryAuthors: Effect.fn("GitHubPullRequestApi.searchRepositoryAuthors")(

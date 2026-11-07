@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { type ComposerContextRecord, ComposerContextId, EnvironmentId } from "@t3tools/contracts";
+import { jiraContextRecord } from "@t3tools/shared/composerContextExternalLinks";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
@@ -185,4 +186,106 @@ it.each([
       ? ["notes.txt"]
       : [],
   );
+});
+
+it("remints a conflicting Jira import under a new contextId", async () => {
+  const target = DraftId.make("clipboard-jira-conflict");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  const existing = jiraContextRecord({
+    key: "T3-1",
+    url: "https://acme.atlassian.net/browse/T3-1",
+    summary: "Old summary",
+  });
+  store.addJiraContexts(target, [existing], { appendReference: false });
+  const incoming = jiraContextRecord({
+    key: "T3-1",
+    url: "https://acme.atlassian.net/browse/T3-1",
+    summary: "New summary",
+  });
+  let importer!: Importer;
+  await using _screen = await render(
+    <Harness
+      input={{
+        environmentId: EnvironmentId.make("clipboard-target"),
+        linkedEnvironments: new Map(),
+        activeThread: undefined,
+        activeThreadId: null,
+        composerDraftTarget: target,
+        attachmentDraftTarget: target,
+        attachmentTargetKey: target,
+        attachmentTargetKeyRef: { current: target },
+        questionAttachmentTarget: null,
+        pendingUserInputs: [],
+        composerContextRecords: new Map([
+          [existing.contextId, { kind: "jira" as const, record: existing }],
+        ]),
+        composerImages: [],
+        composerFilesRef: { current: [] },
+        pendingThreadImportsRef: { current: new Map() },
+        promptRef: { current: "" },
+        addComposerFilesToDraft: () => [],
+      }}
+      ready={(value) => {
+        importer = value;
+      }}
+    />,
+  );
+  let remapped!: ReadonlyMap<string, string>;
+  await act(() => {
+    remapped = importer.importContextRecords([incoming], EnvironmentId.make("clipboard-source"));
+  });
+  const remintedId = remapped.get(incoming.contextId)!;
+  expect(remintedId).not.toBe(incoming.contextId);
+  expect(store.getComposerDraft(target)?.jiraContexts.map((record) => record.summary)).toEqual([
+    "Old summary",
+    "New summary",
+  ]);
+  expect(store.getComposerDraft(target)?.jiraContexts.map((record) => record.contextId)).toEqual([
+    existing.contextId,
+    remintedId,
+  ]);
+});
+
+it("does not attach Jira context to the main draft while answering a question", async () => {
+  const target = DraftId.make("clipboard-jira-question");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  const incoming = jiraContextRecord({
+    key: "T3-2",
+    url: "https://acme.atlassian.net/browse/T3-2",
+    summary: "Question answer",
+  });
+  let importer!: Importer;
+  await using _screen = await render(
+    <Harness
+      input={{
+        environmentId: EnvironmentId.make("clipboard-target"),
+        linkedEnvironments: new Map(),
+        activeThread: undefined,
+        activeThreadId: null,
+        composerDraftTarget: target,
+        attachmentDraftTarget: target,
+        attachmentTargetKey: target,
+        attachmentTargetKeyRef: { current: target },
+        questionAttachmentTarget: target,
+        pendingUserInputs: [],
+        composerContextRecords: new Map(),
+        composerImages: [],
+        composerFilesRef: { current: [] },
+        pendingThreadImportsRef: { current: new Map() },
+        promptRef: { current: "" },
+        addComposerFilesToDraft: () => [],
+      }}
+      ready={(value) => {
+        importer = value;
+      }}
+    />,
+  );
+  let remapped!: ReadonlyMap<string, string>;
+  await act(() => {
+    remapped = importer.importContextRecords([incoming], EnvironmentId.make("clipboard-source"));
+  });
+  expect(remapped.has(incoming.contextId)).toBe(false);
+  expect(store.getComposerDraft(target)?.jiraContexts ?? []).toEqual([]);
 });

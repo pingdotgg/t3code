@@ -29,8 +29,9 @@ import {
   previewAnnotationContextId,
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
-  reviewCommentContextId,
+  reviewCommentDraftContextId,
   reviewCommentContextRecord,
+  reviewCommentContextReference,
   reviewCommentFromRecord,
   terminalContextDraftFromRecord,
   terminalContextRecord,
@@ -52,6 +53,7 @@ import {
   type ComposerDraftContextRecords,
   uploadedContextRecordFromDraft,
 } from "../composerContextPresentation";
+import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -120,6 +122,9 @@ export function useComposerContextImport(input: {
     (store) => store.addPreviewAnnotation,
   );
   const addComposerDraftThreadContexts = useComposerDraftStore((store) => store.addThreadContexts);
+  const addComposerDraftJiraContexts = useComposerDraftStore((store) => store.addJiraContexts);
+  const addComposerDraftFigmaContexts = useComposerDraftStore((store) => store.addFigmaContexts);
+  const addComposerDraftIssueContexts = useComposerDraftStore((store) => store.addIssueContexts);
   const addComposerDraftEnvironmentContexts = useComposerDraftStore(
     (store) => store.addEnvironmentContexts,
   );
@@ -337,16 +342,24 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread" || existing?.kind === "environment"
-                ? existing.record
-                : existing
-                  ? (uploadedContextRecordFromDraft(existing) ?? undefined)
-                  : undefined;
+              : existing?.kind === "pull-request"
+                ? reviewCommentContextRecord(existing.record)
+                : existing?.kind === "thread" ||
+                    existing?.kind === "environment" ||
+                    existing?.kind === "jira" ||
+                    existing?.kind === "figma" ||
+                    existing?.kind === "issue"
+                  ? existing.record
+                  : existing
+                    ? (uploadedContextRecordFromDraft(existing) ?? undefined)
+                    : undefined;
       if (
         existingRecord &&
         isSameComposerContextPayload(existingRecord, record) &&
         (record.kind !== "thread" || threadDraftTarget === attachmentDraftTarget)
       ) {
+        // Paste rewrite needs the identity map even when the chip already exists.
+        rewritten.set(record.contextId, existingRecord.contextId);
         if (record.kind === "preview-annotation" && record.screenshotContextId) {
           skippedDependentAttachmentIds.add(record.screenshotContextId);
         }
@@ -371,7 +384,38 @@ export function useComposerContextImport(input: {
           addComposerDraftReviewComment(composerDraftTarget, comment, {
             appendReference: false,
           });
-          rewritten.set(record.contextId, reviewCommentContextId(comment.id));
+          rewritten.set(record.contextId, reviewCommentDraftContextId(comment));
+          break;
+        }
+        case "pull-request": {
+          // Question answers carry no PR chips; keep them off the main draft while answering.
+          if (questionAttachmentTarget !== null) break;
+          const imported = buildPullRequestReferenceContext({
+            number: record.number,
+            title: record.title,
+            url: record.url,
+            headBranch: record.headBranch,
+            baseBranch: record.baseBranch,
+            state: record.state,
+            isDraft: record.isDraft,
+          });
+          // Handoff/legacy ids can differ from `pr-reference:${url}`; collide on the URL id too.
+          const reconstructedContextId = reviewCommentContextReference(imported).contextId;
+          const existingByUrl = composerContextRecords.get(reconstructedContextId);
+          const existingUrlRecord =
+            existingByUrl?.kind === "pull-request"
+              ? reviewCommentContextRecord(existingByUrl.record)
+              : undefined;
+          if (existingUrlRecord && isSameComposerContextPayload(existingUrlRecord, record)) {
+            rewritten.set(record.contextId, existingUrlRecord.contextId);
+            break;
+          }
+          const comment =
+            conflicts || existingByUrl !== undefined ? { ...imported, id: randomUUID() } : imported;
+          addComposerDraftReviewComment(composerDraftTarget, comment, {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, reviewCommentContextReference(comment).contextId);
           break;
         }
         case "element":
@@ -412,6 +456,51 @@ export function useComposerContextImport(input: {
             appendReference: false,
           });
           rewritten.set(record.contextId, record.contextId);
+          break;
+        }
+        case "jira": {
+          // Question answers carry no Jira chips; keep them off the main draft while answering.
+          if (questionAttachmentTarget !== null) break;
+          const imported = conflicts
+            ? {
+                ...record,
+                contextId: toKindScopedComposerContextId("jira", randomUUID()),
+              }
+            : record;
+          addComposerDraftJiraContexts(composerDraftTarget, [imported], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, imported.contextId);
+          break;
+        }
+        case "figma": {
+          // Question answers carry no Figma chips; keep them off the main draft while answering.
+          if (questionAttachmentTarget !== null) break;
+          const imported = conflicts
+            ? {
+                ...record,
+                contextId: toKindScopedComposerContextId("figma", randomUUID()),
+              }
+            : record;
+          addComposerDraftFigmaContexts(composerDraftTarget, [imported], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, imported.contextId);
+          break;
+        }
+        case "issue": {
+          // Question answers carry no issue chips; keep them off the main draft while answering.
+          if (questionAttachmentTarget !== null) break;
+          const imported = conflicts
+            ? {
+                ...record,
+                contextId: toKindScopedComposerContextId("issue", randomUUID()),
+              }
+            : record;
+          addComposerDraftIssueContexts(composerDraftTarget, [imported], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, imported.contextId);
           break;
         }
         case "image":

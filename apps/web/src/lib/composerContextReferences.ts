@@ -9,6 +9,7 @@ export interface ComposerContextReference {
   kind: ComposerContextKind;
   contextId: string;
   label: string;
+  url?: string;
 }
 
 export function producerIdFromComposerContextId(
@@ -24,6 +25,7 @@ export function formatInlineContextReference(reference: ComposerContextReference
     kind: reference.kind,
     contextId: reference.contextId as ComposerContextId,
     label: reference.label,
+    ...(reference.url !== undefined ? { url: reference.url } : {}),
   });
 }
 
