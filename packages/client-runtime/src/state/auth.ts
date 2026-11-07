@@ -14,7 +14,7 @@ import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe } from "../rpc/client.ts";
-import { executeConnectedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import { executeConnectedEnvironmentHttpRequest } from "./connectedEnvironmentHttp.ts";
 import { createEnvironmentCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
 
 const ACCESS_REQUEST_TIMEOUT_MS = 8_000;
