@@ -26,5 +26,5 @@ async function fetchGithubStars(): Promise<string> {
 
 export const MARKETING_STATS = {
   githubStars: await fetchGithubStars(),
-  users: "500,000",
+  users: "600,000",
 } as const;
