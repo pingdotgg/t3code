@@ -3,7 +3,7 @@ import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-reac
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { use, useState } from "react";
+import { use, useMemo, useState } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -32,8 +32,12 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
     setState((current) =>
       change(current.key === scopeKey ? current : { key: scopeKey, presses: {}, error: null }),
     );
-  const serverViewed = (path: string) =>
-    query.data?.files.some((file) => file.path === path && file.state === "viewed") ?? false;
+  const viewedPaths = useMemo(
+    () =>
+      new Set(query.data?.files.filter((file) => file.state === "viewed").map((file) => file.path)),
+    [query.data],
+  );
+  const serverViewed = (path: string) => viewedPaths.has(path);
   const isViewed = (path: string) => overlay[path] ?? serverViewed(path);
   const toggle = async (path: string) => {
     if (!supported || !allowed || !query.data) return;
