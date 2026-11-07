@@ -536,7 +536,12 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               FROM orchestration_v2_effect_outbox AS candidate
               WHERE ${claimableCandidatePredicate(nowIso, excludeRestartContinuations)}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
-              ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
+              -- Claim other effects before captures: captures serialize per cwd, so a burst would fill every slot.
+              ORDER BY
+                candidate.effect_type = 'checkpoint.capture' ASC,
+                candidate.available_at ASC,
+                candidate.created_at ASC,
+                candidate.effect_id ASC
               LIMIT 1
             )
             RETURNING *

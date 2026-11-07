@@ -2542,6 +2542,79 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("claims a turn start ahead of earlier checkpoint captures on other threads", () => {
+    const commandId = CommandId.make("command:foundation-turn-start-priority");
+    const parentThreadId = ThreadId.make("thread:foundation-turn-start-priority:parent");
+    const childThreadIds = [1, 2, 3, 4].map((index) =>
+      ThreadId.make(`thread:foundation-turn-start-priority:child-${index}`),
+    );
+    const capture = (id: string, threadId: ThreadId) => ({
+      id,
+      commandId,
+      threadId,
+      request: {
+        type: "checkpoint.capture" as const,
+        runId: RunId.make(`run:${id}`),
+        scopeId: CheckpointScopeId.make(`scope:${id}`),
+      },
+    });
+    return Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const parentCaptureId = "effect:foundation-turn-start-priority:a-parent-capture";
+      const turnStartId = "effect:foundation-turn-start-priority:z-turn-start";
+      yield* outbox.enqueue([
+        capture(parentCaptureId, parentThreadId),
+        ...childThreadIds.map((threadId, index) =>
+          capture(`effect:foundation-turn-start-priority:b-child-capture-${index + 1}`, threadId),
+        ),
+      ]);
+      yield* TestClock.adjust("1 second");
+      yield* outbox.enqueue([
+        {
+          id: turnStartId,
+          commandId,
+          threadId: parentThreadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-turn-start-priority:replacement"),
+          },
+        },
+      ]);
+
+      const parentCapture = yield* outbox.claimNext({ workerId: "priority-worker" });
+      assert.equal(Option.getOrUndefined(parentCapture)?.id, parentCaptureId);
+      const whileParentBusy = yield* outbox.claimNext({ workerId: "priority-worker" });
+      assert.notEqual(
+        Option.getOrUndefined(whileParentBusy)?.id,
+        turnStartId,
+        "turn start must wait for its own thread's earlier capture",
+      );
+
+      yield* outbox.succeed({ effectId: parentCaptureId, workerId: "priority-worker" });
+      const next = yield* outbox.claimNext({ workerId: "priority-worker" });
+      assert.equal(
+        Option.getOrUndefined(next)?.id,
+        turnStartId,
+        "claimable provider-turn.start queued behind other threads' checkpoint captures",
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) =>
+          Effect.forEach(
+            [parentThreadId, ...childThreadIds],
+            (threadId) =>
+              outbox.cancelUnsettled({
+                threadId,
+                effectTypes: ["checkpoint.capture", "provider-turn.start"],
+                reason: "Test cleanup.",
+              }),
+            { discard: true },
+          ),
+        ).pipe(Effect.orDie),
+      ),
+    );
+  });
+
   it.effect("ignores deadlines blocked by a running effect on the same thread", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
