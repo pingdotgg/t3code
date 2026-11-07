@@ -46,7 +46,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
-import { type SetStateAction, useLayoutEffect, useRef } from "react";
+import { type SetStateAction, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -400,6 +400,8 @@ export function useComposerSend(input: ComposerSendInput) {
     persistThreadSettingsForNextTurn,
   });
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  // Keeps the composer busy until a `/side` start settles, uploads included.
+  const [sideChatStartingThreadKey, setSideChatStartingThreadKey] = useState<string | null>(null);
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
@@ -575,8 +577,10 @@ export function useComposerSend(input: ComposerSendInput) {
         );
       };
       sendInFlightRef.current = true;
+      setSideChatStartingThreadKey(routeThreadKey);
       const started = await startWithAttachments().finally(() => {
         sendInFlightRef.current = false;
+        setSideChatStartingThreadKey((current) => (current === routeThreadKey ? null : current));
       });
       const current = composerRef.current?.getSendContext();
       // Clear only what was sent; the user may have edited the draft or left meanwhile.
@@ -1588,7 +1592,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
   };
 
-  return { onSend };
+  return { onSend, sideChatStarting: sideChatStartingThreadKey === routeThreadKey };
 }
 
 function sameAttachmentIds(
