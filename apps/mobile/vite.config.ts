@@ -44,6 +44,7 @@ const reactTests = [
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
   "src/features/devices/device-stream.browser.test.ts",
   "src/features/keyboard/keyboardControllerState.test.tsx",
+  "src/features/keyboard/chatKeyboardFeedInput.test.tsx",
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;
