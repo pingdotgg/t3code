@@ -1,4 +1,5 @@
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
+import { ChatTimelineBackground } from "./chat/ChatTimelineBackground";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -3418,8 +3419,9 @@ export default function ChatView(props: ChatViewProps) {
             />
             <div
               {...conversationArea}
-              className="relative flex min-h-0 flex-1 flex-col bg-background"
+              className="relative isolate flex min-h-0 flex-1 flex-col bg-background"
             >
+              <ChatTimelineBackground />
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
                   pendingApprovals={pendingApprovals}

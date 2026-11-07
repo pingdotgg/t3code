@@ -48,6 +48,10 @@ The main sidebar, right panel, and terminal drawer open and close immediately by
 in your operating system. Moving between threads always snaps to the selected thread's panel state
 without replaying its transitions.
 
+In **Settings → Appearance → Wallpaper**, upload an image for the chat background.
+Adjust opacity and blur, or choose **Remove** to restore the plain background.
+Wallpaper is saved on this device and is independent of the selected theme.
+
 ## Custom themes
 
 On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code
