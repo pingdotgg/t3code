@@ -82,6 +82,7 @@ import {
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
   shouldRecedeSidebarThread,
+  sidebarSnoozedShowsStatus,
   resolveWorkingStartedAt,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
@@ -1279,10 +1280,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     )}
                   >
                     {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
-                        {/* The clock tells a wake time from an age at a glance. */}
-                        <AlarmClockIcon aria-hidden className="size-3" />
-                        {props.snoozeWakeLabelText}
+                      <span className="inline-flex items-center gap-1.5 text-xs tabular-nums">
+                        {/* Usage-limit stops keep Limited here; the clock is only the wake time. */}
+                        {sidebarSnoozedShowsStatus(status) && topStatus ? (
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 font-medium",
+                              topStatus.className,
+                            )}
+                          >
+                            <TopStatusIcon icon={topStatus.icon} className="size-3" />
+                            {topStatus.label}
+                          </span>
+                        ) : null}
+                        <span className="inline-flex items-center gap-1 text-info-foreground">
+                          <AlarmClockIcon aria-hidden className="size-3" />
+                          {props.snoozeWakeLabelText}
+                        </span>
                       </span>
                     ) : (inFolder ? isWokeStatus : isWoke) ? (
                       <Tooltip>

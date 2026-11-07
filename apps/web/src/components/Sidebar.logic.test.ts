@@ -19,6 +19,7 @@ import {
   resolveWorkingStartedAt,
   searchSidebarThreads,
   shouldRecedeSidebarThread,
+  sidebarSnoozedShowsStatus,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
@@ -282,6 +283,10 @@ describe("resolveSidebarThreadStatus", () => {
         isSelected: false,
       }),
     ).toBe(false);
+    // Slim snoozed rows still show Limited next to the wake time.
+    expect(sidebarSnoozedShowsStatus("limited")).toBe(true);
+    expect(sidebarSnoozedShowsStatus("failed")).toBe(false);
+    expect(sidebarSnoozedShowsStatus("ready")).toBe(false);
   });
 
   it("reports worktree setup as preparing, and failed only while the latest run failed", () => {

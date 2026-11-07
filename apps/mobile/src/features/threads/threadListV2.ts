@@ -295,6 +295,11 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
+/** Slim snoozed rows keep Limited next to the wake time; other statuses stay wake-only. */
+export function threadListV2SnoozedShowsStatus(status: ThreadListV2Status): boolean {
+  return status === "limited";
+}
+
 function parseTimestampMs(isoDate: string): number {
   const parsed = Date.parse(isoDate);
   return Number.isNaN(parsed) ? 0 : parsed;
