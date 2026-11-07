@@ -4,7 +4,7 @@ import {
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
 import { createRef, useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -31,23 +31,29 @@ const promptBefore = `See ${serializeAssistantCitation(citation)} `;
 function Composer({
   question,
   editorRef,
+  sourceVisible = true,
+  onCommandKeyDown,
 }: {
   question: boolean;
+  sourceVisible?: boolean;
+  onCommandKeyDown?: (key: string, event: KeyboardEvent) => boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }) {
   const [prompt, setPrompt] = useState(promptBefore);
   const [answer, setAnswer] = useState("");
   return (
     <>
-      <div data-assistant-citation-viewport="">
-        <p
-          data-assistant-citation-source={citation.messageId}
-          data-assistant-citation-environment={citation.environmentId}
-          data-assistant-citation-thread={citation.threadId}
-        >
-          hello world
-        </p>
-      </div>
+      {sourceVisible ? (
+        <div data-assistant-citation-viewport="">
+          <p
+            data-assistant-citation-source={citation.messageId}
+            data-assistant-citation-environment={citation.environmentId}
+            data-assistant-citation-thread={citation.threadId}
+          >
+            hello world
+          </p>
+        </div>
+      ) : null}
       <output data-prompt={prompt} data-answer={answer} />
       <ComposerPromptEditor
         editorRef={editorRef}
@@ -61,6 +67,7 @@ function Composer({
         onCitationDraftSave={(replacedValue, savedValue) => {
           if (replacedValue === prompt) setPrompt(savedValue);
         }}
+        {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
         onPaste={() => {}}
       />
     </>
@@ -104,7 +111,10 @@ it.each(["click", "Enter", " "])(
   "opens the citation comment editor with %s on the chip",
   async (activation) => {
     const editorRef = createRef<ComposerPromptEditorHandle>();
-    await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+    const onCommandKeyDown = vi.fn(() => true);
+    await using screen = await render(
+      <Composer question={false} editorRef={editorRef} onCommandKeyDown={onCommandKeyDown} />,
+    );
     const chip = screen.getByRole("link", { name: "View cited assistant text: hello" });
     if (activation === "click") {
       await chip.click();
@@ -113,5 +123,32 @@ it.each(["click", "Enter", " "])(
       await userEvent.keyboard(activation === "Enter" ? "{Enter}" : " ");
     }
     await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+    expect(onCommandKeyDown).not.toHaveBeenCalled();
+    expect(screen.container.querySelector("output")?.dataset.prompt).toBe(promptBefore);
   },
 );
+
+it("reanchors the comment when the cited source mounts after activation", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(
+    <Composer question={false} editorRef={editorRef} sourceVisible={false} />,
+  );
+  await screen.getByRole("link", { name: "View cited assistant text: hello" }).click();
+  await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+  const viewport = document.createElement("div");
+  viewport.dataset.assistantCitationViewport = "";
+  const source = document.createElement("p");
+  source.dataset.assistantCitationSource = citation.messageId;
+  source.dataset.assistantCitationEnvironment = citation.environmentId;
+  source.dataset.assistantCitationThread = citation.threadId;
+  source.textContent = "hello world";
+  viewport.append(source);
+  await act(() => {
+    screen.container.append(viewport);
+  });
+  await vi.waitFor(() => {
+    const highlight = CSS.highlights.get("t3-assistant-citation-comment");
+    expect(highlight?.size).toBe(1);
+    expect(highlight && [...highlight][0]?.startContainer.parentElement).toBe(source);
+  });
+});

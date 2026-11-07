@@ -60,7 +60,14 @@ export function AssistantCitationChip({
   const [unavailableSourceAnchor, setUnavailableSourceAnchor] =
     useState<AssistantCitationSourceAnchor | null>(null);
   const commentOpen = commentEditor?.open ?? false;
-  const sourceAnchor = commentEditor?.sourceAnchor;
+  const [resolvedSource, setResolvedSource] = useState<{
+    citation: AssistantCitation;
+    anchor: AssistantCitationSourceAnchor;
+  } | null>(null);
+  if (!commentOpen && resolvedSource !== null) setResolvedSource(null);
+  const sourceAnchor =
+    commentEditor?.sourceAnchor ??
+    (resolvedSource?.citation === citation ? resolvedSource.anchor : undefined);
   const activeSourceAnchor = sourceAnchor === unavailableSourceAnchor ? undefined : sourceAnchor;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the uncommitted comment draft held in a ref once the parent closes the comment editor
   useEffect(() => {
@@ -83,17 +90,30 @@ export function AssistantCitationChip({
       setUnavailableSourceAnchor(sourceAnchor);
     }
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the cited DOM source while the comment editor is open and reacts when it disappears
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- waits for the navigated source to mount, then observes its lifetime while editing
   useEffect(() => {
-    if (!commentOpen || sourceAnchor === unavailableSourceAnchor) return;
-    const anchor = sourceAnchor ?? findAssistantCitationSourceAnchor(document, citation);
-    if (!anchor) return;
-    return observeAssistantCitationCommentSource({
-      anchor,
-      citation,
-      onUnavailable: onSourceUnavailable,
-    });
-  }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
+    if (!commentOpen) return;
+    let stopObservingSource: (() => void) | undefined;
+    const observer = new MutationObserver(resolveSource);
+    function resolveSource() {
+      const anchor =
+        commentEditor?.sourceAnchor ?? findAssistantCitationSourceAnchor(document, citation);
+      if (!anchor || anchor === unavailableSourceAnchor) return;
+      observer.disconnect();
+      setResolvedSource({ citation, anchor });
+      stopObservingSource = observeAssistantCitationCommentSource({
+        anchor,
+        citation,
+        onUnavailable: onSourceUnavailable,
+      });
+    }
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    resolveSource();
+    return () => {
+      observer.disconnect();
+      stopObservingSource?.();
+    };
+  }, [citation, commentOpen, commentEditor?.sourceAnchor, unavailableSourceAnchor]);
   const popupAnchor = activeSourceAnchor
     ? {
         contextElement: activeSourceAnchor.source,
@@ -136,10 +156,17 @@ export function AssistantCitationChip({
       aria-expanded={commentEditor ? commentOpen : undefined}
       render={<Link {...sourceLinkProps} />}
       data-citation-comment-trigger={commentEditor ? "true" : undefined}
-      onKeyDown={(event) => {
-        if (event.key !== " " || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+      onKeyDownCapture={(event) => {
+        if (
+          (event.key !== " " && event.key !== "Enter") ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
           return;
         event.preventDefault();
+        event.stopPropagation();
         event.currentTarget.click();
       }}
       aria-label={`View cited assistant text: ${label}`}
