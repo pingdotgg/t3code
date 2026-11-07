@@ -2385,6 +2385,58 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("prices turn totals with overrides and aliases for Insights", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* Effect.gen(function* () {
+        const settingsService = yield* ServerSettings.ServerSettingsService;
+        yield* settingsService.updateSettings({
+          usagePriceOverrides: {
+            "priced-model": {
+              inputCostPerMillionTokens: 1_000_000,
+              outputCostPerMillionTokens: 2_000_000,
+            },
+          },
+          usageModelAliases: { "alias-model": "priced-model" },
+        });
+        const service = yield* UsageService.make;
+        const result = yield* service.priceUsage({
+          items: [
+            {
+              id: "priced",
+              model: "alias-model",
+              totals: {
+                uncachedInputTokens: 1,
+                cachedInputTokens: 0,
+                cacheCreationTokens: 0,
+                outputTokens: 1,
+                reasoningTokens: 0,
+              },
+            },
+            {
+              id: "unknown",
+              model: "unknown-model",
+              totals: {
+                uncachedInputTokens: 1,
+                cachedInputTokens: 0,
+                cacheCreationTokens: 0,
+                outputTokens: 0,
+                reasoningTokens: 0,
+              },
+            },
+          ],
+        });
+        assert.deepStrictEqual(result.items, [
+          { id: "priced", costUsd: 3, costSource: "modelPriced" },
+          { id: "unknown", costUsd: 0, costSource: "unpriced" },
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix: "usage-service-price-usage-test", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live(
     "retains Codex reconciliation and partial coverage through persisted restart, append and repair",
     () =>

@@ -161,3 +161,29 @@ export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageR
     return `Usage read failed (${this.reason}): ${this.detail}`;
   }
 }
+
+/** Prices live turn totals with the same LiteLLM table and overrides as Usage. */
+export const UsagePriceItemInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  totals: UsageTokenTotals,
+});
+export type UsagePriceItemInput = typeof UsagePriceItemInput.Type;
+
+export const UsagePriceItemResult = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  costUsd: Schema.Number,
+  costSource: UsageCostSource,
+});
+export type UsagePriceItemResult = typeof UsagePriceItemResult.Type;
+
+export const UsagePriceInput = Schema.Struct({
+  items: Schema.Array(UsagePriceItemInput),
+});
+export type UsagePriceInput = typeof UsagePriceInput.Type;
+
+export const UsagePriceResult = Schema.Struct({
+  items: Schema.Array(UsagePriceItemResult),
+  pricing: UsagePricing,
+});
+export type UsagePriceResult = typeof UsagePriceResult.Type;

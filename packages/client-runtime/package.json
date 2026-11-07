@@ -371,6 +371,10 @@
       "types": "./src/state/contextWindow.ts",
       "default": "./src/state/contextWindow.ts"
     },
+    "./state/thread-turn-token-usage": {
+      "types": "./src/state/threadTurnTokenUsage.ts",
+      "default": "./src/state/threadTurnTokenUsage.ts"
+    },
     "./state/thread-subagents": {
       "types": "./src/state/threadSubagents.ts",
       "default": "./src/state/threadSubagents.ts"

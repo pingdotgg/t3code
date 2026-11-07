@@ -1365,6 +1365,12 @@ export function createServerEnvironmentAtoms<R, E>(
           ),
         ),
     }),
+    priceUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:price-usage",
+      tag: WS_METHODS.serverPriceUsage,
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
+    }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",
       tag: WS_METHODS.subscribeResourceTelemetry,
