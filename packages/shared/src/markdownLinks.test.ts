@@ -15,6 +15,8 @@ describe("isMarkdownFileLinkLabel", () => {
     ["validates the input", "/repo/src/example.ts:12", false],
     ["example.ts:12", "/repo/src/example.ts:12", true],
     ["example.ts:99", "/repo/src/example.ts:12", false],
+    ["example.ts:12-14", "/repo/src/example.ts:12-14", true],
+    ["example.ts:12-13", "/repo/src/example.ts:12-14", false],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });
@@ -29,6 +31,9 @@ describe("inlineCodeFilePathCandidate", () => {
     ["share/man/ls.1", "share/man/ls.1"],
     ["src/main.ts/", null],
     ["./patches/", "./patches/"],
+    // regression: #28555 relative ranges are file references
+    ["src/foo.py:67-69", "src/foo.py:67-69"],
+    ["foo.py:1-3", "foo.py:1-3"],
     // regression: #30757 an agent's shortened path is not a file
     ["/tmp/claude-1000/...", null],
     ["/tmp/claude-1000/...:12", null],
@@ -98,6 +103,19 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink("/srv/app/Makefile")).toEqual({ path: "/srv/app/Makefile" });
   });
 
+  it("reads a colon line range separately from the filename", () => {
+    expect(parseMarkdownFileLink("src/foo.py:67-69")).toEqual({
+      path: "src/foo.py",
+      line: 67,
+      endLine: 69,
+    });
+    expect(parseMarkdownFileLink("foo.py:67-69")).toEqual({
+      path: "foo.py",
+      line: 67,
+      endLine: 69,
+    });
+  });
+
   it("reads positions from suffixes and line anchors", () => {
     expect(parseMarkdownFileLink("/Users/julius/project/src/main.ts#L42C7")).toEqual({
       path: "/Users/julius/project/src/main.ts",
@@ -144,6 +162,9 @@ describe("resolveMarkdownFileLinkTarget", () => {
   it("does not treat filename line references as external schemes", () => {
     expect(resolveMarkdownFileLinkTarget("script.ts:10", "/Users/julius/project")).toBe(
       "/Users/julius/project/script.ts:10",
+    );
+    expect(resolveMarkdownFileLinkTarget("script.ts:67-69", "/Users/julius/project")).toBe(
+      "/Users/julius/project/script.ts:67-69",
     );
   });
 
