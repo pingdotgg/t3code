@@ -371,6 +371,7 @@ interface ActivePiTurn {
   activeCompaction: PiCompactionState | null;
   activeProviderRetry: PiProviderRetryState | null;
   failure: ReturnType<typeof makeProviderFailure> | null;
+  messageFailure: ReturnType<typeof makeProviderFailure> | null;
   rejectedPromptFailure: ReturnType<typeof makeProviderFailure> | null;
   stopTreeRefs?: PiTurnTreeRefs | null;
 }
@@ -1691,10 +1692,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (turn === null) return;
         state.activeTurn = null;
         const interrupted = turn.interrupted || turn.nativeAborted;
+        const failure = interrupted
+          ? null
+          : (turn.rejectedPromptFailure ?? turn.failure ?? turn.messageFailure);
         const completedAt = yield* DateTime.now;
         yield* completeOpenStreamItems(turn);
         if (turn.activeCompaction !== null) {
-          const status = interrupted ? "cancelled" : turn.failure === null ? "completed" : "failed";
+          const status = interrupted ? "cancelled" : failure === null ? "completed" : "failed";
           yield* emitCompaction(turn, turn.activeCompaction, status);
           turn.activeCompaction = null;
         }
@@ -1702,7 +1706,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           if (interrupted) {
             yield* emitProviderRetry(turn, turn.activeProviderRetry, "interrupted", completedAt);
             turn.activeProviderRetry = null;
-          } else if (turn.failure === null) {
+          } else if (failure === null) {
             yield* emitProviderRetry(turn, turn.activeProviderRetry, "completed", completedAt);
             turn.activeProviderRetry = null;
           }
@@ -1713,7 +1717,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const tokenUsage = readUsage
           ? yield* readTokenUsage(turn.latestCompactionAfterTokens, completedAt)
           : undefined;
-        const failure = interrupted ? null : (turn.rejectedPromptFailure ?? turn.failure);
         yield* emit({
           type: "provider_turn.updated",
           driver: PI_PROVIDER,
@@ -1969,12 +1972,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const message = event["message"];
             if (recordString(message, "role") !== "assistant") return;
             yield* completeOpenStreamItems(turn);
-            if (recordString(message, "stopReason") === "error" && turn.failure === null) {
-              turn.failure = makeProviderFailure({
-                message: recordString(message, "errorMessage") ?? "Pi reported a model error.",
-                class: "provider_error",
-              });
-            }
+            turn.messageFailure =
+              recordString(message, "stopReason") === "error"
+                ? makeProviderFailure({
+                    message: recordString(message, "errorMessage") ?? "Pi reported a model error.",
+                    class: "provider_error",
+                  })
+                : null;
             return;
           }
           case "tool_execution_start":
@@ -2039,7 +2043,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               return;
             }
             // Clear overflow failures only when compaction will retry; ordinary compaction must retain exhausted retries.
-            if (event["willRetry"] === true) turn.failure = null;
+            if (event["willRetry"] === true) {
+              turn.failure = null;
+              turn.messageFailure = null;
+            }
             turn.latestCompactionAfterTokens =
               nonNegativeInteger(result, "estimatedTokensAfter") ?? null;
             const summary = recordString(result, "summary");
@@ -2105,6 +2112,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 turn.activeProviderRetry = null;
               }
               turn.failure = null;
+              turn.messageFailure = null;
               return;
             }
             const failure = makeProviderFailure({
@@ -2767,6 +2775,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               activeCompaction: null,
               activeProviderRetry: null,
               failure: null,
+              messageFailure: null,
               rejectedPromptFailure: null,
             };
             // Lock only install/send/start events; correlated setup must leave the pump free for dialogs.
