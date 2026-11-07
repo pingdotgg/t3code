@@ -19,6 +19,7 @@ import {
   PastedTextAttachmentSource,
   type PreviewAnnotationPayload,
   RuntimeMode,
+  RunId,
   ThreadContextRecord,
   EnvironmentContextRecord,
   type ServerProvider,
@@ -103,6 +104,7 @@ import { UnifiedSettings } from "@t3tools/contracts/settings";
 const isElementContextDetails = Schema.is(ElementContextDetails);
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
 const isRuntimeMode = Schema.is(RuntimeMode);
+const isRunId = Schema.is(RunId);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isThreadContextRecord = Schema.is(ThreadContextRecord);
@@ -253,6 +255,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  failedPlanFollowUpRunId: Schema.optionalKey(RunId),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -377,6 +380,8 @@ export interface ComposerThreadDraftState {
   modelSelectionExplicit?: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  /** The run whose plan a failed Implement answered; the thread reads as plan until a newer run. */
+  failedPlanFollowUpRunId?: RunId;
 }
 
 export function composerDraftHasUserContent(
@@ -538,6 +543,7 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
   ) => void;
+  setFailedPlanFollowUpRunId: (threadRef: ScopedThreadRef, runId: RunId | undefined) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => boolean;
   addImages: (
     threadRef: ComposerThreadTarget,
@@ -882,7 +888,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.failedPlanFollowUpRunId === undefined
   );
 }
 
@@ -1893,6 +1900,9 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
+    const failedPlanFollowUpRunId = isRunId(draftCandidate.failedPlanFollowUpRunId)
+      ? draftCandidate.failedPlanFollowUpRunId
+      : undefined;
     const contextIds = new Map<string, string>();
     for (const [kind, entries] of [
       ["image", attachments],
@@ -1983,7 +1993,8 @@ function normalizePersistedDraftsByThreadId(
       environmentContexts.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      failedPlanFollowUpRunId === undefined
     ) {
       continue;
     }
@@ -2017,6 +2028,7 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(failedPlanFollowUpRunId ? { failedPlanFollowUpRunId } : {}),
     };
   }
 
@@ -2114,7 +2126,8 @@ export function partializeComposerDraftStoreState(
       draft.environmentContexts.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.failedPlanFollowUpRunId === undefined
     ) {
       continue;
     }
@@ -2181,6 +2194,9 @@ export function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.failedPlanFollowUpRunId
+        ? { failedPlanFollowUpRunId: draft.failedPlanFollowUpRunId }
+        : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2450,6 +2466,9 @@ function toHydratedThreadDraft(
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    ...(persistedDraft.failedPlanFollowUpRunId
+      ? { failedPlanFollowUpRunId: persistedDraft.failedPlanFollowUpRunId }
+      : {}),
   };
 }
 
@@ -3217,6 +3236,25 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...base,
               interactionMode: nextInteractionMode,
             };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setFailedPlanFollowUpRunId: (threadRef, runId) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (existing?.failedPlanFollowUpRunId === runId) return state;
+            const { failedPlanFollowUpRunId: _previous, ...base } =
+              existing ?? createEmptyThreadDraft();
+            const nextDraft: ComposerThreadDraftState =
+              runId === undefined ? base : { ...base, failedPlanFollowUpRunId: runId };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
               delete nextDraftsByThreadKey[threadKey];

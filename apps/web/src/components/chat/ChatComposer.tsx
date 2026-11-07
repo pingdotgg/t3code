@@ -283,6 +283,7 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { useThreadInteractionMode } from "./useProposedPlanSend";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -970,11 +971,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
+  const activeThreadInteractionMode = useThreadInteractionMode(props.activeThreadShell);
   const { enabled: planModeUiEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: selectedProviderStatus,
     interactionMode: requestedInteractionMode,
-    persistedInteractionMode: props.activeThreadShell?.interactionMode,
+    persistedInteractionMode: activeThreadInteractionMode,
   });
   const selectedModelSelection: ModelSelection = createModelSelection(
     selectedInstanceId,
