@@ -281,7 +281,7 @@ import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
-import { useRemoteOpenState } from "~/remoteOpen";
+import { useRemoteOpenResolution } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
@@ -1646,13 +1646,16 @@ export default function ChatView(props: ChatViewProps) {
   const availableEditors = useAtomValue(
     serverAvailableEditorsAtom(activeThread?.environmentId ?? environmentId),
   );
-  const remoteOpenState = useRemoteOpenState(activeThread?.environmentId ?? environmentId);
+  const remoteOpenResolution = useRemoteOpenResolution(
+    activeThread?.environmentId ?? environmentId,
+  );
   const showOpenInPicker =
     Boolean(activeProject?.title) &&
     shouldShowOpenInPicker({
       environmentId: activeThread?.environmentId ?? environmentId,
       primaryEnvironmentId,
-      remoteOpenMode: remoteOpenState.mode,
+      remoteOpenMode: remoteOpenResolution.state.mode,
+      isSameHomeBearer: remoteOpenResolution.isSameHomeBearer,
     });
   useOpenFavoriteEditorShortcut({
     enabled: showOpenInPicker && !backgroundThread,

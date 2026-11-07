@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
   file: null as ProjectReadFileResult | null,
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
+  primaryEnvironmentId: null as EnvironmentId | null,
+  isSameHomeBearer: false,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
@@ -26,7 +28,7 @@ vi.mock(import("~/state/session"), async (original) => ({
 }));
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
-  usePrimaryEnvironmentId: () => null,
+  usePrimaryEnvironmentId: () => state.primaryEnvironmentId,
 }));
 vi.mock(import("~/state/filesystem"), async (original) => ({
   ...(await original()),
@@ -48,7 +50,12 @@ vi.mock(import("~/state/server"), async (original) => {
 vi.mock(import("~/remoteOpen"), async (original) => ({
   ...(await original()),
   useRemoteOpenState: () => ({ mode: "local-exec" }) as never,
-  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }) as never,
+  useRemoteOpenResolution: () =>
+    ({
+      state: { mode: "local-exec" },
+      isResolved: true,
+      isSameHomeBearer: state.isSameHomeBearer,
+    }) as never,
 }));
 vi.mock(import("~/hooks/useTheme"), async (original) => ({
   ...(await original()),
@@ -92,6 +99,8 @@ function setup() {
   localStorage.setItem(keys[0]!, "false");
   localStorage.setItem(keys[1]!, "true");
   state.optimistic = null;
+  state.primaryEnvironmentId = null;
+  state.isSameHomeBearer = false;
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   return {
     [Symbol.dispose]() {
@@ -134,17 +143,22 @@ function markdownPreview(truncated: boolean, availableEditors: ReadonlyArray<Edi
   );
 }
 
-it("opens a local service file in the editor without a desktop primary", async () => {
-  using _settings = setup();
-  await using screen = await render(markdownPreview(false, ["vscode"]));
-  const open = screen.getByRole("button", { name: "Open file in preferred editor" });
-  await expect.element(open).toBeEnabled();
-  await open.click();
-  expect(state.writeFile).toHaveBeenCalledExactlyOnceWith({
-    environmentId,
-    input: { cwd: "/workspace/tasks.md", editor: "vscode" },
-  });
-});
+it.each([null, EnvironmentId.make("wsl-primary")])(
+  "opens a same-home service file with primary %s",
+  async (primaryEnvironmentId) => {
+    using _settings = setup();
+    state.primaryEnvironmentId = primaryEnvironmentId;
+    state.isSameHomeBearer = true;
+    await using screen = await render(markdownPreview(false, ["vscode"]));
+    const open = screen.getByRole("button", { name: "Open file in preferred editor" });
+    await expect.element(open).toBeEnabled();
+    await open.click();
+    expect(state.writeFile).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { cwd: "/workspace/tasks.md", editor: "vscode" },
+    });
+  },
+);
 
 describe("rendered Markdown task saves", () => {
   it("keeps a truncated read read-only without queuing a replacement", async () => {

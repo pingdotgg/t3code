@@ -10,12 +10,19 @@ it.each([
   { primaryEnvironmentId: null, remoteOpenMode: "local-exec", expected: true },
   { primaryEnvironmentId: environmentId, remoteOpenMode: "local-exec", expected: true },
   { primaryEnvironmentId, remoteOpenMode: "local-exec", expected: false },
+  {
+    primaryEnvironmentId,
+    remoteOpenMode: "local-exec",
+    isSameHomeBearer: true,
+    expected: true,
+  },
   { primaryEnvironmentId, remoteOpenMode: "remote-links", expected: true },
 ] as const)(
   "offers editor opening for $remoteOpenMode with primary $primaryEnvironmentId",
   (input) => {
     expect(
       shouldShowOpenInPicker({
+        isSameHomeBearer: false,
         ...input,
         environmentId,
       }),
