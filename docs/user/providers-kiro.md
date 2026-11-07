@@ -38,6 +38,14 @@ not listed yet. Refresh the Kiro provider after adding or removing an agent.
 The thread's model still applies when an agent sets its own `model`. An agent that was removed
 leaves the thread on Kiro's current agent.
 
+## Skills
+
+Your Kiro skills in `~/.kiro/skills` appear in the `/` and `$` menus once a Kiro session has started
+on this server, for example after the first message in a Kiro thread. Skills in a project's
+`.kiro/skills` are not listed in the menus. Kiro runs a skill only when it starts the message, so
+put the skill first. A skill you add later appears after a Kiro session reports it, and one you
+remove stays listed until the server restarts.
+
 ## Permission Modes
 
 Kiro asks before tool calls such as writes and commands, and T3 Code answers by the permission mode:

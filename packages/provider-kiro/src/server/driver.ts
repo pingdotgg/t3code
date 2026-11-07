@@ -4,6 +4,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -29,6 +31,7 @@ import {
   checkKiroProviderStatus,
   kiroDefaultModelId,
 } from "./status.ts";
+import { makeKiroSkills } from "./skills.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("kiro");
 const decodeKiroSettings = Schema.decodeSync(KiroSettings);
@@ -98,6 +101,8 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     });
     const effectiveConfig = { ...config, enabled } satisfies KiroSettings;
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+    // Kiro lists skills only to a running session, so status checks keep what sessions advertised.
+    const skills = yield* makeKiroSkills();
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),
       getSettings: snapshotSettings.getSettings,
@@ -107,9 +112,22 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
         buildInitialKiroProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider: checkKiroProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
+        Effect.flatMap((checked) =>
+          SubscriptionRef.get(skills).pipe(
+            Effect.map((current) => ({ ...checked, skills: current })),
+          ),
+        ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(SecureRandom.SecureRandom, crypto),
       ),
+      enrichSnapshot: ({ getSnapshot, publishSnapshot }) =>
+        SubscriptionRef.changes(skills).pipe(
+          Stream.runForEach((current) =>
+            getSnapshot.pipe(
+              Effect.flatMap((snapshot) => publishSnapshot({ ...snapshot, skills: current })),
+            ),
+          ),
+        ),
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -126,6 +144,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     // "Kiro default" selects the default the snapshot read from Kiro's model list.
     const orchestrationAdapter = yield* makeKiroAdapterV2Driver(
       snapshot.getSnapshot.pipe(Effect.map((current) => kiroDefaultModelId(current.models))),
+      skills,
     )
       .create({ instanceId, displayName, accentColor, environment, enabled, config })
       .pipe(
