@@ -36,6 +36,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  decodeMarkdownLinkEscapes,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
@@ -119,7 +120,9 @@ function markdownThreadFindText(
       : assistantProcessor;
   const tree = processor.runSync(processor.parse(markdown));
   const paths = [
-    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
+    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)).map(
+      decodeMarkdownLinkEscapes,
+    ),
     ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
   ].flatMap((href) => {
     const target = resolveMarkdownFileLinkTarget(href, cwd);
