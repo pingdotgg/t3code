@@ -1275,7 +1275,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     scrollNode.scrollTop = scrollNode.scrollHeight - scrollNode.clientHeight;
   });
 
-  const lastUserRowId = rows.findLast(
+  const lastUserRowId = timelineEntries.findLast(
     (row) => row.kind === "message" && row.message.role === "user",
   )?.id;
   const revealNewUserMessage = useStableCallback(
@@ -1327,16 +1327,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
     const previousUserMessage = { identity: listIdentityKey, rowId: lastUserRowId };
-    const content = scrollNode?.firstElementChild;
-    const stopRevealingNewMessages =
-      content && list
-        ? observeResize(content, () => revealNewUserMessage(previousUserMessage, list))
-        : undefined;
     let contentSizeFrame: number | null = null;
     // LegendList lays rows out from layout effects; the next frame sees them settled.
     let scheduledData: unknown = null;
     const scheduleContentSizeChanged = () => {
       if (!list) return;
+      revealNewUserMessage(previousUserMessage, list);
       const laidOutData = list.getState().data;
       if (contentSizeFrame !== null) {
         if (scheduledData === laidOutData) return;
@@ -1356,7 +1352,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       rememberPositionOnUnmount();
       stopKeepingEndOnResize?.();
       stopListeningToContentSize?.();
-      stopRevealingNewMessages?.();
       stopRememberingRelease?.();
       if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
       detachViewport?.();
