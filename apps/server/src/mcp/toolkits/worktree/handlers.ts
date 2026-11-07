@@ -46,7 +46,7 @@ const handlers = {
       return yield* service.handoff(scope, input);
     }),
   ),
-  t3_thread_move: McpToolAccess.actsAsCaller((input) =>
+  t3_thread_move: McpToolAccess.actsAsFullAccessCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* WorktreeMcpService.WorktreeMcpService;

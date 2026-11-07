@@ -44,14 +44,14 @@ const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
 
 const ThreadMoveTool = Tool.make("t3_thread_move", {
   description:
-    "Move THIS thread to another folder on this machine, keeping its conversation. Use it when the user asks to move or continue this thread in another folder or project. A separate thread: `t3_thread_launch`. Uses the project rooted at `path`, registering one if none exists. Files stay where they are; the branch and worktree are cleared. Call last in your turn: the move happens when the turn ends. `continuationPrompt` resumes work there next turn. Without it, the thread waits.",
+    "Move THIS thread to another folder when the user asks, keeping its conversation. A separate thread: `t3_thread_launch`. Uses or registers the project rooted at `path`. Files stay; branch and worktree are cleared. Call last: the move happens when the turn ends. Needs full access.",
   parameters: ThreadMoveMcpInput,
   success: ThreadMoveMcpResult,
   failure: WorktreeToolFailure,
   failureMode: "return",
   dependencies,
 })
-  .annotate(Tool.Title, "Move thread to a folder")
+  .annotate(Tool.Title, "Move thread")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)

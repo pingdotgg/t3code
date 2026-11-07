@@ -77,11 +77,11 @@ export type WorktreeMcpHandoffResult = typeof WorktreeMcpHandoffResult.Type;
 /** Keeps the conversation; the move waits for this turn to end, and the next turn resumes in the folder. */
 export const ThreadMoveMcpInput = Schema.Struct({
   path: TrimmedNonEmptyString.annotate({
-    description: "Absolute path of an existing folder on this machine.",
+    description: "Absolute path of an existing folder.",
   }),
   continuationPrompt: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
-      description: "Work to resume in the folder next turn. Omitted: thread waits.",
+      description: "Work to resume there. Omitted: thread waits.",
     }),
   ),
 });

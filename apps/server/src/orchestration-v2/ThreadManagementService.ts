@@ -458,13 +458,15 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
+    /** Runs once the move lands, before the continuation. */
+    readonly afterMove: Effect.Effect<void>;
     readonly continuation?: {
       readonly commandId: CommandId;
       readonly messageId: MessageId;
       readonly text: string;
     };
   }) => Effect.Effect<
-    { readonly movesWhenTurnEnds: boolean },
+    { readonly movesWhenTurnEnds: boolean; readonly continuationFailure?: string },
     Orchestrator.OrchestratorV2Error | ThreadManagementFailure
   >;
   readonly settleThread: (input: {
@@ -1135,25 +1137,69 @@ const make = Effect.gen(function* () {
   const moveThreadToProject: ThreadManagementServiceShape["moveThreadToProject"] = Effect.fn(
     "orchestrationV2.threadManagement.moveThreadToProject",
   )(function* (input) {
-    const apply = Effect.gen(function* () {
+    const dispatchMove = Effect.gen(function* () {
+      const sequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+      return yield* dispatch({
+        type: "thread.project.move",
+        commandId: CommandId.make(`${input.commandId}:${sequence}`),
+        threadId: input.threadId,
+        projectId: input.projectId,
+      });
+    });
+    const continueThere =
+      input.continuation === undefined
+        ? Effect.void
+        : sendToThread({
+            projectId: input.projectId,
+            commandId: input.continuation.commandId,
+            threadId: input.threadId,
+            messageId: input.continuation.messageId,
+            text: input.continuation.text,
+            attachments: [],
+            mode: "queue",
+            createdBy: "agent",
+            creationSource: "mcp",
+          }).pipe(Effect.asVoid);
+    const shell = yield* orchestrator.getThreadShell(input.threadId);
+    if (shell == null) return yield* dispatchMove.pipe(Effect.as({ movesWhenTurnEnds: false }));
+    const instanceId = shell.providerInstanceId;
+    // Without its provider the thread could not run again in the destination.
+    const providerEnabled = isProviderInstanceEnabledForProject({
+      projectId: input.projectId,
+      instanceId,
+    });
+    if (!(yield* providerEnabled)) {
+      return yield* new ThreadManagementProviderInstanceDisabledError({
+        projectId: input.projectId,
+        instanceId,
+      });
+    }
+    if (shell.activeRunId === null) {
+      yield* dispatchMove;
+      yield* input.afterMove;
+      return yield* continueThere.pipe(
+        Effect.as({ movesWhenTurnEnds: false }),
+        // The move landed, so this call must not report that it failed.
+        Effect.catch((error) =>
+          Effect.succeed({ movesWhenTurnEnds: false, continuationFailure: error.message }),
+        ),
+      );
+    }
+    const { projectId, activeRunId } = shell;
+    const moveWhenIdle = Effect.gen(function* () {
       const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
       const tryMove = Effect.gen(function* () {
-        const sequence = yield* orchestrator.getThreadEventSequence(input.threadId);
-        return yield* dispatch({
-          type: "thread.project.move",
-          commandId: CommandId.make(`${input.commandId}:${sequence}`),
-          threadId: input.threadId,
-          projectId: input.projectId,
-        }).pipe(
-          Effect.as(true),
+        if (!(yield* providerEnabled)) return "dropped" as const;
+        return yield* dispatchMove.pipe(
+          Effect.as("moved" as const),
           // A queued message may run first; the next run update tries again.
           Effect.catchTags({
-            OrchestratorDispatchError: () => Effect.succeed(false),
-            OrchestratorCommandPreviouslyRejectedError: () => Effect.succeed(false),
+            OrchestratorDispatchError: () => Effect.succeed("retry" as const),
+            OrchestratorCommandPreviouslyRejectedError: () => Effect.succeed("retry" as const),
           }),
         );
       });
-      const moved = yield* Stream.fromEffect(tryMove).pipe(
+      const outcome = yield* Stream.fromEffect(tryMove).pipe(
         Stream.concat(
           orchestrator
             .streamStoredEventsFrom({
@@ -1163,31 +1209,20 @@ const make = Effect.gen(function* () {
             })
             .pipe(Stream.mapEffect(() => tryMove)),
         ),
-        Stream.filter((done) => done),
+        Stream.filter((result) => result !== "retry"),
         Stream.runHead,
         Effect.timeoutOption(Duration.millis(SETTLE_AFTER_RUN_WAIT_MS)),
       );
-      if (Option.isNone(moved) || Option.isNone(moved.value) || input.continuation === undefined) {
-        return;
+      if (Option.isNone(outcome) || Option.isNone(outcome.value)) return;
+      if (outcome.value.value === "dropped") {
+        return yield* Effect.logWarning(
+          "Dropped a thread move because the destination disabled the thread's provider",
+          { threadId: input.threadId, projectId: input.projectId, instanceId },
+        );
       }
-      yield* sendToThread({
-        projectId: input.projectId,
-        commandId: input.continuation.commandId,
-        threadId: input.threadId,
-        messageId: input.continuation.messageId,
-        text: input.continuation.text,
-        attachments: [],
-        mode: "queue",
-        createdBy: "agent",
-        creationSource: "mcp",
-      });
+      yield* input.afterMove;
+      yield* continueThere;
     });
-    const shell = yield* orchestrator.getThreadShell(input.threadId);
-    if (shell == null || shell.activeRunId === null) {
-      yield* apply;
-      return { movesWhenTurnEnds: false };
-    }
-    const { projectId, activeRunId } = shell;
     yield* waitForThread({
       projectId,
       threadId: input.threadId,
@@ -1196,7 +1231,7 @@ const make = Effect.gen(function* () {
     }).pipe(
       Effect.flatMap(({ run }) =>
         run?.status === "completed"
-          ? apply
+          ? moveWhenIdle
           : Effect.logInfo("Dropped a thread move because its turn did not complete", {
               threadId: input.threadId,
               runId: activeRunId,

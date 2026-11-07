@@ -728,13 +728,19 @@ it.effect.each([
     let queuedRunBusy = true;
     const terminalRead = yield* Deferred.make<void>();
     const moveCommands: Array<CommandId> = [];
+    let afterMoveRuns = 0;
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.sync(() => sequence),
           getThreadShell: () =>
-            Effect.succeed({ id: threadId, projectId, activeRunId: runId } as never),
+            Effect.succeed({
+              id: threadId,
+              projectId,
+              activeRunId: runId,
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            } as never),
           restartContinuationPending: () => Effect.succeed(false),
           streamStoredEventsFrom: (input) =>
             input?.eventType === "run.updated"
@@ -781,6 +787,7 @@ it.effect.each([
               if (command.type === "message.dispatch") {
                 expect(projectId).toBe(targetProjectId);
                 expect(command.text).toBe("Carry on.");
+                expect(afterMoveRuns).toBe(1);
                 yield* Deferred.succeed(continued, undefined);
               }
               return { sequence: 1, storedEvents: [] } as never;
@@ -797,6 +804,9 @@ it.effect.each([
         threadId,
         projectId: targetProjectId,
         commandId: CommandId.make("command:thread-management:move"),
+        afterMove: Effect.sync(() => {
+          afterMoveRuns += 1;
+        }),
         continuation: {
           commandId: CommandId.make("command:thread-management:move-continuation"),
           messageId: MessageId.make("message:thread-management:move-continuation"),
@@ -816,6 +826,7 @@ it.effect.each([
       yield* Deferred.await(terminalRead);
       if (!moves) {
         expect(moveCommands).toEqual([]);
+        expect(afterMoveRuns).toBe(0);
         return;
       }
 
@@ -830,6 +841,125 @@ it.effect.each([
       yield* Deferred.await(continued);
       expect(new Set(moveCommands).size).toBe(moveCommands.length);
     }).pipe(Effect.provide(layerTest));
+  }),
+);
+
+it.effect.each([
+  { name: "a refused move fails at once", moveFails: true, disabled: false, sendFails: false },
+  {
+    name: "a disabled provider refuses the move",
+    moveFails: false,
+    disabled: true,
+    sendFails: false,
+  },
+  {
+    name: "a failed continuation still reports the move",
+    moveFails: false,
+    disabled: false,
+    sendFails: true,
+  },
+] as const)("moveThreadToProject on an idle thread: $name", ({ moveFails, disabled, sendFails }) =>
+  Effect.gen(function* () {
+    const targetProjectId = ProjectId.make("project:thread-management:idle-move-target");
+    const threadId = ThreadId.make("thread:thread-management:idle-move");
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    let moves = 0;
+    let afterMoveRuns = 0;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              projectId: ProjectId.make("project:thread-management:idle-move-source"),
+              activeRunId: null,
+              providerInstanceId: instanceId,
+            } as never),
+          // A retry stream would wait here forever.
+          streamStoredEventsFrom: () => Stream.never,
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: {
+                id: threadId,
+                projectId: targetProjectId,
+                archivedAt: null,
+                deletedAt: null,
+                modelSelection: { instanceId, model: "test" },
+              },
+              runs: [],
+              messages: [],
+              turnItems: [],
+              providerTurns: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: (command) => {
+            if (command.type === "thread.project.move") {
+              moves += 1;
+              if (moveFails) {
+                return Effect.fail(
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "Thread still has work in progress.",
+                  }),
+                );
+              }
+            }
+            if (command.type === "message.dispatch" && sendFails) {
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "Message refused.",
+                }),
+              );
+            }
+            return Effect.succeed({ sequence: 1, storedEvents: [] } as never);
+          },
+        }),
+      ),
+      Layer.provide(
+        ServerSettings.layerTest(
+          disabled
+            ? {
+                projectSettingsOverrides: {
+                  [targetProjectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+                },
+              }
+            : {},
+        ),
+      ),
+      Layer.provide(layerReceiptsTest),
+    );
+
+    const exit = yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      return yield* service.moveThreadToProject({
+        threadId,
+        projectId: targetProjectId,
+        commandId: CommandId.make("command:thread-management:idle-move"),
+        afterMove: Effect.sync(() => {
+          afterMoveRuns += 1;
+        }),
+        continuation: {
+          commandId: CommandId.make("command:thread-management:idle-move-continuation"),
+          messageId: MessageId.make("message:thread-management:idle-move-continuation"),
+          text: "Carry on.",
+        },
+      });
+    }).pipe(Effect.provide(layerTest), Effect.exit);
+
+    expect(moves).toBe(disabled ? 0 : 1);
+    expect(afterMoveRuns).toBe(moveFails || disabled ? 0 : 1);
+    if (moveFails || disabled) {
+      expect(exit._tag).toBe("Failure");
+      return;
+    }
+    expect(exit).toMatchObject({
+      _tag: "Success",
+      value: { movesWhenTurnEnds: false, continuationFailure: expect.any(String) },
+    });
   }),
 );
 

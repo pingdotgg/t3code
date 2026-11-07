@@ -29,6 +29,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
@@ -84,6 +85,7 @@ const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -515,11 +517,14 @@ const make = Effect.gen(function* () {
         }),
         asOperationFailed(`Unable to register a project for '${workspaceRoot}'`),
       );
-    const { movesWhenTurnEnds } = yield* threadManagement
+    const { movesWhenTurnEnds, continuationFailure } = yield* threadManagement
       .moveThreadToProject({
         threadId: thread.id,
         projectId,
         commandId: CommandId.make(part("command", "thread-move")),
+        afterMove: scheduledTasks
+          .moveThreadTasks({ threadIds: [thread.id], projectId })
+          .pipe(Effect.ignoreCause({ log: true })),
         ...(input.continuationPrompt === undefined
           ? {}
           : {
@@ -530,7 +535,7 @@ const make = Effect.gen(function* () {
               },
             }),
       })
-      .pipe(asOperationFailed("Unable to move the thread"));
+      .pipe(asOperationFailed("The thread did not move"));
 
     return {
       projectId,
@@ -542,9 +547,11 @@ const make = Effect.gen(function* () {
           ? "when this turn ends, so finish now and do not start more work here. A failed or stopped turn drops the move"
           : "now"
       }. ${
-        input.continuationPrompt === undefined
-          ? "The conversation continues there when the thread receives its next message."
-          : "The continuation prompt then starts the next turn there."
+        continuationFailure !== undefined
+          ? `The continuation prompt was not queued (${continuationFailure}), so send it again.`
+          : input.continuationPrompt === undefined
+            ? "The conversation continues there when the thread receives its next message."
+            : "The continuation prompt then starts the next turn there."
       } Files and any worktree in the previous folder stay where they are.`,
     };
   });
@@ -592,6 +599,7 @@ export const layer: Layer.Layer<
   | ThreadManagementService.ThreadManagementService
   | ProjectService.ProjectService
   | ServerSettings.ServerSettingsService
+  | ScheduledTaskService.ScheduledTaskService
   | GitWorkflowService.GitWorkflowService
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster

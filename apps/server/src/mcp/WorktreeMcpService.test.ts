@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   WorktreeMcpHandoffInput,
+  ScheduledTaskError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -33,6 +34,7 @@ import {
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -120,6 +122,8 @@ interface HarnessOptions {
   readonly existsFails?: boolean;
   readonly subagentStatus?: string;
   readonly destinationProjectExists?: boolean;
+  readonly moveContinuationFailure?: string;
+  readonly moveTasksFails?: boolean;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -221,7 +225,21 @@ const makeHarness = (options: HarnessOptions = {}) => {
       created: options.destinationProjectExists !== true,
     }),
   );
-  const moveThreadToProject = vi.fn((_: unknown) => Effect.succeed({ movesWhenTurnEnds: true }));
+  const moveThreadToProject = vi.fn((input: { readonly afterMove: Effect.Effect<void> }) =>
+    input.afterMove.pipe(
+      Effect.as({
+        movesWhenTurnEnds: options.moveContinuationFailure === undefined,
+        ...(options.moveContinuationFailure === undefined
+          ? {}
+          : { continuationFailure: options.moveContinuationFailure }),
+      }),
+    ),
+  );
+  const moveThreadTasks = vi.fn((_: unknown) =>
+    options.moveTasksFails
+      ? Effect.fail(new ScheduledTaskError({ message: "simulated" }))
+      : Effect.void,
+  );
   const removeWorktree = vi.fn((_: unknown) =>
     options.removeWorktreeFails
       ? (Effect.fail("simulated worktree removal failure") as never)
@@ -323,6 +341,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
           getById,
           bootstrap: bootstrap as never,
         } satisfies Partial<ProjectService.ProjectService["Service"]>),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          moveThreadTasks: moveThreadTasks as never,
+        }),
         ServerSettings.layerTest({
           newWorktreesStartFromOrigin: options.newWorktreesStartFromOrigin ?? false,
           ...(options.projectNewWorktreesStartFromOrigin === undefined
@@ -384,6 +405,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     runForThread,
     bootstrap,
     moveThreadToProject,
+    moveThreadTasks,
   };
 };
 
@@ -453,6 +475,10 @@ describe("t3_thread_move", () => {
             continuation: expect.objectContaining({ text: "Carry on." }),
           }),
         );
+        expect(harness.moveThreadTasks).toHaveBeenCalledWith({
+          threadIds: [threadId],
+          projectId: result.projectId,
+        });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -472,6 +498,23 @@ describe("t3_thread_move", () => {
         expect(harness.moveThreadToProject).toHaveBeenCalledWith(
           expect.not.objectContaining({ continuation: expect.anything() }),
         );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports a moved thread whose tasks or continuation could not follow", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const folder = yield* makeFolder();
+        const harness = makeHarness({
+          capabilities: moveCapabilities,
+          moveContinuationFailure: "provider disabled",
+          moveTasksFails: true,
+        });
+        const result = yield* runMove(harness, { path: folder, continuationPrompt: "Carry on." });
+
+        expect(result.movesWhenTurnEnds).toBe(false);
+        expect(result.note).toContain("was not queued (provider disabled)");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

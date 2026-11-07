@@ -36,7 +36,7 @@ To move a thread that has already started, ask its agent to move to the folder
 you name. The conversation carries over and the thread lands in that folder's
 project, registering one if there is none. The move happens when the turn ends;
 a failed or stopped turn drops it. Files stay where they are, and the thread's
-branch and worktree are cleared.
+branch and worktree are cleared. The agent needs full access to do this.
 
 Each thread without a project works in its own folder under `~/.t3/scratch` (the
 `scratch` folder of your T3 data directory), named after its date, the first words
