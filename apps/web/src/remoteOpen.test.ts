@@ -6,7 +6,7 @@ import {
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveRemoteOpenState } from "./remoteOpen";
+import { remoteFallbackEditors, resolveRemoteOpenState } from "./remoteOpen";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -140,6 +140,61 @@ describe("resolveRemoteOpenState", () => {
         }),
       ).toEqual({ mode: "remote-unavailable" });
     }
+  });
+});
+
+describe("remoteFallbackEditors", () => {
+  it.each([
+    {
+      device: "iPad",
+      userAgent:
+        "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      platform: "iPad",
+      maxTouchPoints: 5,
+    },
+    {
+      // iPadOS Safari requests the desktop site with a Macintosh user agent by default.
+      device: "iPad with a desktop user agent",
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+      platform: "MacIntel",
+      maxTouchPoints: 5,
+    },
+    {
+      device: "iPhone",
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      platform: "iPhone",
+      maxTouchPoints: 5,
+    },
+    {
+      device: "Android phone",
+      userAgent:
+        "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+      platform: "Linux armv81",
+      maxTouchPoints: 5,
+    },
+  ])("offers no desktop editor for remote links on an $device", ({ device: _, ...identity }) => {
+    expect(remoteFallbackEditors(identity)).toEqual([]);
+  });
+
+  it.each([
+    {
+      device: "Windows",
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+      platform: "Win32",
+      maxTouchPoints: 0,
+    },
+    {
+      device: "Mac",
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    },
+  ])("keeps the VS Code fallback for remote links on $device", ({ device: _, ...identity }) => {
+    expect(remoteFallbackEditors(identity)).toEqual(["vscode"]);
   });
 });
 
