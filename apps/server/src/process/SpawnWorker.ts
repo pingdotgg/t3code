@@ -108,7 +108,7 @@ parentPort.on("message", (request) => {
     if (request.type === "end") post({ type: "finished", id, fd: request.fd });
     return;
   }
-  const stream = child.stdio[request.fd];
+  const stream = child.stdio?.[request.fd];
   switch (request.type) {
     case "write":
       if (!stream || stream.destroyed) {
