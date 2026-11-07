@@ -21,6 +21,7 @@ const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly active: boolean;
   readonly renderingActive: boolean;
+  readonly serverDriven?: boolean;
   readonly keepPaintableWhenInactive?: boolean;
   readonly cornerRadius?: number;
   readonly zIndex?: number;
@@ -34,6 +35,7 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     keepPaintableWhenInactive = false,
     rect,
     renderingActive,
+    serverDriven = false,
     zIndex = 30,
   } = input;
   if (active && rect) {
@@ -48,7 +50,7 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     };
   }
 
-  if (renderingActive) {
+  if (renderingActive || serverDriven) {
     // Electron stops compositing offscreen guests; keep capture-active guests inside the viewport behind the app.
     return {
       left: 0,

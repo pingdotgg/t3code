@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Stands in for an Electron debugger.
 import { describe, expect, it, vi } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -73,6 +74,13 @@ const makeDebuggee = (
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
+    capturePage: async () => {
+      await debuggee.sendCommand("Page.captureScreenshot");
+      return {
+        toPNG: () => Buffer.from("native png"),
+        toJPEG: () => Buffer.from("native jpeg"),
+      };
+    },
   });
   return {
     tab: {
@@ -134,6 +142,44 @@ const watchPainting = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =
   });
 
 describe("DesktopBrowserHost", () => {
+  it.effect.each(["darwin", "linux"] as const)(
+    "uses native viewport capture only on macOS (%s)",
+    (platform) =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        let cdpCaptures = 0;
+        let nativeCaptures = 0;
+        const debuggee = makeDebuggee({
+          refuse: (method) => {
+            if (method !== "Page.captureScreenshot") return false;
+            cdpCaptures += 1;
+            return true;
+          },
+        });
+        debuggee.tab.webContents.capturePage = async () => {
+          nativeCaptures += 1;
+          return { toPNG: () => Buffer.from("native png") } as Electron.NativeImage;
+        };
+        host.attach(key, debuggee.tab);
+        const replies = yield* watchReplies(host);
+        yield* host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id: 1,
+              method: "Page.captureScreenshot",
+              params: { format: "png" },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        expect(yield* Queue.take(replies)).toBe(1);
+        expect(nativeCaptures).toBe(platform === "darwin" ? 1 : 0);
+        expect(cdpCaptures).toBe(platform === "darwin" ? 0 : 1);
+      }).pipe(Effect.provideService(HostProcess.Platform, platform), Effect.scoped),
+  );
+
   it.effect("announces tabs already attached to a backend that starts later", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
