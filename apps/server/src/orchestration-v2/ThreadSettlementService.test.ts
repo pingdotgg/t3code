@@ -565,6 +565,7 @@ interface HarnessOptions {
   ) => Effect.Effect<void>;
   readonly onCloseIdle?: () => Effect.Effect<void>;
   readonly deviceCloseError?: DeviceHostUnavailableError;
+  readonly withoutDeviceSessions?: boolean;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
 }
 
@@ -693,15 +694,19 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     }),
     Layer.mock(DeviceService.DeviceService)({
       sessionsForThread: (threadId) =>
-        Effect.succeed([
-          {
-            threadId,
-            hostId: "local",
-            deviceId: "emulator-5554",
-            platform: "android" as const,
-            openedAt: "2026-01-01T00:00:00.000Z",
-          },
-        ]),
+        Effect.succeed(
+          options.withoutDeviceSessions
+            ? []
+            : [
+                {
+                  threadId,
+                  hostId: "local",
+                  deviceId: "emulator-5554",
+                  platform: "android" as const,
+                  openedAt: "2026-01-01T00:00:00.000Z",
+                },
+              ],
+        ),
       close: (input) =>
         Ref.update(deviceCloses, (closes) => [...closes, input]).pipe(
           Effect.andThen(options.deviceCloseError ?? Effect.void),
@@ -1550,6 +1555,28 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           const run = yield* Queue.take(fixture.scriptRuns);
           assert.strictEqual(run.threadId, settled.id);
           assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), [{ threadId: settled.id }]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("leaves the device service alone for a settled thread without devices", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settled = appThread("deviceless-thread", "settled", "/worktrees/deviceless");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [settled],
+          existingWorktreePaths: ["/worktrees/deviceless"],
+          withoutDeviceSessions: true,
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, settled.id);
+          assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), []);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
