@@ -1046,6 +1046,7 @@ function deriveTurnFolds(input: {
   // Key runless responses per prompt to prevent V2 runs unfolding imported turns.
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
+  let previousRunId: RunId | null = null;
   let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
     if (timelineEntryStartsResponse(entry)) {
@@ -1075,10 +1076,12 @@ function deriveTurnFolds(input: {
       continue;
     }
     // Resumed subagents keep their position and fold with their original turn.
-    const runId =
-      responseKey !== null && (promptIndexByRunId.get(ownRunId) ?? -1) > index
-        ? responseKey
-        : ownRunId;
+    const runId: RunId | null =
+      (promptIndexByRunId.get(ownRunId) ?? -1) > index ? (responseKey ?? previousRunId) : ownRunId;
+    if (runId === null) {
+      continue;
+    }
+    previousRunId = runId;
     if (runId === runlessKey && timelineEntryFailedItem(entry) !== null) {
       runlessFailedKeys.add(runId);
     }

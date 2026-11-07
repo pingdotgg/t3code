@@ -1091,6 +1091,7 @@ function deriveThreadFeedRunFolds(
   >();
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
+  let previousRunId: RunId | null = null;
   let pendingUserBoundary: string | null = null;
   for (const [index, entry] of feed.entries()) {
     if (entry.type === "message" && entry.message.role === "user") {
@@ -1109,10 +1110,10 @@ function deriveThreadFeedRunFolds(
           : null;
     if (!ownRunId) continue;
     // Resumed subagents keep their original turn position and fold, leaving later run folds under their own prompts.
-    const runId =
-      responseKey !== null && (promptIndexByRunId.get(ownRunId) ?? -1) > index
-        ? responseKey
-        : ownRunId;
+    const runId: RunId | null =
+      (promptIndexByRunId.get(ownRunId) ?? -1) > index ? (responseKey ?? previousRunId) : ownRunId;
+    if (runId === null) continue;
+    previousRunId = runId;
     let group = groupsByRunId.get(runId);
     if (!group) {
       group = { entries: [], startBoundary: pendingUserBoundary };

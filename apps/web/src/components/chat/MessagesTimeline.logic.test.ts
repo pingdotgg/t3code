@@ -3685,6 +3685,55 @@ describe("linked timeline resources", () => {
     expect(rows[1]).toMatchObject({ subagents: [{ item: { id: "a" } }, { item: { id: "b" } }] });
   });
 
+  it("folds a turn beside its reply when the window opens on a resumed subagent", () => {
+    const message = (id: string, role: "user" | "assistant", createdAt: string) => ({
+      id,
+      kind: "message" as const,
+      createdAt,
+      message: {
+        id: MessageId.make(id),
+        role,
+        text: id,
+        runId,
+        ...(role === "user" ? { inputIntent: "turn_start" as const } : {}),
+        streaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      ...common,
+      timelineEntries: [
+        event("resumed-card", "subagent"),
+        message("prompt", "user", "2026-09-08T10:00:03Z"),
+        {
+          id: "command",
+          kind: "work",
+          createdAt: "2026-09-08T10:00:04Z",
+          entry: {
+            id: "command",
+            createdAt: "2026-09-08T10:00:04Z",
+            runId,
+            label: "Ran command",
+            command: "ls",
+            itemType: "command_execution",
+            tone: "tool",
+            toolLifecycleStatus: "completed",
+          },
+        },
+        message("reply", "assistant", "2026-09-08T10:00:05Z"),
+      ],
+      latestRun: {
+        runId,
+        status: "completed",
+        startedAt: "2026-09-08T10:00:03Z",
+        completedAt: "2026-09-08T10:00:05Z",
+      },
+    });
+    const turn = ["prompt", "turn-fold:resource-run", "reply"];
+    expect(rows.map((row) => row.id).filter((id) => turn.includes(id))).toEqual(turn);
+  });
+
   it.each([
     { status: "completed", envelope: "direct", role: "general" },
     { status: "completed", envelope: "structured", role: "general" },
