@@ -1,4 +1,8 @@
-import { UsagePolling, UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
+import {
+  UsagePolling,
+  UsageAfterReset,
+  makeUnavailableUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as Hex from "effect/encoding/Hex";
@@ -66,10 +70,16 @@ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const decodeNativeAccount = Schema.decodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
-      tokens: Schema.Struct({
-        account_id: Schema.String,
-        id_token: Schema.optionalKey(Schema.String),
-      }),
+      auth_mode: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      OPENAI_API_KEY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      tokens: Schema.optionalKey(
+        Schema.NullOr(
+          Schema.Struct({
+            account_id: Schema.String,
+            id_token: Schema.optionalKey(Schema.String),
+          }),
+        ),
+      ),
     }),
   ),
 );
@@ -251,15 +261,26 @@ export const CodexDriver: ProviderDriver<
         .readFileString(
           pathService.join(homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath, "auth.json"),
         )
-        .pipe(Effect.flatMap(decodeNativeAccount), Effect.option);
+        .pipe(
+          Effect.catchTags({
+            PlatformError: (error) =>
+              error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+          }),
+          Effect.flatMap(decodeNativeAccount),
+          Effect.option,
+        );
       if (Option.isNone(account)) return undefined;
-      const workspaceId = account.value.tokens.account_id.trim();
-      if (!workspaceId) return undefined;
-      const personId = Option.getOrUndefined(openAiUserId(account.value.tokens.id_token ?? ""));
+      const mode = account.value.auth_mode ?? (account.value.OPENAI_API_KEY ? "apikey" : "chatgpt");
+      const isChatGpt = mode === "chatgpt" || mode === "chatgptAuthTokens";
+      const workspaceId = isChatGpt ? account.value.tokens?.account_id.trim() : undefined;
+      const personId = isChatGpt
+        ? Option.getOrUndefined(openAiUserId(account.value.tokens?.id_token ?? ""))
+        : account.value.OPENAI_API_KEY?.trim();
+      const kind = workspaceId ? "chatgpt" : mode;
       const usageRefreshKey = yield* digest
         .digest(
           Digest.sha256,
-          new TextEncoder().encode(encodeUsageOwner(["chatgpt", workspaceId, personId ?? ""])),
+          new TextEncoder().encode(encodeUsageOwner([kind, workspaceId ?? "", personId ?? ""])),
         )
         .pipe(Effect.map(Hex.encode), Effect.orDie);
       return { workspaceId, usageRefreshKey };
@@ -268,40 +289,41 @@ export const CodexDriver: ProviderDriver<
 
     // Kick the TTL-gated manifest refresh in the background and classify with the in-memory
     // manifest, so a slow or hung fetch never delays the provider check.
-    const checkProvider = modelCatalog.refreshInBackground.pipe(
-      Effect.andThen(
-        Effect.zipWith(
-          Effect.flatMap(UsagePolling, (includeUsage) =>
-            checkCodexProviderStatus(
-              effectiveConfig,
-              undefined,
-              processEnv,
-              undefined,
-              !includeUsage,
-            ),
-          ),
-          currentCatalog,
-          (draft, catalog) => applyCodexModelCatalog(draft, catalog),
-          { concurrent: true },
-        ),
-      ),
-      Effect.flatMap((draft) =>
-        usageAccount.pipe(
-          Effect.map((account) =>
-            stampIdentity({
-              ...draft,
-              auth:
-                draft.auth.type === "chatgpt" && account
-                  ? {
-                      ...draft.auth,
-                      ...account,
-                      workspaceId: draft.auth.workspaceId ?? account.workspaceId,
-                    }
-                  : draft.auth,
-            }),
-          ),
-        ),
-      ),
+    const checkProvider = Effect.gen(function* () {
+      const before = yield* usageAccount;
+      yield* modelCatalog.refreshInBackground;
+      const includeUsage = yield* UsagePolling;
+      const draft = yield* Effect.zipWith(
+        checkCodexProviderStatus(effectiveConfig, undefined, processEnv, undefined, !includeUsage),
+        currentCatalog,
+        (draft, catalog) => applyCodexModelCatalog(draft, catalog),
+        { concurrent: true },
+      );
+      const after = yield* usageAccount;
+      if (after && after.usageRefreshKey !== before?.usageRefreshKey) {
+        return stampIdentity({
+          ...draft,
+          auth: { status: "unknown", ...after },
+          usageLimits: {
+            ...makeUnavailableUsageLimits({ checkedAt: draft.checkedAt, reason: "probeFailed" }),
+            refreshAfter: 0,
+          },
+        });
+      }
+      return stampIdentity({
+        ...draft,
+        auth: before
+          ? {
+              ...draft.auth,
+              ...before,
+              workspaceId:
+                draft.auth.type === "chatgpt"
+                  ? (draft.auth.workspaceId ?? before.workspaceId)
+                  : undefined,
+            }
+          : draft.auth,
+      });
+    }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),
