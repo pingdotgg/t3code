@@ -90,6 +90,27 @@ describe("Codex device context", () => {
     NodeAssert.ok(!tools(true).includes("ToolSearch"));
     NodeAssert.ok(!tools(false).includes("## T3 Code devices"));
   });
+
+  // Codex keeps earlier additionalContext in history, so a resumed thread still holds the device block.
+  it.each([true, false])(
+    "withdraws earlier device instructions when the session lacks device access (browser %s)",
+    (browser) => {
+      const context = buildCodexAdditionalContext(
+        { model: "gpt-6.1-sol" },
+        { browser, device: false },
+      );
+      const withdrawal = Object.values(context).find(
+        ({ value }) =>
+          /device/i.test(value) &&
+          /\b(off|unavailable|disabled|no longer appl(y|ies))\b/i.test(value),
+      );
+
+      NodeAssert.ok(
+        withdrawal,
+        `device-off context ${JSON.stringify(Object.keys(context))} never tells Codex that T3 Code device tools are off, so device instructions from an earlier session still apply`,
+      );
+    },
+  );
 });
 
 function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
