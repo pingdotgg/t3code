@@ -57,45 +57,61 @@ function piProbeSpawner(version: string) {
   });
 }
 
-/** Fails the test if status runs `pi auth check` without `authCheck` or with other arguments. */
+/**
+ * Fails the test if status runs `pi auth check` without `authCheck` or with other arguments.
+ * `noExtensionsInventory` is what a `--no-extensions` launch lists, which omits extension models;
+ * `noExtensionsExits` makes that launch exit before answering.
+ */
 const piDiscoverySpawner = (
   inventory: unknown,
   options: {
     readonly version?: string;
     readonly state?: unknown;
     readonly authCheck?: string | undefined;
+    readonly noExtensionsInventory?: unknown;
+    readonly noExtensionsExits?: boolean;
   } = {},
 ) =>
-  Effect.gen(function* () {
-    const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
-    let stdinBuffer = "";
-    const stdin = Sink.forEach((chunk: Uint8Array) =>
+  Effect.sync(() => {
+    const rpcProcess = (modelInventory: unknown) =>
       Effect.gen(function* () {
-        stdinBuffer += new TextDecoder().decode(chunk);
-        while (true) {
-          const newline = stdinBuffer.indexOf("\n");
-          if (newline === -1) return;
-          const line = stdinBuffer.slice(0, newline);
-          stdinBuffer = stdinBuffer.slice(newline + 1);
-          if (line.length === 0) continue;
-          const request = decodeRpcRequest(line);
-          const data =
-            request.type === "get_available_models"
-              ? inventory
-              : request.type === "get_commands"
-                ? { commands: [] }
-                : request.type === "get_state"
-                  ? (options.state ?? {})
-                  : {};
-          yield* Queue.offer(
-            stdout,
-            encoder.encode(
-              `${encodeJsonLine({ type: "response", id: request.id, command: request.type, success: true, data })}\n`,
-            ),
-          );
-        }
-      }),
-    );
+        const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+        let stdinBuffer = "";
+        const stdin = Sink.forEach((chunk: Uint8Array) =>
+          Effect.gen(function* () {
+            stdinBuffer += new TextDecoder().decode(chunk);
+            while (true) {
+              const newline = stdinBuffer.indexOf("\n");
+              if (newline === -1) return;
+              const line = stdinBuffer.slice(0, newline);
+              stdinBuffer = stdinBuffer.slice(newline + 1);
+              if (line.length === 0) continue;
+              const request = decodeRpcRequest(line);
+              const data =
+                request.type === "get_available_models"
+                  ? modelInventory
+                  : request.type === "get_commands"
+                    ? { commands: [] }
+                    : request.type === "get_state"
+                      ? (options.state ?? {})
+                      : {};
+              yield* Queue.offer(
+                stdout,
+                encoder.encode(
+                  `${encodeJsonLine({ type: "response", id: request.id, command: request.type, success: true, data })}\n`,
+                ),
+              );
+            }
+          }),
+        );
+        return ChildProcessSpawner.makeHandle({
+          ...processHandle({}),
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          stdin,
+          stdout: Stream.fromQueue(stdout),
+        });
+      });
     return ChildProcessSpawner.make((command) => {
       const args = ChildProcess.isStandardCommand(command) ? command.args : [];
       if (args.includes("--version")) {
@@ -107,15 +123,10 @@ const piDiscoverySpawner = (
           ? Effect.die(`Unexpected pi ${args.join(" ")}`)
           : Effect.succeed(processHandle({ stdout: options.authCheck, exitCode: 1 }));
       }
-      return Effect.succeed(
-        ChildProcessSpawner.makeHandle({
-          ...processHandle({}),
-          exitCode: Effect.never,
-          isRunning: Effect.succeed(true),
-          stdin,
-          stdout: Stream.fromQueue(stdout),
-        }),
-      );
+      if (!args.includes("--no-extensions")) return rpcProcess(inventory);
+      return options.noExtensionsExits === true
+        ? Effect.succeed(processHandle({ stderr: 'Error: Unknown provider "auto".', exitCode: 1 }))
+        : rpcProcess(options.noExtensionsInventory ?? inventory);
     });
   });
 
@@ -273,6 +284,77 @@ describe("PiProvider", () => {
       assert.equal(snapshot.auth.status, "authenticated");
       if (row.message === undefined) assert.isUndefined(snapshot.message);
       else assert.include(snapshot.message ?? "", row.message);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("marks models Pi loads only with extensions as unusable for text generation", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        {
+          models: [
+            { provider: "openai", id: "gpt-6-luna" },
+            { provider: "auto", id: "gpt-6-luna" },
+          ],
+        },
+        {
+          version: "1.4.0",
+          noExtensionsInventory: { models: [{ provider: "openai", id: "gpt-6-luna" }] },
+        },
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const model = (slug: string) => snapshot.models.find((candidate) => candidate.slug === slug);
+      assert.notPropertyVal(model("openai/gpt-6-luna"), "supportsTextGeneration", false);
+      assert.propertyVal(
+        model("auto/gpt-6-luna"),
+        "supportsTextGeneration",
+        false,
+        "text generation runs Pi with --no-extensions, which cannot load auto/gpt-6-luna",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "marks every model unusable for text generation when Pi cannot start without extensions",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* piDiscoverySpawner(
+          { models: [{ provider: "auto", id: "gpt-6-luna" }] },
+          { version: "1.4.0", noExtensionsExits: true },
+        );
+        const snapshot = yield* checkPiProviderStatus({
+          ...settings,
+          customModels: ["openai/custom-model"],
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        assert.equal(snapshot.status, "ready");
+        for (const slug of ["default", "auto/gpt-6-luna", "openai/custom-model"]) {
+          assert.propertyVal(
+            snapshot.models.find((model) => model.slug === slug),
+            "supportsTextGeneration",
+            false,
+            slug,
+          );
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves models unmarked when Pi without extensions returns a malformed inventory", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        { models: [{ provider: "auto", id: "gpt-6-luna" }] },
+        { version: "1.4.0", noExtensionsInventory: {} },
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "authenticated");
+      assert.notPropertyVal(
+        snapshot.models.find((model) => model.slug === "auto/gpt-6-luna"),
+        "supportsTextGeneration",
+        false,
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
