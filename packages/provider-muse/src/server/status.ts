@@ -29,6 +29,7 @@ const MUSE_PRESENTATION = {
 } as const;
 
 const FALLBACK_CAPABILITIES = museModelCapabilities();
+const MUSE_MISSING_RUNTIME_ERROR = "muse: installed binary is missing";
 
 export const makePendingMuseProvider = Effect.fn("makePendingMuseProvider")(function* (
   settings: MuseSettings,
@@ -112,7 +113,11 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       version,
       status: "error",
       auth: { status: "unknown" },
-      message: "Muse Code CLI is installed but failed to run.",
+      // T3 sets MUSE_NO_AUTO_UPDATE, so a fresh launcher can't fetch its runtime
+      // during the probe. Recognize that one known error; other stderr stays hidden.
+      message: versionOutput.stderr.includes(MUSE_MISSING_RUNTIME_ERROR)
+        ? "Muse Code CLI has not finished installing (`muse --version` exited with exit code 1). Run `muse --version` on this T3 server host to finish setup, then refresh its status."
+        : "Muse Code CLI is installed but failed to run.",
     });
   }
 

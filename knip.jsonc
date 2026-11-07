@@ -31,6 +31,7 @@
         "linux-after-pack.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
+        "seed-muse-uninitialized.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "prepare-server-compile-cache.cjs",
