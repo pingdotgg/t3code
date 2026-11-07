@@ -2069,6 +2069,64 @@ describe("EnvironmentSupervisor routes", () => {
       }),
   );
 
+  it.effect("asks again, backing off, for a grant the host could not report", () =>
+    Effect.gen(function* () {
+      const lanGrantChecks = yield* Ref.make(0);
+      const thirdAskStarted = yield* Deferred.make<void>();
+      const answerThirdAsk = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        grant: (target) =>
+          target._tag === "RelayConnectionTarget"
+            ? Effect.succeedSome(STANDARD_GRANT)
+            : Ref.updateAndGet(lanGrantChecks, (count) => count + 1).pipe(
+                Effect.tap((count) =>
+                  count === 3
+                    ? Deferred.succeed(thirdAskStarted, undefined).pipe(
+                        Effect.andThen(Deferred.await(answerThirdAsk)),
+                      )
+                    : Effect.void,
+                ),
+                Effect.map((count) => (count <= 2 ? Option.none() : Option.some(LEGACY_GRANT))),
+              ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      // Asked on connecting, then at 2 minutes and not again before 6.
+      yield* TestClock.adjust("60 seconds");
+      expect(yield* Ref.get(lanGrantChecks)).toBe(1);
+      yield* TestClock.adjust("60 seconds");
+      expect(yield* Ref.get(lanGrantChecks)).toBe(2);
+      for (let minute = 0; minute < 3; minute += 1) {
+        yield* TestClock.adjust("60 seconds");
+      }
+      expect(yield* Ref.get(lanGrantChecks)).toBe(2);
+      expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+
+      // A network change during an ask drops its answer and asks again.
+      yield* TestClock.adjust("60 seconds");
+      yield* Deferred.await(thirdAskStarted);
+      yield* harness.wake("network-changed");
+      yield* Deferred.succeed(answerThirdAsk, undefined);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(lanGrantChecks)).toBe(4);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+    }),
+  );
+
   it.effect("asks T3 Connect for its grant again after the network changes", () =>
     Effect.gen(function* () {
       const relayGrant = yield* Ref.make(LEGACY_GRANT);

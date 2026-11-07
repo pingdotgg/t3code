@@ -346,9 +346,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // is strictly broader goes ahead of the saved network order, so an old
   // narrow pairing on the LAN cannot hide a T3 Connect route that grants more.
   const routeGrants = yield* Ref.make<ReadonlyMap<string, RouteGrant>>(new Map());
-  // The live session whose grant was last asked for, so it is asked once per
-  // session and again after a reset.
-  const grantAskedFor = yield* Ref.make<RpcSession.RpcSession | undefined>(undefined);
+  // The live session's grant is asked for once per session and again after a
+  // reset. An unanswered ask is retried, backing off like a silent route.
+  const activeGrantCheck = yield* Ref.make<{
+    readonly session: RpcSession.RpcSession | undefined;
+    readonly retry: SilentRoute | undefined;
+  }>({ session: undefined, retry: undefined });
   // A reset asks every route again, since grants can change, but keeps the
   // active route's until it answers so a failed ask cannot downgrade it.
   const forgetSilentRoutes = Effect.gen(function* () {
@@ -356,7 +359,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       generation: generation + 1,
       routes: new Map(),
     }));
-    yield* Ref.set(grantAskedFor, undefined);
+    yield* Ref.set(activeGrantCheck, { session: undefined, retry: undefined });
     const active = yield* SubscriptionRef.get(prepared);
     const activeId = Option.isSome(active) ? connectionRouteId(active.value.target) : undefined;
     yield* Ref.update(routeGrants, (grants) => {
@@ -519,19 +522,29 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // Only while another route could beat the session.
   const activeGrantDue = Effect.fnUntraced(function* (lease: ConnectedLease) {
     if (!hasGrant(lease.prepared.target) || (yield* currentRoutes).length < 2) return false;
-    return (yield* Ref.get(grantAskedFor)) !== lease.session;
+    const check = yield* Ref.get(activeGrantCheck);
+    if (check.session !== lease.session) return true;
+    return check.retry !== undefined && check.retry.until <= (yield* Clock.monotonicTimeNanos);
   });
 
   const checkActiveGrant = Effect.fnUntraced(function* (lease: ConnectedLease) {
     const live = yield* SubscriptionRef.get(session);
     if (Option.isNone(live) || live.value !== lease.session) return;
     if (!(yield* activeGrantDue(lease))) return;
-    yield* Ref.set(grantAskedFor, lease.session);
+    const now = yield* Clock.monotonicTimeNanos;
+    // Marked unanswered first, so a reset during the ask replaces this exact
+    // value and the answer cannot mark the reset's ask done.
+    const asked = yield* Ref.updateAndGet(activeGrantCheck, (check) => ({
+      session: lease.session,
+      retry: backOffSilentRoute(check.session === lease.session ? check.retry : undefined, now),
+    }));
     const { generation } = yield* Ref.get(silentRoutes);
     const grant = yield* driver.sessionGrant(lease.prepared);
-    if (Option.isSome(grant)) {
-      yield* recordGrant(generation, connectionRouteId(lease.prepared.target), grant.value);
-    }
+    if (Option.isNone(grant)) return;
+    yield* recordGrant(generation, connectionRouteId(lease.prepared.target), grant.value);
+    yield* Ref.update(activeGrantCheck, (check) =>
+      check === asked ? { session: lease.session, retry: undefined } : check,
+    );
   });
 
   const clearLease = Effect.all(
