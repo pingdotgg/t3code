@@ -564,8 +564,9 @@ cleanup_launch() {
   done
 }
 trap cleanup_launch EXIT
-# A dropped SSH session signals the launch; exit so the lock is released.
-trap 'exit 1' HUP INT TERM
+# A dropped SSH session signals the launch (PIPE on its next write); exit so
+# the lock is released.
+trap 'exit 1' HUP INT PIPE TERM
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
@@ -588,7 +589,7 @@ discard_stale_launch_lock() {
     if [ -z "$LAUNCH_BREAK_OWNER" ] || ! kill -0 "$LAUNCH_BREAK_OWNER" 2>/dev/null; then
       rm -f "$LAUNCH_BREAK_LOCK"
     fi
-    return 0
+    return 1
   fi
   if [ "$(cat "$LAUNCH_LOCK" 2>/dev/null || true)" = "$1" ]; then
     rm -f "$LAUNCH_LOCK"
@@ -605,15 +606,13 @@ while ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_LOCK") 2>/dev/null; do
   LAUNCH_LOCK_OWNER="$(cat "$LAUNCH_LOCK" 2>/dev/null || true)"
   if [ -n "$LAUNCH_LOCK_OWNER" ]; then
     LAUNCH_LOCK_UNOWNED=0
-    if ! kill -0 "$LAUNCH_LOCK_OWNER" 2>/dev/null; then
-      discard_stale_launch_lock "$LAUNCH_LOCK_OWNER"
+    if ! kill -0 "$LAUNCH_LOCK_OWNER" 2>/dev/null && discard_stale_launch_lock "$LAUNCH_LOCK_OWNER"; then
       continue
     fi
   else
     LAUNCH_LOCK_UNOWNED=$((LAUNCH_LOCK_UNOWNED + 1))
-    if [ "$LAUNCH_LOCK_UNOWNED" -ge 5 ]; then
+    if [ "$LAUNCH_LOCK_UNOWNED" -ge 5 ] && discard_stale_launch_lock ""; then
       LAUNCH_LOCK_UNOWNED=0
-      discard_stale_launch_lock ""
       continue
     fi
   fi
