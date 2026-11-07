@@ -24,6 +24,7 @@ type ToWorker =
   | { readonly type: "write"; readonly id: number; readonly fd: number; readonly data: Uint8Array }
   | { readonly type: "end"; readonly id: number; readonly fd: number }
   | { readonly type: "flow"; readonly id: number; readonly fd: number; readonly paused: boolean }
+  | { readonly type: "destroy"; readonly id: number; readonly fd: number }
   | { readonly type: "kill"; readonly id: number; readonly signal: NodeJS.Signals | number };
 
 interface SerializedError {
@@ -129,6 +130,9 @@ parentPort.on("message", (request) => {
       if (request.paused) stream?.pause();
       else stream?.resume();
       return;
+    case "destroy":
+      stream?.destroy();
+      return;
     case "kill":
       try {
         child.kill(request.signal);
@@ -202,9 +206,14 @@ class WorkerChild
       this.#finals.set(fd, callback);
       this.worker.post({ type: "end", id: this.id, fd });
     };
-    if (fd === 0) return new NodeStream.Writable({ write, final });
-    if (fd <= 2) return new NodeStream.Readable({ read });
-    return new NodeStream.Duplex({ read, write, final, allowHalfOpen: true });
+    // A caller that destroys its end closes the child pipe, as it would with a real pipe.
+    const destroy = (error: Error | null, callback: (error?: Error | null) => void) => {
+      if (!this.exited) this.worker.post({ type: "destroy", id: this.id, fd });
+      callback(error);
+    };
+    if (fd === 0) return new NodeStream.Writable({ write, final, destroy });
+    if (fd <= 2) return new NodeStream.Readable({ read, destroy });
+    return new NodeStream.Duplex({ read, write, final, destroy, allowHalfOpen: true });
   }
 
   onData(fd: number, data: Uint8Array): void {

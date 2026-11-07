@@ -77,6 +77,11 @@ describe("SpawnWorker", () => {
       });
       expect(fd3).toBe("fd3 value");
       expect(extraCode).toBe(0);
+      const reader = yield* spawner.spawn(
+        node("process.stdin.on('end', () => process.stdout.write('eof')).resume()"),
+      );
+      yield* Stream.fail("abandoned input").pipe(Stream.run(reader.stdin), Effect.ignore);
+      expect(yield* text(reader.stdout)).toBe("eof");
       const pipeline = node("process.stdout.write('piped')").pipe(
         ChildProcess.pipeTo(
           node("process.stdin.on('data', (d) => process.stdout.write(String(d).toUpperCase()))"),
