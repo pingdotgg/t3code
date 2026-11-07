@@ -18,9 +18,26 @@ const mocks = vi.hoisted(() => ({
   closeTab: vi.fn<DesktopPreviewBridge["closeTab"]>(),
   registerWebview: vi.fn<DesktopPreviewBridge["registerWebview"]>(),
   getPreviewConfig: vi.fn<DesktopPreviewBridge["getPreviewConfig"]>(),
+  primaryHasDesktopBrowser: true,
 }));
 
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
+
+vi.mock(import("~/state/primaryEnvironment"), async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { primaryEnvironmentIdAtom: Atom.make(EnvironmentId.make("host-webview-order")) };
+});
+
+vi.mock(import("~/state/entities"), async (original) => ({
+  ...(await original()),
+  useEnvironmentHasDesktopBrowser: () => mocks.primaryHasDesktopBrowser,
+}));
+
+// Background-tab discovery subscribes to the primary over RPC; these tests seed sessions directly.
+vi.mock(import("~/components/preview/usePreviewSession"), async (original) => ({
+  ...(await original()),
+  useDesktopHostedPreviewSessions: () => {},
+}));
 
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
@@ -73,7 +90,8 @@ const snapshot = (tabId: string, updatedAt: string): PreviewSessionSnapshot => (
   updatedAt,
 });
 
-function setup(): Disposable {
+function setup({ primaryHasDesktopBrowser = true } = {}): Disposable {
+  mocks.primaryHasDesktopBrowser = primaryHasDesktopBrowser;
   __resetClientSettingsPersistenceForTests();
   mocks.getClientSettings.mockReset().mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
   mocks.setClientSettings.mockReset().mockResolvedValue(undefined);
@@ -160,4 +178,28 @@ describe("ElectronBrowserHost", () => {
     expect(after).toHaveLength(2);
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
   });
+
+  // Without the desktop browser channel, a local webview would never reach the primary's server.
+  it.each([
+    { primaryHasDesktopBrowser: true, mounted: ["tab_1"] },
+    { primaryHasDesktopBrowser: false, mounted: [] },
+  ])(
+    "mounts a webview for the primary's server tab only with the desktop browser channel ($primaryHasDesktopBrowser)",
+    async ({ primaryHasDesktopBrowser, mounted }) => {
+      using _state = setup({ primaryHasDesktopBrowser });
+      reconcilePreviewServerSessions(threadRef, {
+        sessions: [{ ...snapshot("tab_1", "2026-01-01T00:00:01.000Z"), runtime: "server" }],
+        serverEpoch: "server-a",
+        revision: 1,
+      });
+      await using screen = await renderHost();
+
+      const host = screen.container.querySelector("[data-electron-browser-host]")!;
+      expect(
+        [...host.querySelectorAll("webview")].map((node) =>
+          node.getAttribute("data-preview-server-tab"),
+        ),
+      ).toEqual(mounted);
+    },
+  );
 });

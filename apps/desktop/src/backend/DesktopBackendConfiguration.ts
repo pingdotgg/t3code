@@ -551,6 +551,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    readonly desktopBrowserSocketSecret?: string;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -579,6 +580,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // PortSchema rejects 0 even when Tailscale Serve is disabled.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    ...(input.desktopBrowserSocketSecret === undefined
+      ? {}
+      : { desktopBrowserSocketSecret: input.desktopBrowserSocketSecret }),
     ...buildObservabilityFragment(input.observabilitySettings),
   };
 
@@ -765,10 +769,13 @@ export const make = Effect.gen(function* () {
     const persistedSettings = yield* settings.get;
     const shared = yield* sharedInputs;
     yield* wslEnvironment.preWarm(persistedSettings.wslDistro);
+    // Only the primary's tabs render natively, so a WSL backend beside Windows gets no channel.
+    const desktopBrowserSocketSecret = Hex.encode(yield* random.randomBytes(32));
     return yield* resolveWslStartConfig({
       ...shared,
       port: backendExposure.port,
       distro: persistedSettings.wslDistro,
+      desktopBrowserSocketSecret,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),

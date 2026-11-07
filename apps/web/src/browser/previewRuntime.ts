@@ -7,6 +7,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import {
   readEnvironmentSupportsServerBrowser,
+  useEnvironmentHasDesktopBrowser,
   useEnvironmentSupportsServerBrowser,
 } from "~/state/entities";
 
@@ -41,9 +42,12 @@ export function usePreviewAvailable(environmentId: EnvironmentId | null): boolea
   return isPreviewSupportedInRuntime() || serverBrowser;
 }
 
+// A primary the desktop cannot reach over the browser channel never hears about
+// navigation in a local <webview>, so its tabs stream like any other environment's.
 export function rendersServerTabNatively(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
+  primaryHasDesktopBrowser: boolean,
   snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
 ): boolean {
   return (
@@ -51,13 +55,24 @@ export function rendersServerTabNatively(
     snapshot?.runtime === "server" &&
     !snapshot.headless &&
     primaryEnvironmentId !== null &&
-    environmentId === primaryEnvironmentId
+    environmentId === primaryEnvironmentId &&
+    primaryHasDesktopBrowser
   );
 }
 
 export function useRendersServerTabNatively(
-  environmentId: EnvironmentId,
+  environmentId: EnvironmentId | null,
   snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
 ): boolean {
-  return rendersServerTabNatively(environmentId, useAtomValue(primaryEnvironmentIdAtom), snapshot);
+  const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
+  const primaryHasDesktopBrowser = useEnvironmentHasDesktopBrowser(primaryEnvironmentId);
+  return (
+    environmentId !== null &&
+    rendersServerTabNatively(
+      environmentId,
+      primaryEnvironmentId,
+      primaryHasDesktopBrowser,
+      snapshot,
+    )
+  );
 }

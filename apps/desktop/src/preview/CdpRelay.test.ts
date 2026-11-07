@@ -5,12 +5,14 @@ import { createCdpRelayConnection, type CdpRelayTarget } from "./CdpRelay.ts";
 const makeTarget = (
   send: CdpRelayTarget["send"],
   setDownloadDirectory: CdpRelayTarget["setDownloadDirectory"] = () => {},
+  serverPath: CdpRelayTarget["serverPath"] = (path) => path,
 ): CdpRelayTarget => ({
   send,
   targetId: async () => "GUEST-TARGET",
   url: () => "http://localhost:4719/",
   title: () => "Fixture",
   userAgent: () => "Electron",
+  serverPath,
   setDownloadDirectory,
 });
 
@@ -205,6 +207,102 @@ describe("CDP relay downloads", () => {
       { method: "Browser.downloadProgress", params: { guid: "g1", state: "completed" } },
     ]);
   });
+
+  it.each([
+    {
+      downloadPath: "/tmp/artifacts",
+      directoryPath: "/home/user/assets",
+      windowsDownloads: "\\\\wsl.localhost\\Ubuntu\\tmp\\artifacts",
+      windowsDirectory: "\\\\wsl.localhost\\Ubuntu\\home\\user\\assets",
+    },
+    {
+      downloadPath: "/mnt/c/Users/user/My Downloads",
+      directoryPath: "/windows/Users/user/My Assets",
+      windowsDownloads: "C:\\Users\\user\\My Downloads",
+      windowsDirectory: "C:\\Users\\user\\My Assets",
+    },
+  ])(
+    "awaits WSL path conversion for downloads and directory uploads ($directoryPath)",
+    async ({ downloadPath, directoryPath, windowsDownloads, windowsDirectory }) => {
+      const send = vi.fn(async () => ({}));
+      const directories: Array<string | null> = [];
+      const relay = makeRelay(
+        makeTarget(
+          send,
+          (directory) => directories.push(directory),
+          async (path) => (path === downloadPath ? windowsDownloads : windowsDirectory),
+        ),
+        () => {},
+      );
+      relay.receive(
+        JSON.stringify({
+          id: 1,
+          method: "Browser.setDownloadBehavior",
+          params: { behavior: "allowAndName", downloadPath, eventsEnabled: true },
+        }),
+      );
+      await settle();
+      expect(directories).toEqual([windowsDownloads]);
+      expect(send).toHaveBeenCalledWith(
+        "Page.setDownloadBehavior",
+        { behavior: "default" },
+        undefined,
+      );
+      relay.receive(
+        JSON.stringify({
+          id: 2,
+          method: "DOM.setFileInputFiles",
+          params: { objectId: "input", files: [directoryPath] },
+          sessionId: "t3-preview-page",
+        }),
+      );
+      await settle();
+      expect(send).toHaveBeenLastCalledWith(
+        "DOM.setFileInputFiles",
+        { objectId: "input", files: [windowsDirectory] },
+        undefined,
+        undefined,
+      );
+    },
+  );
+
+  it.each(["DOM.setFileInputFiles", "Browser.setDownloadBehavior"])(
+    "reports a failed path conversion without forwarding %s",
+    async (method) => {
+      const send = vi.fn(async () => ({}));
+      const setDirectory = vi.fn();
+      const written: Array<Record<string, unknown>> = [];
+      const relay = makeRelay(
+        makeTarget(send, setDirectory, async () => {
+          throw new Error("WSL path conversion failed");
+        }),
+        (raw) => written.push(JSON.parse(raw)),
+      );
+      const session = method === "DOM.setFileInputFiles" ? { sessionId: "t3-preview-page" } : {};
+      relay.receive(
+        JSON.stringify({
+          id: 1,
+          method,
+          params: {
+            files: ["/mnt/c/assets"],
+            behavior: "allowAndName",
+            downloadPath: "/mnt/c/artifacts",
+          },
+          ...session,
+        }),
+      );
+      await settle();
+      expect(written).toEqual([
+        {
+          id: 1,
+          error: { code: -32000, message: "WSL path conversion failed" },
+          ...session,
+        },
+      ]);
+      expect(send).not.toHaveBeenCalled();
+      expect(setDirectory).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps denial scoped to the preview and restores Electron's save handling when allowed", async () => {
     const send = vi.fn(async () => ({}));
