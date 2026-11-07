@@ -4,6 +4,7 @@ import * as Redacted from "effect/Redacted";
 import { SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import type {
   SpeechAcceleration,
+  SpeechModelDirectories,
   SpeechModelUnloadTimeout,
   SpeechTranscriptionOptions,
   SpeechPostProcessingOptions,
@@ -171,6 +172,19 @@ export const postProcessEnvironmentTranscript = (
     timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
     run: ({ client, headers }) =>
       client.postProcess({ headers, payload: { transcript, draft, options } }),
+  });
+
+export const updateEnvironmentSpeechModelDirectories = (
+  prepared: PreparedConnection,
+  directories: SpeechModelDirectories,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.updateModelDirectories(),
+    run: ({ client, headers }) =>
+      client.updateModelDirectories({ headers, payload: { directories } }),
   });
 
 export const updateEnvironmentSpeechAcceleration = (

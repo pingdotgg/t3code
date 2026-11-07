@@ -41,12 +41,17 @@ export class SpeechModelStore extends Context.Service<
   SpeechModelStore,
   {
     /** Cheap size check for status polls; never hashes the file. */
-    readonly isReady: (model: ModelFile) => Effect.Effect<boolean>;
+    readonly hasOwnedFile: (model: ModelFile) => Effect.Effect<boolean>;
+    readonly isReady: (model: ModelFile, directories?: readonly string[]) => Effect.Effect<boolean>;
     /** The installed file once its SHA-256 has been verified, hashing it on first use. */
-    readonly installedPath: (model: ModelFile) => Effect.Effect<string | undefined>;
+    readonly installedPath: (
+      model: ModelFile,
+      directories?: readonly string[],
+    ) => Effect.Effect<string | undefined>;
     readonly download: (
       model: ModelFile,
       progress?: SpeechModelDownloadProgress,
+      directories?: readonly string[],
     ) => Effect.Effect<
       string,
       SpeechModelDownloadError | PlatformError | HttpClientError.HttpClientError
@@ -75,6 +80,7 @@ const make = Effect.gen(function* () {
   const modelPath = (model: ModelFile) => path.join(directory, model.filename);
   // Files whose digest failed, by identity, so status polls stop calling them ready.
   const corrupt = new Map<string, string>();
+  const verifiedExternal = new Map<string, string>();
 
   const identity = (model: ModelFile, info: FileSystem.File.Info) =>
     [
@@ -110,21 +116,23 @@ const make = Effect.gen(function* () {
     model: ModelFile,
     file: string,
     onVerificationStart?: () => void,
+    shared = false,
   ) {
     const info = yield* expectedFile(model, file);
     if (!info) return undefined;
     const marker = identity(model, info);
     if (corrupt.get(file) === marker) return undefined;
-    const recorded = yield* fs
-      .readFileString(`${file}.verified`)
-      .pipe(Effect.orElseSucceed(() => undefined));
+    const recorded = shared
+      ? verifiedExternal.get(file)
+      : yield* fs.readFileString(`${file}.verified`).pipe(Effect.orElseSucceed(() => undefined));
     if (recorded === marker) return file;
     onVerificationStart?.();
     const valid = yield* digestMatches(model, file);
     if (!valid) corrupt.set(file, marker);
     const current = yield* expectedFile(model, file);
     if (!valid || !current || identity(model, current) !== marker) return undefined;
-    yield* fs.writeFileString(`${file}.verified`, marker, { mode: 0o600 }).pipe(Effect.ignore);
+    if (shared) verifiedExternal.set(file, marker);
+    else yield* fs.writeFileString(`${file}.verified`, marker, { mode: 0o600 }).pipe(Effect.ignore);
     return file;
   });
 
@@ -180,11 +188,20 @@ const make = Effect.gen(function* () {
   });
 
   const download: SpeechModelStore["Service"]["download"] = Effect.fn("SpeechModelStore.download")(
-    function* (model, progress = {}) {
+    function* (model, progress = {}, directories = []) {
       yield* Effect.annotateCurrentSpan({ modelId: model.id });
       const finalPath = modelPath(model);
       yield* fs.makeDirectory(directory, { recursive: true });
       if (yield* verifiedPath(model, finalPath, progress.onVerificationStart)) return finalPath;
+      for (const extra of directories) {
+        const shared = yield* verifiedPath(
+          model,
+          path.join(extra, model.filename),
+          progress.onVerificationStart,
+          true,
+        );
+        if (shared) return shared;
+      }
       const partialPath = `${finalPath}.${yield* random.uuidV4()}.part`;
       const url = `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`;
       return yield* Effect.gen(function* () {
@@ -228,16 +245,33 @@ const make = Effect.gen(function* () {
   );
 
   return SpeechModelStore.of({
-    isReady: Effect.fn("SpeechModelStore.isReady")((model) =>
-      expectedFile(model, modelPath(model)).pipe(
-        Effect.map(
-          (info) => info !== undefined && corrupt.get(modelPath(model)) !== identity(model, info),
-        ),
-      ),
+    hasOwnedFile: Effect.fn("SpeechModelStore.hasOwnedFile")((model) =>
+      statFile(modelPath(model)).pipe(Effect.map((info) => info?.type === "File")),
     ),
-    installedPath: Effect.fn("SpeechModelStore.installedPath")((model) =>
-      verifiedPath(model, modelPath(model)),
-    ),
+    isReady: Effect.fn("SpeechModelStore.isReady")(function* (model, directories = []) {
+      for (const file of [
+        modelPath(model),
+        ...directories.map((extra) => path.join(extra, model.filename)),
+      ]) {
+        const info = yield* expectedFile(model, file);
+        if (info && corrupt.get(file) !== identity(model, info)) return true;
+      }
+      return false;
+    }),
+    installedPath: Effect.fn("SpeechModelStore.installedPath")(function* (model, directories = []) {
+      const owned = yield* verifiedPath(model, modelPath(model));
+      if (owned) return owned;
+      for (const extra of directories) {
+        const shared = yield* verifiedPath(
+          model,
+          path.join(extra, model.filename),
+          undefined,
+          true,
+        );
+        if (shared) return shared;
+      }
+      return undefined;
+    }),
     download,
     remove: Effect.fn("SpeechModelStore.remove")(function* (model) {
       const file = modelPath(model);

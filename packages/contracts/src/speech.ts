@@ -22,6 +22,14 @@ export const SpeechCustomWords = Schema.Array(
 );
 export type SpeechCustomWords = typeof SpeechCustomWords.Type;
 
+export const SpeechModelDirectories = Schema.Array(
+  Schema.String.check(Schema.isMaxLength(4096)),
+).check(Schema.isMaxLength(20));
+export type SpeechModelDirectories = typeof SpeechModelDirectories.Type;
+export const EnvironmentSpeechModelDirectoriesRequest = Schema.Struct({
+  directories: SpeechModelDirectories,
+});
+
 export const SpeechAcceleration = Schema.Union([
   Schema.Literal("auto"),
   Schema.Literal("cpu"),
@@ -76,6 +84,7 @@ export const EnvironmentSpeechModel = Schema.Struct({
   supportsTranslation: Schema.Boolean,
   active: Schema.Boolean,
   state: EnvironmentSpeechModelState,
+  shared: Schema.optionalKey(Schema.Boolean),
   downloaded: Schema.optionalKey(Schema.Finite),
 });
 export type EnvironmentSpeechModel = typeof EnvironmentSpeechModel.Type;
@@ -108,6 +117,7 @@ export const EnvironmentSpeechStatus = Schema.Union([
     supportsLanguageDetection: Schema.optionalKey(Schema.Boolean),
     acceleration: SpeechAcceleration,
     modelUnloadTimeout: SpeechModelUnloadTimeout,
+    modelDirectories: Schema.optionalKey(SpeechModelDirectories),
     gpuDevices: Schema.Array(SpeechGpuDevice),
   }),
 ]);

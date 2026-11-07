@@ -39,6 +39,12 @@ is ever retried on another environment. Models marked **Live preview** show
 text while you speak. Other models can process long recordings in chunks at pauses
 while you record; models with built-in long-form support transcribe when you stop.
 
+To reuse a catalog model downloaded by another app, add its folder under
+**Settings → Voice → Model folders**. Use an absolute path on the environment
+that transcribes your audio. The filename, size, and SHA-256 must match the
+catalog. T3 Code reads these folders without changing or deleting their files.
+Removing a folder stops T3 Code from using models stored there.
+
 ## Dictate
 
 Press the microphone in the composer, or `mod+shift+d` (`mod` is Command on
