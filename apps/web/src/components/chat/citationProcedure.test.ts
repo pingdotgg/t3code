@@ -181,6 +181,21 @@ describe("resolveCitationPhase", () => {
     });
   });
 
+  it("expands a folded HTML render and resolves it when its row appears", () => {
+    const htmlEntry: TimelineEntry = {
+      kind: "html-render",
+      id: messageId,
+      createdAt: at,
+      runId,
+      htmlRender: { attachmentId: "chart", title: "Chart", height: 240 },
+    };
+    expect(phase({ history: "found", entries: [htmlEntry] })).toEqual({ _tag: "expanding" });
+    expect(phase({ history: "found", entries: [htmlEntry], rows: [htmlEntry] })).toEqual({
+      _tag: "ready",
+      rowId: messageId,
+    });
+  });
+
   it("fails for a citation that names a user message", () => {
     const userEntry: TimelineEntry = {
       ...entry,
