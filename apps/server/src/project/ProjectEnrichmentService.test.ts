@@ -2,9 +2,11 @@ import { assert, it } from "@effect/vitest";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import { TestClock } from "effect/testing";
 
 import * as ProjectEnrichment from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -255,5 +257,156 @@ it.effect("deduplicates requests, bounds pending work, and reloads invalidated r
         }),
       ),
     );
+  }),
+);
+
+it.effect(
+  "retains resolved identities through expiry and failed refreshes until a successful replacement",
+  () =>
+    Effect.gen(function* () {
+      const refreshStarted = yield* Deferred.make<void>();
+      const releaseRefresh = yield* Deferred.make<void>();
+      const phase = yield* Ref.make<"initial" | "failed" | "changed" | "removed">("initial");
+      const calls = yield* Ref.make(0);
+      const layerMetadata = Layer.merge(
+        Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+          resolve: (workspaceRoot) =>
+            Effect.gen(function* () {
+              yield* Ref.update(calls, (count) => count + 1);
+              switch (yield* Ref.get(phase)) {
+                case "failed":
+                  yield* Deferred.succeed(refreshStarted, undefined);
+                  yield* Deferred.await(releaseRefresh);
+                  return yield* Effect.die("repository resolver failed");
+                case "changed":
+                  return identity(workspaceRoot, 2);
+                case "removed":
+                  return null;
+                default:
+                  return identity(workspaceRoot);
+              }
+            }),
+        }),
+        Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+          invalidate: () => Effect.void,
+          resolvePath: () => Effect.succeed(null),
+        }),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+        const changes = yield* service.subscribeChanges;
+        assert.deepEqual(yield* service.readRepositoryIdentity("/repo"), identity("/repo"));
+        yield* Ref.set(phase, "failed");
+        yield* TestClock.adjust("61 seconds");
+
+        const expired = yield* service.getAvailable("/repo");
+        assert.deepEqual(expired.repositoryIdentity, identity("/repo"));
+        assert.isTrue(expired.repositoryIdentityResolved);
+        yield* Deferred.await(refreshStarted);
+        assert.deepEqual((yield* service.peek("/repo")).repositoryIdentity, identity("/repo"));
+        yield* Deferred.succeed(releaseRefresh, undefined);
+        yield* PubSub.take(changes);
+        const failed = yield* service.getAvailable("/repo");
+        assert.deepEqual(failed.repositoryIdentity, identity("/repo"));
+        assert.deepEqual(yield* service.readRepositoryIdentity("/repo"), identity("/repo"));
+        assert.equal(yield* Ref.get(calls), 2);
+
+        yield* Ref.set(phase, "changed");
+        yield* TestClock.adjust("6 seconds");
+        yield* service.request("/repo");
+        const changed = yield* PubSub.take(changes);
+        assert.deepEqual(changed.enrichment.repositoryIdentity, identity("/repo", 2));
+        assert.deepEqual((yield* service.peek("/repo")).repositoryIdentity, identity("/repo", 2));
+
+        yield* Ref.set(phase, "removed");
+        yield* TestClock.adjust("61 seconds");
+        yield* service.request("/repo");
+        const removed = yield* PubSub.take(changes);
+        assert.isNull(removed.enrichment.repositoryIdentity);
+        assert.isTrue(removed.repositoryIdentityResolved);
+        yield* TestClock.adjust("61 seconds");
+        const expiredNull = yield* service.peek("/repo");
+        assert.isNull(expiredNull.repositoryIdentity);
+        assert.isTrue(expiredNull.repositoryIdentityResolved);
+      }).pipe(Effect.provide(layer(layerMetadata)));
+    }),
+);
+
+it.effect("bounds retained repository results and clears them on invalidation", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+    yield* service.readRepositoryIdentity("/evicted");
+    yield* service.readRepositoryIdentity("/retained");
+    yield* service.readRepositoryIdentity("/invalidated");
+    yield* TestClock.adjust("61 seconds");
+    const evicted = yield* service.peek("/evicted");
+    assert.isNull(evicted.repositoryIdentity);
+    assert.isFalse(evicted.repositoryIdentityResolved);
+    assert.deepEqual((yield* service.peek("/retained")).repositoryIdentity, identity("/retained"));
+    yield* service.invalidate(["/invalidated"]);
+    const invalidated = yield* service.peek("/invalidated");
+    assert.isNull(invalidated.repositoryIdentity);
+    assert.isFalse(invalidated.repositoryIdentityResolved);
+  }).pipe(
+    Effect.provide(
+      layer(
+        Layer.merge(
+          Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+            resolve: (workspaceRoot) => Effect.succeed(identity(workspaceRoot)),
+          }),
+          Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+            invalidate: () => Effect.void,
+            resolvePath: () => Effect.succeed(null),
+          }),
+        ),
+        { cacheCapacity: 2 },
+      ),
+    ),
+  ),
+);
+
+it.effect("does not retain an invalidated lookup over a newer confirmed null", () =>
+  Effect.gen(function* () {
+    const begin = yield* Deferred.make<void>();
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const layerMetadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          Deferred.await(begin).pipe(
+            Effect.andThen(Deferred.isDone(started)),
+            Effect.flatMap((isRefresh) =>
+              isRefresh
+                ? Effect.succeed(null)
+                : Deferred.succeed(started, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.as(identity(workspaceRoot)),
+                  ),
+            ),
+          ),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: () => Effect.succeed(null),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      const oldRead = yield* service
+        .readRepositoryIdentity("/repo")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(begin, undefined);
+      yield* Deferred.await(started);
+      yield* service.invalidate(["/repo"]);
+      assert.isNull(yield* service.readRepositoryIdentity("/repo"));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(oldRead);
+      assert.isNull((yield* service.peek("/repo")).repositoryIdentity);
+      yield* TestClock.adjust("61 seconds");
+      const expired = yield* service.peek("/repo");
+      assert.isNull(expired.repositoryIdentity);
+      assert.isTrue(expired.repositoryIdentityResolved);
+    }).pipe(Effect.provide(layer(layerMetadata)));
   }),
 );

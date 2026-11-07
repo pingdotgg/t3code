@@ -91,6 +91,8 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const maxPending = Math.max(1, options.maxPending ?? DEFAULT_MAX_PENDING);
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
 
+  // Freshness expires independently of the last successful result, including a confirmed null.
+  const resolvedRepositoryIdentities = new Map<string, RepositoryIdentity | null>();
   const repositoryIdentityCache = yield* Cache.makeWith(
     (workspaceRoot: string) => Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)),
     {
@@ -111,6 +113,20 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
       }),
     },
   );
+  // The worker and direct read already trace this; invalidated lookups must not replace newer results.
+  const readRepositoryIdentityResult = Effect.fnUntraced(function* (workspaceRoot: string) {
+    const result = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
+    const current = yield* Cache.getSuccess(repositoryIdentityCache, workspaceRoot);
+    if (Exit.isSuccess(result) && Option.isSome(current) && current.value === result) {
+      resolvedRepositoryIdentities.delete(workspaceRoot);
+      resolvedRepositoryIdentities.set(workspaceRoot, result.value);
+      if (resolvedRepositoryIdentities.size > cacheCapacity) {
+        const oldest = resolvedRepositoryIdentities.keys().next().value;
+        if (oldest !== undefined) resolvedRepositoryIdentities.delete(oldest);
+      }
+    }
+    return result;
+  });
   const makeWorkLane = Effect.gen(function* () {
     const pendingRoots = yield* Ref.make<ReadonlySet<string>>(new Set());
     const queue = yield* Effect.acquireRelease(Queue.dropping<string>(maxPending), (queue) =>
@@ -158,7 +174,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   const resolveRepositoryIdentity = Effect.fn("ProjectEnrichmentService.resolveRepositoryIdentity")(
     function* (workspaceRoot: string) {
-      const repositoryIdentity = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
+      const repositoryIdentity = yield* readRepositoryIdentityResult(workspaceRoot);
       yield* logFailure(workspaceRoot, "repositoryIdentity", repositoryIdentity);
       const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
       const repositoryIdentityResolved = Exit.isSuccess(repositoryIdentity);
@@ -238,10 +254,16 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         ] as const,
         { concurrency: "unbounded" },
       );
+      const resolved = Option.getOrUndefined(repositoryIdentity);
       return {
-        repositoryIdentity: availableValue(repositoryIdentity),
+        repositoryIdentity:
+          resolved && Exit.isSuccess(resolved)
+            ? resolved.value
+            : (resolvedRepositoryIdentities.get(workspaceRoot) ?? null),
         faviconPath: availableValue(faviconPath),
-        repositoryIdentityResolved: isSuccessfullyResolved(repositoryIdentity),
+        repositoryIdentityResolved:
+          isSuccessfullyResolved(repositoryIdentity) ||
+          resolvedRepositoryIdentities.has(workspaceRoot),
       };
     },
   );
@@ -274,8 +296,10 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   const readRepositoryIdentity: ProjectEnrichmentService["Service"]["readRepositoryIdentity"] =
     Effect.fn("ProjectEnrichmentService.readRepositoryIdentity")(function* (workspaceRoot) {
-      const resolved = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
-      return Exit.isSuccess(resolved) ? resolved.value : null;
+      const resolved = yield* readRepositoryIdentityResult(workspaceRoot);
+      return Exit.isSuccess(resolved)
+        ? resolved.value
+        : (resolvedRepositoryIdentities.get(workspaceRoot) ?? null);
     });
 
   const invalidate: ProjectEnrichmentService["Service"]["invalidate"] = Effect.fn(
@@ -286,6 +310,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
       (workspaceRoot) =>
         Effect.all(
           [
+            Effect.sync(() => resolvedRepositoryIdentities.delete(workspaceRoot)),
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
             Cache.invalidate(faviconCache, workspaceRoot),
             // The resolver keeps its own misses, which would outlive a clone filling the folder.
