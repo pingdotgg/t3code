@@ -28,6 +28,7 @@ const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
   .split(",")
   .map((name) => name.trim())
   .filter((name) => name.length > 0);
+const loadedCommandNames = process.env.T3_ACP_LOADED_COMMANDS?.split(",").filter(Boolean);
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -680,14 +681,12 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
-      if (process.env.T3_ACP_LOADED_COMMANDS !== undefined) {
+      if (loadedCommandNames !== undefined) {
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "available_commands_update",
-            availableCommands: process.env.T3_ACP_LOADED_COMMANDS.split(",")
-              .filter(Boolean)
-              .map((name) => ({ name, description: name })),
+            availableCommands: loadedCommandNames.map((name) => ({ name, description: name })),
           },
         });
       }
