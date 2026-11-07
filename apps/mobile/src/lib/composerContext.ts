@@ -1,5 +1,9 @@
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  composerRecallContext,
+  recallComposerText,
+} from "@t3tools/shared/composerContextReferences";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
@@ -211,7 +215,7 @@ export function uploadedComposerContext(
   if (!context) return undefined;
   const ids = new Map(drafts.map((draft, index) => [draft.id, uploaded[index]?.id]));
   return {
-    version: 1,
+    ...context,
     records: context.records.map((record) =>
       "attachmentId" in record
         ? { ...record, attachmentId: ids.get(record.attachmentId) ?? record.attachmentId }
@@ -260,6 +264,11 @@ export function serializeComposerMessageForServer(
 ): { text: string; context?: OrchestrationMessageContext } {
   const text = isImageReferencesOnly(composerText)
     ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
-    : composerText;
-  return { text, ...(context ? { context } : {}) };
+    : composerText.trim();
+  const recallContext = composerRecallContext(
+    text,
+    recallComposerText(composerText, context),
+    context,
+  );
+  return { text, ...(recallContext ? { context: recallContext } : {}) };
 }

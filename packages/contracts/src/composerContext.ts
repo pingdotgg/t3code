@@ -283,6 +283,12 @@ export type GuestMessageAttribution = typeof GuestMessageAttribution.Type;
 /** Structured context riding on a user message. Undecodable records are dropped, not fatal. */
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
+  // Text-only prompt recall, captured before send-time decoration. A UTF-16
+  // [start, end) range avoids duplicating long prompts; a string preserves text
+  // absent from the sent message (including trimmed whitespace). Empty means generated-only.
+  composerRecall: Schema.optional(
+    Schema.Union([Schema.String, Schema.Tuple([NonNegativeInt, NonNegativeInt])]),
+  ),
   guest: Schema.optional(GuestMessageAttribution),
   records: Schema.Array(Schema.Unknown)
     .check(

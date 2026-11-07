@@ -80,6 +80,8 @@ function context(attachmentIds: ReadonlyArray<string>): OrchestrationMessageCont
 describe("resolveQueuedEditPayload", () => {
   it("resends the kept server attachments ahead of the newly uploaded ones", () => {
     const payload = resolveQueuedEditPayload({
+      text: "original",
+      draftText: "original",
       edit: edit([image("kept")]),
       draftContext: undefined,
       draftAttachments: [{ id: "draft-1" }],
@@ -91,6 +93,8 @@ describe("resolveQueuedEditPayload", () => {
 
   it("rebinds context records from the draft's ids to the uploaded ones", () => {
     const payload = resolveQueuedEditPayload({
+      text: "original",
+      draftText: "original",
       edit: edit([]),
       draftContext: context(["draft-1"]),
       draftAttachments: [{ id: "draft-1" }],
@@ -104,6 +108,8 @@ describe("resolveQueuedEditPayload", () => {
 
   it("drops the record of an attachment the user removed", () => {
     const payload = resolveQueuedEditPayload({
+      text: "original",
+      draftText: "original",
       edit: edit([image("kept")]),
       draftContext: context(["kept", "gone"]),
       draftAttachments: [],
@@ -112,6 +118,20 @@ describe("resolveQueuedEditPayload", () => {
 
     expect(payload.attachments.map((attachment) => attachment.id)).toEqual(["kept"]);
     expect(payload.context?.records).toEqual([expect.objectContaining({ attachmentId: "kept" })]);
+  });
+
+  it("keeps the authored prompt bytes when the edit is saved unchanged", () => {
+    const recalled = { version: 1, records: [], composerRecall: "  original\n" } as const;
+    const payload = resolveQueuedEditPayload({
+      edit: { ...edit([]), context: recalled },
+      text: "original",
+      draftText: "original",
+      draftContext: recalled,
+      draftAttachments: [],
+      uploaded: [],
+    });
+
+    expect(payload.context).toEqual(recalled);
   });
 });
 

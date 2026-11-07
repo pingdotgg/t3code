@@ -1,18 +1,23 @@
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import {
-  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-  collectComposerContextReferences,
-} from "@t3tools/shared/composerContextReferences";
-import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
+import type { OrchestrationMessageContext } from "@t3tools/contracts";
+import { recallComposerText as recallableComposerPrompt } from "@t3tools/shared/composerContextReferences";
 
-const CLAUDE_ULTRATHINK_PREFIX = "Ultrathink:\n";
-const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_comment>/g;
-const TRAILING_LEGACY_CONTEXT =
-  /\n*<(terminal_context|element_context|preview_annotation)>\n([\s\S]*?)\n<\/\1>\s*$/;
+export { recallableComposerPrompt };
 
 type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
+  readonly context?: OrchestrationMessageContext | undefined;
 };
+
+/** Appends a rewound message's authored prompt after whatever the user already drafted. */
+export function appendRewoundPrompt(
+  currentPrompt: string,
+  message: { readonly text: string; readonly context?: OrchestrationMessageContext | undefined },
+): string {
+  const restoredPrompt = recallableComposerPrompt(message.text, message.context);
+  if (restoredPrompt.length === 0) return currentPrompt;
+  return currentPrompt.length > 0 ? `${currentPrompt}\n\n${restoredPrompt}` : restoredPrompt;
+}
 
 interface ComposerPromptHistoryEntry {
   readonly id: string;
@@ -38,85 +43,6 @@ interface ComposerPromptHistoryStep {
   readonly prompt: string;
 }
 
-function stripTrailingReviewComments(prompt: string): string {
-  let cut = prompt.length;
-  for (const match of [...prompt.matchAll(REVIEW_COMMENT_BLOCK_PATTERN)].toReversed()) {
-    const blockEnd = match.index + match[0].length;
-    if (prompt.slice(blockEnd, cut).trim().length > 0) break;
-    cut = match.index;
-  }
-  return cut === prompt.length ? prompt : prompt.slice(0, cut).trimEnd();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string>): string {
-  let result = prompt;
-  for (const header of headers) {
-    const match = /^(.+?) lines? (\d+(?:-\d+)?)$/.exec(header);
-    if (!match) continue;
-    const label = `@${match[1]!.trim().toLowerCase().replace(/\s+/g, "-")}:${match[2]}`;
-    const labelPattern = new RegExp(`(?<![\\w@.-])${escapeRegExp(label)}(?![\\d-])`);
-    const index = result.search(labelPattern);
-    if (index < 0) continue;
-    let end = index + label.length;
-    let start = index;
-    if (result[end] === " ") end += 1;
-    else if (result[start - 1] === " ") start -= 1;
-    result = result.slice(0, start) + result.slice(end);
-  }
-  return result;
-}
-
-export function recallableComposerPrompt(messageText: string): string {
-  let prompt = messageText.trim();
-  if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
-    prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
-  }
-
-  while (prompt.length > 0) {
-    const withoutReviewComments = stripTrailingReviewComments(prompt);
-    if (withoutReviewComments !== prompt) {
-      prompt = withoutReviewComments;
-      continue;
-    }
-    const legacy = TRAILING_LEGACY_CONTEXT.exec(prompt);
-    if (legacy) {
-      if (
-        legacy[1] === "preview_annotation" &&
-        /^<preview_annotation>\s*$/m.test(legacy[2]!) &&
-        !/^(?:Id|Page|Comment|Targets): /m.test(legacy[2]!)
-      )
-        break;
-      const headers = Array.from(legacy[2]!.matchAll(/^- (.+):$/gm), (match) => match[1]!);
-      if (legacy[1] !== "preview_annotation" && headers.length === 0) break;
-      prompt = prompt.slice(0, legacy.index).trimEnd();
-      if (legacy[1] === "terminal_context") prompt = stripInlineTerminalLabels(prompt, headers);
-      continue;
-    }
-    break;
-  }
-
-  // Recall strips chips because their backing records are absent.
-  for (const reference of collectComposerContextReferences(prompt).toReversed()) {
-    let { start, end } = reference;
-    if (prompt[end] === " ") end += 1;
-    else if (prompt[start - 1] === " ") start -= 1;
-    prompt = prompt.slice(0, start) + prompt.slice(end);
-  }
-
-  const trimmed = prompt.trim();
-  if (
-    trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
-    trimmed.startsWith(PLAN_IMPLEMENTATION_PROMPT_PREFIX)
-  ) {
-    return "";
-  }
-  return trimmed;
-}
-
 export function buildComposerPromptHistoryEntries(
   messages: ReadonlyArray<ComposerPromptHistoryMessage>,
 ): ComposerPromptHistoryEntry[] {
@@ -125,7 +51,7 @@ export function buildComposerPromptHistoryEntries(
     if (message.role !== "user") continue;
     // Automations and other agents send user-role messages; recall only what the user typed.
     if (resolveUserMessagePresentation(message).attribution !== null) continue;
-    const prompt = recallableComposerPrompt(message.text);
+    const prompt = recallableComposerPrompt(message.text, message.context);
     if (prompt.length === 0) continue;
     const previous = entries[entries.length - 1];
     if (previous && previous.prompt === prompt) {

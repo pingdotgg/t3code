@@ -10,6 +10,7 @@ import {
 
 const decodeRecord = Schema.decodeUnknownOption(ComposerContextRecord);
 const decodeContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
+const encodeContext = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationMessageContext));
 
 const base = { version: 1, contextId: "ctx_1" } as const;
 
@@ -159,6 +160,14 @@ describe("ComposerContextRecord", () => {
 });
 
 describe("OrchestrationMessageContext", () => {
+  it.each(["", "  literal\n", [12, 100_012] as const])(
+    "roundtrips prompt recall provenance: %s",
+    (composerRecall) => {
+      const context = { version: 1 as const, records: [], composerRecall };
+      const json = encodeContext(context);
+      expect(decodeContext(json)).toEqual(context);
+    },
+  );
   it("rejects aggregate context size even when each record is valid", () => {
     const record = {
       ...knownRecords["preview-annotation"],
