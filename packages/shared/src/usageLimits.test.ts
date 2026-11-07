@@ -19,6 +19,7 @@ import {
   collectLimitPools,
   elapsedShare,
   exhaustedUsageWindow,
+  formatSpend,
   paceOf,
   paceRemainingPercent,
   usesChatGptSharing,
@@ -160,6 +161,20 @@ describe("pace", () => {
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
+  });
+});
+
+describe("formatSpend", () => {
+  const spend = { usedMinor: 34_260, limitMinor: 50_000, currency: "USD", exponent: 2 };
+  it("scales provider minor units by the reported exponent", () => {
+    expect(formatSpend({ ...window, spend })).toBe("$342.60 / $500.00");
+    expect(formatSpend({ ...window, spend: { ...spend, currency: "JPY", exponent: 0 } })).toBe(
+      "¥34,260 / ¥50,000",
+    );
+    expect(formatSpend({ ...window, spend: { ...spend, currency: "credits" } })).toBe(
+      "342.60 credits / 500.00 credits",
+    );
+    expect(formatSpend(window)).toBeNull();
   });
 });
 
