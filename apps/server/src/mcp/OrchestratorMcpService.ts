@@ -1184,6 +1184,7 @@ const make = Effect.gen(function* () {
           );
 
   const loadTargetThread = Effect.fn("OrchestratorMcpService.loadTargetThread")(function* (
+    scope: McpInvocationScope,
     threadId: ThreadId,
     includeHistory = true,
   ) {
@@ -1191,7 +1192,12 @@ const make = Effect.gen(function* () {
       .getThreadShell(threadId)
       .pipe(Effect.mapError(threadManagementFailure));
     if (shell === null || shell.deletedAt !== null) {
-      return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
+      return yield* threadNotFound(
+        threadManagement,
+        threadId,
+        `Thread ${threadId} was not found.`,
+        scope.linkedEnvironments,
+      );
     }
     // Native wait owns its history reads; keep legacy import and project validation here.
     return yield* includeHistory
@@ -1210,7 +1216,7 @@ const make = Effect.gen(function* () {
     const target =
       caller.parent !== undefined && threadId === caller.parent.thread.id
         ? caller.parent
-        : yield* loadTargetThread(threadId, includeHistory);
+        : yield* loadTargetThread(scope, threadId, includeHistory);
     return { ...caller, target } as const;
   });
 
@@ -1273,6 +1279,7 @@ const make = Effect.gen(function* () {
         threadManagement,
         threadId,
         `Thread ${threadId} is no longer available.`,
+        scope.linkedEnvironments,
       );
     }
     const input = { projectId: shell.projectId, threadId };

@@ -226,7 +226,12 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new Failure({ cause })),
     );
     if (Option.isNone(thread) || thread.value.deletedAt !== null) {
-      return yield* threadNotFound(engine, threadId, `Thread ${threadId} was not found.`);
+      return yield* threadNotFound(
+        engine,
+        threadId,
+        `Thread ${threadId} was not found.`,
+        scope.linkedEnvironments,
+      );
     }
     return thread.value;
   });

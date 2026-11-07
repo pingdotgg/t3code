@@ -26,14 +26,19 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
   threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
   threadId: ThreadId,
   message: string,
+  linkedEnvironments: boolean | undefined,
 ) {
   const prefixed = ThreadId.make(`mcp:${threadId}`);
   const shell = yield* threads.getThreadShell(prefixed).pipe(Effect.orElseSucceed(() => null));
+  const recovery =
+    linkedEnvironments === false
+      ? "ask the user to enable Linked environments in Settings → Labs."
+      : "call `t3_environment_links`, then retry with its `environmentId`.";
   return yield* new OrchestratorMcpFailure({
     code: "thread_not_found",
     message:
       shell === null || shell.deletedAt !== null
-        ? message
+        ? `${message} This lookup only checked this environment. If the thread is on another machine, ${recovery}`
         : `${message} Did you mean \`${prefixed}\`?`,
   });
 });
@@ -186,7 +191,12 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   const targetId = yield* resolveThreadId(context, threadId);
   const shell = yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
   if (shell === null || shell.deletedAt !== null) {
-    return yield* threadNotFound(context.threads, targetId, "The thread was not found.");
+    return yield* threadNotFound(
+      context.threads,
+      targetId,
+      "The thread was not found.",
+      context.scope.linkedEnvironments,
+    );
   }
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {
