@@ -175,12 +175,14 @@ function wordDocuments(
   let inText = false;
   let truncated = incomplete;
   const limit = Symbol("Word preview limit");
-  parser.on("text", (text) => {
+  const countText = (text: string) => {
     if (!inText || paragraphText.length === 0) return;
     const length = paragraphText.at(-1)! + text.length;
     if (length > WORD_LIMITS.paragraphText) throw limit;
     paragraphText[paragraphText.length - 1] = length;
-  });
+  };
+  parser.on("text", countText);
+  parser.on("cdata", countText);
   parser.on("opentag", (tag) => {
     names.push(tag.name);
     if (prefix && tag.local === "p") paragraphText.push(0);
@@ -812,16 +814,18 @@ async function wordExpansion(
   const nodes = new Map<string, { xml: string; path: string }>();
   const optional = new Set<string>();
   const noteParts = new Map<string, string>();
-  let oversized = false;
+  // Headers and footers too long to lay out, and whether the document uses one.
+  const oversized = new Set<string>();
+  let oversizedUsed = false;
   for (const [path, roles] of parts.roles) {
     if (![...roles].some((role) => WORD_EXPANDED_PARTS.has(role))) continue;
     const xml = await archive.file(path)?.async("string");
     if (!xml) continue;
     optional.add(path);
     if (roles.has("header") || roles.has("footer")) {
-      // A header's layout grows with its own length: leave a long one out, with its references.
+      // A header's layout grows with its own length: a long one is left out, as an unused one is.
       if (xml.length > WORD_LIMITS.headerBytes) {
-        oversized = true;
+        oversized.add(path);
         continue;
       }
       nodes.set(path, { xml, path });
@@ -872,6 +876,7 @@ async function wordExpansion(
       if (tag.local === "headerReference" || tag.local === "footerReference") {
         const target = parts.relationships.get(path)?.get(attr("id"));
         if (target) headers.add(target);
+        if (target && oversized.has(target)) oversizedUsed = true;
       }
       if (tag.local === "altChunk") cost.bytes = Infinity;
       if (tag.local !== "blip" && tag.local !== "imagedata") return;
@@ -948,7 +953,7 @@ async function wordExpansion(
     bytes > WORD_LIMITS.expandedBytes ||
     markup > WORD_LIMITS.expandedMarkup ||
     media > OFFICE_PREVIEW_MAX_BYTES;
-  const truncated = (used.size > 0 && overBudget) || bytes === Infinity || oversized;
+  const truncated = (used.size > 0 && overBudget) || bytes === Infinity;
   const omitted = new Set([...optional].filter((path) => truncated || !used.has(path)));
   for (const path of omitted) archive.remove(path);
   if (truncated)
@@ -979,7 +984,7 @@ async function wordExpansion(
       xml = xml.slice(0, range.start) + xml.slice(range.end);
     archive.file(relPath, xml);
   }
-  return { costs, truncated, omitted };
+  return { costs, truncated: truncated || oversizedUsed, omitted };
 }
 
 // Stream each entry before handing it to an engine. A tiny compressed archive

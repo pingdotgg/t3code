@@ -5,12 +5,17 @@ import { prepareOffice } from "./officeArchive";
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 const V = 'xmlns:v="urn:schemas-microsoft-com:vml"';
+const R = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
 const relationship = (type: string, target: string) =>
   `<Relationship Id="${type}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/>`;
 const paragraph = (text: string, properties = "") =>
   `<w:p>${properties}<w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:p>`;
 
-async function wordFile(body: string, parts: { styles?: string; numbering?: string } = {}) {
+async function wordFile(
+  body: string,
+  parts: Partial<Record<"styles" | "numbering" | "header" | "footer" | "footnotes", string>> = {},
+  section = "",
+) {
   const zip = new JSZip();
   zip.file(
     "[Content_Types].xml",
@@ -31,7 +36,7 @@ async function wordFile(body: string, parts: { styles?: string; numbering?: stri
   for (const [part, xml] of Object.entries(parts)) zip.file(`word/${part}.xml`, xml);
   zip.file(
     "word/document.xml",
-    `<w:document ${W} ${V}><w:body>${body}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`,
+    `<w:document ${W} ${V} ${R}><w:body>${body}<w:sectPr>${section}<w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`,
   );
   return zip.generateAsync({ type: "arraybuffer" });
 }
@@ -86,14 +91,15 @@ describe("Word preview limits", () => {
     expect(await result.part("word/document.xml")).toContain("Item 5999");
   });
 
+  const text = "x".repeat(40_000);
   it.each([
-    ["on its own", ""],
+    ["on its own", `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`],
     [
       "after an empty paragraph in a text box",
-      "<w:r><w:pict><v:shape><v:textbox><w:txbxContent><w:p/></w:txbxContent></v:textbox></v:shape></w:pict></w:r>",
+      `<w:p><w:r><w:pict><v:shape><v:textbox><w:txbxContent><w:p/></w:txbxContent></v:textbox></v:shape></w:pict></w:r><w:r><w:t>${text}</w:t></w:r></w:p>`,
     ],
-  ])("stops before a paragraph too long to lay out %s", async (_, before) => {
-    const long = `<w:p>${before}<w:r><w:t>${"x".repeat(40_000)}</w:t></w:r></w:p>`;
+    ["written as CDATA", `<w:p><w:r><w:t><![CDATA[${text}]]></w:t></w:r></w:p>`],
+  ])("stops before a paragraph too long to lay out %s", async (_, long) => {
     const result = await prepared(
       await wordFile(paragraph("Kept") + long + paragraph("Not reached")),
     );
@@ -108,5 +114,26 @@ describe("Word preview limits", () => {
     const result = await prepared(await wordFile(formatted + paragraph("After")));
     expect(result.truncated).toBe(false);
     expect(await result.part("word/document.xml")).toContain("After");
+  });
+
+  it.each([
+    ["used", true],
+    ["unused", false],
+  ])("leaves out only a header too long to lay out (%s)", async (_, used) => {
+    const header = `<w:hdr ${W}>${Array.from({ length: 3_000 }, (_, line) => paragraph(`Header line ${line}`)).join("")}</w:hdr>`;
+    const footer = `<w:ftr ${W}>${paragraph("Footer")}</w:ftr>`;
+    const footnotes = `<w:footnotes ${W}><w:footnote w:id="1">${paragraph("Note")}</w:footnote></w:footnotes>`;
+    const result = await prepared(
+      await wordFile(
+        `<w:p><w:r><w:t>Body</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>`,
+        { header, footer, footnotes },
+        `${used ? '<w:headerReference w:type="default" r:id="header"/>' : ""}<w:footerReference w:type="default" r:id="footer"/>`,
+      ),
+    );
+    expect(result.truncated).toBe(used);
+    expect(await result.part("word/header.xml")).toBeUndefined();
+    expect(await result.part("word/footer.xml")).toBe(footer);
+    expect(await result.part("word/footnotes.xml")).toBe(footnotes);
+    expect(await result.part("word/document.xml")).toContain("Body");
   });
 });
