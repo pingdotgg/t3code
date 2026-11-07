@@ -3040,9 +3040,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextActiveProvider = normalized?.instanceId ?? base.activeProvider;
             if (
+              opts?.explicit !== true &&
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               base.activeProvider === nextActiveProvider &&
-              (base.modelSelectionExplicit ?? false) === (opts?.explicit === true)
+              !base.modelSelectionExplicit
             ) {
               return state;
             }
@@ -3104,16 +3105,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 
             const nextMap = { ...base.modelSelectionByProvider };
             const currentForProvider = nextMap[instanceKey];
-            if (providerOpts) {
-              nextMap[instanceKey] = createModelSelection(
-                instanceKey,
-                currentForProvider?.model ?? fallbackModel,
-                providerOpts,
-              );
-            } else if (currentForProvider && (currentForProvider.options?.length ?? 0) > 0) {
-              const { options: _, ...rest } = currentForProvider;
-              nextMap[instanceKey] = rest as ModelSelection;
-            }
+            nextMap[instanceKey] = createModelSelection(
+              instanceKey,
+              currentForProvider?.model ?? fallbackModel,
+              providerOpts,
+            );
 
             let nextStickyMap = state.stickyModelSelectionByProvider;
             let nextOptionsByModel = state.stickyOptionsByModelByProvider;
@@ -3153,15 +3149,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextStickyActiveProvider = options.instanceId
                 ? instanceKey
                 : (base.activeProvider ?? instanceKey);
-            }
-
-            if (
-              Equal.equals(base.modelSelectionByProvider, nextMap) &&
-              Equal.equals(state.stickyModelSelectionByProvider, nextStickyMap) &&
-              Equal.equals(state.stickyOptionsByModelByProvider, nextOptionsByModel) &&
-              state.stickyActiveProvider === nextStickyActiveProvider
-            ) {
-              return state;
             }
 
             const { modelSelectionExplicit: _previousExplicit, ...restBase } = base;

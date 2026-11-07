@@ -1601,28 +1601,45 @@ describe("composerDraftStore modelSelection", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBe(latest);
   });
 
-  it("releases an accepted pick only while it is still the draft's latest choice", () => {
-    const store = useComposerDraftStore.getState();
-    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.5"), {
-      explicit: true,
-    });
-    const first = draftFor(threadId, TEST_ENVIRONMENT_ID)!.modelSelectionByProvider[
-      CODEX_INSTANCE
-    ]!;
-    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
-      explicit: true,
-    });
-    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.5"), {
-      explicit: true,
-    });
-    const latest = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
+  it.each(["consecutive model", "consecutive options", "returning model"] as const)(
+    "releases only the latest accepted pick after %s picks",
+    (kind) => {
+      const store = useComposerDraftStore.getState();
+      store.setPrompt(threadRef, "keep this follow-up");
+      const select = () => {
+        if (kind === "consecutive options") {
+          store.setProviderModelOptions(
+            threadRef,
+            CODEX_DRIVER,
+            toSelections({ reasoningEffort: "high" }),
+            { instanceId: CODEX_INSTANCE, model: "gpt-5.5" },
+          );
+        } else {
+          store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.5"), {
+            explicit: true,
+          });
+        }
+      };
+      select();
+      const first = draftFor(threadId, TEST_ENVIRONMENT_ID)!.modelSelectionByProvider[
+        CODEX_INSTANCE
+      ]!;
+      if (kind === "returning model") {
+        store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+          explicit: true,
+        });
+      }
+      select();
+      const latest = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
 
-    // An older acknowledgement of the same model is not the latest pick.
-    store.releaseModelSelection(threadRef, first);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBe(latest);
-    store.releaseModelSelection(threadRef, latest.modelSelectionByProvider[CODEX_INSTANCE]!);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
-  });
+      store.releaseModelSelection(threadRef, first);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBe(latest);
+      store.releaseModelSelection(threadRef, latest.modelSelectionByProvider[CODEX_INSTANCE]!);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBeUndefined();
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider).toEqual({});
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("keep this follow-up");
+    },
+  );
 
   it("releases an inactive thread pick only after its queued model becomes durable", () => {
     const store = useComposerDraftStore.getState();
