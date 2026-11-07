@@ -738,6 +738,16 @@ export function PullRequestSummaryTab({
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {/* Azure DevOps accepts reviewers but cannot list candidates. */}
+              {detail.capabilities.reviewers.request &&
+              detail.capabilities.reviewers.listCandidates ? (
+                <PullRequestReviewerPicker
+                  searchable={detail.capabilities.reviewers.searchCandidates === true}
+                  environmentId={environmentId}
+                  reference={reference}
+                  allowed={detail.viewerPermissions.requestReviewers}
+                />
+              ) : null}
               {reviewerEntries.length === 0 ? (
                 <span className="text-muted-foreground">None</span>
               ) : (
@@ -798,21 +808,18 @@ export function PullRequestSummaryTab({
                   })}
                 </span>
               )}
-              {/* Azure DevOps accepts reviewers but cannot list candidates. */}
-              {detail.capabilities.reviewers.request &&
-              detail.capabilities.reviewers.listCandidates ? (
-                <PullRequestReviewerPicker
-                  searchable={detail.capabilities.reviewers.searchCandidates === true}
-                  environmentId={environmentId}
-                  reference={reference}
-                  allowed={detail.viewerPermissions.requestReviewers}
-                />
-              ) : null}
             </span>
           </MetaRow>
           {detail.labels.length > 0 || detail.capabilities.labels === true ? (
             <MetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
               <span className="flex min-w-0 flex-wrap items-center gap-1">
+                {detail.capabilities.labels === true ? (
+                  <PullRequestLabelPicker
+                    environmentId={environmentId}
+                    reference={reference}
+                    allowed={detail.viewerPermissions.labels !== false}
+                  />
+                ) : null}
                 {detail.labels.length === 0 ? (
                   <span className="text-muted-foreground">None</span>
                 ) : (
@@ -825,13 +832,6 @@ export function PullRequestSummaryTab({
                     />
                   ))
                 )}
-                {detail.capabilities.labels === true ? (
-                  <PullRequestLabelPicker
-                    environmentId={environmentId}
-                    reference={reference}
-                    allowed={detail.viewerPermissions.labels !== false}
-                  />
-                ) : null}
               </span>
             </MetaRow>
           ) : null}
