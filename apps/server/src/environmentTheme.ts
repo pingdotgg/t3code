@@ -339,10 +339,15 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
         0o644,
       );
       try {
-        NodeFS.writeFileSync(fd, raw);
-        return NodeFS.fstatSync(fd).ino;
-      } finally {
-        NodeFS.closeSync(fd);
+        try {
+          NodeFS.writeFileSync(fd, raw);
+          return NodeFS.fstatSync(fd).ino;
+        } finally {
+          NodeFS.closeSync(fd);
+        }
+      } catch (cause) {
+        NodeFS.unlinkSync(stagingPath);
+        throw cause;
       }
     },
     catch: publishFailure,

@@ -329,6 +329,28 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))("environment theme",
     ),
   );
 
+  it.effect("preserves the theme and removes staging files when writing fails", () =>
+    withEnvironmentThemes(
+      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const service = yield* EnvironmentTheme.EnvironmentThemeService;
+        {
+          using _write = vi.spyOn(NodeFS, "writeFileSync").mockImplementation(() => {
+            throw Object.assign(new Error("Disk write failed"), { code: "EIO" });
+          });
+          const error = yield* Effect.flip(
+            service.save({ id: "nightfall", theme: SHARED_THEME, overwrite: true }),
+          );
+          assert.equal(error.reason, "storage");
+        }
+        assert.deepEqual(yield* service.read("nightfall"), { id: "nightfall", ...NIGHTFALL_THEME });
+        const fs = yield* FileSystem.FileSystem;
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        assert.deepEqual(yield* fs.readDirectory(environmentThemesDir), ["nightfall.json"]);
+      }),
+    ),
+  );
+
   it.effect("never replaces another publisher during create", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
