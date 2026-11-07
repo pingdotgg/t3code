@@ -2858,6 +2858,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
             LSHandlerRank: "Alternate",
             LSItemContentTypes: ["public.html", "public.xhtml"],
           },
+          // Lets a folder dropped on the Dock icon open as a project.
+          {
+            CFBundleTypeName: "Folder",
+            CFBundleTypeRole: "Viewer",
+            LSHandlerRank: "Alternate",
+            LSItemContentTypes: ["public.folder"],
+          },
         ],
       },
       protocols: [

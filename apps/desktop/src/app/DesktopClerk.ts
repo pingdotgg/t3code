@@ -3,6 +3,7 @@ import * as NodeURL from "node:url";
 import { storage } from "@clerk/electron/storage";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -19,6 +20,7 @@ import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/rela
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
@@ -61,6 +63,8 @@ export class DesktopClerk extends Context.Service<
       | ElectronApp.ElectronApp
       | ElectronWindow.ElectronWindow
       | DesktopWebLinks.DesktopWebLinks
+      | DesktopAppActivation.DesktopAppActivation
+      | FileSystem.FileSystem
       | Scope.Scope
     >;
   }
@@ -133,6 +137,16 @@ export const make = Effect.gen(function* () {
   yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
     if (handleOpenUrl(url)) event.preventDefault();
   });
+  // A Dock drop that launches the app reaches open-file the same way.
+  const pendingOpenFiles: Array<string> = [];
+  let handleOpenFile = (path: string) => {
+    pendingOpenFiles.push(path);
+  };
+  // Finder offers the app only the types it registers: folders and web pages.
+  yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
+    event.preventDefault();
+    handleOpenFile(path);
+  });
 
   yield* Effect.acquireRelease(
     Effect.try({
@@ -162,6 +176,8 @@ export const make = Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
+      const fileSystem = yield* FileSystem.FileSystem;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
@@ -228,11 +244,21 @@ export const make = Effect.gen(function* () {
         openWebLink(url) ||
         openAppLink(url);
       for (const url of pendingOpenUrls.splice(0)) handleOpenUrl(url);
-      yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
-        if (!DesktopWebLinks.isWebPageFile(path)) return;
-        event.preventDefault();
-        void runPromise(webLinks.receive(NodeURL.pathToFileURL(path).href));
-      });
+      handleOpenFile = (path) => {
+        void runPromise(
+          fileSystem.stat(path).pipe(
+            Effect.flatMap((info) => {
+              if (info.type === "Directory") return appActivation.openWorkspace(path);
+              if (DesktopWebLinks.isWebPageFile(path)) {
+                return webLinks.receive(NodeURL.pathToFileURL(path).href);
+              }
+              return Effect.void;
+            }),
+            Effect.catchCause((cause) => Effect.logWarning("Could not open a dropped file", cause)),
+          ),
+        );
+      };
+      for (const path of pendingOpenFiles.splice(0)) handleOpenFile(path);
       handleSecondInstance = (argv) => {
         if (
           argv?.some(

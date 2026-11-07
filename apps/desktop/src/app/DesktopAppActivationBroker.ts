@@ -41,7 +41,10 @@ export class DesktopAppActivationBroker {
     this.#activate = input.activate;
   }
 
-  request(request: DesktopAppActivationRequest): Promise<DesktopAppActivationResponse> {
+  request(
+    request: DesktopAppActivationRequest,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<DesktopAppActivationResponse> {
     if (this.#closed) {
       return Promise.resolve(
         failure(request.requestId, "renderer-unavailable", "T3 Code is shutting down."),
@@ -62,7 +65,7 @@ export class DesktopAppActivationBroker {
             "The desktop app did not finish opening the project in time.",
           ),
         );
-      }, this.#requestTimeoutMs);
+      }, options?.timeoutMs ?? this.#requestTimeoutMs);
       this.#pending.set(request.requestId, {
         request,
         resolve,

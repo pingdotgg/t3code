@@ -24,8 +24,10 @@ import * as Scope from "effect/Scope";
 
 import type * as Electron from "electron";
 
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { DesktopAppActivationBroker } from "./DesktopAppActivationBroker.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -33,6 +35,8 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
+// A folder dropped on the Dock can launch the app, so its deadline covers backend startup.
+const OPEN_FILE_TIMEOUT_MS = 120_000;
 const isDesktopAppActivationRequest = Schema.is(DesktopAppActivationRequest);
 
 export class DesktopAppActivationStartError extends Schema.TaggedError<DesktopAppActivationStartError>()(
@@ -289,6 +293,7 @@ export class DesktopAppActivation extends Context.Service<
     readonly start: Effect.Effect<void, DesktopAppActivationStartError, Scope.Scope>;
     readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
     readonly complete: (response: DesktopAppActivationResponse) => Effect.Effect<void>;
+    readonly openWorkspace: (workspaceRoot: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppActivation") {}
 
@@ -298,6 +303,8 @@ const { logWarning } = makeComponentLogger("desktop-app-activation");
 export const make = Effect.gen(function* () {
   const desktopEnvironment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const path = yield* Path.Path;
   const userId = yield* HostProcess.UserId;
@@ -388,6 +395,33 @@ export const make = Effect.gen(function* () {
     // The IPC handler owns the activation-completion span.
     complete: Effect.fnUntraced(function* (response) {
       return yield* Effect.sync(() => broker.complete(response));
+    }),
+    openWorkspace: Effect.fn("DesktopAppActivation.openWorkspace")(function* (workspaceRoot) {
+      const showFailure = (detail: string) =>
+        electronDialog
+          .showMessageBox({ type: "warning", message: "Could not open folder", detail })
+          .pipe(Effect.ignore);
+      if (!(yield* appSettings.get).localEnvironmentEnabled) {
+        return yield* showFailure("Turn on the local environment in Settings to open folders.");
+      }
+      const response = yield* Effect.promise(() =>
+        broker.request(
+          {
+            version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
+            requestId: NodeCrypto.randomUUID(),
+            type: "open-workspace",
+            workspaceRoot,
+            // Only macOS delivers open-file.
+            platform: "darwin",
+          },
+          { timeoutMs: OPEN_FILE_TIMEOUT_MS },
+        ),
+      );
+      if (response.ok) return;
+      yield* logWarning("failed to open a dropped folder", { code: response.code });
+      // Quitting settles queued requests this way; a dialog would hold up shutdown.
+      if (response.code === "renderer-unavailable") return;
+      yield* showFailure(response.message);
     }),
   });
 });

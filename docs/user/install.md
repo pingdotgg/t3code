@@ -158,6 +158,9 @@ Pass a path, such as `t3 app ../my-project`, to open another directory. It requi
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
+On macOS, you can also drop a folder on the T3 Code icon in the Dock, or choose
+**Open With → T3 Code** in Finder, even when the app is closed.
+
 ## Mobile app
 
 Install T3 Code from the
