@@ -1143,7 +1143,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Held until the deferred move's fiber ends; two pending moves would race for the thread.
+  // Held until a move finishes, including a deferred move's fiber; two moves would race for the thread.
   const threadsWithPendingMove = new Set<ThreadId>();
 
   const moveThreadToProject: ThreadManagementServiceShape["moveThreadToProject"] = Effect.fn(
@@ -1177,18 +1177,29 @@ const make = Effect.gen(function* () {
       commandType: "thread.project.move",
       cause: `Thread ${input.threadId} already has a move pending.`,
     });
-    const moveNow = Effect.gen(function* () {
-      if (threadsWithPendingMove.has(input.threadId)) return yield* movePending;
-      yield* dispatchMove;
-      yield* input.afterMove;
-      return yield* continueThere.pipe(
-        Effect.as({ movesWhenTurnEnds: false }),
-        // The move landed, so this call must not report that it failed.
-        Effect.catch((error) =>
-          Effect.succeed({ movesWhenTurnEnds: false, continuationFailure: error.message }),
-        ),
-      );
+    const reserveThread = Effect.suspend(() => {
+      if (threadsWithPendingMove.has(input.threadId)) return Effect.fail(movePending);
+      threadsWithPendingMove.add(input.threadId);
+      return Effect.void;
     });
+    const releaseThread = Effect.sync(() => threadsWithPendingMove.delete(input.threadId));
+    const moveNow = Effect.acquireUseRelease(
+      reserveThread,
+      () =>
+        dispatchMove.pipe(
+          Effect.andThen(input.afterMove),
+          Effect.andThen(
+            continueThere.pipe(
+              Effect.as({ movesWhenTurnEnds: false }),
+              // The move landed, so this call must not report that it failed.
+              Effect.catch((error) =>
+                Effect.succeed({ movesWhenTurnEnds: false, continuationFailure: error.message }),
+              ),
+            ),
+          ),
+        ),
+      () => releaseThread,
+    );
     const shell = yield* orchestrator.getThreadShell(input.threadId);
     if (shell == null) return yield* moveNow;
     const instanceId = shell.providerInstanceId;
@@ -1265,15 +1276,11 @@ const make = Effect.gen(function* () {
       ),
       Effect.ignoreCause({ log: true }),
       Effect.interruptible,
-      Effect.ensuring(Effect.sync(() => threadsWithPendingMove.delete(input.threadId))),
+      Effect.ensuring(releaseThread),
     );
     // Uninterruptible so cancellation cannot hold the guard with no fiber to release it.
     yield* Effect.uninterruptible(
-      Effect.suspend(() => {
-        if (threadsWithPendingMove.has(input.threadId)) return Effect.fail(movePending);
-        threadsWithPendingMove.add(input.threadId);
-        return waitThenMove.pipe(Effect.forkIn(layerScope));
-      }),
+      reserveThread.pipe(Effect.andThen(waitThenMove.pipe(Effect.forkIn(layerScope)))),
     );
     return { movesWhenTurnEnds: true };
   });

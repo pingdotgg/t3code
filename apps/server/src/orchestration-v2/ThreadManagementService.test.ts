@@ -984,6 +984,65 @@ it.effect.each([
   }),
 );
 
+it.effect("moveThreadToProject holds the thread during an immediate move", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:thread-management:concurrent-move");
+    const entered = yield* Deferred.make<void>();
+    const gate = yield* Deferred.make<void>();
+    const moved: Array<string> = [];
+    let moveCalls = 0;
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(
+        ThreadManagementService.layer.pipe(
+          Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+          Layer.provide(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              getThreadEventSequence: () => Effect.succeed(0),
+              getThreadShell: () =>
+                Effect.succeed({
+                  id: threadId,
+                  projectId: ProjectId.make("project:thread-management:concurrent-source"),
+                  activeRunId: null,
+                  providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                } as never),
+              dispatch: () =>
+                Effect.gen(function* () {
+                  moveCalls += 1;
+                  if (moveCalls === 1) {
+                    yield* Deferred.succeed(entered, undefined);
+                    yield* Deferred.await(gate);
+                  }
+                  return { sequence: 1, storedEvents: [] } as never;
+                }),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerReceiptsTest),
+        ),
+      ),
+    );
+    const move = (destination: string) =>
+      service.moveThreadToProject({
+        threadId,
+        projectId: ProjectId.make(destination),
+        commandId: CommandId.make(`command:thread-management:${destination}`),
+        afterMove: Effect.sync(() => {
+          moved.push(destination);
+        }),
+      });
+
+    const first = yield* move("first").pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    const second = yield* move("second").pipe(Effect.flip);
+    expect(second).toMatchObject({ cause: `Thread ${threadId} already has a move pending.` });
+    yield* Deferred.succeed(gate, undefined);
+    yield* Fiber.join(first);
+
+    yield* move("third");
+    expect(moved).toEqual(["first", "third"]);
+  }),
+);
+
 it.effect("waitForThread follows a thread that moves to another project", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-source");
