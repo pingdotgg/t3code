@@ -563,6 +563,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "ready",
   "pending",
   "exhausted",
+  "fallback exhausted",
   "not installed",
   "signed out",
   "signed out, fallback failed",
@@ -576,7 +577,8 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
     const slow = primaryState.endsWith("slow");
     const primaryBlocked = primaryState === "primary slow";
     const fallbackBlocked = primaryState === "fallback slow" || primaryState === "both slow";
-    const exhausted = primaryState === "exhausted" || slow;
+    const fallbackExhausted = primaryState === "fallback exhausted";
+    const exhausted = primaryState === "exhausted" || fallbackExhausted || slow;
     let readStarted = yield* Deferred.make<void>();
     const fallbackFailed = primaryState === "signed out, fallback failed";
     const needsFallback =
@@ -624,7 +626,8 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
             ? { status: "error", auth: { status: "unauthenticated" } }
             : {}),
           ...(fallbackFailed && instanceId !== primary ? { status: "error" } : {}),
-          ...(exhausted && instanceId === primary
+          ...((exhausted && instanceId === primary) ||
+          (fallbackExhausted && instanceId === unrelated)
             ? {
                 usageLimits: {
                   checkedAt: "1970-01-01T00:00:00Z",
@@ -745,10 +748,12 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       expect(calls).toEqual([
         needsFallback && !fallbackFailed
           ? {
-              instanceId: operation === "title" ? unrelated : fallback,
+              instanceId: operation === "title" && !fallbackExhausted ? unrelated : fallback,
               model:
                 DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[
-                  ProviderDriverKind.make(operation === "title" ? "antigravity" : "claudeAgent")
+                  ProviderDriverKind.make(
+                    operation === "title" && !fallbackExhausted ? "antigravity" : "claudeAgent",
+                  )
                 ],
             }
           : selection,
@@ -759,7 +764,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       (needsFallback && !fallbackFailed && !primaryBlocked
         ? [
             [primary, fallback],
-            [primary, fallback, unrelated],
+            fallbackExhausted ? [primary, unrelated, fallback] : [primary, unrelated],
           ]
         : [[primary], [primary]]
       ).map((ids) => ids.sort()),

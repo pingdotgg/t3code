@@ -10,10 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
-import {
-  defaultTextGenerationModel,
-  fallbackTextGenerationModelSelection,
-} from "@t3tools/shared/serverSettings";
+import { fallbackTextGenerationModelSelection } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
@@ -123,38 +120,35 @@ export const make = Effect.gen(function* () {
         isProviderAvailable(provider) &&
         isProviderTextGenerationCapable(provider) &&
         (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(provider.driver));
-      const remaining = usageDeadline - (yield* Clock.currentTimeMillis);
-      if (remaining > 0)
-        yield* Effect.forEach(
-          instances.filter(
-            (instance) =>
-              instance.enabled &&
-              fallbackTextGenerationModelSelection(
-                settings.providerInstances,
-                (instanceId) => instanceId === instance.instanceId,
-                { includeConfiguredInstances: true },
-              ) !== null &&
-              snapshots.some(
-                (provider) => provider.instanceId === instance.instanceId && canServe(provider),
-              ),
-          ),
-          (instance) => (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignore),
-          { concurrency: "unbounded", discard: true },
-        ).pipe(Effect.timeoutOption(remaining));
-      snapshots = yield* readSnapshots;
-      selection =
-        fallbackTextGenerationModelSelection(
+      const attempted = new Set<ProviderInstanceId>();
+      while (true) {
+        const candidate = fallbackTextGenerationModelSelection(
           settings.providerInstances,
-          (instanceId, driver) => {
-            const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
-            return (
-              provider !== undefined &&
-              canServe(provider) &&
-              !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
-            );
+          (instanceId) => {
+            const provider = snapshots.find((provider) => provider.instanceId === instanceId);
+            return !attempted.has(instanceId) && provider !== undefined && canServe(provider);
           },
           { includeConfiguredInstances: true },
-        ) ?? selection;
+        );
+        if (candidate === null) break;
+        attempted.add(candidate.instanceId);
+        const remaining = usageDeadline - (yield* Clock.currentTimeMillis);
+        if (remaining > 0)
+          yield* (
+            instances.find((instance) => instance.instanceId === candidate.instanceId)?.snapshot
+              .refreshUsage ?? Effect.void
+          ).pipe(Effect.ignore, Effect.timeoutOption(remaining));
+        snapshots = yield* readSnapshots;
+        const provider = snapshots.find((provider) => provider.instanceId === candidate.instanceId);
+        if (
+          provider &&
+          canServe(provider) &&
+          !exhaustedUsageWindow(provider, now, candidate.model)
+        ) {
+          selection = candidate;
+          break;
+        }
+      }
     }
     return yield* resolveInstance(registry, operation, selection.instanceId).pipe(
       Effect.flatMap((service) => invoke(service, selection)),
