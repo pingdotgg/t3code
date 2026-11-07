@@ -61,7 +61,7 @@ export const make = Effect.gen(function* () {
     const iconPaths = yield* assets.iconPaths;
     // Tray icons need a real image; a missing or undecodable asset leaves the
     // feature off so window close keeps its normal quit behavior.
-    const created = yield* Effect.try(() => {
+    const created = yield* Effect.sync(() => {
       if (environment.platform === "win32") {
         const icoPath = Option.getOrNull(iconPaths.ico);
         return icoPath === null ? null : new Electron.Tray(icoPath);
@@ -70,12 +70,7 @@ export const make = Effect.gen(function* () {
       if (pngPath === null) return null;
       const image = Electron.nativeImage.createFromPath(pngPath).resize({ width: 32, height: 32 });
       return image.isEmpty() ? null : new Electron.Tray(image);
-    }).pipe(
-      Effect.catch((cause) =>
-        logWarning("failed to create the system tray icon", { cause }).pipe(Effect.as(undefined)),
-      ),
-    );
-    if (created === undefined) return;
+    });
     if (created === null) {
       yield* logWarning("no tray icon image is available; close to tray stays off");
       return;
