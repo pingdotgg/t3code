@@ -438,6 +438,34 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(line.join("")).toBe("tiếng việt");
   });
 
+  it("commits a composition typed after plain text once, then drops that text at Enter", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    const input = (value: string, isComposing = false) => {
+      surface.input.value = value;
+      surface.input.dispatchEvent(Object.assign(new Event("input"), { isComposing }));
+    };
+
+    for (const char of "ls ") {
+      if (
+        !key(surface, char, char === " " ? "Space" : `Key${char.toUpperCase()}`).defaultPrevented
+      ) {
+        input(surface.input.value + char);
+      }
+    }
+    surface.input.dispatchEvent(new Event("compositionstart"));
+    input("ls にほん", true);
+    input("ls 日本", true);
+    surface.input.dispatchEvent(new Event("compositionend"));
+    // WebKit fires the commit's input after compositionend.
+    input("ls 日本");
+    key(surface, "Enter", "Enter");
+
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["l", "s", " ", "日本", "\r"]);
+    expect(surface.input.value).toBe("");
+  });
+
   function paste(surface: GhosttyTerminalSurface, text: string) {
     surface.input.dispatchEvent(
       Object.assign(new Event("paste", { cancelable: true }), {
