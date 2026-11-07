@@ -1028,27 +1028,38 @@ describe("PiAdapterV2", () => {
       yield* setStatus("t3:background");
       assert.deepStrictEqual(yield* takeRoster(), ["t3:background:build"]);
 
-      // A replacement session lists only its own work and releases the outgoing thread.
-      fake.deferNextLifecycle("new_session");
-      fake.queueState({ sessionFile: "/fake/replaced.jsonl" });
-      const switching = yield* runtime
-        .ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        })
-        .pipe(Effect.forkScoped);
-      const newSession = yield* fake.takeRequest("new_session");
-      assert.deepStrictEqual(yield* takeRoster(), []);
-      yield* setStatus("t3:background:deploy", "Deploying");
-      yield* fake.emit({
-        type: "response",
-        id: newSession["id"],
-        command: "new_session",
-        success: true,
-        data: { cancelled: false },
+      const switchSession = Effect.fnUntraced(function* (cancelled: boolean) {
+        fake.deferNextLifecycle("new_session");
+        if (!cancelled) fake.queueState({ sessionFile: "/fake/replaced.jsonl" });
+        const switching = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          })
+          .pipe(Effect.forkScoped);
+        const newSession = yield* fake.takeRequest("new_session");
+        yield* setStatus(
+          cancelled ? "t3:background:docs" : "t3:background:deploy",
+          cancelled ? "Docs building" : "Deploying",
+        );
+        yield* fake.emit({
+          type: "response",
+          id: newSession["id"],
+          command: "new_session",
+          success: true,
+          data: { cancelled },
+        });
+        return yield* Fiber.join(switching);
       });
-      const replacement = yield* Fiber.join(switching);
+
+      // The outgoing roster is not cleared while Pi's hooks decide, and a veto keeps its work.
+      assert.isTrue(Exit.isFailure(yield* switchSession(true).pipe(Effect.exit)));
+      assert.deepStrictEqual(yield* takeRoster(), ["t3:background:build", "t3:background:docs"]);
+
+      // A replacement session lists only its own work and releases the outgoing thread.
+      const replacement = yield* switchSession(false);
+      assert.deepStrictEqual(yield* takeRoster(), []);
       assert.notEqual(replacement.id, providerThread.id);
       assert.deepStrictEqual(
         replacement.pendingBackgroundTasks?.map((task) => task.taskId),

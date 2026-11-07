@@ -658,15 +658,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         );
 
       const syncBackgroundTasks = Effect.fnUntraced(function* () {
+        // A lifecycle reset clears statuses until its outcome; the thread keeps listing its work.
+        if (extensionStatusReset !== null) return;
         const owner = threadState ?? backgroundTaskOwner;
-        const previous = backgroundTaskOwner;
         backgroundTaskOwner = owner;
-        if (
-          previous !== null &&
-          previous.providerThread.id !== owner?.providerThread.id &&
-          previous.providerThread.pendingBackgroundTasks?.length
-        )
-          yield* updateProviderThread(previous, { pendingBackgroundTasks: [] });
         if (owner === null) return;
         const tasks = backgroundTasks();
         const listed = owner.providerThread.pendingBackgroundTasks ?? [];
@@ -680,6 +675,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         )
           return;
         yield* updateProviderThread(owner, { pendingBackgroundTasks: tasks });
+      });
+
+      const releaseBackgroundTasks = Effect.fnUntraced(function* () {
+        const previous = backgroundTaskOwner;
+        backgroundTaskOwner = null;
+        if (previous?.providerThread.pendingBackgroundTasks?.length)
+          yield* updateProviderThread(previous, { pendingBackgroundTasks: [] });
       });
 
       // Frequent notifications share the event pump's tracing boundary and outlive individual turns.
@@ -2496,7 +2498,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               ? { type: "switch_session", sessionPath: resumeId }
               : { type: "new_session" },
           );
-          if (recordField(result, "cancelled") === true) {
+          const cancelled = recordField(result, "cancelled") === true;
+          // A completed switch ended the outgoing session's work; the new binding lists its own.
+          yield* sessionEventPermit.withPermits(1)(
+            cancelled || existing?.id === backgroundTaskOwner?.providerThread.id
+              ? syncBackgroundTasks()
+              : releaseBackgroundTasks(),
+          );
+          if (cancelled) {
             return yield* protocolError("A Pi extension cancelled the session switch");
           }
         }
@@ -2569,8 +2578,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               };
         const state: PiThreadState = { providerThread, activeTurn: null };
         threadState = state;
-        // Clears the outgoing thread's roster after a session switch.
-        yield* syncBackgroundTasks();
+        backgroundTaskOwner = state;
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
           Effect.orElseSucceed(() => undefined),
         );
@@ -3222,6 +3230,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               (barrier) =>
                 Effect.gen(function* () {
                   const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
+                  yield* sessionEventPermit.withPermits(1)(syncBackgroundTasks());
                   if (recordField(forkData, "cancelled") === true)
                     return yield* protocolError("A Pi extension cancelled the session fork");
                   const forkState = yield* request({ type: "get_state" }).pipe(
