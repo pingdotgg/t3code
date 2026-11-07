@@ -15,7 +15,7 @@ import { useNavigation } from "@react-navigation/native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppBar } from "../../components/ui/AppBar";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { useMemo, useRef, type ComponentProps } from "react";
+import { useMemo, type ComponentProps } from "react";
 import { RefreshControl, useWindowDimensions, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -29,6 +29,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { useOpenThreadSwipeable } from "../home/use-open-thread-swipeable";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
 
@@ -298,7 +299,8 @@ export function ArchivedThreadsScreen(props: {
   readonly onUnarchiveThread: (thread: EnvironmentThreadShell) => void;
 }) {
   const { onDeleteThread, onUnarchiveThread } = props;
-  const openSwipeableRef = useRef<SwipeableMethods | null>(null);
+  const { handleSwipeableWillOpen, handleSwipeableClose, closeOpenSwipeable } =
+    useOpenThreadSwipeable();
   const archiveScrollGesture = useNativeGesture();
   const environmentLabelsById = useMemo(
     () =>
@@ -335,17 +337,6 @@ export function ArchivedThreadsScreen(props: {
     }
     return items;
   }, [environmentLabelsById, props.groups, serverConfigs]);
-  const handleSwipeableWillOpen = (methods: SwipeableMethods) => {
-    if (openSwipeableRef.current && openSwipeableRef.current !== methods) {
-      openSwipeableRef.current.close();
-    }
-    openSwipeableRef.current = methods;
-  };
-  const handleSwipeableClose = (methods: SwipeableMethods) => {
-    if (openSwipeableRef.current === methods) {
-      openSwipeableRef.current = null;
-    }
-  };
   const isInitialLoad = props.isLoading && props.groups.length === 0 && props.error === null;
   const isFiltered = props.searchQuery.trim().length > 0 || props.selectedEnvironmentId !== null;
   const renderListItem = ({ item }: { item: ArchivedThreadListItem }) => {
@@ -432,7 +423,7 @@ export function ArchivedThreadsScreen(props: {
             ListHeaderComponent={
               props.error ? <ArchiveError message={props.error} onRetry={props.onRefresh} /> : null
             }
-            onScrollBeginDrag={() => openSwipeableRef.current?.close()}
+            onScrollBeginDrag={closeOpenSwipeable}
             refreshControl={
               <RefreshControl
                 onRefresh={props.onRefresh}
