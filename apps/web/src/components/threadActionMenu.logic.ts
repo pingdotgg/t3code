@@ -96,6 +96,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Sidebar-only: the sidebar is the one place that handles this action, so other menus don't offer it. */
+  readonly showOpenToSide?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -119,9 +121,11 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
-    { id: "open-to-side" as const, label: "Open to the side", icon: "columns-2" },
     ...(state.canFind
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
+      : []),
+    ...(state.showOpenToSide
+      ? [{ id: "open-to-side" as const, label: "Open to the side", icon: "columns-2" }]
       : []),
     ...(state.branch
       ? [
