@@ -204,7 +204,7 @@ describe("workspace document previews", () => {
     expect(screen.container.contains(loaded), "an unchanged document was remounted").toBe(true);
   });
 
-  it("keeps an unchanged document loaded across a reconnect", async () => {
+  it("keeps an unchanged document mounted while its revision check reloads", async () => {
     using _settings = setup();
     await using screen = await render(documentPreview("mutation-1", "revision-1"));
     const preview = screen.getByTestId("office-preview");
@@ -215,8 +215,14 @@ describe("workspace document previews", () => {
     await screen.rerender(filePreview("report.docx", "mutation-1"));
     await screen.rerender(documentPreview("mutation-1", "revision-1"));
 
-    expect(state.mintUrl, "a reconnect re-minted the document URL").toHaveBeenCalledOnce();
-    expect(screen.container.contains(loaded), "a reconnect remounted the document").toBe(true);
+    expect(
+      state.mintUrl,
+      "a reloading revision check re-minted the document URL",
+    ).toHaveBeenCalledOnce();
+    expect(
+      screen.container.contains(loaded),
+      "a reloading revision check remounted the document",
+    ).toBe(true);
   });
 
   it("reloads the document when its URL can no longer be minted", async () => {
