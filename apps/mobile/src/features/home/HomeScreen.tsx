@@ -37,6 +37,7 @@ import {
   ANDROID_READING_MAX_WIDTH,
   deriveCenteredContentHorizontalPadding,
 } from "../../lib/layout";
+import { NewThreadButton } from "../../components/NewThreadButton";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
@@ -701,29 +702,24 @@ export function HomeScreen(props: HomeScreenProps) {
                 icon={needsEnvironment ? "desktopcomputer" : "bubble.left.and.bubble.right"}
                 title={emptyState.title}
                 detail={emptyState.detail}
-                actionLabel={
-                  showStartAction
-                    ? needsEnvironment
-                      ? "Add environment"
-                      : "New thread"
-                    : undefined
-                }
-                onAction={
-                  showStartAction
-                    ? needsEnvironment
-                      ? props.onAddConnection
-                      : props.onStartNewTask
-                    : undefined
-                }
                 action={
-                  Platform.OS === "android" && showStartAction ? (
-                    <FloatingActionButton
-                      label={needsEnvironment ? "Add environment" : "New thread"}
-                      icon={needsEnvironment ? "plus" : "square.and.pencil"}
-                      variant="extended"
-                      tone="primary"
-                      onPress={needsEnvironment ? props.onAddConnection : props.onStartNewTask}
-                    />
+                  showStartAction ? (
+                    Platform.OS === "android" ? (
+                      <FloatingActionButton
+                        label={needsEnvironment ? "Add environment" : "New thread"}
+                        icon={needsEnvironment ? "plus" : "square.and.pencil"}
+                        variant="extended"
+                        tone="primary"
+                        onPress={needsEnvironment ? props.onAddConnection : props.onStartNewTask}
+                      />
+                    ) : (
+                      <NewThreadButton
+                        extended
+                        label={needsEnvironment ? "Add environment" : "New thread"}
+                        icon={needsEnvironment ? "plus" : "square.and.pencil"}
+                        onPress={needsEnvironment ? props.onAddConnection : props.onStartNewTask}
+                      />
+                    )
                   ) : undefined
                 }
                 variant="plain"

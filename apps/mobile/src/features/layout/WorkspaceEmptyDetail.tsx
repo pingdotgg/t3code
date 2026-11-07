@@ -1,5 +1,5 @@
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { NewThreadButton } from "../../components/NewThreadButton";
@@ -67,17 +67,7 @@ export function WorkspaceEmptyDetail(props: {
                     : "Choose a thread from the sidebar or start a new task."}
             </Text>
             {props.onStartNewTask && !pullRequests && !settings ? (
-              Platform.OS === "android" ? (
-                <NewThreadButton extended className="mt-2" onPress={props.onStartNewTask} />
-              ) : (
-                <Pressable
-                  accessibilityRole="button"
-                  className="mt-2 flex-row items-center gap-2 rounded-full bg-primary px-5 py-3 active:opacity-70"
-                  onPress={props.onStartNewTask}
-                >
-                  <Text className="text-base font-t3-bold text-primary-foreground">New thread</Text>
-                </Pressable>
-              )
+              <NewThreadButton extended className="mt-2" onPress={props.onStartNewTask} />
             ) : null}
           </View>
         )}

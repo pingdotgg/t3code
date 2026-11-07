@@ -28,6 +28,7 @@ interface GlassSurfaceProps extends ViewProps {
   // null leaves UIKit's material untinted instead of applying the theme tint.
   readonly tintColor?: ColorValue | null;
   readonly tintColorClassName?: string;
+  readonly isInteractive?: boolean;
   readonly chrome?: "default" | "none";
   readonly fallbackColor?: ColorValue;
   readonly fallbackClassName?: string;
@@ -40,6 +41,7 @@ export function GlassSurface({
   chrome = "default",
   tintColor,
   tintColorClassName,
+  isInteractive = false,
   fallbackColor,
   fallbackClassName,
   className,
@@ -72,6 +74,7 @@ export function GlassSurface({
           className,
         )}
         glassEffectStyle={glassEffectStyle}
+        isInteractive={isInteractive}
         tintColor={tintColor == null ? undefined : String(tintColor)}
         tintColorClassName={
           tintColorClassName ?? (tintColor === undefined ? "accent-glass-tint" : undefined)
