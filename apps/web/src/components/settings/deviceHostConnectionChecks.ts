@@ -5,6 +5,8 @@ import {
   SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { redactSshAddresses } from "@t3tools/client-runtime/connection";
+import { parseManualDesktopSshTarget } from "./sshTarget";
 
 export interface DeviceHostCheckTarget {
   environmentId: EnvironmentId;
@@ -19,7 +21,7 @@ export type DeviceHostCheck =
       platforms: ReadonlyArray<DevicePlatformAvailability>;
       tools?: DeviceHostSummary["tools"];
     }
-  | { status: "failed"; error: string };
+  | { status: "failed"; error: string; rawError: string };
 
 const decodeDeviceHostDraft = Schema.decodeUnknownOption(SshDeviceHostConfig);
 
@@ -44,7 +46,21 @@ export async function checkDeviceHostConnections(
   await Promise.all(
     targets.map(async (target) => {
       report(target.environmentId, { status: "pending" });
+      let sshTarget: ReturnType<typeof parseManualDesktopSshTarget> = {
+        alias: host.target,
+        hostname: host.target,
+        username: null,
+        port: host.port ?? null,
+      };
       try {
+        sshTarget = {
+          ...parseManualDesktopSshTarget({
+            host: host.target,
+            username: "",
+            port: host.port?.toString() ?? "",
+          }),
+          alias: host.target,
+        };
         if (!target.connected) throw new Error("Environment disconnected");
         const result = await probe(target.environmentId, host);
         report(
@@ -60,7 +76,11 @@ export async function checkDeviceHostConnections(
       } catch (error) {
         report(target.environmentId, {
           status: "failed",
-          error: error instanceof Error ? error.message : String(error),
+          rawError: error instanceof Error ? error.message : String(error),
+          error: redactSshAddresses(
+            error instanceof Error ? error.message : String(error),
+            sshTarget,
+          ),
         });
       }
     }),

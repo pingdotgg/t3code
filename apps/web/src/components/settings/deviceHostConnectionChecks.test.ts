@@ -25,6 +25,52 @@ const summary: DeviceHostSummary = {
 };
 
 describe("device host connection checks", () => {
+  it.each([
+    [
+      "203.0.113.42",
+      "connect to host 203.0.113.42 port 22: refused",
+      "connect to host ••• port 22: refused",
+    ],
+    [
+      "build.example.com",
+      "Could not resolve hostname build.example.com",
+      "Could not resolve hostname •••",
+    ],
+    [
+      "deploy@build.example.com",
+      "Could not resolve hostname build.example.com",
+      "Could not resolve hostname •••",
+    ],
+    [
+      "deploy@build.example.com:2222",
+      "Could not resolve hostname build.example.com",
+      "Could not resolve hostname •••",
+    ],
+    [
+      "deploy@build.example.com",
+      "deploy@build.example.com: Permission denied",
+      "•••@•••: Permission denied",
+    ],
+    ["devbox", "Could not resolve hostname devbox", "Could not resolve hostname devbox"],
+    [
+      "devbox",
+      "connect to host 2001:db8:: port 22: refused",
+      "connect to host ••• port 22: refused",
+    ],
+    ["deploy@devbox", "deploy@devbox: Permission denied", "•••@devbox: Permission denied"],
+  ])("redacts failed probes for %s before reporting them", async (target, message, expected) => {
+    const results = new Map<string, DeviceHostCheck>();
+    await checkDeviceHostConnections(
+      targets.slice(0, 1),
+      { ...host, target },
+      async () => {
+        throw new Error(message);
+      },
+      (environmentId, result) => results.set(environmentId, result),
+    );
+    expect(results.get(ids[0]!)).toEqual({ status: "failed", error: expected, rawError: message });
+  });
+
   it("starts all connected environments and retains success, local, failure, and offline results", async () => {
     const calls: string[] = [];
     const pending = new Map<
@@ -50,8 +96,8 @@ describe("device host connection checks", () => {
     expect([...results.values()]).toEqual([
       { status: "connected", platforms: summary.platforms },
       { status: "local" },
-      { status: "failed", error: "SSH key rejected" },
-      { status: "failed", error: "Environment disconnected" },
+      { status: "failed", error: "SSH key rejected", rawError: "SSH key rejected" },
+      { status: "failed", error: "Environment disconnected", rawError: "Environment disconnected" },
     ]);
   });
 

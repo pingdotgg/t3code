@@ -107,6 +107,7 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
   {
     reason: ConnectionTransientReason,
     detail: Schema.String,
+    rawDetail: Schema.optionalKey(Schema.String),
     traceId: Schema.optionalKey(Schema.String),
     ...ConnectionFailureFields,
   },
@@ -121,6 +122,7 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
   {
     reason: ConnectionBlockedReason,
     detail: Schema.String,
+    rawDetail: Schema.optionalKey(Schema.String),
     traceId: Schema.optionalKey(Schema.String),
     ...ConnectionFailureFields,
 

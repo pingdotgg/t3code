@@ -62,7 +62,14 @@ function Owner() {
 
 function setup() {
   mocks.connectSshEnvironment.mockClear();
-  return stubGlobal("desktopBridge", {});
+  return stubGlobal("desktopBridge", {
+    resolveSshHost: async () => ({
+      alias: "devbox",
+      hostname: "private.example.com",
+      username: "deploy",
+      port: 22,
+    }),
+  });
 }
 
 const remoteCard = () => page.getByRole("button", { name: /Remote link/ });
@@ -92,7 +99,18 @@ describe("AddEnvironmentDialog", () => {
     await userEvent.click(
       page.getByRole("dialog").getByRole("button", { name: "Add environment" }),
     );
-    expect(mocks.connectSshEnvironment).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(mocks.connectSshEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: {
+            alias: "devbox",
+            hostname: "private.example.com",
+            username: "deploy",
+            port: 22,
+          },
+        }),
+      ),
+    );
 
     await expectDefaultModeAfterReopen();
   });
