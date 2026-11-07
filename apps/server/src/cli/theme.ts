@@ -233,7 +233,9 @@ const publishThemeFile = Effect.fn(function* (input: {
     .pipe(
       Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
     );
-  const raw = readThemeFileGuarded(resolvedSource, MAX_THEME_FILE_BYTES);
+  const raw = yield* readThemeFileGuarded(resolvedSource, MAX_THEME_FILE_BYTES).pipe(
+    Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
+  );
   if (raw === null) {
     return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
   }

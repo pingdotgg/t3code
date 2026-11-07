@@ -157,7 +157,7 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))("environment theme",
       ),
   );
 
-  it.effect("reports directory failures to readers and retains the published snapshot", () =>
+  it.effect("reports storage failures to readers and retains the published snapshot", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let denied = false;
@@ -188,6 +188,17 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))("environment theme",
             ["nightfall"],
           );
           denied = false;
+          for (const method of ["openSync", "readSync"] as const) {
+            using _read = vi.spyOn(NodeFS, method).mockImplementation(() => {
+              throw Object.assign(new Error("Read denied"), { code: "EACCES" });
+            });
+            assert.equal((yield* Effect.flip(service.list)).reason, "storage");
+            assert.equal((yield* Effect.flip(service.read("nightfall"))).reason, "storage");
+            assert.deepEqual(
+              (yield* service.current).map((theme) => theme.id),
+              ["nightfall"],
+            );
+          }
           const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
           yield* fs.remove(environmentThemesDir, { recursive: true });
           assert.equal(

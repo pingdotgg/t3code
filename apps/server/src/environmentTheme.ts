@@ -110,39 +110,58 @@ export class EnvironmentThemeService extends Context.Service<
 
 /** Validates and reads one handle; rejects symlinked files, allows symlinked directories.
  * Uses non-blocking opens against FIFOs; Windows lacks these flags and checks symlinks with lstat. */
-export const readThemeFileGuarded = (filePath: string, maxBytes: number): string | null => {
-  let fd: number;
-  try {
-    if (NodeFS.constants.O_NOFOLLOW === undefined && NodeFS.lstatSync(filePath).isSymbolicLink()) {
-      return null;
-    }
-    fd = NodeFS.openSync(
-      filePath,
-      NodeFS.constants.O_RDONLY |
-        (NodeFS.constants.O_NOFOLLOW ?? 0) |
-        (NodeFS.constants.O_NONBLOCK ?? 0),
-    );
-  } catch {
-    return null;
-  }
-  try {
-    const info = NodeFS.fstatSync(fd);
-    if (!info.isFile() || info.size > maxBytes) return null;
-    const contents = Buffer.alloc(info.size);
-    let offset = 0;
-    while (offset < contents.length) {
-      const read = NodeFS.readSync(fd, contents, offset, contents.length - offset, offset);
-      if (read <= 0) break;
-      offset += read;
-    }
-    // Unlike Buffer#toString, TextDecoder drops a UTF-8 BOM, which JSON.parse rejects.
-    return new TextDecoder().decode(contents.subarray(0, offset));
-  } catch {
-    return null;
-  } finally {
-    NodeFS.closeSync(fd);
-  }
-};
+export const readThemeFileGuarded = Effect.fn("EnvironmentTheme.readFile")(
+  (filePath: string, maxBytes: number) =>
+    Effect.try({
+      try: (): string | null => {
+        let fd: number;
+        try {
+          if (
+            NodeFS.constants.O_NOFOLLOW === undefined &&
+            NodeFS.lstatSync(filePath).isSymbolicLink()
+          ) {
+            return null;
+          }
+          fd = NodeFS.openSync(
+            filePath,
+            NodeFS.constants.O_RDONLY |
+              (NodeFS.constants.O_NOFOLLOW ?? 0) |
+              (NodeFS.constants.O_NONBLOCK ?? 0),
+          );
+        } catch (cause) {
+          if (
+            ["ENOENT", "ENOTDIR", "ELOOP", "ENXIO"].includes(
+              (cause as NodeJS.ErrnoException).code ?? "",
+            )
+          )
+            return null;
+          throw cause;
+        }
+        try {
+          const info = NodeFS.fstatSync(fd);
+          if (!info.isFile() || info.size > maxBytes) return null;
+          const contents = Buffer.alloc(info.size);
+          let offset = 0;
+          while (offset < contents.length) {
+            const read = NodeFS.readSync(fd, contents, offset, contents.length - offset, offset);
+            if (read <= 0) break;
+            offset += read;
+          }
+          // Unlike Buffer#toString, TextDecoder drops a UTF-8 BOM, which JSON.parse rejects.
+          return new TextDecoder().decode(contents.subarray(0, offset));
+        } finally {
+          NodeFS.closeSync(fd);
+        }
+      },
+      catch: (cause) =>
+        new ThemeLibraryError({
+          reason: "storage",
+          detail:
+            "Could not read a published theme file. Check file permissions and disk availability.",
+          cause,
+        }),
+    }),
+);
 
 /** CLI and MCP writes require usable colors; the watcher preserves lenient legacy files. */
 export const validateThemeFile = Effect.fn("EnvironmentTheme.validateFile")(function* (
@@ -218,7 +237,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     }
 
     const filePath = `${themesDir}/${entry}`;
-    const raw = readThemeFileGuarded(filePath, MAX_THEME_FILE_BYTES);
+    const raw = yield* readThemeFileGuarded(filePath, MAX_THEME_FILE_BYTES);
     if (raw === null) {
       yield* Effect.logWarning("ignoring unusable environment theme file", {
         path: filePath,
@@ -291,14 +310,12 @@ export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(functi
         !UNPUBLISHABLE_THEME_IDS.has(id)
       );
     });
-  const totalBytes = others.reduce(
-    (total, entry) =>
-      total +
-      Buffer.byteLength(
-        readThemeFileGuarded(path.join(input.themesDir, entry), MAX_THEME_FILE_BYTES) ?? "",
-      ),
-    Buffer.byteLength(raw),
-  );
+  let totalBytes = Buffer.byteLength(raw);
+  for (const entry of others) {
+    totalBytes += Buffer.byteLength(
+      (yield* readThemeFileGuarded(path.join(input.themesDir, entry), MAX_THEME_FILE_BYTES)) ?? "",
+    );
+  }
   if (others.length >= MAX_THEME_FILES || totalBytes > MAX_THEME_TOTAL_BYTES)
     return yield* new ThemeLibraryError({
       reason: "limit",
@@ -544,7 +561,7 @@ const make = Effect.gen(function* () {
     if (exists !== input.overwrite)
       return yield* new ThemeLibraryError({ reason: exists ? "collision" : "not_found" });
     // Existing entries must be readable regular theme files, never symlinks.
-    if (exists && readThemeFileGuarded(destination, MAX_THEME_FILE_BYTES) === null)
+    if (exists && (yield* readThemeFileGuarded(destination, MAX_THEME_FILE_BYTES)) === null)
       return yield* new ThemeLibraryError({ reason: "invalid" });
     const published = yield* publishThemeContents({
       themesDir: environmentThemesDir,
