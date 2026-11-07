@@ -331,6 +331,7 @@ export function ReviewThreadCard({
                       text={comment.body}
                       cwd={workspaceRoot}
                       environmentId={environmentId}
+                      aiCollapsed={false}
                     />
                     {canEditComment(comment) ? (
                       <PullRequestEditButton

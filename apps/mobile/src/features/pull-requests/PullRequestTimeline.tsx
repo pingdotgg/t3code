@@ -116,20 +116,20 @@ function TimelineComment({
         </View>
         <Text className="text-2xs text-foreground-tertiary">{relativeTime(comment.createdAt)}</Text>
       </View>
-      {comment.path && oneLine === null ? (
+      {comment.path ? (
         <Text className="font-mono text-2xs text-foreground-muted" numberOfLines={2}>
           {comment.path}
         </Text>
       ) : null}
       {oneLine !== null ? (
         <Animated.View layout={PR_ROW_LAYOUT} className="w-full min-w-0">
-          <Pressable
-            onPress={() => setExpanded((current) => !current)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded }}
-            className="w-full min-w-0 overflow-hidden rounded-2xl bg-grouped-card px-3 py-2.5 active:opacity-70"
-          >
-            <View className="w-full min-w-0 flex-row items-center gap-1">
+          <View className="w-full min-w-0 gap-2 overflow-hidden rounded-2xl bg-grouped-card p-3">
+            <Pressable
+              onPress={() => setExpanded((current) => !current)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded }}
+              className="w-full min-w-0 flex-row items-center gap-1 active:opacity-70"
+            >
               <View className="shrink-0">
                 <SymbolView
                   name={expanded ? "chevron.down" : "chevron.right"}
@@ -144,21 +144,16 @@ function TimelineComment({
               >
                 {oneLine}
               </Text>
-            </View>
+            </Pressable>
             {expanded ? (
               <Animated.View
                 entering={PR_DISCLOSURE_ENTER}
-                className="mt-2 w-full min-w-0 gap-2 overflow-hidden"
+                className="w-full min-w-0 overflow-hidden"
               >
-                {comment.path ? (
-                  <Text className="font-mono text-2xs text-foreground-tertiary" numberOfLines={2}>
-                    {comment.path}
-                  </Text>
-                ) : null}
                 <PullRequestMarkdown markdown={displayBody} imageGroupMarkdown={displayBody} />
               </Animated.View>
             ) : null}
-          </Pressable>
+          </View>
         </Animated.View>
       ) : preview.trim() || content.attachments.length ? (
         <View className="gap-2 overflow-hidden rounded-2xl bg-grouped-card p-3">

@@ -84,10 +84,6 @@ import {
 } from "@t3tools/client-runtime/pull-request-editing";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
-import {
-  PullRequestAiReviewerFinding,
-  pullRequestAiReviewerFeedback,
-} from "./PullRequestAiReviewerFinding";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
@@ -725,38 +721,6 @@ export function PullRequestSummaryTab({
           onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
           reactionBar={reactionBarFor(comment)}
         />
-      );
-    }
-    const aiFeedback = pullRequestAiReviewerFeedback(comment);
-    if (aiFeedback !== null) {
-      const outcome = pullRequestReviewOutcome(comment.reviewState);
-      const finding: PullRequestFinding | null =
-        (comment.kind !== "review" && comment.kind !== "review-comment") || outcome === "approved"
-          ? null
-          : thread === undefined
-            ? { kind: "comment", comment }
-            : { kind: "thread", thread };
-      const chat = chatSubject(comment, thread);
-      return (
-        <PullRequestAiReviewerFinding
-          key={`${detail.url}:${item.kind}:${item.id}`}
-          comment={comment}
-          detail={detail}
-          thread={thread}
-          {...(onFixFinding && finding
-            ? {
-                fixLabel: pullRequestFixFindingLabel(finding, fixInThisThread),
-                fixPending: pendingFinding === pullRequestFindingKey(finding),
-                onFix: () => onFixFinding(finding),
-              }
-            : {})}
-          {...(onAddToChat && chat !== null ? { onAddToChat: () => onAddToChat(chat) } : {})}
-          reactionBar={reactionBarFor(comment)}
-        >
-          <CommentBody comment={comment} editing={commentEditing} />
-          {replies}
-          {moreReplies}
-        </PullRequestAiReviewerFinding>
       );
     }
     if (item.kind === "comment") return renderCommentCard(comment, undefined);
