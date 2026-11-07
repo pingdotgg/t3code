@@ -52,10 +52,10 @@ export function resolveChatSelectionActionPosition({
       viewport.width - actionSize.width - 8,
     ),
   );
-  const nearRelease = (y: number) =>
+  const nearRelease = (y: number, left = x) =>
     pointer !== null &&
-    pointer.x >= x - 8 &&
-    pointer.x <= x + actionSize.width + 8 &&
+    pointer.x >= left - 8 &&
+    pointer.x <= left + actionSize.width + 8 &&
     pointer.y >= y - 8 &&
     pointer.y <= y + actionSize.height + 8;
   for (const clip of [bounds, outerBounds]) {
@@ -68,7 +68,15 @@ export function resolveChatSelectionActionPosition({
   const maxY = viewport.height - actionSize.height - 8;
   const pinTop = Math.max(8, Math.min(Math.max(8, outerBounds.top) + 8, maxY));
   const pinBottom = Math.max(8, Math.min(outerBounds.bottom - actionSize.height - 8, maxY));
-  return { x, y: nearRelease(pinTop) ? pinBottom : pinTop };
+  if (!nearRelease(pinTop)) return { x, y: pinTop };
+  if (!nearRelease(pinBottom)) return { x, y: pinBottom };
+  // A chat area too short for either pin: step sideways off the release point.
+  const right = pointer!.x + 16;
+  const left = Math.max(8, pointer!.x - actionSize.width - 16);
+  return {
+    x: right + actionSize.width <= viewport.width - 8 ? right : left,
+    y: pinTop,
+  };
 }
 
 export function isSelectionRectVisible(rect: SelectionRect, clips: readonly SelectionRect[]) {
