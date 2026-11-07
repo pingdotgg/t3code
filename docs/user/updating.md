@@ -176,6 +176,14 @@ or when its instances use different update commands, such as two instances that
 run different CLI installs. Update those by hand, or point every instance of the
 provider at the same CLI.
 
+The official standalone Codex installer and npm can publish new versions at
+different times. T3 Code checks the standalone installation against the native
+installer's release channel. If npm is newer, the standalone installation can
+still be up to date for its channel; repeating the native update will not fetch
+the npm release. Wait for the native channel to catch up, or update and select
+the npm installation if you intend to use it. Updating another Codex installation
+on the same machine does not change the executable selected in T3 Code.
+
 After a successful provider CLI update, T3 Code refreshes model discovery for
 every enabled instance of that provider using its own configuration. Connected
 clients receive the refreshed catalogs automatically. Provider update checks
