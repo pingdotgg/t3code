@@ -1049,7 +1049,10 @@ type ShellRunRow = {
   readonly thread_id: string;
   readonly run_id: string;
   readonly ordinal: number;
+  readonly status: string;
 };
+
+type ForkSourceRun = { readonly id: RunId; readonly ordinal: number; readonly status: string };
 
 type SettlementThreadRow = Pick<
   ShellThreadRow,
@@ -1391,6 +1394,22 @@ function isTurnItemAtOrBeforeRun(input: {
   return ordinal !== undefined && ordinal <= input.sourceRunOrdinal;
 }
 
+/**
+ * Source runs a fork inherits from. Runs rolled back before the fork had already left the
+ * source's history; once the fork run itself is rolled back, the fork keeps every row it inherited.
+ */
+function forkSourceRunOrdinals(
+  runs: ReadonlyArray<ForkSourceRun>,
+  forkRunId: RunId,
+): Map<RunId, number> {
+  const keepRolledBack = runs.some((run) => run.id === forkRunId && run.status === "rolled_back");
+  return new Map(
+    runs.flatMap((run) =>
+      run.status === "rolled_back" && !keepRolledBack ? [] : [[run.id, run.ordinal] as const],
+    ),
+  );
+}
+
 function visibleTurnItemsThroughRun(input: {
   readonly sourceProjection: OrchestrationV2ThreadProjection;
   readonly sourceRunId: NonNullable<OrchestrationV2TurnItem["runId"]>;
@@ -1400,7 +1419,7 @@ function visibleTurnItemsThroughRun(input: {
     return [];
   }
 
-  const runOrdinalById = new Map(input.sourceProjection.runs.map((run) => [run.id, run.ordinal]));
+  const runOrdinalById = forkSourceRunOrdinals(input.sourceProjection.runs, sourceRun.id);
   const inheritedPrefix = input.sourceProjection.visibleTurnItems
     .filter(
       (row) => row.item.threadId !== input.sourceProjection.thread.id || row.item.type === "fork",
@@ -1786,7 +1805,7 @@ type ShellThreadState = {
   readonly itemCount: number;
   readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
-  readonly runOrdinalById: ReadonlyMap<RunId, number>;
+  readonly runs: ReadonlyArray<ForkSourceRun>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
 };
 
@@ -1814,14 +1833,15 @@ function itemCountThroughRun(input: {
   readonly state: ShellThreadState;
   readonly runId: RunId;
 }): number {
-  const runOrdinal = input.state.runOrdinalById.get(input.runId);
+  const runOrdinalById = forkSourceRunOrdinals(input.state.runs, input.runId);
+  const runOrdinal = runOrdinalById.get(input.runId);
   if (runOrdinal === undefined) {
     return 0;
   }
 
   let count = input.state.thread.historyOrigin === "v1_import" ? input.state.runlessItemCount : 0;
   for (const [runId, itemCount] of input.state.itemCountByRunId) {
-    const itemRunOrdinal = input.state.runOrdinalById.get(runId);
+    const itemRunOrdinal = runOrdinalById.get(runId);
     if (itemRunOrdinal !== undefined && itemRunOrdinal <= runOrdinal) {
       count += itemCount;
     }
@@ -2910,7 +2930,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       9223372036854775807
                     )
                     AND (
-                      ${window.requiredRunId ?? null} IS NOT NULL
+                      (
+                        ${window.requiredRunId ?? null} IS NOT NULL
+                        -- Matches forkSourceRunOrdinals.
+                        AND (
+                          run.status IS NULL
+                          OR run.status <> 'rolled_back'
+                          OR EXISTS (
+                            SELECT 1 FROM orchestration_v2_projection_runs AS fork_run
+                            WHERE fork_run.thread_id = ${threadId}
+                              AND fork_run.run_id = ${window.requiredRunId ?? null}
+                              AND fork_run.status = 'rolled_back'
+                          )
+                        )
+                      )
                       OR (
                         (run.status IS NULL OR run.status <> 'rolled_back')
                         AND NOT (
@@ -5794,7 +5827,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const sourceRun = source.records.runs.find((run) => run.id === fork.runId);
         let inherited: Array<TimelineIndexRow> = [];
         if (sourceRun !== undefined) {
-          const ordinals = new Map(source.records.runs.map((run) => [run.id, run.ordinal]));
+          const ordinals = forkSourceRunOrdinals(source.records.runs, sourceRun.id);
           const sourceItems = source.local.map((row) => row.item);
           inherited = [
             ...source.visible.filter(
@@ -6417,11 +6450,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const selectShellRunRows = (threadIds?: ReadonlyArray<ThreadId>) =>
       threadIds === undefined
         ? sql<ShellRunRow>`
-            SELECT thread_id, run_id, ordinal
+            SELECT thread_id, run_id, ordinal, status
             FROM orchestration_v2_projection_runs
           `
         : sql<ShellRunRow>`
-            SELECT thread_id, run_id, ordinal
+            SELECT thread_id, run_id, ordinal, status
             FROM orchestration_v2_projection_runs
             WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           `;
@@ -6498,13 +6531,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readonly runRows: ReadonlyArray<ShellRunRow>;
       readonly itemCountRows: ReadonlyArray<ShellRunItemCountRow>;
     }) => {
-      const runOrdinalsByThreadId = new Map<ThreadId, Map<RunId, number>>();
+      const runsByThreadId = new Map<ThreadId, Array<ForkSourceRun>>();
       for (const row of input.runRows) {
         const threadId = ThreadId.make(row.thread_id);
-        const runId = RunId.make(row.run_id);
-        const existing = runOrdinalsByThreadId.get(threadId) ?? new Map<RunId, number>();
-        existing.set(runId, row.ordinal);
-        runOrdinalsByThreadId.set(threadId, existing);
+        const existing = runsByThreadId.get(threadId) ?? [];
+        existing.push({ id: RunId.make(row.run_id), ordinal: row.ordinal, status: row.status });
+        runsByThreadId.set(threadId, existing);
       }
       const itemCountsByThreadId = new Map<ThreadId, Map<RunId, number>>();
       for (const row of input.itemCountRows) {
@@ -6514,7 +6546,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         existing.set(runId, row.item_count);
         itemCountsByThreadId.set(threadId, existing);
       }
-      return { runOrdinalsByThreadId, itemCountsByThreadId };
+      return { runsByThreadId, itemCountsByThreadId };
     };
 
     const shellItemCountMap = (rows: ReadonlyArray<ShellItemCountRow>) =>
@@ -6775,7 +6807,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       /* Runs once per shell row; the enclosing snapshot or thread read owns the span. */
       Effect.fnUntraced(function* (input: {
         readonly row: ShellThreadRow;
-        readonly runOrdinalsByThreadId: ReadonlyMap<ThreadId, Map<RunId, number>>;
+        readonly runsByThreadId: ReadonlyMap<ThreadId, ReadonlyArray<ForkSourceRun>>;
         readonly itemCountsByThreadId: ReadonlyMap<ThreadId, Map<RunId, number>>;
         readonly shellItemCountsByThreadId: ReadonlyMap<
           ThreadId,
@@ -6792,7 +6824,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       }) {
         const {
           row,
-          runOrdinalsByThreadId,
+          runsByThreadId,
           itemCountsByThreadId,
           shellItemCountsByThreadId,
           providerThreadsByThreadId,
@@ -6955,7 +6987,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           itemCount: shellItemCountsByThreadId.get(thread.id)?.itemCount ?? 0,
           runlessItemCount: shellItemCountsByThreadId.get(thread.id)?.runlessItemCount ?? 0,
           updatedAt: thread.updatedAt,
-          runOrdinalById: runOrdinalsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
+          runs: runsByThreadId.get(ThreadId.make(row.thread_id)) ?? [],
           itemCountByRunId: itemCountsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
         } satisfies ShellThreadState;
       });
@@ -7044,7 +7076,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       providerThreadRows,
       pendingTurnItemRows,
     }: Effect.Success<ReturnType<typeof readShellSnapshotRows>>) {
-      const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
+      const { runsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
         runRows,
         itemCountRows,
       });
@@ -7054,7 +7086,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const states = yield* Effect.forEach(threadRows, (row) =>
         shellThreadStateFromRow({
           row,
-          runOrdinalsByThreadId,
+          runsByThreadId,
           itemCountsByThreadId,
           shellItemCountsByThreadId,
           providerThreadsByThreadId,
@@ -7431,7 +7463,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ),
               ),
             ]);
-            const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
+            const { runsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
               runRows,
               itemCountRows,
             });
@@ -7442,7 +7474,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const states = yield* Effect.forEach([...rowsByThreadId.values()], (row) =>
               shellThreadStateFromRow({
                 row,
-                runOrdinalsByThreadId,
+                runsByThreadId,
                 itemCountsByThreadId,
                 shellItemCountsByThreadId,
                 providerThreadsByThreadId,

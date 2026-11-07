@@ -7740,14 +7740,30 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const emptyBoundaryFork = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
         rowLimit: 2,
       });
-      assert.deepEqual(
-        emptyBoundaryFork.projection.visibleTurnItems.map((row) =>
+      // Run 2 was rolled back before this later fork run existed, so the fork never had it.
+      const forkRowLabels = (rows: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>) =>
+        rows.map((row) =>
           row.item.type === "user_message" || row.item.type === "assistant_message"
             ? row.item.text
             : row.item.type,
-        ),
-        ["source two", "two", "fork"],
+        );
+      assert.deepEqual(forkRowLabels(emptyBoundaryFork.projection.visibleTurnItems), [
+        "source one",
+        "one",
+        "fork",
+      ]);
+      const emptyBoundaryProjection = yield* projectionStore.getThreadProjection(targetThreadId);
+      assert.deepEqual(forkRowLabels(emptyBoundaryProjection.visibleTurnItems), [
+        "source one",
+        "one",
+        "fork",
+      ]);
+      assert.deepEqual(
+        (yield* projectionStore.getTimelinePage(targetThreadId, { view: "activity", limit: 10 }))
+          .items,
+        emptyBoundaryProjection.visibleTurnItems,
       );
+      assert.equal((yield* projectionStore.getThreadShell(targetThreadId))?.visibleItemCount, 3);
       yield* sql`
         UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.forkedFrom.runId', ${sourceRun2Id})
