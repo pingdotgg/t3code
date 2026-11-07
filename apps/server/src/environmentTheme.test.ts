@@ -125,6 +125,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     withEnvironmentThemes(
       {
         "nightfall.json": encodeThemeFile(NIGHTFALL_THEME),
+        "notepad.json": `\uFEFF${encodeThemeFile(SHARED_THEME)}`,
         "unresolved.json":
           '{ "name": "X", "appearance": "dark", "canvas": "{{ background }}", "accent": "#7aa2f7" }',
         "malformed.json": "{ not json",
@@ -137,7 +138,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
       Effect.gen(function* () {
         assert.deepEqual(
           (yield* currentThemes).map((theme) => theme.id),
-          ["nightfall"],
+          ["nightfall", "notepad"],
         );
       }),
     ),
