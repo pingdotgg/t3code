@@ -120,6 +120,33 @@ describe.each(["react-native.js", "react-native.mjs"])(
       expect(list.ready()).toBe(true);
     });
 
+    it("re-aims a far measured end while hidden, but not after the reveal", () => {
+      const list = createList(bundle);
+      list.state.lastNativeScroll = 400;
+      list.resize(2000);
+      list.start();
+      list.advance(2);
+      expect(list.scrollTo).toHaveBeenCalledWith({ animated: false, x: 0, y: 1200 });
+      expect(list.ready()).toBe(false);
+      list.state.lastNativeScroll = 1200;
+      list.advance(7);
+      expect(list.ready()).toBe(true);
+      list.scrollTo.mockClear();
+      list.resize(2800);
+      list.advance(4);
+      expect(list.scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("never chases the list end far from a bottom-aligned row above the last", () => {
+      const list = createList(bundle);
+      list.state.props.data = ["message", "reply"];
+      list.state.lastNativeScroll = 400;
+      list.resize(2000);
+      list.start();
+      list.advance(4);
+      expect(list.scrollTo).not.toHaveBeenCalled();
+    });
+
     it("keeps the reveal bounded when native events never arrive", () => {
       const list = createList(bundle);
       list.state.lastNativeScroll = undefined;
@@ -144,6 +171,103 @@ describe.each(["react-native.js", "react-native.mjs"])(
       expect(list.state.didUserDrag).toBe(true);
       expect(list.scrollTo).not.toHaveBeenCalled();
       expect(list.onLoad).toHaveBeenCalledTimes(1);
+    });
+  },
+);
+
+function createBootstrapEvaluation(bundle: string, lastNativeScroll: number) {
+  const source = NodeFS.readFileSync(
+    new URL(`../apps/mobile/node_modules/@legendapp/list/${bundle}`, import.meta.url),
+    "utf8",
+  );
+  const evaluate = source.slice(
+    source.indexOf("function evaluateBootstrapInitialScroll("),
+    source.indexOf("function finishBootstrapInitialScrollWithoutScroll("),
+  );
+  const finishWithoutScroll = vi.fn();
+  const dispatchInitialScroll = vi.fn();
+  // A session re-armed by a data change after landing keeps its stale mount seed.
+  const bootstrap = {
+    scroll: 4692,
+    seedContentOffset: 12,
+    previousResolvedOffset: 4692,
+    visibleIndices: [9],
+    passCount: 0,
+    mountFrameCount: 0,
+  };
+  const state = {
+    initialScroll: { index: 9, viewPosition: 1 },
+    initialScrollSession: { kind: "bootstrap", bootstrap },
+    lastNativeScroll,
+    props: { data: [] },
+    startBuffered: 9,
+    endBuffered: 9,
+    idCache: { 9: "message-9" },
+    sizesKnown: new Set(["message-9"]),
+  };
+  const run = NodeVM.runInNewContext(`${evaluate}\nevaluateBootstrapInitialScroll`, {
+    getBootstrapInitialScrollSession: () => bootstrap,
+    isOffsetInitialScrollSession: () => false,
+    abortBootstrapRevealIfNeeded: () => false,
+    resolveInitialScrollOffset: () => 4692,
+    checkAllSizesKnown: () => true,
+    getBootstrapRevealVisibleIndices: () => [9],
+    doVisibleIndicesMatch: () => true,
+    DEFAULT_BOOTSTRAP_REVEAL_EPSILON: 1,
+    Platform: { OS: "ios" },
+    getObservedBootstrapInitialScrollOffset: () => lastNativeScroll,
+    finishBootstrapInitialScrollWithoutScroll: finishWithoutScroll,
+    clearBootstrapInitialScrollSession: vi.fn(),
+    dispatchInitialScroll,
+    queueBootstrapInitialScrollReevaluation: vi.fn(),
+  }) as (context: { state: typeof state }) => void;
+  run({ state });
+  return { finishWithoutScroll, dispatchInitialScroll };
+}
+
+describe.each(["react-native.js", "react-native.mjs"])(
+  "re-armed initial end bootstrap (%s)",
+  (bundle) => {
+    it("finishes without a no-op scroll once native reported the target", () => {
+      const landed = createBootstrapEvaluation(bundle, 4692);
+      expect(landed.finishWithoutScroll).toHaveBeenCalledTimes(1);
+      expect(landed.dispatchInitialScroll).not.toHaveBeenCalled();
+      const short = createBootstrapEvaluation(bundle, 4600);
+      expect(short.finishWithoutScroll).not.toHaveBeenCalled();
+      expect(short.dispatchInitialScroll).toHaveBeenCalledTimes(1);
+    });
+  },
+);
+
+describe.each(["react-native.js", "react-native.mjs"])(
+  "in-flight initial scroll re-aim (%s)",
+  (bundle) => {
+    it("re-aims as rows measure, until the user drags", () => {
+      const source = NodeFS.readFileSync(
+        new URL(`../apps/mobile/node_modules/@legendapp/list/${bundle}`, import.meta.url),
+        "utf8",
+      );
+      const flush = source.slice(
+        source.indexOf("function flushItemSizeUpdates("),
+        source.indexOf("function updateItemSizes("),
+      );
+      const advanceCurrentInitialScrollSession = vi.fn();
+      const run = NodeVM.runInNewContext(`${flush}\nflushItemSizeUpdates`, {
+        advanceCurrentInitialScrollSession,
+        maybeUpdateAnchoredEndSpace: vi.fn(),
+        doMaintainScrollAtEnd: vi.fn(),
+      }) as (context: unknown, result: { didChange: boolean }) => void;
+      const state = {
+        scrollingTo: { isInitialScroll: true },
+        initialScrollSession: { kind: "bootstrap" },
+        didUserDrag: false,
+        props: { maintainVisibleContentPosition: { size: false } },
+      };
+      run({ state }, { didChange: true });
+      expect(advanceCurrentInitialScrollSession).toHaveBeenCalledTimes(1);
+      state.didUserDrag = true;
+      run({ state }, { didChange: true });
+      expect(advanceCurrentInitialScrollSession).toHaveBeenCalledTimes(1);
     });
   },
 );
