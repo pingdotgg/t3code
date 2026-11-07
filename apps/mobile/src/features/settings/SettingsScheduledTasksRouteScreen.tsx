@@ -512,7 +512,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
     ownerKey,
     label: editor?.draft.title.trim() || title,
     selection,
-    openDraftReader: () => () => {
+    readDraftMessage: () => {
       const current = readEditor();
       if (current?.environmentId !== editor?.environmentId) return null;
       return current?.draft.prompt ?? null;

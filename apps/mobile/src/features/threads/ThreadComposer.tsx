@@ -58,7 +58,6 @@ import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/re
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
   getComposerDraftSnapshot,
-  readComposerDraftTextUntilReset,
   setComposerDraftText,
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
@@ -570,7 +569,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
     label: props.selectedThread.title || "Untitled thread",
-    openDraftReader: () => readComposerDraftTextUntilReset(composerDraftKey),
+    readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     selection: composerMenu.selection,
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,

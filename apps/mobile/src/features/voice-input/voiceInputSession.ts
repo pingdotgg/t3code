@@ -52,18 +52,13 @@ export function createVoiceInputTarget(
   commitDraft: VoiceInputTarget["commitDraft"],
   selection: VoiceDraftSnapshot["selection"],
 ): VoiceInputTarget {
-  const selectedText = readText();
+  const startText = readText();
   return {
     ownerKey,
     readDraft: () => {
       const text = readText();
-      if (text === null) return null;
-      // The selection was taken in `selectedText`; a draft replaced since takes the transcript at its end.
-      return {
-        ownerKey,
-        text,
-        selection: text === selectedText ? selection : { start: text.length, end: text.length },
-      };
+      // Mobile has no live caret off screen, so a draft changed elsewhere refuses the transcript.
+      return text === null || text !== startText ? null : { ownerKey, text, selection };
     },
     commitDraft,
   };
