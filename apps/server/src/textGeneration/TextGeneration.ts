@@ -129,6 +129,19 @@ export const make = Effect.gen(function* () {
     }
     return yield* resolveInstance(registry, operation, selection.instanceId).pipe(
       Effect.flatMap((service) => invoke(service, selection)),
+      // Drivers report what went wrong, not which model ran; after a usage-limit fallback only
+      // this layer knows.
+      Effect.mapError(
+        (error) =>
+          new TextGenerationError({
+            operation: error.operation,
+            detail: error.detail,
+            instanceId: selection.instanceId,
+            model: selection.model,
+            ...(error.modelSetting === undefined ? {} : { modelSetting: error.modelSetting }),
+            ...(error.cause === undefined ? {} : { cause: error.cause }),
+          }),
+      ),
     );
   });
   return TextGeneration.of({

@@ -1,10 +1,15 @@
-import type {
-  GitRunStackedActionResult,
-  GitStackedAction,
-  VcsStatusResult,
+import {
+  TextGenerationError,
+  type EnvironmentId,
+  type GitRunStackedActionResult,
+  type GitStackedAction,
+  type TextGenerationModelSetting,
+  type VcsStatusResult,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+import type { SettingsSearchItemId } from "./settings/settingsSearch";
 import {
   changeRequestTerminologyFor,
   type DefaultBranchActionDialogCopy,
@@ -451,5 +456,30 @@ export function resolveChangesTotals(
     insertions: selected.insertions,
     deletions: selected.deletions,
     baseRef: selected.baseRef,
+  };
+}
+
+const isTextGenerationError = Schema.is(TextGenerationError);
+
+const TEXT_GENERATION_SETTINGS = {
+  textGeneration: { to: "/settings/threads", id: "text-generation-model" },
+  sourceControlWriter: { to: "/settings/source-control", id: "source-control-writer-model" },
+} as const satisfies Record<TextGenerationModelSetting, { to: string; id: SettingsSearchItemId }>;
+
+/** The setting that picked the model of a failed generation, opened where the action ran. */
+export function resolveTextGenerationSettingsLink(
+  error: unknown,
+  scope: { readonly environmentId: EnvironmentId; readonly projectKey: string | null },
+) {
+  if (!isTextGenerationError(error) || error.modelSetting === undefined) return null;
+  const setting = TEXT_GENERATION_SETTINGS[error.modelSetting];
+  return {
+    to: setting.to,
+    hash: setting.id,
+    search: {
+      machine: scope.environmentId,
+      project: scope.projectKey ?? undefined,
+      checkout: undefined,
+    },
   };
 }

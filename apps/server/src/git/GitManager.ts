@@ -39,6 +39,7 @@ import {
   type ProjectId,
   SourceControlProviderError,
   type SourceControlWritingStyleSettings,
+  type TextGenerationModelSetting,
   type ThreadId,
   type ThreadPullRequestKey,
   type VcsCreateWorktreeInput,
@@ -65,7 +66,11 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
-import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
+import {
+  GitManagerError,
+  GitPullRequestMaterializationError,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import {
   historicalMessage,
   renderHistory,
@@ -114,8 +119,19 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
 
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
+  readonly modelSetting: TextGenerationModelSetting;
   readonly style: SourceControlWritingStyleSettings;
 }
+
+const withModelSetting = (error: TextGenerationError, modelSetting: TextGenerationModelSetting) =>
+  new TextGenerationError({
+    operation: error.operation,
+    detail: error.detail,
+    ...(error.instanceId === undefined ? {} : { instanceId: error.instanceId }),
+    ...(error.model === undefined ? {} : { model: error.model }),
+    modelSetting,
+    ...(error.cause === undefined ? {} : { cause: error.cause }),
+  });
 
 export class GitManager extends Context.Service<
   GitManager,
@@ -2147,7 +2163,10 @@ export const make = Effect.gen(function* () {
           ...(policy ? { policy } : {}),
           modelSelection: input.settings.modelSelection,
         })
-        .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+        .pipe(
+          Effect.map((result) => sanitizeCommitMessage(result)),
+          Effect.mapError((error) => withModelSetting(error, input.settings.modelSetting)),
+        );
 
       return {
         subject: generated.subject,
@@ -2337,18 +2356,20 @@ export const make = Effect.gen(function* () {
         : undefined;
     const threadContext = yield* readThreadContext(threadId);
 
-    const generated = yield* textGeneration.generatePrContent({
-      cwd,
-      baseBranch,
-      headBranch: headContext.headBranch,
-      commitSummary: limitContext(rangeContext.commitSummary, 20_000),
-      diffSummary: limitContext(rangeContext.diffSummary, 20_000),
-      diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-      ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
-      ...(threadContext ? { threadContext } : {}),
-      ...(policy ? { policy } : {}),
-      modelSelection: settings.modelSelection,
-    });
+    const generated = yield* textGeneration
+      .generatePrContent({
+        cwd,
+        baseBranch,
+        headBranch: headContext.headBranch,
+        commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+        diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+        diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+        ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+        ...(threadContext ? { threadContext } : {}),
+        ...(policy ? { policy } : {}),
+        modelSelection: settings.modelSelection,
+      })
+      .pipe(Effect.mapError((error) => withModelSetting(error, settings.modelSetting)));
 
     const bodyFile = path.join(
       tempDir,
@@ -3191,19 +3212,29 @@ export const make = Effect.gen(function* () {
         const textGenerationSettings = yield* projectSettingsFor(input).pipe(
           Effect.flatMap(({ settings, projectId }) =>
             settings.sourceControlWriterModelSelection === null
-              ? Effect.succeed({
+              ? Effect.succeed<SourceControlTextGenerationSettings>({
                   modelSelection: settings.textGenerationModelSelection,
+                  modelSetting: "textGeneration",
                   style: settings.sourceControlWritingStyle,
                 })
               : providerRegistry.getProviders.pipe(
-                  Effect.map((providers) => ({
-                    modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
+                  Effect.map((providers): SourceControlTextGenerationSettings => {
+                    const modelSelection = ServerSettings.resolveSourceControlWriterModelSelection(
                       settings,
                       providers,
                       projectId,
-                    ),
-                    style: settings.sourceControlWritingStyle,
-                  })),
+                    );
+                    return {
+                      modelSelection,
+                      // The resolver returns the writer's own selection or falls back to the
+                      // general one; a fallback is fixed in the general setting.
+                      modelSetting:
+                        modelSelection === settings.sourceControlWriterModelSelection
+                          ? "sourceControlWriter"
+                          : "textGeneration",
+                      style: settings.sourceControlWritingStyle,
+                    };
+                  }),
                 ),
           ),
           Effect.mapError(

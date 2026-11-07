@@ -28,6 +28,7 @@ import type {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
   ModelSelection,
+  ServerProvider,
 } from "@t3tools/contracts";
 
 import {
@@ -601,6 +602,7 @@ function makeManager(input?: {
   sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
+  providers?: ReadonlyArray<ServerProvider>;
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
   gitCommands?: string[];
@@ -707,7 +709,7 @@ function makeManager(input?: {
   const layerManager = Layer.mergeAll(
     Layer.succeed(TextGeneration.TextGeneration, textGeneration),
     Layer.mock(ProviderRegistry.ProviderRegistry)({
-      getProviders: Effect.succeed([]),
+      getProviders: Effect.succeed(input?.providers ?? []),
     }),
     Layer.succeed(
       ProjectSetupScriptRunner.ProjectSetupScriptRunner,
@@ -745,6 +747,22 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
+
+const WRITER_INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
+const WRITER = { instanceId: WRITER_INSTANCE_ID, model: "claude-sonnet-4-5" };
+const WRITER_SNAPSHOT: ServerProvider = {
+  instanceId: WRITER_INSTANCE_ID,
+  driver: ProviderDriverKind.make("claudeAgent"),
+  enabled: true,
+  installed: true,
+  status: "ready",
+  auth: { status: "authenticated" },
+  version: null,
+  checkedAt: "1970-01-01T00:00:00Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+};
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
   it.effect(
@@ -3013,6 +3031,85 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
 
       expect(generatedModelSelection).toEqual(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
+    }),
+  );
+
+  it.effect.each([
+    { name: "no writer", writer: null, providers: [], expected: "textGeneration" },
+    {
+      name: "an available writer",
+      writer: WRITER,
+      providers: [WRITER_SNAPSHOT],
+      expected: "sourceControlWriter",
+    },
+    {
+      name: "an unavailable writer",
+      writer: WRITER,
+      providers: [{ ...WRITER_SNAPSHOT, availability: "unavailable" }],
+      expected: "textGeneration",
+    },
+  ] as const)(
+    "a failed commit message names the setting that picked its model with $name",
+    ({ writer, providers, expected }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nwriter\n");
+        const { manager } = yield* makeManager({
+          serverSettings: { sourceControlWriterModelSelection: writer },
+          providers,
+          textGeneration: {
+            generateCommitMessage: () =>
+              Effect.fail(
+                new TextGenerationError({
+                  operation: "generateCommitMessage",
+                  detail: "model rejected",
+                }),
+              ),
+          },
+        });
+
+        const error = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" }).pipe(
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(TextGenerationError);
+        expect(error).toMatchObject({ modelSetting: expected });
+      }),
+  );
+
+  it.effect("failed pull request content names the writer setting that picked its model", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/writer-failure"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "writer.txt"), "writer\n");
+      yield* runGit(repoDir, ["add", "writer.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Writer failure"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/writer-failure"]);
+      const { manager, providerCalls } = yield* makeManager({
+        serverSettings: { sourceControlWriterModelSelection: WRITER },
+        providers: [WRITER_SNAPSHOT],
+        textGeneration: {
+          generatePrContent: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generatePrContent",
+                detail: "model rejected",
+              }),
+            ),
+        },
+      });
+
+      const error = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" }).pipe(
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(TextGenerationError);
+      expect(error).toMatchObject({ modelSetting: "sourceControlWriter" });
+      expect(created(providerCalls)).toHaveLength(0);
     }),
   );
 

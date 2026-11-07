@@ -1,4 +1,10 @@
-import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  GitManagerError,
+  SourceControlProviderKind,
+  TextGenerationError,
+  type VcsStatusResult,
+} from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
@@ -9,6 +15,7 @@ import {
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
+  resolveTextGenerationSettingsLink,
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -295,6 +302,45 @@ describe("resolveChangesTotals", () => {
         }),
       ),
       { insertions: 2, deletions: 0 },
+    );
+  });
+});
+
+describe("resolveTextGenerationSettingsLink", () => {
+  const scope = { environmentId: EnvironmentId.make("env-1"), projectKey: "project-1" };
+  const failure = (modelSetting?: "textGeneration" | "sourceControlWriter") =>
+    new TextGenerationError({
+      operation: "generateCommitMessage",
+      detail: "model rejected",
+      ...(modelSetting ? { modelSetting } : {}),
+    });
+
+  it("opens the setting that picked the model, scoped to the acting project", () => {
+    assert.deepEqual(resolveTextGenerationSettingsLink(failure("textGeneration"), scope), {
+      to: "/settings/threads",
+      hash: "text-generation-model",
+      search: { machine: scope.environmentId, project: "project-1", checkout: undefined },
+    });
+    assert.deepEqual(
+      resolveTextGenerationSettingsLink(failure("sourceControlWriter"), {
+        ...scope,
+        projectKey: null,
+      }),
+      {
+        to: "/settings/source-control",
+        hash: "source-control-writer-model",
+        search: { machine: scope.environmentId, project: undefined, checkout: undefined },
+      },
+    );
+  });
+
+  it("offers nothing when the server did not say which setting ran", () => {
+    assert.isNull(resolveTextGenerationSettingsLink(failure(), scope));
+    assert.isNull(
+      resolveTextGenerationSettingsLink(
+        new GitManagerError({ operation: "runStackedAction", cwd: "/repo", detail: "failed" }),
+        scope,
+      ),
     );
   });
 });
