@@ -10,6 +10,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 
 import type { SpawnHostEvent, SpawnHostSpawnRequest } from "./spawnHostProcess.ts";
+import * as SpawnWorker from "./SpawnWorker.ts";
 
 // A blocked native spawn occupies its host; already-running children share available hosts.
 const MAX_IDLE_HOSTS = 1;
@@ -293,7 +294,9 @@ export const layerHost = (command: string, args: ReadonlyArray<string>) =>
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) !== "linux") return NodeChildProcessSpawner.layer;
+    const platform = yield* HostProcess.Platform;
+    if (platform === "win32") return SpawnWorker.layer;
+    if (platform !== "linux") return NodeChildProcessSpawner.layer;
     const invocation = yield* resolveSelfInvocation();
     return layerHost(invocation.command, selfInvocationArgs(invocation, ["__spawn-host"]));
   }),
