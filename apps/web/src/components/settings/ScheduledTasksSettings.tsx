@@ -150,6 +150,7 @@ const EMPTY_DRAFT: DraftState = {
   runAt: "",
   savedRunAt: "",
   weekdays: new Set([1, 2, 3, 4, 5]),
+  runMissedOnce: false,
   projectId: "",
   threadId: "",
   threadMode: "new_thread",
@@ -1256,6 +1257,8 @@ function ScheduledTaskEditorForm({
   const offersOnce =
     environment?.serverConfig?.environment.capabilities.oneTimeSchedules === true ||
     task?.schedule.type === "once";
+  const offersMissedRun =
+    environment?.serverConfig?.environment.capabilities.missedRunSchedules === true;
   const offersThreadModes =
     environment?.serverConfig?.environment.capabilities.scheduledTaskThreadModes === true;
   const connected =
@@ -1983,6 +1986,28 @@ function ScheduledTaskEditorForm({
                 <span className="text-xs text-muted-foreground">minutes</span>
               </div>
             )}
+            {draft.scheduleMode === "fixed" && offersMissedRun ? (
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0 space-y-1">
+                  <Label htmlFor="scheduled-task-missed-run">Run once if missed</Label>
+                  <p
+                    id="scheduled-task-missed-run-description"
+                    className="text-sm text-muted-foreground"
+                  >
+                    If T3 Code was off or asleep at that time, run once when it is back instead of
+                    waiting for the next time.
+                  </p>
+                </div>
+                <Switch
+                  id="scheduled-task-missed-run"
+                  aria-describedby="scheduled-task-missed-run-description"
+                  checked={draft.runMissedOnce}
+                  onCheckedChange={(runMissedOnce) =>
+                    setDraft((current) => ({ ...current, runMissedOnce }))
+                  }
+                />
+              </div>
+            ) : null}
           </div>
 
           <div className="flex items-center justify-between gap-4">
