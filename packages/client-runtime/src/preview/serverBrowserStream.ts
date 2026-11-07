@@ -99,7 +99,7 @@ export interface PreviewStreamDownload {
   readonly url: string;
 }
 
-/** Text the page copied during the user's click; write it only on a further local action. */
+/** Text the page copied after the user's click; write it only on a further local action. */
 export interface PreviewStreamCopyOffer {
   readonly text: string;
   readonly host: string;
