@@ -1156,12 +1156,11 @@ const make = Effect.gen(function* () {
             ? endAlertRow
             : null
           : delivery.alertRow;
-      // Prefer a regular push when we have a device token — Live Activity alert
-      // payloads alone stay silent if the activity token is stale or the card was
-      // dismissed. Content updates only companion on a new transition; ends may
-      // still use notificationForAggregate (e.g. Live Activities turned off).
+      // Prefer a companion push when allowed; otherwise keep the Live Activity alert.
+      // Skip companions when notifications are off so a leftover token cannot mute both.
       const transitionCompanion =
         input.target.push_token === null ||
+        preferences?.notificationsEnabled !== true ||
         input.replay ||
         suppressAlerts ||
         liveActivityAlert === null ||

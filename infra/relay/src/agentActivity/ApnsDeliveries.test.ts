@@ -140,6 +140,15 @@ const notificationsDisabledPreferences = JSON.stringify({
   notifyOnFailure: true,
 });
 
+const liveActivityWithoutPushPreferences = JSON.stringify({
+  liveActivitiesEnabled: true,
+  notificationsEnabled: false,
+  notifyOnApproval: true,
+  notifyOnInput: true,
+  notifyOnCompletion: true,
+  notifyOnFailure: true,
+});
+
 const target: LiveActivities.TargetRow = {
   user_id: "dev:julius",
   device_id: "device-1",
@@ -522,6 +531,53 @@ describe("ApnsDeliveries", () => {
       }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
     },
   );
+
+  it.effect("keeps the Live Activity alert when push notifications are preferred off", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    const previousAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activities: [
+        {
+          ...aggregate.activities[0]!,
+          phase: "running",
+          status: "Working",
+        },
+      ],
+    };
+    const inputAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activities: [
+        {
+          ...aggregate.activities[0]!,
+          phase: "waiting_for_approval",
+          status: "Approval",
+        },
+      ],
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          push_token: "apns-device-token",
+          preferences_json: liveActivityWithoutPushPreferences,
+          last_aggregate_json: JSON.stringify(previousAggregate),
+        },
+        aggregate: inputAggregate,
+        nowMs: 5_000,
+      });
+
+      expect(result?.kind).toBe("live_activity_update");
+      expect(queuedJobs).toHaveLength(1);
+      expect(queuedJobs[0]?.payload).toMatchObject({
+        kind: "live_activity_update",
+        alert: { title: "Needs your reply" },
+      });
+      expect(attempts).toEqual([]);
+    }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
+  });
 
   it.effect(
     "queues a companion push with Live Activity updates so stale activity tokens cannot swallow alerts",
