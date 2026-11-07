@@ -210,6 +210,11 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("gitlab"),
+    // GitLab lists fork merge requests by source branch with no owner filter, so read a full page.
+    headBranchProbe: ({ headSelectors }) => ({
+      headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+      limit: 100,
+    }),
     readChangeRequestTemplate: Effect.fn("GitLabSourceControlProvider.readChangeRequestTemplate")(
       function ({ cwd, treeish }) {
         return GitLabChangeRequestTemplate.detect(cwd, treeish, git.execute);
