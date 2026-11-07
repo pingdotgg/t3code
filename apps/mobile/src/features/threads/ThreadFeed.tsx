@@ -294,29 +294,22 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-// A formatter pins the default zone when built. Probing the zone builds a formatter too, so
-// re-probe only when the UTC offset moves: that catches DST and almost every zone change.
-// Missed: a switch between zones with the same current offset; it heals at the next offset change.
+// A formatter pins the zone when built, so key it on the live zone. Probing costs one
+// resolvedOptions() per rendered message; accepted for correctness across zone switches.
 const MESSAGE_TIME_OPTIONS: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
-let messageTimeFormatter = new Intl.DateTimeFormat(undefined, MESSAGE_TIME_OPTIONS);
-let messageTimeOffset = new Date().getTimezoneOffset();
+const messageTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 function formatMessageTime(input: string): string {
   const timestamp = Date.parse(input);
   if (Number.isNaN(timestamp)) {
     return "";
   }
-  const offset = new Date().getTimezoneOffset();
-  if (offset !== messageTimeOffset) {
-    messageTimeOffset = offset;
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (messageTimeFormatter.resolvedOptions().timeZone !== timeZone) {
-      messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
-        ...MESSAGE_TIME_OPTIONS,
-        timeZone,
-      });
-    }
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  let formatter = messageTimeFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(undefined, { ...MESSAGE_TIME_OPTIONS, timeZone });
+    messageTimeFormatters.set(timeZone, formatter);
   }
-  return messageTimeFormatter.format(timestamp);
+  return formatter.format(timestamp);
 }
 
 const TURN_FOLD_HEIGHT = 42;
