@@ -192,6 +192,9 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -813,12 +816,13 @@ function worktreeSetupPending(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
 ): boolean {
   return (
-    projection.thread.worktreePath === null &&
-    projection.runs.some(
-      (run) =>
-        (run.status === "failed" || run.status === "interrupted") &&
-        run.workspacePreparation?.type === "worktree",
-    )
+    projection.thread.forkWorkspacePreparation !== undefined ||
+    (projection.thread.worktreePath === null &&
+      projection.runs.some(
+        (run) =>
+          (run.status === "failed" || run.status === "interrupted") &&
+          run.workspacePreparation?.type === "worktree",
+      ))
   );
 }
 
@@ -1102,6 +1106,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const projectFiles = yield* T3ProjectFileLoader.make;
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
@@ -1721,6 +1727,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
+        projection.thread.forkWorkspacePreparation !== undefined ||
         projection.runs.some(isActiveRun)
       ) {
         return;
@@ -4585,10 +4592,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.source_point_type": command.sourcePoint.type,
     });
 
+    const settings = yield* serverSettings.getSettings.pipe(mapDispatchError(command));
     const sourceProjection = yield* projectionStore
       .getThreadRecords(command.sourceThreadId, [
         "runs",
-        ...(command.sourcePoint.type === "checkpoint" ? (["checkpoints"] as const) : []),
+        ...(command.sourcePoint.type === "checkpoint" || settings.forkThreadEnvMode !== "same"
+          ? (["checkpoints"] as const)
+          : []),
         "providerThreads",
         "providerTurns",
         "attempts",
@@ -4611,15 +4621,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.sourceThreadId} was deleted.`,
       });
     }
-    // The fork would copy no worktree path and run in the project checkout.
+    // An unresolved workspace cannot be shared by another fork.
     if (
-      command.sideChat === true &&
-      orchestrationV2WorktreePending(sourceProjection.thread.worktreePath, sourceProjection.runs)
+      sourceProjection.thread.forkWorkspacePreparation !== undefined ||
+      (command.sideChat === true &&
+        orchestrationV2WorktreePending(sourceProjection.thread.worktreePath, sourceProjection.runs))
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.sourceThreadId} has no worktree yet. Start the side chat once its worktree is set up.`,
+        cause: `Thread ${command.sourceThreadId} has no worktree yet. Fork once its worktree is set up.`,
       });
     }
     if ((yield* findThread(command.targetThreadId)) !== null) {
@@ -4683,12 +4694,104 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       })
       .pipe(mapDispatchError(command));
 
+    let forkThread = targetThread;
+    if (command.sideChat !== true && settings.forkThreadEnvMode !== "same") {
+      const project = Option.getOrUndefined(
+        yield* projects.get(sourceProjection.thread.projectId).pipe(mapDispatchError(command)),
+      );
+      if (project !== undefined) {
+        const sourceCwd = sourceProjection.thread.worktreePath ?? project.workspaceRoot;
+        const cwd = (yield* fileSystem.exists(sourceCwd).pipe(mapDispatchError(command)))
+          ? sourceCwd
+          : project.workspaceRoot;
+        const status = yield* git.statusDetailsLocal(cwd).pipe(mapDispatchError(command));
+        const resolved = resolveProjectSettings(
+          settings,
+          project.projectId,
+          project,
+          Option.getOrNull(yield* projectFiles.load(project.workspaceRoot)),
+        ).settings;
+        const mode =
+          settings.forkThreadEnvMode === "inherit" ? resolved.defaultThreadEnvMode : "worktree";
+        if (mode === "worktree" && !status.isRepo) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "A new worktree requires a Git repository. Choose workspace reuse for this folder.",
+          });
+        }
+        if (status.isRepo) {
+          if (mode === "worktree") {
+            const checkpointId =
+              command.sourcePoint.type === "checkpoint"
+                ? command.sourcePoint.checkpointId
+                : sourceRun?.checkpointId;
+            const checkpoint = sourceProjection.checkpoints.find(
+              (entry) => entry.id === checkpointId && entry.status === "ready",
+            );
+            if (
+              checkpoint === undefined &&
+              (command.sourcePoint.type === "checkpoint" || cwd !== sourceCwd)
+            ) {
+              return yield* new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause:
+                  "The source snapshot is unavailable. Restore its checkout or choose a ready checkpoint.",
+              });
+            }
+            const { commitSha } = yield* git
+              .resolveCommit({
+                cwd,
+                revision: checkpoint?.ref ?? "HEAD",
+              })
+              .pipe(mapDispatchError(command));
+            const available = yield* git
+              .execute({
+                operation: "Orchestrator.forkWorkspace.hasCommit",
+                cwd: project.workspaceRoot,
+                args: ["cat-file", "-e", `${commitSha}^{commit}`],
+                allowNonZeroExit: true,
+              })
+              .pipe(mapDispatchError(command));
+            if (available.exitCode !== 0) {
+              yield* git
+                .execute({
+                  operation: "Orchestrator.forkWorkspace.fetchCommit",
+                  cwd: project.workspaceRoot,
+                  args: [
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--no-write-fetch-head",
+                    "--no-recurse-submodules",
+                    "--",
+                    cwd,
+                    commitSha,
+                  ],
+                })
+                .pipe(mapDispatchError(command));
+            }
+            forkThread = {
+              ...targetThread,
+              branch: null,
+              worktreePath: null,
+              forkWorkspacePreparation: { type: "worktree", baseRef: commitSha },
+            };
+          } else {
+            forkThread = { ...targetThread, branch: null, worktreePath: null };
+          }
+        }
+      }
+    }
+
     yield* emitEvent({
       type: "thread.created",
       threadId: command.targetThreadId,
       providerInstanceId: targetThread.providerInstanceId,
       occurredAt: now,
-      payload: targetThread,
+      payload: forkThread,
     });
     yield* emitEvent({
       type: "context-transfer.created",
@@ -5826,11 +5929,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
     const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-    let dispatchMode = resolveMessageDispatchIntent(
+    const requestedDispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
       command.deliveryIntent,
     );
+    let dispatchMode = requestedDispatchMode;
+    if (projection.thread.forkWorkspacePreparation !== undefined) {
+      dispatchMode = {
+        type: "defer_start",
+        workspaceStrategy: projection.thread.forkWorkspacePreparation,
+      };
+    }
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -5911,10 +6021,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.notification !== undefined &&
       (command.createdBy !== "agent" ||
         (command.creationSource !== "server" && command.creationSource !== "provider") ||
-        (dispatchMode.type !== "queue_after_active" &&
+        (requestedDispatchMode.type !== "queue_after_active" &&
           !(
             command.restartContinuationOfRunId !== undefined &&
-            dispatchMode.type === "start_immediately"
+            requestedDispatchMode.type === "start_immediately"
           )))
     ) {
       return yield* new OrchestratorDispatchError({
@@ -5929,7 +6039,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         command.createdBy !== "agent" ||
         command.creationSource !== "server" ||
-        dispatchMode.type !== "queue_after_active"
+        requestedDispatchMode.type !== "queue_after_active"
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -6098,10 +6208,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const latestRun = latestExecutedRun(projection.runs);
     const worktreeMissingRun =
       activeRun === undefined &&
-      dispatchMode.type === "queue_after_active" &&
+      requestedDispatchMode.type === "queue_after_active" &&
       (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
       latestRun.workspacePreparation?.type === "worktree" &&
-      projection.thread.worktreePath === null
+      worktreeSetupPending(projection)
         ? latestRun
         : undefined;
     const queueBehindRun = activeRun ?? worktreeMissingRun;
@@ -6904,7 +7014,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: command.threadId,
         request: { type: "provider-turn.start", runId },
       } satisfies PendingOrchestrationEffectV2;
-      if (dispatchMode.type !== "defer_start") {
+      if (
+        dispatchMode.type === "defer_start" &&
+        projection.thread.forkWorkspacePreparation !== undefined
+      ) {
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            ...pendingEffect,
+            request: { type: "workspace.prepare", runId },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+      } else if (dispatchMode.type !== "defer_start") {
         yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
       }
       return;
@@ -7402,29 +7523,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
-    const checkpointScope = yield* checkpointService
-      .prepareRootRunScope({
-        threadId: command.threadId,
-        runId,
-        rootNodeId,
-        providerThreadId: providerThread.id,
-        cwd:
-          resolvedRuntimePolicy.cwd ??
-          existingProviderSession?.cwd ??
-          projection.thread.worktreePath ??
-          process.cwd(),
-        createdAt: now,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
+    const checkpointScope =
+      dispatchMode.type === "defer_start"
+        ? null
+        : yield* checkpointService
+            .prepareRootRunScope({
+              threadId: command.threadId,
+              runId,
+              rootNodeId,
+              providerThreadId: providerThread.id,
+              cwd:
+                resolvedRuntimePolicy.cwd ??
+                existingProviderSession?.cwd ??
+                projection.thread.worktreePath ??
+                process.cwd(),
+              createdAt: now,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause,
+                  }),
+              ),
+            );
     const run: OrchestrationV2Run = {
       id: runId,
       threadId: command.threadId,
@@ -7435,12 +7559,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       userMessageId: command.messageId,
       rootNodeId,
       activeAttemptId: attemptId,
-      status: "starting",
+      status: dispatchMode.type === "defer_start" ? "preparing" : "starting",
       queuePosition: null,
       requestedAt: now,
       startedAt: null,
       completedAt: null,
       checkpointId: null,
+      ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
+        ? { workspacePreparation: dispatchMode.workspaceStrategy }
+        : {}),
       contextHandoffId:
         portableForkHandoff?.id ??
         providerSwitchHandoff?.id ??
@@ -7483,7 +7610,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerTurnId: null,
       nativeItemRef: null,
       runtimeRequestId: null,
-      checkpointScopeId: checkpointScope.id,
+      checkpointScopeId: checkpointScope?.id ?? null,
       startedAt: null,
       completedAt: null,
     };
@@ -7825,15 +7952,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: rootNode,
     });
-    yield* emitEvent({
-      type: "checkpoint-scope.created",
-      threadId: command.threadId,
-      runId,
-      nodeId: rootNodeId,
-      providerInstanceId: modelSelection.instanceId,
-      occurredAt: now,
-      payload: checkpointScope,
-    });
+    if (checkpointScope !== null) {
+      yield* emitEvent({
+        type: "checkpoint-scope.created",
+        threadId: command.threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+        payload: checkpointScope,
+      });
+    }
     if (handoffTurnItem !== null) {
       yield* emitEvent({
         type: "turn-item.updated",
@@ -7867,6 +7996,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* notificationTasks(command.threadId, message, projection.subagents),
       ),
     });
+    if (dispatchMode.type === "defer_start") {
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+        payload: {
+          id: idAllocator.derive.turnItemFromProviderItem({
+            driver: adapter.driver,
+            nativeItemId: `workspace-preparation:${runId}`,
+          }),
+          threadId: command.threadId,
+          runId,
+          nodeId: rootNodeId,
+          providerThreadId: providerThread.id,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: turnItem.ordinal + 1,
+          status: "running",
+          title: WORKSPACE_PREPARATION_INPUT,
+          input: WORKSPACE_PREPARATION_INPUT,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "command_execution",
+        },
+      });
+    }
     const forkResolution = nativeForkResolution ?? portableForkResolution;
     if (pendingForkTransfer !== undefined && forkResolution !== null) {
       yield* emitEvent({
@@ -7924,7 +8084,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadId: command.threadId,
       request: { type: "provider-turn.start", runId },
     } satisfies PendingOrchestrationEffectV2;
-    yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
+    if (
+      dispatchMode.type !== "defer_start" ||
+      projection.thread.forkWorkspacePreparation !== undefined
+    ) {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        dispatchMode.type === "defer_start"
+          ? ({
+              ...pendingEffect,
+              request: { type: "workspace.prepare", runId },
+            } satisfies PendingOrchestrationEffectV2)
+          : pendingEffect,
+      ]);
+    }
   });
 
   const dispatchDelegatedTaskRequest = Effect.fn("orchestrationV2.dispatch.delegatedTaskRequest")(
@@ -10383,6 +10556,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         })
         .pipe(mapDispatchError(command));
       const emitEvent = emit(events, command);
+      if (projection.thread.forkWorkspacePreparation !== undefined) {
+        yield* emitEvent({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: { ...projection.thread, forkWorkspacePreparation: undefined, updatedAt: now },
+        });
+      }
       yield* emitEvent({
         type: "checkpoint-scope.created",
         threadId: command.threadId,
@@ -14595,6 +14776,7 @@ export const layer: Layer.Layer<
   | EventSinkV2
   | IdAllocator.IdAllocatorV2
   | ProjectStore.ProjectStoreV2
+  | GitVcsDriver.GitVcsDriver
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2
   | ProviderSwitchServiceV2

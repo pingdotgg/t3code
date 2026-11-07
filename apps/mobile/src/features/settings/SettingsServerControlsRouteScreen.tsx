@@ -447,6 +447,37 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
             {props.page === "worktrees" ? (
               <>
+                {!projectSelected ? (
+                  <SettingsSection
+                    title="Workspace for forked threads"
+                    footer={managedSubtitle(
+                      "forkThreadEnvMode",
+                      "Choose whether forked threads reuse the original workspace or create a new worktree. Side chats always use the parent thread's workspace.",
+                    )}
+                    trailing={
+                      pendingWrites === 0 && isMixed("forkThreadEnvMode") ? (
+                        <MixedValuesLabel projectSelected={projectSelected} />
+                      ) : null
+                    }
+                  >
+                    {(
+                      [
+                        { mode: "inherit", label: "Use new thread setting" },
+                        { mode: "same", label: "Reuse original thread's workspace" },
+                        { mode: "worktree", label: "Create a new worktree" },
+                      ] as const
+                    ).map((choice, index) => (
+                      <SettingsChoiceRow
+                        key={choice.mode}
+                        label={choice.label}
+                        selected={uniform("forkThreadEnvMode") === choice.mode}
+                        separated={index > 0}
+                        disabled={disabledFor("forkThreadEnvMode")}
+                        onPress={() => write({ forkThreadEnvMode: choice.mode })}
+                      />
+                    ))}
+                  </SettingsSection>
+                ) : null}
                 <SettingsSection title="New worktrees">
                   <SettingsSwitchRow
                     icon="arrow.triangle.branch"
