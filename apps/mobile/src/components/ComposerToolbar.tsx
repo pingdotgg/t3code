@@ -304,11 +304,13 @@ export function ComposerActionButton(props: {
           name={props.icon}
           size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
           weight="semibold"
+          // Fade the whole icon: a translucent tint stacks where the SVG strokes overlap.
+          className={props.disabled && props.variant !== "danger" ? "opacity-38" : undefined}
           tintColorClassName={
             props.variant === "danger"
               ? "accent-danger-foreground"
               : props.disabled
-                ? "accent-foreground/38"
+                ? "accent-foreground"
                 : "accent-primary-foreground"
           }
           type="monochrome"
