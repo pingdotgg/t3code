@@ -1057,6 +1057,8 @@ export const RelayAgentActivitySnapshotEndpoint = HttpApiEndpoint.get(
   "/v1/mobile/agent-activity",
   {
     headers: RelayDpopRequestHeaders,
+    // Applies that device's environment filter; older clients omit it.
+    query: Schema.Struct({ deviceId: Schema.optionalKey(TrimmedNonEmptyString) }),
     success: RelayAgentActivitySnapshotResponse,
     error: RelayAuthAndInternalErrors,
   },

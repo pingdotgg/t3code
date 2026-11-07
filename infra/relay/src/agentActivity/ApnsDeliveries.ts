@@ -46,7 +46,9 @@ import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
+  hiddenEnvironmentIds,
   rowPhasesChanged,
+  sameEnvironmentIds,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
 const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
@@ -211,6 +213,7 @@ function notificationForAggregate(input: {
 function chooseLiveActivityDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly contentHidden?: boolean;
   readonly nowMs: number;
   readonly replay?: boolean;
 }): ChosenLiveActivityDelivery | "suppressed" | null {
@@ -236,7 +239,11 @@ function chooseLiveActivityDelivery(input: {
         : DateTime.make(input.target.remote_started_at),
       { onNone: () => null, onSome: (dt) => dt.epochMilliseconds },
     );
-    if (armedAtMs !== null && input.nowMs - armedAtMs < FRESHLY_ARMED_GRACE_MS) {
+    if (
+      !input.contentHidden &&
+      armedAtMs !== null &&
+      input.nowMs - armedAtMs < FRESHLY_ARMED_GRACE_MS
+    ) {
       return null;
     }
     return {
@@ -262,11 +269,13 @@ function chooseLiveActivityDelivery(input: {
           ? null
           : (alertForAttentionTransition({
               previousAggregate,
+              previousHiddenEnvironmentIds: input.target.last_hidden_environment_ids,
               nextAggregate,
               preferences,
             }) ??
             alertForNewlyTerminal({
               previousAggregate,
+              previousHiddenEnvironmentIds: input.target.last_hidden_environment_ids,
               nextAggregate,
               preferences,
               nowMs: input.nowMs,
@@ -279,6 +288,7 @@ function chooseLiveActivityDelivery(input: {
 function chooseDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly contentHidden?: boolean;
   readonly nowMs: number;
   readonly replay?: boolean;
 }): ChosenDelivery | null {
@@ -427,6 +437,7 @@ interface SendLiveActivityDeliveryInputBase {
   readonly target: LiveActivityDeliveryTarget;
   readonly token: string;
   readonly sourceJobId: string;
+  readonly hiddenEnvironmentIds?: ReadonlyArray<string>;
 }
 
 export type SendLiveActivityDeliveryInput =
@@ -484,6 +495,8 @@ export class ApnsDeliveries extends Context.Service<
     readonly sendForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
+      // The aggregate is empty only because the device hides every environment with work.
+      readonly contentHidden?: boolean;
       readonly nowMs: number;
       readonly replay?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
@@ -691,31 +704,32 @@ const make = Effect.gen(function* () {
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
     deliveryTarget = currentTarget;
+    const currentPreferences = parsePreferences(currentTarget.preferences_json);
     if (alert) {
-      const preferences = parsePreferences(currentTarget.preferences_json);
-      const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
+      const transition = aggregate && {
+        previousAggregate: parseAggregate(currentTarget.last_aggregate_json),
+        previousHiddenEnvironmentIds: currentTarget.last_hidden_environment_ids,
+        nextAggregate: aggregate,
+        preferences: currentPreferences,
+      };
       alert =
-        !preferences?.notificationsEnabled || !aggregate
+        !currentPreferences?.notificationsEnabled || !transition
           ? null
-          : (alertForAttentionTransition({
-              previousAggregate,
-              nextAggregate: aggregate,
-              preferences,
-            }) ??
+          : (alertForAttentionTransition(transition) ??
             alertForNewlyTerminal({
-              previousAggregate,
-              nextAggregate: aggregate,
-              preferences,
+              ...transition,
               nowMs: now.epochMilliseconds,
               includeUnobserved: true,
             }));
     }
+    // The registration replay that changed the filter supersedes cards built under the old one.
     if (
       aggregate !== null &&
-      !(yield* aggregateRowsAreCurrent({
-        userId: input.target.user_id,
-        aggregate,
-      }))
+      (!sameEnvironmentIds(input.hiddenEnvironmentIds, hiddenEnvironmentIds(currentPreferences)) ||
+        !(yield* aggregateRowsAreCurrent({
+          userId: input.target.user_id,
+          aggregate,
+        })))
     ) {
       yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,
@@ -728,11 +742,8 @@ const make = Effect.gen(function* () {
     if (
       input.kind === "live_activity_end" &&
       aggregate === null &&
-      parsePreferences(currentTarget.preferences_json)?.liveActivitiesEnabled !== false &&
-      (yield* userHasContentToShow(
-        input.target.user_id,
-        parsePreferences(currentTarget.preferences_json),
-      ))
+      currentPreferences?.liveActivitiesEnabled !== false &&
+      (yield* userHasContentToShow(input.target.user_id, currentPreferences))
     ) {
       yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,
@@ -764,6 +775,7 @@ const make = Effect.gen(function* () {
         deviceId: input.target.device_id,
         kind: input.kind,
         aggregate,
+        hiddenEnvironmentIds: aggregate === null ? null : (input.hiddenEnvironmentIds ?? []),
         deliveredAt: iso,
       });
     } else if (isPermanentApnsTokenFailure(result)) {
@@ -977,6 +989,7 @@ const make = Effect.gen(function* () {
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
+            hiddenEnvironmentIds: payload.hiddenEnvironmentIds ?? [],
           });
         case "live_activity_end":
           return sendLiveActivity({
@@ -991,6 +1004,7 @@ const make = Effect.gen(function* () {
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
+            hiddenEnvironmentIds: payload.hiddenEnvironmentIds ?? [],
           });
         case "push_notification":
           if (payload.notification === null) {
@@ -1046,6 +1060,7 @@ const make = Effect.gen(function* () {
       const delivery = chooseDelivery({
         target: input.target,
         aggregate: input.aggregate,
+        contentHidden: input.contentHidden ?? false,
         nowMs: input.nowMs,
         replay: input.replay ?? false,
       });
@@ -1090,6 +1105,7 @@ const make = Effect.gen(function* () {
         apsEnvironment: input.target.aps_environment,
         aggregate: delivery.aggregate,
         alert,
+        hiddenEnvironmentIds: hiddenEnvironmentIds(parsePreferences(input.target.preferences_json)),
       });
       if (delivery.kind === "live_activity_end" && notification && input.target.push_token) {
         yield* deliveryQueue.enqueuePushNotification({

@@ -49,6 +49,7 @@ function target(deviceId: string): LiveActivities.TargetRow {
     remote_started_at: null,
     ended_at: null,
     last_aggregate_json: null,
+    last_hidden_environment_ids: null,
     last_live_activity_delivery_at: null,
   };
 }
@@ -156,7 +157,7 @@ describe("AgentActivityPublisher", () => {
       }),
     };
     const fcmCalls: Array<Parameters<FcmDeliveries.FcmDeliveries["Service"]["enqueue"]>[0]> = [];
-    const appleDevices: Array<[string, number | null]> = [];
+    const appleDevices: Array<[string, number | null, boolean]> = [];
     return Effect.gen(function* () {
       const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
       yield* publisher.publish({
@@ -174,8 +175,8 @@ describe("AgentActivityPublisher", () => {
         { target: android, state: null, replay: true },
       ]);
       expect(appleDevices).toEqual([
-        ["ios", 1],
-        ["ios-disabled", null],
+        ["ios", 1, false],
+        ["ios-disabled", null, true],
       ]);
     }).pipe(
       Effect.provide(
@@ -198,6 +199,7 @@ describe("AgentActivityPublisher", () => {
                       appleDevices.push([
                         input.target.device_id,
                         input.aggregate?.activeCount ?? null,
+                        input.contentHidden ?? false,
                       ]);
                       return null;
                     }),

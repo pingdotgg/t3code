@@ -63,6 +63,7 @@ const AgentAwarenessOperation = Schema.Literals([
   "load-live-activity-registration-identifier",
   "list-active-live-activities",
   "load-live-activity-prime-preferences",
+  "load-live-activity-prime-identifier",
   "prime-live-activity",
   "load-registration-record",
 ]);
@@ -518,8 +519,17 @@ const readAgentActivitySnapshot: () => Effect.Effect<
     if (!token) {
       return null;
     }
+    const deviceId = yield* Effect.tryPromise({
+      try: () => loadOrCreateAgentAwarenessDeviceId(),
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "load-live-activity-prime-identifier",
+          cause,
+        }),
+    });
     const client = yield* ManagedRelay.ManagedRelayClient;
-    return yield* client.getAgentActivitySnapshot({ clerkToken: token });
+    // The relay hides this device's disabled environments so priming cannot show them.
+    return yield* client.getAgentActivitySnapshot({ clerkToken: token, deviceId });
   },
   Effect.catch((error) =>
     Effect.sync(() => {

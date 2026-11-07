@@ -273,6 +273,7 @@ describe("MobileRegistrations", () => {
               remote_started_at: null,
               ended_at: null,
               last_aggregate_json: null,
+              last_hidden_environment_ids: null,
               last_live_activity_delivery_at: null,
             },
           ]),
@@ -295,4 +296,67 @@ describe("MobileRegistrations", () => {
       }).pipe(Effect.provide(layerRegistrationReplay({ devices, liveActivities, queuedJobs })));
     },
   );
+
+  describe("with every environment that has work disabled on the device", () => {
+    const armedTarget: LiveActivities.TargetRow = {
+      user_id: "dev:julius",
+      device_id: "device-1",
+      platform: "ios",
+      ios_major_version: 18,
+      app_version: "1.0.0",
+      bundle_id: null,
+      aps_environment: null,
+      push_token: null,
+      push_to_start_token: null,
+      preferences_json: JSON.stringify({
+        ...device.preferences,
+        disabledEnvironmentIds: ["env-1"],
+      }),
+      activity_push_token: "activity-token",
+      remote_start_queued_at: null,
+      remote_started_at: "1970-01-01T00:00:00.000Z",
+      ended_at: null,
+      last_aggregate_json: null,
+      last_hidden_environment_ids: null,
+      last_live_activity_delivery_at: null,
+    };
+    const layer = (queuedJobs: Array<SignedApnsDeliveryJob>) =>
+      layerRegistrationReplay({
+        devices: makeDevices(),
+        liveActivities: makeLiveActivities({ listTargets: () => Effect.succeed([armedTarget]) }),
+        queuedJobs,
+      });
+
+    it.effect("gives that device no snapshot to start a card from", () =>
+      Effect.gen(function* () {
+        const registrations = yield* MobileRegistrations.MobileRegistrations;
+        const filtered = yield* registrations.getAgentActivitySnapshot({
+          userId: "dev:julius",
+          deviceId: "device-1",
+        });
+        const unfiltered = yield* registrations.getAgentActivitySnapshot({ userId: "dev:julius" });
+
+        expect(filtered.aggregate).toBeNull();
+        expect(unfiltered.aggregate?.activeCount).toBe(1);
+      }).pipe(Effect.provide(layer([]))),
+    );
+
+    it.effect("ends a freshly armed card instead of waiting for work", () => {
+      const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+      return Effect.gen(function* () {
+        const registrations = yield* MobileRegistrations.MobileRegistrations;
+        yield* registrations.registerLiveActivity({
+          userId: "dev:julius",
+          payload: {
+            deviceId: device.deviceId,
+            activityPushToken: "activity-token",
+          },
+        });
+
+        expect(queuedJobs).toMatchObject([
+          { payload: { kind: "live_activity_end", aggregate: null } },
+        ]);
+      }).pipe(Effect.provide(layer(queuedJobs)));
+    });
+  });
 });

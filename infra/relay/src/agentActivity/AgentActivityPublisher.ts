@@ -1,20 +1,18 @@
 import {
   makeAggregateState,
+  parseDevicePreferences,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
 } from "./agentActivityAggregate.ts";
-import {
-  RelayAgentAwarenessPreferences,
-  type RelayAgentActivityState,
-  type RelayDeliveryResult,
-  type RelayPublishResponse,
+import type {
+  RelayAgentActivityState,
+  RelayDeliveryResult,
+  RelayPublishResponse,
 } from "@t3tools/contracts/relay";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import { isTerminalPhase } from "./agentActivityPayloads.ts";
 
@@ -24,11 +22,6 @@ import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
-
-const decodePreferencesJson = Schema.decodeUnknownOption(
-  Schema.fromJsonString(RelayAgentAwarenessPreferences),
-);
-const decodePreferences = (value: string) => Option.getOrNull(decodePreferencesJson(value));
 
 export type AgentActivityPublishError =
   | FcmDeliveries.FcmDeliveryError
@@ -74,15 +67,10 @@ const make = Effect.gen(function* () {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
       ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
       : [];
-    const liveActivityAggregateFor = (target: LiveActivities.TargetRow) =>
-      input.deliveryUser.liveActivitiesEnabled
-        ? makeAggregateState({
-            activeStates,
-            terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
-            nowMs: input.nowMs,
-            preferences: decodePreferences(target.preferences_json),
-          })
-        : null;
+    const terminalState = input.state && isTerminalPhase(input.state) ? input.state : null;
+    const accountAggregate = input.deliveryUser.liveActivitiesEnabled
+      ? makeAggregateState({ activeStates, terminalState, nowMs: input.nowMs })
+      : null;
     const notificationOnlyAggregate =
       input.deliveryUser.notificationsEnabled &&
       !input.deliveryUser.liveActivitiesEnabled &&
@@ -100,11 +88,20 @@ const make = Effect.gen(function* () {
         if (target.platform === "android") {
           return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
         }
+        const aggregate =
+          accountAggregate &&
+          makeAggregateState({
+            activeStates,
+            terminalState,
+            nowMs: input.nowMs,
+            preferences: parseDevicePreferences(target.preferences_json),
+          });
         return yield* Effect.all(
           [
             apnsDeliveries.sendForTarget({
               target,
-              aggregate: liveActivityAggregateFor(target),
+              aggregate,
+              contentHidden: aggregate === null && accountAggregate !== null,
               nowMs: input.nowMs,
             }),
             notificationOnlyAggregate === null
@@ -149,11 +146,18 @@ const make = Effect.gen(function* () {
         activeStates,
         terminalState: null,
         nowMs: now.epochMilliseconds,
-        preferences: decodePreferences(target.preferences_json),
+        preferences: parseDevicePreferences(target.preferences_json),
       });
       return yield* apnsDeliveries.sendForTarget({
         target,
         aggregate,
+        contentHidden:
+          aggregate === null &&
+          makeAggregateState({
+            activeStates,
+            terminalState: null,
+            nowMs: now.epochMilliseconds,
+          }) !== null,
         nowMs: now.epochMilliseconds,
         replay: true,
       });
