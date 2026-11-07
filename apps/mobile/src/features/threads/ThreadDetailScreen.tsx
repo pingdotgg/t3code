@@ -177,7 +177,7 @@ import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
 import { FreshSessionNotice } from "./FreshSessionNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
-import { ComposerUsageLimits } from "./ComposerUsageLimits";
+import { ComposerUsageLimits, useComposerUsageLimitSources } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
@@ -974,12 +974,16 @@ function ThreadDetailBody(
   if (usageLimitsPanel !== null && usageLimitsPanel.key !== usageLimitsKey) {
     setUsageLimitsPanel(null);
   }
+  const usageLimitSources = useComposerUsageLimitSources(
+    props.environmentId,
+    props.serverConfig?.usageLimitSources,
+  );
   const usageLimitsReport =
     usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
       ? collectProviderUsageLimits(
           props.selectedThread.modelSelection.instanceId,
           props.serverConfig?.providers ?? [],
-          props.serverConfig?.usageLimitSources ?? [],
+          usageLimitSources,
           usageLimitsPanel.now,
         )
       : null;
