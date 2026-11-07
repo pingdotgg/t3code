@@ -31,6 +31,7 @@ const settings = Schema.decodeSync(ServerSettings)({
   easDeviceHosts: [
     { kind: "eas", id: "eas", label: "EAS Simulator", accessToken: personal("op://expo") },
   ],
+  cloudSpeechCredentials: { openai: personal("op://voice"), xai: "" },
 });
 
 it.each([
@@ -42,6 +43,7 @@ it.each([
       "GitHub · github.com",
       "https://hub.test · Management Key",
       "EAS Simulator · Access Token",
+      "Voice · OpenAI",
     ],
   ],
   ["work", ["Antigravity Work · OTHER_TOKEN", "GitHub · ghe.acme.test"]],

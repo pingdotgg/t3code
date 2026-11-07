@@ -203,6 +203,8 @@ choose the environment, and confirm. Finished recordings go only to that environ
 even when a draft belongs to another one. This also works on phones without local
 speech recognition. If the chosen environment disconnects, dictation stops; it never
 switches hosts. Choose **This device** to revoke access and discard pending audio.
+For [cloud dictation](./voice-input.md#choose-where-audio-goes), open **Cloud providers**
+under the environment in **Settings → Voice** and confirm which provider may receive recordings.
 On Android, keep T3 Code open while recording and transcribing.
 
 On-device dictation may need a network connection to download a speech model the

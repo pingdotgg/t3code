@@ -21,6 +21,7 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as SpeechPostProcessing from "./postProcessing.ts";
+import * as CloudSpeech from "./CloudSpeech.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
@@ -57,6 +58,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
   "voice",
   Effect.fnUntraced(function* (handlers) {
     const speech = yield* SpeechService.SpeechService;
+    const cloud = yield* CloudSpeech.CloudSpeech;
     const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
     const guard = Effect.fnUntraced(function* (
       endpoint: string,
@@ -66,6 +68,53 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       yield* requireEnvironmentScope(scope);
     });
     return handlers
+      .handle(
+        "cloudKeys",
+        Effect.fn("environment.voice.cloudKeys")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* cloud.configured.pipe(
+            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
+          );
+        }),
+      )
+      .handle(
+        "setCloudKey",
+        Effect.fn("environment.voice.setCloudKey")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          yield* cloud
+            .setKey(args.params.provider, args.payload.key)
+            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+        }),
+      )
+      .handle(
+        "cloudModels",
+        Effect.fn("environment.voice.cloudModels")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return { models: yield* cloud.models };
+        }),
+      )
+      .handle(
+        "transcribeCloud",
+        Effect.fn("environment.voice.transcribeCloud")(function* (args) {
+          yield* guard(args.endpoint.name);
+          const decoded = parseAudio(args.payload);
+          if (Option.isNone(decoded)) return yield* failEnvironmentInvalidRequest("invalid_audio");
+          const text = yield* cloud
+            .transcribe(
+              args.params.provider,
+              decoded.value.pcm,
+              decoded.value.options,
+              args.query.model,
+            )
+            .pipe(
+              Effect.catchTags({
+                ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
+                SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+              }),
+            );
+          return { text };
+        }),
+      )
       .handle(
         "status",
         Effect.fn("environment.voice.status")(function* (args) {
