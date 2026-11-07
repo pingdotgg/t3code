@@ -6,7 +6,7 @@ export interface AssignableProject {
   readonly repositoryIdentity?: { readonly canonicalKey?: string | undefined } | null | undefined;
 }
 
-function repositoryKey(project: AssignableProject): string | undefined {
+export function repositoryKey(project: AssignableProject): string | undefined {
   return project.repositoryIdentity?.canonicalKey?.toLowerCase();
 }
 
@@ -45,6 +45,46 @@ export function assignProjectsToEnvironments(
     else listed.push(project.id);
   }
   return assignment;
+}
+
+/**
+ * The list reads per server. Hiding repositories names every remaining project, because a
+ * server asked without `projectIds` lists all of its projects, hidden ones included.
+ */
+export function pullRequestEnvironmentQueries(
+  projects: ReadonlyArray<AssignableProject>,
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  options: {
+    readonly projectsKnown: boolean;
+    readonly projectScoped: boolean;
+    readonly excludedRepositories: ReadonlyArray<string>;
+  },
+): ReadonlyArray<{
+  readonly environmentId: EnvironmentId;
+  readonly projectIds?: ReadonlyArray<ProjectId>;
+}> {
+  if (options.projectScoped) return environmentIds.map((environmentId) => ({ environmentId }));
+  if (!options.projectsKnown) {
+    return options.excludedRepositories.length > 0
+      ? []
+      : environmentIds.map((environmentId) => ({ environmentId }));
+  }
+  const hidden = new Set(options.excludedRepositories);
+  const assignment = assignProjectsToEnvironments(
+    projects.filter((project) => !hidden.has(repositoryKey(project) ?? "")),
+    environmentIds,
+    environmentIds[0],
+  );
+  const totals = new Map<EnvironmentId, number>();
+  for (const project of projects) {
+    totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
+  }
+  return environmentIds.flatMap((environmentId) => {
+    const projectIds = assignment.get(environmentId);
+    if (projectIds === undefined) return [];
+    if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
+    return [{ environmentId, projectIds }];
+  });
 }
 
 export interface PickableEnvironment {

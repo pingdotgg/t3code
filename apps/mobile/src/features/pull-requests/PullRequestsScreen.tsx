@@ -20,6 +20,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useWorkspaceState } from "../../state/workspace";
+import { pullRequestRepositoryKey } from "@t3tools/client-runtime/pull-request-project-filter";
 import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
@@ -155,13 +156,26 @@ export function PullRequestsScreen(
               environment.environmentId === controls.projectEnvironmentId),
         )
         .sort((left, right) => left.environmentId.localeCompare(right.environmentId))
-        .map((environment) => ({
-          environmentId: environment.environmentId,
-          input: pullRequestListInput(controls, query),
-        })),
-    [environments, environmentId, configs, controls, query],
+        .flatMap((environment) => {
+          const input = pullRequestListInput(
+            controls,
+            query,
+            allProjects.filter((project) => project.environmentId === environment.environmentId),
+          );
+          return input === null ? [] : [{ environmentId: environment.environmentId, input }];
+        }),
+    [environments, environmentId, configs, controls, query, allProjects],
   );
   const result = usePullRequestList(targets);
+  // Rows read before a project's repository identity arrived can still belong to a hidden one.
+  const excludedProjectKeys = useMemo(() => {
+    const hidden = controls.projectId ? [] : (controls.excludedRepositories ?? []);
+    return new Set(
+      allProjects
+        .filter((project) => hidden.includes(pullRequestRepositoryKey(project) ?? ""))
+        .map((project) => JSON.stringify([project.environmentId, project.id])),
+    );
+  }, [allProjects, controls]);
   const connectedTargets = targets.filter((target) =>
     environments.some(
       (environment) =>
@@ -180,14 +194,17 @@ export function PullRequestsScreen(
   const entries = useMemo(
     () =>
       filterPullRequestList(
-        result.entries,
+        result.entries.filter(
+          (entry) =>
+            !excludedProjectKeys.has(JSON.stringify([entry.environmentId, entry.projectId])),
+        ),
         controls,
         result.data?.viewers ?? {},
         query,
         result.data.localSearchHosts,
         new Set(connectedKey.split("\n")),
       ),
-    [result.entries, controls, query, result.data, connectedKey],
+    [result.entries, controls, query, result.data, connectedKey, excludedProjectKeys],
   );
   const facets = pullRequestListFacets(result.entries);
   const [knownFacets, setKnownFacets] = useState({ environmentId, source: facets, ...facets });
@@ -247,11 +264,15 @@ export function PullRequestsScreen(
     labels: knownFacets.environmentId === environmentId ? knownFacets.labels : facets.labels,
     labelColors,
     projects,
-    onSearch: (kind) =>
+    onSearch: (kind, excluding) =>
       navigation.navigate("PullRequestFilterSearch", {
         kind,
+        excluding,
         environmentId,
-        environmentIds: targets.map((target) => String(target.environmentId)),
+        scopes: targets.map((target) => ({
+          environmentId: String(target.environmentId),
+          ...(target.input.projectIds ? { projectIds: target.input.projectIds } : {}),
+        })),
         suggestions: knownFacets.environmentId === environmentId ? knownFacets[kind] : facets[kind],
         labelColors,
       }),

@@ -260,17 +260,22 @@ export function matchesPullRequestFilters(
 ): boolean {
   const labels = entry.labels.map((label) => label.name.trim().toLowerCase());
   const holds = (label: string) => labels.includes(label.trim().toLowerCase());
+  const reviewIs = (review: NonNullable<PullRequestListFilters["review"]>) =>
+    review === "none" ? entry.reviewDecision === undefined : entry.reviewDecision === review;
+  const authoredBy = (author: string) =>
+    entry.author?.login.toLowerCase() ===
+    resolvePullRequestAuthorFilter(author, viewer).toLowerCase();
   return (
     (filters.draft === undefined || entry.isDraft === (filters.draft === "only")) &&
-    (filters.review === undefined ||
-      (filters.review === "none"
-        ? entry.reviewDecision === undefined
-        : entry.reviewDecision === filters.review)) &&
+    (filters.review === undefined || reviewIs(filters.review)) &&
+    // Entries omit both "no reviews" and "host reports none", so the server judges "none".
+    (filters.excludedReview === undefined ||
+      filters.excludedReview === "none" ||
+      !reviewIs(filters.excludedReview)) &&
     (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
     (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
-    (filters.author === undefined ||
-      entry.author?.login.toLowerCase() ===
-        resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
+    (filters.author === undefined || authoredBy(filters.author)) &&
+    !(filters.excludedAuthors ?? []).some(authoredBy)
   );
 }
 

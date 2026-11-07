@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   assignProjectsToEnvironments,
+  pullRequestEnvironmentQueries,
   resolvePickableEnvironments,
   type AssignableProject,
 } from "./pullRequestProjectAssignment.logic";
@@ -106,6 +107,35 @@ const connected = (...ids: ReadonlyArray<string>) =>
 const on = (environmentId: string, projectId: string) => ({
   environmentId: environmentId as EnvironmentId,
   projectId: projectId as ProjectId,
+});
+
+describe("hiding repositories from the list", () => {
+  const projects = [
+    project("app", "env-1", "github.com/acme/app"),
+    project("app-wt", "env-1", "github.com/acme/app"),
+    project("tools", "env-1", "github.com/acme/tools"),
+    project("app-2", "env-2", "github.com/acme/app"),
+  ];
+  const known = { projectsKnown: true, projectScoped: false };
+
+  it("names the remaining projects so the server leaves every copy of the hidden one out", () => {
+    expect(
+      pullRequestEnvironmentQueries(projects, envs("env-1", "env-2"), {
+        ...known,
+        excludedRepositories: ["github.com/acme/app"],
+      }),
+    ).toEqual([{ environmentId: "env-1", projectIds: ["tools"] }]);
+  });
+
+  it("reads nothing until the projects are known, rather than every repository", () => {
+    expect(
+      pullRequestEnvironmentQueries(projects, envs("env-1", "env-2"), {
+        projectsKnown: false,
+        projectScoped: false,
+        excludedRepositories: ["github.com/acme/app"],
+      }),
+    ).toEqual([]);
+  });
 });
 
 describe("where a pull request can be acted on", () => {

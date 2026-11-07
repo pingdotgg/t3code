@@ -1,4 +1,7 @@
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
+import {
+  pullRequestFilterProjects,
+  pullRequestRepositoryKey,
+} from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
   ProjectId,
@@ -299,17 +302,30 @@ export function patchPullRequestListEntry(
   );
 }
 
+/**
+ * One environment's read, or null when it holds only hidden repositories. Hiding names the
+ * remaining projects, since a read without `projectIds` lists every project.
+ */
 export function pullRequestListInput(
   controls: PullRequestListControls,
   query: string,
-): PullRequestListInput {
+  environmentProjects: readonly Pick<FilterProject, "id" | "repositoryIdentity">[],
+): PullRequestListInput | null {
   const parsed = parsePullRequestQuery(query);
+  const hidden = new Set(controls.projectId ? [] : (controls.excludedRepositories ?? []));
+  const visible = environmentProjects.filter(
+    (project) => !hidden.has(pullRequestRepositoryKey(project) ?? ""),
+  );
+  if (visible.length === 0 && hidden.size > 0) return null;
   return {
     state: controls.state,
     involvement: controls.involvement,
     filters: { ...controls.filters, ...parsed.filters },
     limit: PR_LIST_PAGE_SIZE,
     ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
+    ...(visible.length < environmentProjects.length
+      ? { projectIds: visible.map((project) => project.id) }
+      : {}),
     ...(parsed.text ? { query: parsed.text } : {}),
   };
 }
@@ -432,7 +448,24 @@ export function filterPullRequestList<
     if (filters.review && entry.reviewDecision && entry.reviewDecision !== filters.review)
       return false;
     if (filters.review === "none" && entry.reviewDecision) return false;
+    if (filters.excludedAuthors?.length) {
+      const login = normalize(entry.author?.login ?? "");
+      if (
+        filters.excludedAuthors.some(
+          (excluded) => normalize(resolvePullRequestAuthorFilter(excluded, viewer)) === login,
+        )
+      )
+        return false;
+    }
+    // Entries omit both "no reviews" and "host reports none", so the server judges "none".
+    if (
+      filters.excludedReview &&
+      filters.excludedReview !== "none" &&
+      entry.reviewDecision === filters.excludedReview
+    )
+      return false;
     if (filters.checks && entry.checksState && entry.checksState !== filters.checks) return false;
+    if (filters.excludedChecks && entry.checksState === filters.excludedChecks) return false;
     const labels = new Set(entry.labels.map((label) => normalize(label.name)));
     if (filters.labels?.some((group) => !group.some((label) => labels.has(normalize(label)))))
       return false;

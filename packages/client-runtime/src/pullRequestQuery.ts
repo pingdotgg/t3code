@@ -43,10 +43,13 @@ export function parsePullRequestQuery(raw: string): {
   const text: string[] = [];
   const labels: string[][] = [];
   const excludedLabels: string[] = [];
+  const excludedAuthors: string[] = [];
   let author: string | undefined;
   let draft: PullRequestListFilters["draft"];
   let review: PullRequestListFilters["review"];
+  let excludedReview: PullRequestListFilters["review"];
   let checks: PullRequestListFilters["checks"];
+  let excludedChecks: PullRequestListFilters["checks"];
   for (const [token] of raw.matchAll(QUERY_TOKEN)) {
     const qualifier = /^(-?)([A-Za-z][A-Za-z0-9_-]*):(.*)$/.exec(token);
     const value = qualifier === null ? "" : qualifierValue(qualifier[3] ?? "");
@@ -60,24 +63,26 @@ export function parsePullRequestQuery(raw: string): {
         continue;
       }
       case "author":
-        if (negated) break;
-        author = value.slice(0, MAX_QUALIFIER_LENGTH).trim();
+        if (negated) excludedAuthors.push(value.slice(0, MAX_QUALIFIER_LENGTH).trim());
+        else author = value.slice(0, MAX_QUALIFIER_LENGTH).trim();
         continue;
       case "draft":
         if (negated || (value.toLowerCase() !== "true" && value.toLowerCase() !== "false")) break;
         draft = value.toLowerCase() === "true" ? "only" : "hide";
         continue;
       case "review": {
-        const decision = negated ? undefined : REVIEW_VALUES[value.toLowerCase()];
+        const decision = REVIEW_VALUES[value.toLowerCase()];
         if (decision === undefined) break;
-        review = decision;
+        if (negated) excludedReview = decision;
+        else review = decision;
         continue;
       }
       case "status":
       case "checks": {
-        const state = negated ? undefined : CHECKS_VALUES[value.toLowerCase()];
+        const state = CHECKS_VALUES[value.toLowerCase()];
         if (state === undefined) break;
-        checks = state;
+        if (negated) excludedChecks = state;
+        else checks = state;
         continue;
       }
       case "":
@@ -105,9 +110,14 @@ export function parsePullRequestQuery(raw: string): {
         ? {}
         : { excludedLabels: excludedLabels.slice(0, MAX_QUALIFIER_VALUES) }),
       ...(author === undefined ? {} : { author }),
+      ...(excludedAuthors.length === 0
+        ? {}
+        : { excludedAuthors: excludedAuthors.slice(0, MAX_QUALIFIER_VALUES) }),
       ...(draft === undefined ? {} : { draft }),
       ...(review === undefined ? {} : { review }),
+      ...(excludedReview === undefined ? {} : { excludedReview }),
       ...(checks === undefined ? {} : { checks }),
+      ...(excludedChecks === undefined ? {} : { excludedChecks }),
     },
   };
 }

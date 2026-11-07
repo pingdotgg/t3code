@@ -33,9 +33,9 @@ import {
   type PullRequestGroup,
   type PullRequestListOverride,
 } from "./pullRequestList.logic";
-import type { PullRequestExpectedHost } from "./PullRequestListFilters";
+import { type PullRequestExpectedHost, pullRequestProjectKey } from "./PullRequestListFilters";
 import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequestListPreferences";
-import { assignProjectsToEnvironments } from "./pullRequestProjectAssignment.logic";
+import { pullRequestEnvironmentQueries, repositoryKey } from "./pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 
@@ -114,28 +114,20 @@ export function usePullRequestScope(search: PullRequestsSearch) {
     scopedProjectId,
     projectsKnown,
   );
-  const environmentQueries = ((): ReadonlyArray<{
-    readonly environmentId: EnvironmentId;
-    readonly projectIds?: ReadonlyArray<ProjectId>;
-  }> => {
-    const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
-    if (!projectsKnown || scopedProjectId !== undefined) return plain;
-    const assignment = assignProjectsToEnvironments(
-      projects,
-      queryEnvironmentIds,
-      queryEnvironmentIds[0],
-    );
-    const totals = new Map<EnvironmentId, number>();
-    for (const project of projects) {
-      totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
-    }
-    return queryEnvironmentIds.flatMap((environmentId) => {
-      const projectIds = assignment.get(environmentId);
-      if (projectIds === undefined) return [];
-      if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
-      return [{ environmentId, projectIds }];
-    });
-  })();
+  const excludedRepositories =
+    scopedProjectId === undefined ? (search.excludedRepositories ?? []) : [];
+  const environmentQueries = pullRequestEnvironmentQueries(projects, queryEnvironmentIds, {
+    projectsKnown,
+    projectScoped: scopedProjectId !== undefined,
+    excludedRepositories,
+  });
+  // Rows read before a project's repository identity arrived, or carried over from the previous
+  // answer, can still belong to a hidden repository.
+  const excludedProjectKeys = new Set(
+    projects
+      .filter((project) => excludedRepositories.includes(repositoryKey(project) ?? ""))
+      .map(pullRequestProjectKey),
+  );
   const assignmentKey = environmentQueries
     .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)
     .join("|");
@@ -178,6 +170,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
     linkedSelection,
     expectedHosts,
     projectsKnown,
+    excludedProjectKeys,
   };
 }
 
@@ -194,9 +187,13 @@ export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuer
   const menuFilters = {
     ...(search.draft ? { draft: search.draft } : {}),
     ...(search.review ? { review: search.review } : {}),
+    ...(search.excludedReview ? { excludedReview: search.excludedReview } : {}),
     ...(search.checks ? { checks: search.checks } : {}),
+    ...(search.excludedChecks ? { excludedChecks: search.excludedChecks } : {}),
     ...(search.author ? { author: search.author } : {}),
+    ...(search.excludedAuthors ? { excludedAuthors: search.excludedAuthors } : {}),
     ...(search.labels ? { labels: search.labels.map((label) => [label]) } : {}),
+    ...(search.excludedLabels ? { excludedLabels: search.excludedLabels } : {}),
   };
   const menuFiltered = Object.keys(menuFilters).length > 0;
   const filters = { ...menuFilters, ...sentParsed.filters };
@@ -235,6 +232,7 @@ export function usePullRequestDisplayGroups({
   sort,
   text,
   involvement,
+  excludedProjectKeys,
 }: {
   answered: MergedPullRequestList | null;
   host: string | undefined;
@@ -248,6 +246,7 @@ export function usePullRequestDisplayGroups({
   sort: PullRequestListSort;
   text: string;
   involvement: PullRequestInvolvement;
+  excludedProjectKeys: ReadonlySet<string>;
 }) {
   const [hostsState, setHostsState] = useState<{
     readonly source: MergedPullRequestList | null;
@@ -266,7 +265,15 @@ export function usePullRequestDisplayGroups({
   const displayGroups = (() => {
     const enriched = groups.map((group) => {
       const overridden = applyPullRequestOverrides(
-        group.entries.map((entry) => withDiffStat(entry, statsByRow)),
+        group.entries
+          .filter(
+            (entry) =>
+              excludedProjectKeys.size === 0 ||
+              !excludedProjectKeys.has(
+                pullRequestProjectKey({ id: entry.projectId, environmentId: entry.environmentId }),
+              ),
+          )
+          .map((entry) => withDiffStat(entry, statsByRow)),
         overrides,
         pullRequestEntryKey,
         state,

@@ -35,16 +35,29 @@ const PullRequestQualifierValues = Schema.Array(PullRequestQualifierValue).check
   Schema.isMaxLength(10),
 );
 
+/** Hiding one repository names every other project on the server, so this tracks project counts. */
+const PullRequestProjectScope = Schema.Array(ProjectId).check(Schema.isMaxLength(1000));
+
+export const PullRequestReviewFilter = Schema.Literals([
+  "approved",
+  "changes-requested",
+  "review-required",
+  "none",
+]);
+export const PullRequestChecksFilter = Schema.Literals(["passing", "failing"]);
+
+/** Each `excluded*` field drops the rows its include counterpart would keep. */
 export const PullRequestListFilters = Schema.Struct({
   draft: Schema.optional(Schema.Literals(["only", "hide"])),
-  review: Schema.optional(
-    Schema.Literals(["approved", "changes-requested", "review-required", "none"]),
-  ),
-  checks: Schema.optional(Schema.Literals(["passing", "failing"])),
+  review: Schema.optional(PullRequestReviewFilter),
+  excludedReview: Schema.optional(PullRequestReviewFilter),
+  checks: Schema.optional(PullRequestChecksFilter),
+  excludedChecks: Schema.optional(PullRequestChecksFilter),
   /** GitHub label qualifiers: every group must match; any name within a group suffices. */
   labels: Schema.optional(Schema.Array(PullRequestQualifierValues).check(Schema.isMaxLength(10))),
   excludedLabels: Schema.optional(PullRequestQualifierValues),
   author: Schema.optional(PullRequestQualifierValue),
+  excludedAuthors: Schema.optional(PullRequestQualifierValues),
 });
 export type PullRequestListFilters = typeof PullRequestListFilters.Type;
 
@@ -368,7 +381,7 @@ export const PullRequestListInput = Schema.Struct({
   involvement: Schema.optional(PullRequestInvolvement),
   filters: Schema.optional(PullRequestListFilters),
   projectId: Schema.optional(ProjectId),
-  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  projectIds: Schema.optional(PullRequestProjectScope),
   host: Schema.optional(TrimmedNonEmptyString),
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 }))),
   cursors: Schema.optional(PullRequestListCursors),
@@ -548,7 +561,7 @@ export type PullRequestFilterOptionKind = typeof PullRequestFilterOptionKind.Typ
 export const PullRequestFilterOptionsInput = Schema.Struct({
   kind: PullRequestFilterOptionKind,
   projectId: Schema.optional(ProjectId),
-  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  projectIds: Schema.optional(PullRequestProjectScope),
   host: Schema.optional(TrimmedNonEmptyString),
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
   /** For `references`, the sigil typed, so a host can search only what it links. */

@@ -167,6 +167,7 @@ export function PullRequestsPage() {
     linkedSelection,
     expectedHosts,
     projectsKnown,
+    excludedProjectKeys,
   } = usePullRequestScope(search);
   const rightPanelRef = capableEnvironments.length === 0 ? null : PULL_REQUESTS_PANEL_REF;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(rightPanelRef);
@@ -221,6 +222,9 @@ export function PullRequestsPage() {
           ...(next.repository ? { repository: next.repository } : {}),
           ...(next.number ? { number: next.number } : {}),
           ...(next.projectId ? { projectId: next.projectId } : {}),
+          ...(next.excludedRepositories && next.excludedRepositories.length > 0
+            ? { excludedRepositories: next.excludedRepositories }
+            : {}),
           ...(next.environmentId ? { environmentId: next.environmentId } : {}),
           ...(next.host ? { host: next.host } : {}),
           ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
@@ -231,9 +235,17 @@ export function PullRequestsPage() {
           ...(next.q ? { q: next.q } : {}),
           ...(next.draft ? { draft: next.draft } : {}),
           ...(next.review ? { review: next.review } : {}),
+          ...(next.excludedReview ? { excludedReview: next.excludedReview } : {}),
           ...(next.checks ? { checks: next.checks } : {}),
+          ...(next.excludedChecks ? { excludedChecks: next.excludedChecks } : {}),
           ...(next.author ? { author: next.author } : {}),
+          ...(next.excludedAuthors && next.excludedAuthors.length > 0
+            ? { excludedAuthors: next.excludedAuthors }
+            : {}),
           ...(next.labels && next.labels.length > 0 ? { labels: next.labels } : {}),
+          ...(next.excludedLabels && next.excludedLabels.length > 0
+            ? { excludedLabels: next.excludedLabels }
+            : {}),
         };
       },
       replace: true,
@@ -278,7 +290,7 @@ export function PullRequestsPage() {
   const turnRefreshToken = turnRefreshes
     .map(([environmentId, revision]) => `${environmentId}:${revision}`)
     .join("|");
-  const scopeKey = `${environmentKey}:${assignmentKey}:${search.state}:${search.involvement}:${scopedProjectId ?? ""}:${search.host ?? ""}:${search.draft ?? ""}:${search.review ?? ""}:${search.checks ?? ""}:${search.author ?? ""}:${search.labels?.join("\u0000") ?? ""}`;
+  const scopeKey = `${environmentKey}:${assignmentKey}:${search.state}:${search.involvement}:${scopedProjectId ?? ""}:${search.host ?? ""}:${search.draft ?? ""}:${search.review ?? ""}:${search.excludedReview ?? ""}:${search.checks ?? ""}:${search.excludedChecks ?? ""}:${search.author ?? ""}:${search.excludedAuthors?.join("\u0000") ?? ""}:${search.labels?.join("\u0000") ?? ""}:${search.excludedLabels?.join("\u0000") ?? ""}`;
   const filterKey = `${scopeKey}:${sentQuery}`;
   const statsScope: PullRequestStatsScope = { key: filterKey, policy: statsPolicy };
   const [page, setPage] = useState<{
@@ -919,6 +931,7 @@ export function PullRequestsPage() {
     sort,
     text: typedParsed.text,
     involvement: search.involvement,
+    excludedProjectKeys,
   });
   const showProvider = hosts.length > 1;
   const [closeSweepKeys, setCloseSweepKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -1293,9 +1306,13 @@ export function PullRequestsPage() {
           ...(query === typedQuery ? {} : { q: query || undefined }),
           draft: next.draft,
           review: next.review,
+          excludedReview: next.excludedReview,
           checks: next.checks,
+          excludedChecks: next.excludedChecks,
           author: next.author,
+          excludedAuthors: next.excludedAuthors,
           labels: next.labels?.flatMap((group) => group),
+          excludedLabels: next.excludedLabels,
         });
       }}
       authorOptions={facets.authors}
@@ -1311,8 +1328,13 @@ export function PullRequestsPage() {
       projectId={scopedProjectId}
       projectEnvironmentId={scopedProject?.environmentId}
       unavailable={unavailableProjects}
-      onProject={(projectId, environmentId) =>
-        updateListScope(environmentId === undefined ? { projectId } : { projectId, environmentId })
+      excludedRepositories={search.excludedRepositories ?? []}
+      onProjectScope={({ project, excludedRepositories }) =>
+        updateListScope({
+          projectId: project?.id,
+          ...(project === undefined ? {} : { environmentId: project.environmentId }),
+          excludedRepositories: excludedRepositories.length > 0 ? excludedRepositories : undefined,
+        })
       }
     />
   );

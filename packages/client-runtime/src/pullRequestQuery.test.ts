@@ -35,6 +35,17 @@ describe("reading qualifiers out of a typed query", () => {
     });
   });
 
+  it("reads a negated author, review, or checks qualifier as an exclusion", () => {
+    expect(
+      parsePullRequestQuery("-author:dependabot -author:renovate -review:approved -status:failure")
+        .filters,
+    ).toEqual({
+      excludedAuthors: ["dependabot", "renovate"],
+      excludedReview: "approved",
+      excludedChecks: "failing",
+    });
+  });
+
   it("leaves an unknown value and a stray colon as text, and reads an unknown key as a label", () => {
     const parsed = parsePullRequestQuery("milestone:v2 draft:maybe status: parser");
     expect(parsed.filters).toEqual({ labels: [["milestone:v2"]] });

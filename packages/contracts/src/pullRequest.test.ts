@@ -4,11 +4,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   PullRequestDetail,
+  PullRequestListInput,
   PullRequestListResult,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
 const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
+const decodeListInput = Schema.decodeSync(PullRequestListInput);
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
@@ -71,6 +73,13 @@ describe("PullRequestListResult", () => {
     const decoded = Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(LIST_RESULT));
 
     expect(decoded).toStrictEqual(LIST_RESULT);
+  });
+});
+
+describe("PullRequestListInput", () => {
+  it("accepts every other project of a large server when one repository is hidden", () => {
+    const projectIds = Array.from({ length: 101 }, (_, index) => `project-${index}`);
+    expect(decodeListInput({ state: "open", projectIds }).projectIds).toHaveLength(101);
   });
 });
 
