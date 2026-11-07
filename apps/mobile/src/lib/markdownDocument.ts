@@ -2,6 +2,7 @@ import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
@@ -426,6 +427,111 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
       });
     })
     .parse(markdown);
+  return applyMarkdownEdits(markdown, edits);
+}
+
+// md4c's `$` flanking: line edge, Unicode whitespace (Zs, \t\v\f) or punctuation (P, S), except `$`.
+const DOLLAR_MAY_OPEN_AFTER = /(?:^|(?!\$)[\n\r\t\v\f\p{Zs}\p{P}\p{S}])$/u;
+const DOLLAR_MAY_CLOSE_BEFORE = /^(?:$|(?!\$)[\n\r\t\v\f\p{Zs}\p{P}\p{S}])/u;
+// Rough Node microseconds for `markdownMathRanges`, so long or pathological replies stay raw.
+const MATH_PARSE_BUDGET = 120_000;
+const CHARACTER_COST = 1.5;
+const LINE_COST = 40;
+const DELIMITER_COST = 10;
+// A failed inline opener also costs about 1/16 per character before it on its line.
+const COLUMN_DIVISOR = 16;
+// How far the parser reads past an opener: unclosed `\(`, `\[` and `$$` to their paragraph's end,
+// a `\[` alone on its line to a line ending in `\]`, `$$` to the next `$$` and `$$$` to the end.
+// A lone `$` stops at the next one, so its reads never overlap.
+const PARAGRAPH_END = /(?:\r\n|\r(?!\n)|\n)(?: {0,3}>)*[ \t]*(?![^\r\n])/g;
+const LINE_END = /[\r\n]/g;
+const PAREN_CLOSE = /(?<!\\)(?:\\\\)*\\\)/g;
+const BRACKET_CLOSE = /(?<!\\)(?:\\\\)*\\\]/g;
+const TEX_FENCE_OPEN_REST = /[ \t]*(?![^\r\n])/y;
+const TEX_FENCE_CLOSE = /\\\][ \t]*(?![^\r\n])/g;
+const DOLLAR_FENCE_CLOSE = /(?<!\\)\$\$/g;
+// An inline `\(` or `\[` fails at the first backtick, so its read stops there.
+const BACKTICK = /`/g;
+const UNESCAPED_DOLLAR = /(?<!\\)(?:\\\\)*\$/g;
+
+function mathParseFits(markdown: string): boolean {
+  const stops = new Map<RegExp, number>();
+  // Openers arrive in order, so each pattern's next match is searched for once per stretch.
+  const until = (pattern: RegExp, from: number) => {
+    let stop = stops.get(pattern);
+    if (stop === undefined || stop < from) {
+      pattern.lastIndex = from;
+      stop = pattern.exec(markdown)?.index ?? markdown.length;
+      stops.set(pattern, stop);
+    }
+    return stop - from;
+  };
+  let work = markdown.length * CHARACTER_COST;
+  for (const _ of markdown.matchAll(/(?:\r\n?|\n)(?=[^\r\n])/g)) work += LINE_COST;
+  let lineStart = 0;
+  for (const match of markdown.matchAll(/\\[([]|\$+/g)) {
+    const [delimiter] = match;
+    const index = match.index;
+    TEX_FENCE_OPEN_REST.lastIndex = index + 2;
+    const texFence = delimiter === "\\[" && TEX_FENCE_OPEN_REST.test(markdown);
+    if (index - lineStart > until(LINE_END, lineStart)) {
+      lineStart = index;
+      while (lineStart > 0 && !/[\r\n]/.test(markdown[lineStart - 1]!)) lineStart -= 1;
+    }
+    work += DELIMITER_COST + (index - lineStart) / COLUMN_DIVISOR;
+    const paragraph = until(PARAGRAPH_END, index);
+    const close = delimiter === "\\(" ? PAREN_CLOSE : delimiter[0] === "\\" ? BRACKET_CLOSE : null;
+    // A closed formula consumes the openers inside it; only an unclosed one rereads its paragraph.
+    if (close) {
+      const read = Math.min(paragraph, until(BACKTICK, index));
+      if (until(close, index + 2) + 2 >= read) work += read;
+    } else if (delimiter.length > 1) work += paragraph;
+    if (texFence) work += until(TEX_FENCE_CLOSE, index + 2);
+    else if (delimiter.length > 2 && delimiter[0] === "$") work += markdown.length - index;
+    else if (delimiter === "$$") work += until(DOLLAR_FENCE_CLOSE, index + 2);
+    if (work > MATH_PARSE_BUDGET) return false;
+  }
+  return true;
+}
+
+/** md4c only typesets `$` and `$$`, so swap the delimiters of formulas web reads as `\(` or `\[`. */
+export function markdownWithDollarMath(markdown: string): string {
+  if (!markdown.includes("\\(") && !markdown.includes("\\[")) return markdown;
+  if (!mathParseFits(markdown)) return markdown;
+  let ranges: ReturnType<typeof markdownMathRanges>;
+  try {
+    ranges = markdownMathRanges(markdown);
+  } catch {
+    // Deeply nested Markdown overflows the recursive range walker.
+    return markdown;
+  }
+  // md4c would pair a literal `$` (a price, `$HOME`) with an inserted delimiter.
+  let covering = 0;
+  for (const match of markdown.matchAll(UNESCAPED_DOLLAR)) {
+    const dollar = match.index + match[0].length - 1;
+    while (covering < ranges.length && ranges[covering]!.end <= dollar) covering += 1;
+    const range = ranges[covering];
+    if (!range || range.start > dollar || range.source.startsWith("\\")) return markdown;
+  }
+  const edits: MarkdownEdit[] = [];
+  for (const [index, { start, end, source }] of ranges.entries()) {
+    const dollars = source.startsWith("\\(") ? "$" : source.startsWith("\\[") ? "$$" : null;
+    if (
+      !dollars ||
+      ranges[index - 1]?.end === start ||
+      ranges[index + 1]?.start === end ||
+      markdown[start + 2] === "$" ||
+      markdown[end - 3] === "$" ||
+      !DOLLAR_MAY_OPEN_AFTER.test(markdown.slice(Math.max(0, start - 2), start)) ||
+      !DOLLAR_MAY_CLOSE_BEFORE.test(markdown.slice(end, end + 2))
+    ) {
+      continue;
+    }
+    edits.push(
+      { start, end: start + 2, content: dollars },
+      { start: end - 2, end, content: dollars },
+    );
+  }
   return applyMarkdownEdits(markdown, edits);
 }
 
