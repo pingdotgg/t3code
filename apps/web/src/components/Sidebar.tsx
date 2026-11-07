@@ -991,6 +991,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const boringSidebarEnabled = useBoringSidebarEnabled();
   const legacySidebarEnabled = useClientSettings((settings) => settings.legacySidebarEnabled);
+  const searchInTitleBar = useClientSettings((settings) => settings.sidebarSearchInTitleBar);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
@@ -2984,7 +2985,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         ref={sidebarContentRef}
         className="min-h-full"
         fixedHeader={
-          <SidebarGroup className="z-[1]">
+          <SidebarGroup className={cn("z-[1]", searchInTitleBar && "pointer-events-none -mb-4")}>
             <SidebarThreadHeader
               hasProjects={projectGroups.length > 0}
               projectScope={
