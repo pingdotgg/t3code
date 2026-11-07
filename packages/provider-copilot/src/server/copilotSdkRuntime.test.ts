@@ -36,6 +36,7 @@ import {
   copilotSdkMcpServers,
   copilotSdkProposedPlan,
   copilotSlashCommand,
+  copilotWindowsExecutable,
   generateCopilotText,
   makeCopilotSdkEventTranslator,
   makeCopilotSdkRuntime,
@@ -472,6 +473,7 @@ it("lets an investigation run plain git reads and read the checkout, and nothing
     shell("git diff ../secret README.md"),
     shell("git diff -- ../secret README.md"),
     shell("git diff ~/secret README.md"),
+    shell("git diff C:/secret README.md"),
     shell("git diff -O/etc/passwd"),
     shell("git log --textconv"),
     shell("git diff | sh"),
@@ -530,6 +532,19 @@ it("refuses tool calls Copilot would run without asking", async () => {
   ] as const) {
     assert.strictEqual(await decide(toolName, toolArgs), expected, JSON.stringify(toolArgs));
   }
+});
+
+it("swaps npm's Windows shim for the binary behind it", () => {
+  const root = "C:\\npm\\prefix";
+  const nested = `${root}\\node_modules\\@github\\copilot\\node_modules\\@github\\copilot-win32-x64\\copilot.exe`;
+  const hoisted = `${root}\\node_modules\\@github\\copilot-win32-x64\\copilot.exe`;
+  const resolve = (command: string, ...present: Array<string>) =>
+    copilotWindowsExecutable(command, "x64", (path) => present.includes(path));
+
+  assert.strictEqual(resolve(`${root}\\copilot.cmd`, nested), nested);
+  assert.strictEqual(resolve(`${root}\\copilot.CMD`, hoisted), hoisted);
+  assert.strictEqual(resolve(`${root}\\copilot.cmd`), `${root}\\copilot.cmd`);
+  assert.strictEqual(resolve("C:\\tools\\copilot.exe"), "C:\\tools\\copilot.exe");
 });
 
 it("rejects a permission unless an allow option was selected", () => {

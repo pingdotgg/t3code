@@ -18,7 +18,6 @@ import {
   type ServerProviderDraft,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
@@ -33,6 +32,7 @@ import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 
 import type { GitHubCopilotSettings } from "../settings.ts";
 import {
+  copilotLaunchCommand,
   makeCopilotSdkClient,
   type CopilotSdkClient,
   type CopilotSdkCommand,
@@ -213,17 +213,6 @@ export const checkGitHubCopilotProviderStatus = Effect.fn("checkGitHubCopilotPro
         message: "GitHub Copilot is disabled in T3 Code settings.",
       });
     }
-    // The CLI's Windows shims need a shell, which the SDK does not use to start it.
-    if ((yield* HostProcess.Platform) === "win32") {
-      return snapshot(settings, checkedAt, {
-        installed: false,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message:
-          "GitHub Copilot is not available on Windows yet. Use Copilot from the ACP Registry.",
-      });
-    }
 
     const command = settings.binaryPath || "copilot";
     const versionResult = yield* runCopilotVersion(command, environment).pipe(
@@ -249,7 +238,11 @@ export const checkGitHubCopilotProviderStatus = Effect.fn("checkGitHubCopilotPro
     // The SDK only checks that the file exists, so it never searches PATH itself.
     const resolved = yield* resolveCommandPath(command, { env: environment });
     const account = yield* readGitHubCopilotAccount(
-      makeClient({ command: resolved ?? command, args: [], env: environment }),
+      makeClient({
+        command: yield* copilotLaunchCommand(resolved ?? command),
+        args: [],
+        env: environment,
+      }),
     ).pipe(Effect.result);
     if (Result.isFailure(account) || Option.isNone(account.success)) {
       return snapshot(settings, checkedAt, {

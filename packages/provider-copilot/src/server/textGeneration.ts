@@ -3,8 +3,10 @@ import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textG
 import {
   decodeJsonReply,
   fromRunner,
+  investigationUnsupported,
   type Request,
 } from "@t3tools/provider-core/server/textGenerationOperations";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,7 +14,7 @@ import * as Path from "effect/Path";
 import type * as Schema from "effect/Schema";
 
 import type { GitHubCopilotSettings } from "../settings.ts";
-import { makeCopilotSdkClient } from "./copilotSdkRuntime.ts";
+import { copilotLaunchCommand, makeCopilotSdkClient } from "./copilotSdkRuntime.ts";
 
 const PROVIDER = "GitHub Copilot";
 const TIMEOUT_MS = 180_000;
@@ -28,6 +30,10 @@ export function makeGitHubCopilotTextGeneration(input: {
 }): ProviderTextGeneration {
   const makeClient = input.makeClient ?? makeCopilotSdkClient;
   const run = Effect.fnUntraced(function* <S extends Schema.Top>(request: Request<S>) {
+    // The read-only rules are written for bash; Copilot's Windows shell is PowerShell.
+    if (request.investigate !== undefined && (yield* HostProcess.Platform) === "win32") {
+      return yield* investigationUnsupported(request.operation, PROVIDER);
+    }
     const binary = input.settings.binaryPath || "copilot";
     const command = yield* resolveCommandPath(binary, { env: input.environment }).pipe(
       Effect.provideService(FileSystem.FileSystem, input.fileSystem),
@@ -39,7 +45,11 @@ export function makeGitHubCopilotTextGeneration(input: {
         detail: `${PROVIDER} CLI (${binary}) is not installed or not on PATH.`,
       });
     }
-    const client = makeClient({ command, args: [], env: input.environment });
+    const client = makeClient({
+      command: yield* copilotLaunchCommand(command),
+      args: [],
+      env: input.environment,
+    });
     const timeoutMs = request.investigate?.timeoutMs ?? TIMEOUT_MS;
     const reply = yield* Effect.tryPromise({
       try: () =>

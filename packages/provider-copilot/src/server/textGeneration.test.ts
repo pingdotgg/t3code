@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -83,6 +84,36 @@ it.layer(NodeServices.layer)("GitHub Copilot text generation", (it) => {
 
       assert.isTrue(sent?.investigate);
       assert.strictEqual(sent?.timeoutMs, 900_000);
+    }),
+  );
+
+  it.effect("refuses review guides on Windows, where the read-only rules do not apply", () =>
+    Effect.gen(function* () {
+      const generation = makeGitHubCopilotTextGeneration({
+        settings,
+        environment: {},
+        fileSystem: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        makeClient: () => assert.fail("must not start the CLI"),
+      });
+
+      const failure = yield* generation
+        .generateReviewGuide({
+          cwd: "/repo",
+          number: 1,
+          title: "t",
+          description: "",
+          baseBranch: "main",
+          baseCommit: "abc",
+          settledReview: "",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("githubCopilot"),
+            model: "claude-haiku-4.5",
+          },
+        })
+        .pipe(Effect.flip, Effect.provideService(HostProcess.Platform, "win32"));
+
+      assert.include(failure.detail, "cannot investigate");
     }),
   );
 

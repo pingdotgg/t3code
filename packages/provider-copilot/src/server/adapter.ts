@@ -48,6 +48,7 @@ import {
   copilotSdkMcpAppDocument,
   copilotSdkProposedPlan,
   copilotSdkSteering,
+  copilotLaunchCommand,
   makeCopilotSdkClient,
   makeCopilotSdkRuntime,
   requestCopilotSdkMcpApp,
@@ -170,7 +171,11 @@ function makeFlavor(options: GitHubCopilotAdapterV2Options): AcpAdapterV2Flavor 
         }
         return yield* makeCopilotSdkRuntime({
           ...runtimeInput,
-          client: makeCopilotSdkClient({ command, args: [], env }),
+          client: makeCopilotSdkClient({
+            command: yield* copilotLaunchCommand(command),
+            args: [],
+            env,
+          }),
         });
       }),
   };

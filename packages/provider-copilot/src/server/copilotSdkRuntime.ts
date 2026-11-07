@@ -11,9 +11,12 @@ import {
 } from "@github/copilot-sdk";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - The SDK calls its hooks outside any Effect runtime.
 import * as NodeFSP from "node:fs/promises";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The SDK client is built synchronously, outside any Effect runtime.
+import * as NodeFS from "node:fs";
 
 import type { AcpSessionRuntimeOptions } from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -261,7 +264,7 @@ const INVESTIGATION_FEEDBACK =
 
 // `git diff` compares files anywhere once a path leaves the checkout, even without `--no-index`.
 const staysInCheckout = (word: string) =>
-  !word.startsWith("/") && !word.startsWith("~") && !word.split("/").includes("..");
+  !/^(?:[/~]|[A-Za-z]:)/.test(word) && !word.split("/").includes("..");
 
 const isReadOnlyGitCommand = (command: string) =>
   READ_ONLY_GIT_COMMAND.test(command) &&
@@ -388,6 +391,29 @@ function definedEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   );
 }
 
+/** The SDK starts the CLI without a shell, so npm's shim has to become the binary behind it. */
+export function copilotWindowsExecutable(
+  command: string,
+  arch: string,
+  exists: (path: string) => boolean = NodeFS.existsSync,
+) {
+  if (!/\.(?:cmd|bat|ps1)$/i.test(command)) return command;
+  const directory = command.slice(0, Math.max(command.lastIndexOf("\\"), command.lastIndexOf("/")));
+  const binary = `@github\\copilot-win32-${arch}\\copilot.exe`;
+  return (
+    [
+      `${directory}\\node_modules\\@github\\copilot\\node_modules\\${binary}`,
+      `${directory}\\node_modules\\${binary}`,
+    ].find(exists) ?? command
+  );
+}
+
+export const copilotLaunchCommand = Effect.fnUntraced(function* (command: string) {
+  return (yield* HostProcess.Platform) === "win32"
+    ? copilotWindowsExecutable(command, yield* HostProcess.Architecture)
+    : command;
+});
+
 export function makeCopilotSdkClient(input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -449,8 +475,12 @@ const TOOL_KINDS: Record<string, AcpSchema.ToolKind> = {
   glob: "search",
   grep: "search",
   list_bash: "execute",
+  list_powershell: "execute",
+  powershell: "execute",
   read_bash: "execute",
+  read_powershell: "execute",
   stop_bash: "execute",
+  stop_powershell: "execute",
   str_replace_editor: "edit",
   view: "read",
   web_fetch: "fetch",

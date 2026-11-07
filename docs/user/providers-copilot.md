@@ -3,8 +3,7 @@
 T3 Code can run GitHub Copilot as its own provider, using the Copilot CLI you already have. This is
 separate from Copilot in the [ACP Registry](./providers-acp.md), which keeps working as before.
 
-GitHub Copilot is an early-access provider. It relies on an experimental Copilot API, and it is not
-available on Windows yet, where you can use Copilot from the ACP Registry instead.
+GitHub Copilot is an early-access provider, and it relies on an experimental Copilot API.
 
 ## Set it up
 
@@ -54,7 +53,8 @@ Copilot can write thread titles, commit messages, branch names, pull request tit
 descriptions, and review guides when you select it for text generation in **Settings**. It is not
 chosen automatically, because generated text uses your Copilot quota.
 
-Review guides can only read the checkout and run `git diff`, `git log`, and `git show`.
+Review guides can only read the checkout and run `git diff`, `git log`, and `git show`. They are not
+available on Windows, so choose another model for them there.
 
 ## If Copilot reports it is not compatible
 
