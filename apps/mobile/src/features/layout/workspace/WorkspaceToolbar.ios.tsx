@@ -152,6 +152,9 @@ export function WorkspaceToolbar(props: {
             searchVisible
               ? {
                   ref: searchRef,
+                  // Empty active must still autofocus on first open: without Liquid Glass the bar
+                  // mounts after focusSearch, so the imperative focus above misses. Restore stays
+                  // gated by shouldRestoreNativeSearch, which refuses empty searches.
                   autoFocus: tab.searchMode === "active",
                   autoCapitalize: "none",
                   hideNavigationBar: false,

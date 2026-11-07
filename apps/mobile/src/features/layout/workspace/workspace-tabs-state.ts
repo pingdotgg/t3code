@@ -108,12 +108,14 @@ export function workspaceTabsReducer(
 }
 
 /**
- * iOS 27's integrated search X closes the field with only a blur, leaving `expanded`.
- * An empty one has nothing to restore, except where the caller keeps it open (the Duo).
+ * Integrated search collapses when its screen reappears. Restore only when a query
+ * still filters the list (or the Duo keeps an empty field open). An empty `active`
+ * search is left behind when a thread covers Home before blur can expand — leave it
+ * collapsed. iOS 27's X also only blurs, leaving empty `expanded`, which must stay closed.
  */
 export function shouldRestoreNativeSearch(tab: WorkspaceTabState, keepsEmptySearchOpen: boolean) {
   if (tab.searchMode === "resting") return false;
-  return tab.searchMode === "active" || tab.query !== "" || keepsEmptySearchOpen;
+  return tab.query !== "" || keepsEmptySearchOpen;
 }
 
 export const WORKSPACE_TOOLBAR = { height: 48, expandedGap: 10, edge: 16, gap: 8 };
