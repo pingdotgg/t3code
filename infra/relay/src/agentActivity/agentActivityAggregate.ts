@@ -1,10 +1,11 @@
-import type {
-  RelayAgentActivityAggregateState,
-  RelayAgentActivityState,
+import {
   RelayAgentAwarenessPreferences,
+  type RelayAgentActivityAggregateState,
+  type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { environmentEnabledOnDevice } from "./agentActivityAlerts.ts";
 import {
   isExpiredAgentActivityState,
@@ -71,6 +72,14 @@ function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): b
     return false;
   }
   return nowMs - updatedAtMs <= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS;
+}
+
+const decodePreferencesJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(RelayAgentAwarenessPreferences),
+);
+
+export function parseDevicePreferences(json: string): RelayAgentAwarenessPreferences | null {
+  return Option.getOrNull(decodePreferencesJson(json));
 }
 
 export function makeAggregateState(input: {

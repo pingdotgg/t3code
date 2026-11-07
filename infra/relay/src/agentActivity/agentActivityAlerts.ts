@@ -22,6 +22,8 @@ function isFreshTerminalNotification(updatedAt: string, nowMs: number): boolean 
 
 type TransitionInput = {
   readonly previousAggregate: RelayAgentActivityAggregateState | null;
+  // Rows from these environments were filtered out of the baseline, so they are not new.
+  readonly previousHiddenEnvironmentIds?: ReadonlyArray<string> | null;
   readonly nextAggregate: RelayAgentActivityAggregateState;
   readonly preferences: RelayAgentAwarenessPreferences | null;
 };
@@ -52,6 +54,27 @@ export function environmentEnabledOnDevice(
   return !preferences?.disabledEnvironmentIds?.some((disabled) => disabled === environmentId);
 }
 
+export function hiddenEnvironmentIds(
+  preferences: RelayAgentAwarenessPreferences | null,
+): ReadonlyArray<string> {
+  return [...new Set(preferences?.disabledEnvironmentIds ?? [])].sort();
+}
+
+export function sameEnvironmentIds(
+  left: ReadonlyArray<string> | null | undefined,
+  right: ReadonlyArray<string> | null | undefined,
+): boolean {
+  const a = [...new Set(left ?? [])].sort();
+  const b = [...new Set(right ?? [])].sort();
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+function rowsVisibleInBaseline(input: TransitionInput) {
+  const hidden = input.previousHiddenEnvironmentIds;
+  if (!hidden?.length) return input.nextAggregate.activities;
+  return input.nextAggregate.activities.filter((row) => !hidden.includes(row.environmentId));
+}
+
 function alertAllowedForRow(
   preferences: RelayAgentAwarenessPreferences | null,
   row: { readonly phase: string; readonly environmentId: string },
@@ -78,7 +101,7 @@ export function attentionTransitionRows(input: TransitionInput) {
   const previouslyAttention = new Set(
     input.previousAggregate.activities.filter((row) => isAttentionPhase(row.phase)).map(rowKey),
   );
-  return input.nextAggregate.activities.filter(
+  return rowsVisibleInBaseline(input).filter(
     (row) =>
       isAttentionPhase(row.phase) &&
       !previouslyAttention.has(rowKey(row)) &&
@@ -87,15 +110,14 @@ export function attentionTransitionRows(input: TransitionInput) {
 }
 
 function newlyTerminalRows(
-  previousAggregate: RelayAgentActivityAggregateState | null,
-  nextAggregate: RelayAgentActivityAggregateState,
+  input: TransitionInput,
   includeUnobserved = false,
 ): ReadonlyArray<RelayAgentActivityAggregateRow> {
-  if (previousAggregate === null) return [];
+  if (input.previousAggregate === null) return [];
   const previousPhases = new Map(
-    previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
+    input.previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
   );
-  return nextAggregate.activities.filter((row) => {
+  return rowsVisibleInBaseline(input).filter((row) => {
     if (row.phase !== "completed" && row.phase !== "failed") return false;
     const previousPhase = previousPhases.get(rowKey(row));
     return (
@@ -109,11 +131,7 @@ function newlyTerminalRows(
 export function terminalTransitionRows(
   input: TransitionInput & { readonly nowMs: number; readonly includeUnobserved?: boolean },
 ) {
-  return newlyTerminalRows(
-    input.previousAggregate,
-    input.nextAggregate,
-    input.includeUnobserved,
-  ).filter((row) => {
+  return newlyTerminalRows(input, input.includeUnobserved).filter((row) => {
     return (
       alertAllowedForRow(input.preferences, row) &&
       isFreshTerminalNotification(row.updatedAt, input.nowMs)

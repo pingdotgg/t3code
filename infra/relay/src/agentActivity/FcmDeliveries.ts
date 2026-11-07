@@ -28,6 +28,7 @@ import { isExpiredAgentActivityState, notificationForActivity } from "./agentAct
 import {
   alertForActivityRows,
   attentionTransitionRows,
+  hiddenEnvironmentIds,
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -76,6 +77,7 @@ export function androidAlertForState(
 
 export function androidAlertForAggregate(input: {
   readonly previousAggregate: RelayAgentActivityAggregateState;
+  readonly previousHiddenEnvironmentIds?: ReadonlyArray<string> | null;
   readonly nextAggregate: RelayAgentActivityAggregateState;
   readonly preferences: RelayAgentAwarenessPreferences;
   readonly nowMs: number;
@@ -264,6 +266,7 @@ const make = Effect.gen(function* () {
           }
           alert = androidAlertForAggregate({
             previousAggregate,
+            previousHiddenEnvironmentIds: target.last_hidden_environment_ids,
             nextAggregate: {
               ...aggregate,
               activities: aggregate.activities.filter((row) =>
@@ -330,6 +333,9 @@ const make = Effect.gen(function* () {
           kind: active ? "live_activity_update" : "live_activity_end",
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
           aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
+          hiddenEnvironmentIds: preferences.value.liveActivitiesEnabled
+            ? hiddenEnvironmentIds(preferences.value)
+            : null,
           deliveredAt: DateTime.formatIso(now),
         });
       }
