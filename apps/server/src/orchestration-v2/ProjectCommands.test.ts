@@ -17,6 +17,7 @@ const row = (overrides: Partial<ProjectRow> = {}): ProjectRow => ({
   projectId,
   title: "Scripts",
   workspaceRoot: "/tmp/scripts",
+  groupingIdentity: null,
   defaultModelSelection: null,
   defaultThreadEnvMode: null,
   autoPull: false,

@@ -9,6 +9,7 @@ import {
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
+  resolveNewTaskEnvironments,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -87,34 +88,114 @@ describe("resolveEnvironmentProjectMatch", () => {
     expect(resolveEnvironmentProjectMatch(target, selected)).toBe(target[1]);
   });
 
-  it("falls back to workspace basename, then title, for unindexed projects", () => {
-    const selected = makeProject("t3code", "mac", { workspaceRoot: "/Users/me/t3code" });
-    const byBasename = [
-      makeProject("other", "server"),
-      makeProject("srv", "server", { workspaceRoot: "/home/me/t3code" }),
-    ];
-    expect(resolveEnvironmentProjectMatch(byBasename, selected)).toBe(byBasename[1]);
+  it("requires explicit identity for non-Git copies and respects separate mode", () => {
+    const groupingIdentity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+    const selected = { ...makeProject("sdk", "mac"), groupingIdentity };
+    const unrelated = makeProject("sdk", "server");
+    const target = { ...makeProject("copy", "server"), groupingIdentity };
+    expect(resolveEnvironmentProjectMatch([unrelated], selected)).toBeNull();
+    expect(resolveEnvironmentProjectMatch([unrelated, target], selected)).toBe(target);
+    expect(
+      resolveEnvironmentProjectMatch([target], selected, {
+        sidebarProjectGroupingMode: "separate",
+        sidebarProjectGroupingOverrides: {},
+      }),
+    ).toBeNull();
+    expect(
+      resolveEnvironmentProjectMatch([unrelated], { ...selected, groupingIdentity: null }),
+    ).toBeNull();
+  });
+  it("does not switch to unrelated repositories or first-project fallbacks", () => {
+    const selected = makeProject("sdk", "mac", { repositoryKey: "github.com/g/sdk" });
+    expect(
+      resolveEnvironmentProjectMatch(
+        [makeProject("sdk", "server", { repositoryKey: "github.com/other/sdk" })],
+        selected,
+      ),
+    ).toBeNull();
+    expect(resolveEnvironmentProjectMatch([], selected)).toBeNull();
+  });
+});
 
-    const byTitle = [
-      makeProject("other", "server"),
-      makeProject("srv", "server", { title: "t3code" }),
-    ];
-    expect(resolveEnvironmentProjectMatch(byTitle, selected)).toBe(byTitle[1]);
+describe("collection-aware environment routing", () => {
+  const settings = {
+    sidebarProjectGroupingMode: "repository" as const,
+    sidebarProjectGroupingOverrides: {},
+  };
+
+  it("routes duplicate physical records using the same inherited Git identity as project grouping", () => {
+    const older = makeProject("older", "mac", {
+      workspaceRoot: "/sdk",
+      repositoryKey: "github.com/g/sdk",
+    });
+    const selectedProject = {
+      ...makeProject("newer", "mac", { workspaceRoot: "/sdk" }),
+      groupingIdentity: "39c61a1b-8a64-43a6-9da5-65c15da93d52",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    };
+    const remote = makeProject("copy", "server", { repositoryKey: "github.com/g/sdk" });
+    const projects = [selectedProject, older, remote];
+    expect(resolveEnvironmentProjectMatch([remote], selectedProject, settings, projects)).toBe(
+      remote,
+    );
+    expect(
+      resolveNewTaskEnvironments({
+        projects,
+        selectedProject,
+        settings,
+        savedConnectionsById: {
+          mac: { environmentLabel: "Mac" },
+          server: { environmentLabel: "Server" },
+        },
+      }).map((environment) => environment.environmentId),
+    ).toEqual(["mac", "server"]);
+  });
+});
+
+describe("resolveNewTaskEnvironments", () => {
+  const settings = {
+    sidebarProjectGroupingMode: "repository" as const,
+    sidebarProjectGroupingOverrides: {},
+  };
+  const savedConnectionsById = {
+    mac: { environmentLabel: "Mac" },
+    server: { environmentLabel: "Server" },
+  };
+
+  it("lists only registered hosts of the explicit group", () => {
+    const groupingIdentity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+    const selectedProject = { ...makeProject("sdk", "mac"), groupingIdentity };
+    const input = {
+      projects: [
+        selectedProject,
+        { ...makeProject("copy", "server"), groupingIdentity },
+        { ...makeProject("copy", "unsaved"), groupingIdentity },
+      ],
+      selectedProject,
+      settings,
+      savedConnectionsById,
+    };
+    expect(resolveNewTaskEnvironments(input)).toEqual([
+      { environmentId: "mac", environmentLabel: "Mac" },
+      { environmentId: "server", environmentLabel: "Server" },
+    ]);
+    expect(
+      resolveNewTaskEnvironments({
+        ...input,
+        settings: { ...settings, sidebarProjectGroupingMode: "separate" },
+      }),
+    ).toEqual([{ environmentId: "mac", environmentLabel: "Mac" }]);
   });
 
-  it("does not treat a known different repository as a basename or title match", () => {
-    const selected = makeProject("t3code", "mac", {
-      repositoryKey: "github.com/t3tools/t3code",
-      workspaceRoot: "/Users/me/t3code",
-    });
-    const fork = makeProject("fork", "server", {
-      repositoryKey: "github.com/someone/t3code",
-      title: "t3code",
-      workspaceRoot: "/home/me/t3code",
-    });
-    const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/t3code" });
-    expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
-    expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+  it("does not offer unrelated machines for an ordinary draft with a missing project", () => {
+    expect(
+      resolveNewTaskEnvironments({
+        projects: [makeProject("other", "server")],
+        selectedProject: makeProject("missing", "mac"),
+        settings,
+        savedConnectionsById,
+      }),
+    ).toEqual([]);
   });
 });
 

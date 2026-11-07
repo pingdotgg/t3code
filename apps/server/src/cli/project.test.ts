@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 import { Command } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
+import * as TestConsole from "effect/testing/TestConsole";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { cli } from "../binCli.ts";
@@ -473,4 +474,98 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
   },
+);
+
+it.effect(
+  "assigns grouping through add and can inspect, change, and clear it while preserving threads",
+  () =>
+    Effect.gen(function* () {
+      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+      const threadId = ThreadId.make("grouping-preserved-thread");
+      yield* seedNativeThreads(baseDir, [{ id: threadId, projectId: project.id, archived: false }]);
+      const before = yield* readNativeThreadState(baseDir, threadId);
+      const identity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+      for (let attempt = 0; attempt < 2; attempt++) {
+        yield* runCli([
+          "project",
+          "add",
+          workspaceRoot,
+          "--title",
+          "Ignored for existing",
+          "--grouping-identity",
+          identity,
+          "--base-dir",
+          baseDir,
+        ]);
+      }
+      const assigned = (yield* readProjects(baseDir)).projects;
+      assert.equal(assigned.length, 1);
+      assert.equal(assigned[0]?.id, project.id);
+      assert.equal(assigned[0]?.title, project.title);
+      assert.equal(assigned[0]?.groupingIdentity, identity);
+      const groupingOutput = yield* runCli([
+        "project",
+        "grouping",
+        project.id,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.andThen(TestConsole.logLines), Effect.provide(Layer.fresh(TestConsole.layer)));
+      assert.deepEqual(
+        groupingOutput.map((line) => JSON.parse(String(line))),
+        [{ projectId: project.id, groupingIdentity: identity }],
+      );
+      const listOutput = yield* runCli(["project", "list", "--base-dir", baseDir]).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.provide(Layer.fresh(TestConsole.layer)),
+      );
+      assert.lengthOf(listOutput, 1);
+      const listed = JSON.parse(String(listOutput[0]));
+      assert.lengthOf(listed, 1);
+      assert.nestedPropertyVal(listed, "[0].id", project.id);
+      assert.nestedPropertyVal(listed, "[0].groupingIdentity", identity);
+      yield* runCli([
+        "project",
+        "grouping",
+        workspaceRoot,
+        "--identity",
+        "e703c118-3547-41b1-88c5-9774cf40ae86",
+        "--base-dir",
+        baseDir,
+      ]);
+      assert.equal(
+        (yield* readProjects(baseDir)).projects[0]?.groupingIdentity,
+        "e703c118-3547-41b1-88c5-9774cf40ae86",
+      );
+      yield* runCli(["project", "grouping", workspaceRoot, "--clear", "--base-dir", baseDir]);
+      assert.isNull((yield* readProjects(baseDir)).projects[0]?.groupingIdentity);
+      assert.deepEqual(yield* readNativeThreadState(baseDir, threadId), before);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects malformed grouping flags before opening or changing project state", () =>
+  Effect.gen(function* () {
+    const { baseDir, workspaceRoot } = yield* makeProjectLookupFixture();
+    const before = yield* readProjects(baseDir);
+    const fs = yield* FileSystem.FileSystem;
+    const unopenedBaseDir = `${baseDir}-unopened`;
+    const newRoot = `${workspaceRoot}-new`;
+    yield* fs.makeDirectory(newRoot);
+    for (const command of [
+      ["add", newRoot, "--grouping-identity", "group/sdk"],
+      ["add", workspaceRoot, "--grouping-identity", "group/sdk"],
+      ["grouping", workspaceRoot, "--identity", "group/sdk"],
+    ]) {
+      const error = yield* runCli(["project", ...command, "--base-dir", baseDir]).pipe(Effect.flip);
+      assert.equal(error.message, "Grouping identity must be a lowercase UUID v4.");
+      assert.deepEqual(yield* readProjects(baseDir), before);
+      const unopenedError = yield* runCli([
+        "project",
+        ...command,
+        "--base-dir",
+        unopenedBaseDir,
+      ]).pipe(Effect.flip);
+      assert.equal(unopenedError.message, "Grouping identity must be a lowercase UUID v4.");
+      assert.isFalse(yield* fs.exists(unopenedBaseDir));
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

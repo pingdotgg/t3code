@@ -177,3 +177,20 @@ effectIt.effect("an icon kind from a newer server shows the default icon", () =>
     assert.strictEqual(broken._tag, "Failure");
   }),
 );
+
+describe("explicit grouping identity contracts", () => {
+  it("accepts an explicit UUID, distinguishes clear from omission, and rejects names", () => {
+    const groupingIdentity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+    expect(
+      decodeProjectCreatePayload({ title: "sdk", workspaceRoot: "/sdk", groupingIdentity })
+        .groupingIdentity,
+    ).toBe(groupingIdentity);
+    expect(decodeProjectUpdatePayload({ groupingIdentity: null })).toEqual({
+      groupingIdentity: null,
+    });
+    expect(decodeProjectUpdatePayload({})).not.toHaveProperty("groupingIdentity");
+    for (const value of ["sdk", "group/sdk", "", "39c61a1b-8a64-13a6-9da5-65c15da93d52"]) {
+      expect(() => decodeProjectUpdatePayload({ groupingIdentity: value })).toThrow();
+    }
+  });
+});
