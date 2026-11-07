@@ -325,10 +325,18 @@ describe("pull request detail decoding", () => {
           checkSuite: { workflowRun: null },
           ...fields,
         };
-  const inWorkflow = ({ workflowName, ...fields }: Record<string, unknown>) =>
+  const inWorkflow = ({
+    workflowName,
+    workflowId = `W_kwDORLtfbc4${String(workflowName)}`,
+    event = "pull_request",
+    runNumber = 95380,
+    ...fields
+  }: Record<string, unknown>) =>
     check({
       ...fields,
-      checkSuite: { workflowRun: { workflow: { name: workflowName } } },
+      checkSuite: {
+        workflowRun: { event, runNumber, workflow: { id: workflowId, name: workflowName } },
+      },
     });
 
   const coreJson = (
@@ -580,6 +588,149 @@ describe("pull request detail decoding", () => {
       expect(checksOf(rollup)).toEqual([[["check", "pending"]], "pending"]);
     }
   });
+
+  it("drops a cancelled check whose workflow run was superseded by a newer run on the head", () => {
+    const superseded = {
+      workflowName: "CI",
+      workflowId: "W_kwDORLtfbc4N00ni",
+      runNumber: 95379,
+      status: "COMPLETED",
+      startedAt: "2026-10-30T10:00:00Z",
+      completedAt: "2026-10-30T10:00:05Z",
+    };
+    const replacement = {
+      workflowName: "CI",
+      workflowId: "W_kwDORLtfbc4N00ni",
+      runNumber: 95380,
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      startedAt: "2026-10-30T10:00:10Z",
+      completedAt: "2026-10-30T10:05:00Z",
+    };
+    const rollup = [
+      inWorkflow({ ...superseded, name: "check", conclusion: "CANCELLED" }),
+      inWorkflow({
+        ...superseded,
+        name: "web browser tests (runner ${{ matrix.slice }} of 6)",
+        conclusion: "CANCELLED",
+      }),
+      inWorkflow({ ...replacement, name: "check" }),
+      inWorkflow({ ...replacement, name: "web browser tests (runner 1 of 6)" }),
+      inWorkflow({ ...replacement, name: "web browser tests (runner 2 of 6)" }),
+    ];
+    const checksOf = (contexts: ReadonlyArray<Record<string, unknown>>) => {
+      const detail = detailOf(contexts);
+      return [detail.checks.map((check) => [check.name, check.status]), detail.checksState];
+    };
+
+    expect(checksOf(rollup)).toEqual([
+      [
+        ["check", "success"],
+        ["web browser tests (runner 1 of 6)", "success"],
+        ["web browser tests (runner 2 of 6)", "success"],
+      ],
+      "passing",
+    ]);
+    expect(
+      checksOf([
+        ...rollup,
+        inWorkflow({
+          ...superseded,
+          workflowName: "Release",
+          workflowId: "W_kwDORLtfbc4Onf3y",
+          runNumber: 92888,
+          name: "publish",
+          conclusion: "CANCELLED",
+        }),
+      ])[0],
+    ).toContainEqual(["publish", "cancelled"]);
+  });
+
+  it("keeps a cancelled check when the newer run is another workflow with the same name", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        workflowId: "W_kwDORLtfbc4N00ni",
+        runNumber: 95379,
+        conclusion: "CANCELLED",
+      }),
+      inWorkflow({
+        name: "lint",
+        workflowName: "CI",
+        workflowId: "W_kwDORLtfbc4ToKTh",
+        runNumber: 95380,
+        conclusion: "SUCCESS",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
+      "test",
+      "cancelled",
+    ]);
+    expect(detail.checksState).toBe("failing");
+  });
+
+  it("drops a required cancelled check once a newer run reports it, whenever it finished", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        runNumber: 41,
+        conclusion: "CANCELLED",
+        isRequired: true,
+        startedAt: "2026-10-30T10:00:00Z",
+        completedAt: "2026-10-30T10:09:00Z",
+      }),
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        runNumber: 42,
+        conclusion: "SUCCESS",
+        isRequired: true,
+        startedAt: "2026-10-30T10:01:00Z",
+        completedAt: "2026-10-30T10:05:00Z",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toEqual([["test", "success"]]);
+    expect(detail.checksState).toBe("passing");
+  });
+
+  it.each([
+    ["a manual dispatch", "workflow_dispatch", "workflow_dispatch", "CANCELLED", "cancelled"],
+    ["a push of another ref", "push", "push", "CANCELLED", "cancelled"],
+    ["another event", "pull_request", "pull_request_target", "CANCELLED", "cancelled"],
+    ["a pull request run", "pull_request", "pull_request", "FAILURE", "failure"],
+    ["a pull request run, if required", "pull_request", "pull_request", "CANCELLED", "cancelled"],
+  ])(
+    "keeps an older run's check when the newer run is %s",
+    (label, olderEvent, newerEvent, conclusion, status) => {
+      const detail = detailOf([
+        inWorkflow({
+          name: "test (packages/shared)",
+          workflowName: "CI",
+          event: olderEvent,
+          runNumber: 41,
+          conclusion,
+          ...(label.endsWith("if required") ? { isRequired: true } : {}),
+        }),
+        inWorkflow({
+          name: "test (apps/server)",
+          workflowName: "CI",
+          event: newerEvent,
+          runNumber: 42,
+          conclusion: "SUCCESS",
+        }),
+      ]);
+
+      expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
+        "test (packages/shared)",
+        status,
+      ]);
+      expect(detail.checksState).toBe("failing");
+    },
+  );
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
     const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));

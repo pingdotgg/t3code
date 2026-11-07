@@ -3517,13 +3517,25 @@ layer("GitHubPullRequestApi.layer", (it) => {
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "SUCCESS",
-                                checkSuite: { workflowRun: { workflow: { name: "linux" } } },
+                                checkSuite: {
+                                  workflowRun: {
+                                    event: "push",
+                                    runNumber: 1,
+                                    workflow: { id: "W_linux", name: "linux" },
+                                  },
+                                },
                               }),
                               checkRun({
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "FAILURE",
-                                checkSuite: { workflowRun: { workflow: { name: "windows" } } },
+                                checkSuite: {
+                                  workflowRun: {
+                                    event: "push",
+                                    runNumber: 1,
+                                    workflow: { id: "W_windows", name: "windows" },
+                                  },
+                                },
                               }),
                             ],
                             pageInfo: { hasNextPage: false, endCursor: null },
@@ -3559,6 +3571,73 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(detail.labels).toEqual([{ name: "bug", color: "ff0000" }]);
       expect(detail.checks).toHaveLength(2);
       expect(detail.checksState).toBe("failing");
+    }),
+  );
+
+  it.effect("reads checks as GitHub reports them for a run a newer run superseded", () =>
+    Effect.gen(function* () {
+      // Verbatim GitHub nodes, including unselected ids beyond int32.
+      const ciRun = (run: number, runNumber: number) => ({
+        databaseId: run,
+        event: "pull_request",
+        runNumber,
+        runAttempt: 1,
+        workflow: { id: "W_kwDORLtfbc4N00ni", databaseId: 231950818, name: "CI" },
+      });
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson(
+              coreResponse({
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        statusCheckRollup: {
+                          contexts: {
+                            nodes: [
+                              checkRun({
+                                name: "web browser tests (runner ${{ matrix.slice }} of 6)",
+                                conclusion: "CANCELLED",
+                                startedAt: "2026-11-03T21:30:02Z",
+                                completedAt: "2026-11-03T21:30:02Z",
+                                detailsUrl:
+                                  "https://github.com/pingdotgg/t3code/actions/runs/41719063754/job/126207741102",
+                                checkSuite: { workflowRun: ciRun(41719063754, 95379) },
+                              }),
+                              checkRun({
+                                name: "web browser tests (runner 1 of 6)",
+                                conclusion: "SUCCESS",
+                                startedAt: "2026-11-03T21:34:14Z",
+                                completedAt: "2026-11-03T21:41:45Z",
+                                detailsUrl:
+                                  "https://github.com/pingdotgg/t3code/actions/runs/41722982377/job/126220308427",
+                                checkSuite: { workflowRun: ciRun(41722982377, 95380) },
+                              }),
+                            ],
+                            pageInfo: { hasNextPage: false },
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              }),
+            ),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const detail = yield* cli.getPullRequestDetail({
+        cwd: "/w",
+        repository: "pingdotgg/t3code",
+        host: "github.com",
+        number: 30378,
+      });
+      expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
+        ["web browser tests (runner 1 of 6)", "success"],
+      ]);
+      expect(detail.checksState).toBe("passing");
     }),
   );
 
