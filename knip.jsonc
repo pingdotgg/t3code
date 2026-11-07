@@ -31,6 +31,8 @@
         "linux-after-pack.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
+        // Run by hand to seed an isolated .t3 for issue #23245 verification.
+        "seed-issue-23245.mjs",
         "setup-worktree.ts",
         "sign-macos.ts",
         "prepare-server-compile-cache.cjs",

@@ -1,0 +1,14 @@
+{
+  "R1": [
+    { "provider": "opencode", "model": "opencode/big-pickle" },
+    { "provider": "audit-absent-instance", "model": "audit/absent-instance-model" },
+    { "provider": "codex", "model": "audit/missing-model-23245" }
+  ],
+  "R2": [{ "provider": "opencode", "model": "opencode/big-pickle" }],
+  "R3": [{ "provider": "opencode", "model": "opencode/big-pickle" }],
+  "R4": [
+    { "provider": "codex", "model": "audit/missing-model-23245" },
+    { "provider": "codex", "model": "gpt-6.1-sol" }
+  ],
+  "empty": []
+}
