@@ -34,13 +34,14 @@ function kindFromLabel(label: string): XcodeMarkKind {
 
 /** Collect Xcode jump-bar landmarks from MARK comments and `#pragma mark`. */
 export function parseXcodeMarks(source: string): XcodeMark[] {
+  // Classic Mac CR-only files have no LF; normalize so marks are not collapsed into one line.
+  const normalized = source.includes("\r") ? source.replace(/\r\n?/g, "\n") : source;
   const marks: XcodeMark[] = [];
   let line = 1;
   let start = 0;
-  while (start <= source.length) {
-    const end = source.indexOf("\n", start);
-    const raw = source.slice(start, end === -1 ? source.length : end);
-    const text = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+  while (start <= normalized.length) {
+    const end = normalized.indexOf("\n", start);
+    const text = normalized.slice(start, end === -1 ? normalized.length : end);
 
     const comment = COMMENT_MARK.exec(text);
     if (comment) {

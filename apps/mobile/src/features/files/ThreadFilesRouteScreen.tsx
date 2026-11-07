@@ -49,6 +49,7 @@ import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
+import { prepareSourceFileDocument } from "./source-file-document";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
 import { AppBar } from "../../components/ui/AppBar";
@@ -1038,7 +1039,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const headerSubtitle = fileHeaderSubtitle(projectName, relativePath);
   const markItems =
     fileData?.contents && resolvedActiveMode === "source"
-      ? parseXcodeMarks(fileData.contents).flatMap((mark) => {
+      ? parseXcodeMarks(prepareSourceFileDocument(fileData.contents).contents).flatMap((mark) => {
           const title = xcodeMarkMenuLabel(mark);
           if (title === null) return [];
           return [

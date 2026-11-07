@@ -1122,10 +1122,20 @@ export default function FilePreviewPanel({
   );
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
-  const [markReveal, setMarkReveal] = useState<{ line: number; requestId: number } | null>(null);
+  // Mark jumps are path-scoped and yield once a newer external reveal arrives, so a prior
+  // mark cannot steer another file or swallow a later line-link in this one.
+  const [markReveal, setMarkReveal] = useState<{
+    path: string;
+    line: number;
+    requestId: number;
+    baselineExternalRequestId: number;
+  } | null>(null);
   const activeReveal =
-    markReveal !== null && markReveal.requestId > revealRequestId
-      ? markReveal
+    markReveal !== null &&
+    relativePath !== null &&
+    markReveal.path === relativePath &&
+    revealRequestId <= markReveal.baselineExternalRequestId
+      ? { line: markReveal.line, requestId: markReveal.requestId }
       : { line: revealLine, requestId: revealRequestId };
   const revealHandled =
     activeReveal.line === null ||
@@ -1198,10 +1208,17 @@ export default function FilePreviewPanel({
       ? collectXcodeMarks(file.data.contents)
       : [];
   const jumpToMark = (line: number) => {
+    if (relativePath === null) return;
     setHandledReveal(null);
+    // Stay above ordinary external reveal ids so a later equal external id is not treated as handled.
+    const markRequestBase = 1_000_000_000;
+    const priorMarkRequestId =
+      markReveal?.path === relativePath ? markReveal.requestId : markRequestBase;
     setMarkReveal({
+      path: relativePath,
       line,
-      requestId: Math.max(revealRequestId, markReveal?.requestId ?? 0) + 1,
+      requestId: Math.max(markRequestBase, priorMarkRequestId) + 1,
+      baselineExternalRequestId: revealRequestId,
     });
   };
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
@@ -1458,8 +1475,8 @@ export default function FilePreviewPanel({
               name={relativePath}
               delimiter={renderTable ? tableDelimiter : null}
               workspaceMutationId={workspaceMutationId}
-              revealLine={revealLine}
-              revealRequestId={revealRequestId}
+              revealLine={activeReveal.line}
+              revealRequestId={activeReveal.requestId}
               wordWrap={wordWrap}
             />
           ) : relativePath &&
