@@ -1,5 +1,6 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   DraftId,
@@ -7,6 +8,11 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
 } from "../../composerDraftStore";
+import { threadContextReference } from "../../lib/composerContextRecords";
+import {
+  collectInlineContextIds,
+  formatInlineContextReference,
+} from "../../lib/composerContextReferences";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
 
 const environmentId = EnvironmentId.make("remote-environment");
@@ -83,6 +89,39 @@ describe("queued message file edits", () => {
     ).toBe("kept");
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
     expect(store.getComposerDraft(threadTarget)?.files).toEqual([file]);
+    expect(store.getComposerDraft(editTarget)).toBeNull();
+  });
+
+  it("keeps context added to an edit when another client starts the queued run", () => {
+    const store = useComposerDraftStore.getState();
+    const mention = threadContextRecord(
+      scopeThreadRef(environmentId, ThreadId.make("thread:other")),
+      "Other thread",
+    );
+    store.setPrompt(editTarget, "Original message");
+    store.addThreadContexts(editTarget, [mention]);
+    expect(
+      recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
+    ).toBe("kept");
+    const kept = store.getComposerDraft(threadTarget);
+    expect(kept?.threadContexts).toEqual([mention]);
+    expect(collectInlineContextIds(kept?.prompt ?? "")).toEqual([mention.contextId]);
+    expect(store.getComposerDraft(editTarget)).toBeNull();
+  });
+
+  it("leaves out a mention typed over and a chip with no record when keeping an edit", () => {
+    const store = useComposerDraftStore.getState();
+    const threadRecord = (id: string) =>
+      threadContextRecord(scopeThreadRef(environmentId, ThreadId.make(id)), id);
+    const deadChip = formatInlineContextReference(threadContextReference(threadRecord("dead")));
+    store.setThreadContexts(editTarget, [threadRecord("typed-over")]);
+    store.setPrompt(editTarget, `Edited ${deadChip}`);
+    expect(
+      recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
+    ).toBe("kept");
+    const kept = store.getComposerDraft(threadTarget);
+    expect(kept?.prompt).toBe("Edited ");
+    expect(kept?.threadContexts).toEqual([]);
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
 
