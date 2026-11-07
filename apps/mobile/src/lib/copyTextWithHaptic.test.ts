@@ -35,7 +35,9 @@ describe("copyTextWithHaptic", () => {
   it("triggers haptic feedback without waiting for the clipboard promise", () => {
     copyTextWithHaptic("trace-123");
 
-    expect(mocks.setStringAsync).toHaveBeenCalledWith("trace-123");
+    expect(mocks.setStringAsync).toHaveBeenCalledWith("trace-123", {
+      android: { isSensitive: false },
+    });
     expect(mocks.impactAsync).toHaveBeenCalledWith("light");
   });
 
@@ -45,15 +47,22 @@ describe("copyTextWithHaptic", () => {
       feedback: "selection",
     });
 
-    expect(mocks.setStringAsync).toHaveBeenCalledWith("work output");
+    expect(mocks.setStringAsync).toHaveBeenCalledWith("work output", {
+      android: { isSensitive: false },
+    });
     expect(mocks.selectionAsync).toHaveBeenCalledOnce();
     expect(mocks.impactAsync).not.toHaveBeenCalled();
   });
 
-  it("reports whether the clipboard write succeeded", async () => {
+  it("marks sensitive clipboard writes and reports success", async () => {
     mocks.setStringAsync.mockResolvedValueOnce(undefined);
 
-    await expect(tryCopyTextWithHaptic("thread-123")).resolves.toBe(true);
+    await expect(tryCopyTextWithHaptic("fake-credential", { isSensitive: true })).resolves.toBe(
+      true,
+    );
+    expect(mocks.setStringAsync).toHaveBeenCalledWith("fake-credential", {
+      android: { isSensitive: true },
+    });
   });
 
   it("returns false when the clipboard write fails", async () => {
