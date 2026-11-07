@@ -178,7 +178,7 @@ const projectIdsOf = Effect.fn("easProjectId.projectIdsOf")(function* (dir: stri
   }
   for (const file of JSON_CONFIG_FILES) {
     const json = yield* fs.readFileString(path.join(dir, file)).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catch((error) =>
         Effect.succeed(error.reason._tag === "NotFound" ? Option.none<string>() : null),
       ),

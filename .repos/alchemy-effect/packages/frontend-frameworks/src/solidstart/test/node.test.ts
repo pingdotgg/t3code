@@ -4,25 +4,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import { describe, expect, it } from "vitest";
-import {
-  NODE_BUNDLE_CONDITIONS,
-  NODE_SERVE_ENTRY_FILE_NAME,
-} from "../../core/NodeServe.ts";
+import { NODE_BUNDLE_CONDITIONS, NODE_SERVE_ENTRY_FILE_NAME } from "../../core/NodeServe.ts";
+import { NITRO_HANDLER_SPECIFIER, NITRO_PRESET, makeNodeTarget, target } from "../node.ts";
 import type { NitroConfigSlice } from "../UserConfig.ts";
-import {
-  NITRO_HANDLER_SPECIFIER,
-  NITRO_PRESET,
-  makeNodeTarget,
-  target,
-} from "../node.ts";
 
 const runWithNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ): Promise<A> =>
   Effect.runPromise(
-    Effect.scoped(effect).pipe(
-      Effect.provide(NodeServices.layer),
-    ) as Effect.Effect<A, E>,
+    Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer)) as Effect.Effect<A, E>,
   );
 
 describe("makeNodeTarget", () => {
@@ -49,9 +39,7 @@ describe("makeNodeTarget", () => {
   });
 
   it("exports the node-listener handler specifier for user entries", () => {
-    expect(NITRO_HANDLER_SPECIFIER).toBe(
-      "nitropack/presets/node/runtime/node-listener",
-    );
+    expect(NITRO_HANDLER_SPECIFIER).toBe("nitropack/presets/node/runtime/node-listener");
     expect(NITRO_HANDLER_SPECIFIER).not.toContain("aws-lambda");
   });
 
@@ -89,9 +77,7 @@ describe("finish", () => {
         );
       }),
     );
-    expect(output.serverModules?.[0]?.name).toBe(
-      `server/${NODE_SERVE_ENTRY_FILE_NAME}`,
-    );
+    expect(output.serverModules?.[0]?.name).toBe(`server/${NODE_SERVE_ENTRY_FILE_NAME}`);
     const source = String(output.serverModules?.[0]?.content);
     expect(source).toContain("/health");
     expect(source).toContain("process.env.PORT");

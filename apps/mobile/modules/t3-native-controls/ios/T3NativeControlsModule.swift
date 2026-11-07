@@ -10,6 +10,7 @@ public final class T3NativeControlsModule: Module {
   private var filePresentation: T3NativeFilePresentation?
 
   public func definition() -> ModuleDefinition {
+    Events("videoPlaybackChange")
     Constants {
       if #available(iOS 26.0, *) {
         return [
@@ -65,7 +66,8 @@ public final class T3NativeControlsModule: Module {
                            identifier: identifier, promise: promise)
     }.runOnQueue(.main)
 
-    AsyncFunction("presentFiles") { (urls: [URL], titles: [String], selectedIndex: Int, sourceIdentifiers: [String], identifier: String, promise: Promise) in
+    // A nil URL is still resolving in JS and arrives later through updateFile.
+    AsyncFunction("presentFiles") { (urls: [URL?], titles: [String], selectedIndex: Int, sourceIdentifiers: [String], identifier: String, promise: Promise) in
       guard !urls.isEmpty, urls.count == titles.count, urls.count == sourceIdentifiers.count,
         urls.indices.contains(selectedIndex)
       else {
@@ -78,6 +80,11 @@ public final class T3NativeControlsModule: Module {
         return
       }
       file.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
+    }.runOnQueue(.main)
+
+    // A nil URL marks the item as one that could not be resolved.
+    AsyncFunction("updateFile") { (identifier: String, index: Int, url: URL?) in
+      if self.filePresentation?.identifier == identifier { self.filePresentation?.update(index: index, url: url) }
     }.runOnQueue(.main)
 
     OnDestroy {
@@ -247,10 +254,16 @@ public final class T3NativeControlsModule: Module {
         userInfo: [NSLocalizedDescriptionKey: "The video preview is no longer available."]
       )
     }
-    let presentation = T3NativeVideoPresentation(identifier: identifier, url: url, title: title) { [weak self] error in
-      self?.videoPresentation = nil
-      if let error { promise.reject(error) } else { promise.resolve(nil) }
-    }
+    let presentation = T3NativeVideoPresentation(
+      identifier: identifier, url: url, title: title,
+      onPlaybackChange: { [weak self] isPlaying in
+        self?.sendEvent("videoPlaybackChange", ["identifier": identifier, "isPlaying": isPlaying])
+      },
+      completion: { [weak self] error in
+        self?.videoPresentation = nil
+        if let error { promise.reject(error) } else { promise.resolve(nil) }
+      }
+    )
     videoPresentation = presentation
     presentation.present(from: presenter, sources: presentationSources, sourceIdentifier: sourceIdentifier)
   }

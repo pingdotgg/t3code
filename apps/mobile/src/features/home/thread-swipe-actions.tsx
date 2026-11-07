@@ -50,8 +50,8 @@ const ACTION_ICON_SIZE = 15;
 const COMPACT_ACTION_CIRCLE_SIZE = 28;
 const COMPACT_ACTION_ICON_SIZE = 13;
 
-export const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
-export const THREAD_SWIPE_SPRING = {
+const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
+const THREAD_SWIPE_SPRING = {
   damping: 26,
   mass: 0.7,
   overshootClamping: true,
@@ -121,6 +121,9 @@ function resolveSecondaryAction(input: {
 
 /** Keep the scroll gate in context so scroll start cannot re-render every row and its subscriptions. */
 const SwipeableScrollGateContext = createContext(true);
+// Swipeable rebuilds its native pan gesture whenever its config changes identity, so the props
+// that feed it stay stable across row re-renders such as selection.
+const FAIL_OFFSET_Y: [number, number] = [-10, 10];
 
 export function SwipeableScrollGateProvider(props: {
   readonly enabled: boolean;
@@ -161,6 +164,7 @@ export function useSwipeableScrollGate(options?: {
       settleTimerRef.current = null;
     }
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the scroll settle timer on unmount
   useEffect(() => clearSettle, [clearSettle]);
 
   const onScrollBeginDrag = useCallback(
@@ -286,6 +290,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     pending.resolve();
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the row's Reanimated animations and settles a pending dismissal on unmount
   useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -299,6 +304,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   }, [actionOpacity, collapse, fallbackTranslation, finishDismiss]);
 
   // Reset recycled rows in place so their child views stay mounted.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the swipeable and its shared values when the list recycles this row for new content
   useLayoutEffect(() => {
     if (contentRef.current === content) return;
     contentRef.current = content;
@@ -306,6 +312,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     restoreRow();
   }, [content, finishDismiss, restoreRow]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the open swipeable and resets its shared values when the row goes dormant
   useLayoutEffect(() => {
     if (props.dormant && activeTranslationRef.current && dismissalRef.current === null) {
       restoreRow();
@@ -336,6 +343,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     },
     [actionOpacity, collapse, dismissing, finishDismiss, rowWidth],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this row's animated dismissal in the module-level thread dismissal registry
   useLayoutEffect(
     () =>
       props.dormant
@@ -402,11 +410,77 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     },
     [content],
   );
-  const handleWillOpen = () => {
-    if (!props.dormant && !dismissalRef.current && swipeableRef.current) {
-      props.onSwipeableWillOpen?.(swipeableRef.current);
+  const { dormant, onSwipeableWillOpen, backgroundColor, containerStyle } = props;
+  const handleWillOpen = useCallback(() => {
+    if (!dormant && !dismissalRef.current && swipeableRef.current) {
+      onSwipeableWillOpen?.(swipeableRef.current);
     }
+  }, [dormant, onSwipeableWillOpen]);
+  const handleSwipeableClose = useCallback(() => {
+    if (swipeableRef.current) onSwipeableClose?.(swipeableRef.current);
+  }, [onSwipeableClose]);
+  const compactActions = props.compactActions === true;
+  const { secondaryAction, threadTitle } = props;
+  // Swipeable calls this on every render; returning the previous element while nothing it shows
+  // changed keeps a selection change from re-rendering the hidden actions.
+  const rightActions = useRef<{ deps: readonly unknown[]; element: ReactNode } | null>(null);
+  const renderRightActions = (
+    _progress: SharedValue<number>,
+    translation: SharedValue<number>,
+    methods: SwipeableMethods,
+  ) => {
+    const deps = [
+      dormant,
+      translation,
+      methods,
+      actionStyle,
+      backgroundColor,
+      compactActions,
+      fullSwipeAction,
+      fullSwipeThreshold,
+      handleFullSwipeArmedChange,
+      primaryAction,
+      commitPrimaryAction,
+      onDelete,
+      secondaryAction,
+      threadTitle,
+    ];
+    const cached = rightActions.current;
+    if (cached && deps.every((dep, index) => Object.is(dep, cached.deps[index]))) {
+      return cached.element;
+    }
+    const element = dormant ? null : (
+      <Animated.View
+        ref={() => {
+          activeTranslationRef.current = translation;
+        }}
+        style={actionStyle}
+      >
+        <ThreadSwipeActions
+          backgroundColor={backgroundColor}
+          compact={compactActions}
+          fullSwipeAction={fullSwipeAction}
+          fullSwipeThreshold={fullSwipeThreshold}
+          onFullSwipeArmedChange={handleFullSwipeArmedChange}
+          primaryAction={{ ...primaryAction, onPress: commitPrimaryAction }}
+          secondaryAction={resolveSecondaryAction({
+            close: () => methods.close(),
+            onDelete,
+            secondaryAction,
+            threadTitle,
+          })}
+          translation={translation}
+        />
+      </Animated.View>
+    );
+    rightActions.current = { deps, element };
+    return element;
   };
+  const childrenContainerStyle = useMemo(() => ({ backgroundColor }), [backgroundColor]);
+  const swipeableContainerStyle = useMemo(
+    () => [{ backgroundColor }, containerStyle],
+    [backgroundColor, containerStyle],
+  );
 
   return (
     <Animated.View style={dismissStyle}>
@@ -419,57 +493,29 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
         <ReanimatedSwipeable
           ref={swipeableRef}
           animationOptions={THREAD_SWIPE_SPRING}
-          childrenContainerStyle={{ backgroundColor: props.backgroundColor }}
-          containerStyle={[{ backgroundColor: props.backgroundColor }, props.containerStyle]}
+          childrenContainerStyle={childrenContainerStyle}
+          containerStyle={swipeableContainerStyle}
           dragOffsetFromRight={-8}
           enabled={!props.dormant && !isDismissing && props.enabled !== false && gateEnabled}
           enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
           // Reject vertical pans via patched RNGH failOffsetY; simultaneous trackpad scrolls otherwise open rows on horizontal drift.
-          failOffsetY={[-10, 10]}
+          failOffsetY={FAIL_OFFSET_Y}
           friction={1}
-          onSwipeableClose={() => {
-            if (swipeableRef.current) {
-              props.onSwipeableClose?.(swipeableRef.current);
-            }
-          }}
+          onSwipeableClose={handleSwipeableClose}
           onSwipeableRelease={handleRelease}
           onSwipeableOpenStartDrag={handleWillOpen}
           onSwipeableWillOpen={handleWillOpen}
           overshootFriction={1}
           overshootRight
-          renderRightActions={(_progress, translation, methods) =>
-            props.dormant ? null : (
-              <Animated.View
-                ref={() => {
-                  activeTranslationRef.current = translation;
-                }}
-                style={actionStyle}
-              >
-                <ThreadSwipeActions
-                  backgroundColor={props.backgroundColor}
-                  compact={props.compactActions === true}
-                  fullSwipeAction={fullSwipeAction}
-                  fullSwipeThreshold={fullSwipeThreshold}
-                  onFullSwipeArmedChange={handleFullSwipeArmedChange}
-                  primaryAction={{
-                    ...primaryAction,
-                    onPress: commitPrimaryAction,
-                  }}
-                  secondaryAction={resolveSecondaryAction({
-                    close: () => methods.close(),
-                    onDelete: props.onDelete,
-                    secondaryAction: props.secondaryAction,
-                    threadTitle: props.threadTitle,
-                  })}
-                  translation={translation}
-                />
-              </Animated.View>
-            )
-          }
+          renderRightActions={renderRightActions}
           rightThreshold={actionsWidth * 0.42}
           simultaneousWith={props.simultaneousWith}
         >
-          {props.children(close)}
+          {
+            /* oxlint-disable react/refs -- The render callback receives a close/open handler; only invoking that handler accesses the ref. */
+            props.children(close)
+            /* oxlint-enable react/refs */
+          }
         </ReanimatedSwipeable>
       </View>
     </Animated.View>
@@ -670,7 +716,7 @@ function SwipeActionButton(props: {
   );
 }
 
-export function ThreadSwipeActions(props: {
+function ThreadSwipeActions(props: {
   readonly backgroundColor: ColorValue;
   readonly compact: boolean;
   readonly fullSwipeAction?: "delete" | "primary";

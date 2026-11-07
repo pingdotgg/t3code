@@ -406,7 +406,7 @@ function makeReplayCreateHost(controller: MuseReplayController) {
   };
 }
 
-const DEFAULT_MUSE_SETTINGS = Schema.decodeUnknownSync(MuseSettings)({ enabled: true });
+const DEFAULT_MUSE_SETTINGS = Schema.decodeSync(MuseSettings)({ enabled: true });
 
 export function layer(input: {
   readonly scenario: string;

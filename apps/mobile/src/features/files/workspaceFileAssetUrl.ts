@@ -16,13 +16,10 @@ export function useWorkspaceFileAssetUrlState(props: {
   readonly threadId: ThreadId | null;
   readonly draftCwd?: string | null;
 }) {
-  const absolutePath = useMemo(
-    () =>
-      props.cwd !== null && props.relativePath !== null
-        ? resolveWorkspaceFilePath(props.cwd, props.relativePath)
-        : null,
-    [props.cwd, props.relativePath],
-  );
+  const absolutePath =
+    props.cwd !== null && props.relativePath !== null
+      ? resolveWorkspaceFilePath(props.cwd, props.relativePath)
+      : null;
 
   const relativePath = props.relativePath;
   const draftCwd = props.draftCwd ?? null;

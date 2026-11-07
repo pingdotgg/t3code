@@ -4,12 +4,9 @@ import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./metho
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
+import { getConnectionCatalog, setConnectionCatalog } from "./methods/connectionCatalog.ts";
 import {
-  clearConnectionCatalog,
-  getConnectionCatalog,
-  setConnectionCatalog,
-} from "./methods/connectionCatalog.ts";
-import {
+  getHostEnvironmentId,
   getLocalEnvironmentEnabled,
   setLocalEnvironmentEnabled,
 } from "./methods/localEnvironment.ts";
@@ -26,7 +23,6 @@ import {
   ensureSshEnvironment,
   fetchSshEnvironmentDescriptor,
   fetchSshSessionState,
-  issueSshWebSocketTicket,
   resolveSshHost,
   resolveSshPasswordPrompt,
 } from "./methods/sshEnvironment.ts";
@@ -41,10 +37,12 @@ import {
   getAppBranding,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
-  getRelayTelemetryEnabled,
+  installRelayTelemetryEnabled,
   getSystemLocale,
+  getPreferredSystemLanguages,
   getWindowFullscreenState,
   openExternal,
+  readMedia,
   openSystemSettings,
   checkSystemPermission,
   pasteAsText,
@@ -96,12 +94,14 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(takeLegacyLocalStorage);
   yield* ipc.handle(completeLegacyLocalStorage);
   yield* ipc.handleSync(getAppBranding);
-  yield* ipc.handleSync(getRelayTelemetryEnabled);
+  yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
+  yield* ipc.handleSync(getPreferredSystemLanguages);
   yield* ipc.handleSync(getWindowFullscreenState);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handleSync(getLocalEnvironmentEnabled);
   yield* ipc.handle(setLocalEnvironmentEnabled);
+  yield* ipc.handle(getHostEnvironmentId);
   yield* ipc.handle(getLocalEnvironmentBearerToken);
 
   yield* ipc.handle(getClientSettings);
@@ -120,7 +120,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(dismissSnapShotAnimation);
   yield* ipc.handle(acknowledgeSnapShot);
   yield* ipc.handle(setConnectionCatalog);
-  yield* ipc.handle(clearConnectionCatalog);
 
   yield* ipc.handle(discoverSshHosts);
   yield* ipc.handle(resolveSshHost);
@@ -129,7 +128,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(fetchSshEnvironmentDescriptor);
   yield* ipc.handle(bootstrapSshBearerSession);
   yield* ipc.handle(fetchSshSessionState);
-  yield* ipc.handle(issueSshWebSocketTicket);
   yield* ipc.handle(resolveSshPasswordPrompt);
 
   yield* ipc.handle(getServerExposureState);
@@ -148,6 +146,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setTheme);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
+  yield* ipc.handle(readMedia);
   yield* ipc.handle(receiveProviderAuthCallback);
   yield* ipc.handle(cancelProviderAuthCallback);
   yield* ipc.handle(openSystemSettings);

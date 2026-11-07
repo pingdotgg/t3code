@@ -1,6 +1,13 @@
 {
   "customNotices": [
     {
+      "name": "opencode Office viewers",
+      "bundles": ["web"],
+      "license": "MIT",
+      "sourceUrl": "https://github.com/anomalyco/opencode",
+      "noticeFile": "apps/web/src/components/files/office/LICENSE.opencode"
+    },
+    {
       "bundles": ["desktop", "web"],
       "license": "MIT",
       "name": "Ionic keyboard assist",
@@ -222,6 +229,107 @@
     }
   ],
   "packageOverrides": [
+    {
+      "name": "entities",
+      "version": "8.1.0",
+      "license": "BSD-2-Clause",
+      "sourceUrl": "https://github.com/fb55/entities"
+    },
+    {
+      "name": "@nodable/entities",
+      "version": "2.1.1",
+      "sourceUrl": "https://github.com/nodable/val-parsers",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 Nodable"]
+      }
+    },
+    {
+      "name": "xml-naming",
+      "version": "0.1.0",
+      "sourceUrl": "https://github.com/NaturalIntelligence/xml-naming",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 Natural Intelligence"]
+      }
+    },
+    {
+      "name": "fast-xml-parser",
+      "version": "5.7.3",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/NaturalIntelligence/fast-xml-parser"
+    },
+    {
+      "name": "@betteroffice/xlsx",
+      "version": "0.3.0",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/openooxml/betteroffice",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
+    },
+    {
+      "name": "@betteroffice/pptx",
+      "version": "0.2.0",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/openooxml/betteroffice",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
+    },
+    {
+      "name": "@betteroffice/docx",
+      "version": "0.4.3",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/openooxml/betteroffice",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
+    },
+    {
+      "name": "character-entities",
+      "version": "2.0.2",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/wooorm/character-entities",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>"]
+      }
+    },
+    {
+      "name": "saxes",
+      "version": "6.0.0",
+      "license": "ISC",
+      "sourceUrl": "https://github.com/lddubeau/saxes",
+      "generatedNotice": {
+        "licenseId": "ISC",
+        "copyrights": [
+          "Copyright (c) 2018-2021 Louis-Dominique Dubeau",
+          "Copyright (c) Contributors",
+          "Copyright (c) Isaac Z. Schlueter and Contributors"
+        ]
+      }
+    },
+    {
+      "name": "pdfjs-dist",
+      "version": "6.4.299",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/mozilla/pdf.js"
+    },
+    {
+      "name": "@betteroffice/fonts",
+      "version": "0.4.0",
+      "license": "Apache-2.0 AND OFL-1.1",
+      "generatedNotices": [
+        { "licenseId": "Apache-2.0" },
+        {
+          "licenseId": "OFL-1.1",
+          "copyrights": [
+            "Copyright 2013 The Carlito Project Authors (https://github.com/googlefonts/carlito), with Reserved Font Name \"Carlito\""
+          ]
+        }
+      ]
+    },
     {
       "name": "remark-math",
       "version": "6.0.0",
@@ -745,6 +853,21 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
       }
+    },
+    {
+      "name": "sql.js",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/sql-js/sql.js"
+    },
+    {
+      "name": "tiff",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/image-js/tiff"
+    },
+    {
+      "name": "iobuffer",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/image-js/iobuffer"
     }
   ]
 }

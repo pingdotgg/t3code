@@ -1,9 +1,9 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { hasDismissedResumeCompaction } from "@t3tools/client-runtime/state/context-window";
 import {
   hasAvailableCompactionProvider,
-  hasDismissedResumeCompaction,
   resolveContextWindowModelDisplayName,
   shouldReserveContextWindowMeter,
 } from "./ContextWindowMeter.logic";
@@ -99,7 +99,7 @@ describe("resolveContextWindowModelDisplayName", () => {
         },
         modelOptionsByInstance,
       ),
-    ).toBe("5.6 Sol");
+    ).toBe("GPT-5.6 Sol");
   });
 });
 

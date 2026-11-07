@@ -6,8 +6,9 @@ import {
   buildReviewSubmission,
   buildReviewerRequest,
   pullRequestLookup,
+  referenceSearchQuery,
+  toRepositoryReferences,
   toPullRequestWatchFingerprint,
-  decodePullRequestDetailJson,
   decodePullRequestFilesJson,
   decodePullRequestStacksJson,
   LenientPullRequestList,
@@ -128,9 +129,6 @@ const reviewCommit = ({ commit: { authors, ...commit } }: Json) => ({
   commit: {
     messageHeadline: "",
     committedDate: "",
-    additions: 0,
-    deletions: 0,
-    parents: { totalCount: 1 },
     ...commit,
     authors: {
       nodes: nodesIn(authors).map((author) => ({
@@ -296,6 +294,20 @@ describe("pull request list decoding", () => {
     ]);
   });
 
+  it("keeps review required when an approval falls short of the branch's required count", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          {
+            reviewDecision: "REVIEW_REQUIRED",
+            latestReviews: [{ author: user("octocat"), state: "APPROVED" }],
+          },
+        ]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.reviewDecision)).toEqual(["review-required"]);
+  });
+
   it("skips malformed entries but still counts them, so paging does not stop early", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(listJson([{}, { number: "not-a-number" }])),
@@ -366,6 +378,7 @@ describe("pull request detail decoding", () => {
             baseRefName: "main",
             headRefOid: "abc123",
             isCrossRepository: false,
+            maintainerCanModify: true,
             headRepositoryOwner: null,
             headRepository: null,
             headRef: null,
@@ -382,7 +395,10 @@ describe("pull request detail decoding", () => {
                 {
                   commit: {
                     statusCheckRollup: {
-                      contexts: { nodes: rollup, pageInfo: { hasNextPage: false } },
+                      contexts: {
+                        nodes: rollup,
+                        pageInfo: { hasNextPage: false, endCursor: null },
+                      },
                     },
                   },
                 },
@@ -397,6 +413,30 @@ describe("pull request detail decoding", () => {
     rollup: ReadonlyArray<Record<string, unknown>>,
     pullRequest?: Record<string, unknown>,
   ) => expectSuccess(decodePullRequestCoreJson(coreJson(rollup, pullRequest)));
+
+  it.each([
+    [{}, true],
+    [{ viewerDidAuthor: false }, false],
+    [{ isCrossRepository: false }, false],
+    [{ state: "CLOSED" }, false],
+    [{ headRepositoryOwner: { __typename: "Organization", login: "team" } }, false],
+    [{ headRepository: null }, false],
+  ])(
+    "reads maintainer edits and lets only the author of an open personal fork change them: %j",
+    (overrides, allowed) => {
+      const detail = detailOf([], {
+        maintainerCanModify: false,
+        isCrossRepository: true,
+        viewerDidAuthor: true,
+        headRepositoryOwner: { __typename: "User", login: "octocat" },
+        headRepository: { nameWithOwner: "octocat/t3code", viewerPermission: "ADMIN" },
+        headRef: { id: "REF_7" },
+        ...overrides,
+      });
+      expect(detail.maintainerCanModify).toBe(false);
+      expect(detail.canEditMaintainerEdits).toBe(allowed);
+    },
+  );
 
   const detailJson = JSON.stringify({
     comments: [{ id: "c1", body: "second", createdAt: "2026-07-04T00:00:00Z" }],
@@ -450,6 +490,8 @@ describe("pull request detail decoding", () => {
               nodes: ((raw["commits"] ?? []) as ReadonlyArray<Record<string, unknown>>).map(
                 ({ authors, ...commit }) => ({
                   commit: {
+                    id: "commit-id",
+                    parents: { totalCount: 1 },
                     ...commit,
                     authors: {
                       nodes: ((authors ?? []) as ReadonlyArray<Record<string, unknown>>).map(
@@ -487,27 +529,12 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
-  it("reads an auto-merge request and strategy, its null as off and its absence as neither", () => {
+  it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
       autoMergeMethod: "squash",
     });
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
-    expect(
-      expectSuccess(
-        decodePullRequestDetailJson(
-          JSON.stringify({
-            number: 7,
-            title: "Detail",
-            url: "https://github.com/pingdotgg/t3code/pull/7",
-            headRefName: "feat/detail",
-            baseRefName: "main",
-            createdAt: "2026-07-01T00:00:00Z",
-            updatedAt: "2026-07-05T00:00:00Z",
-          }),
-        ),
-      ).autoMergeEnabled,
-    ).toBeUndefined();
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
@@ -638,25 +665,27 @@ describe("review thread decoding", () => {
       },
     });
 
-  it("omits misleading line counts from merge commits", () => {
+  it("selects stats only for non-merge activity commits", () => {
     const result = expectSuccess(
-      decodeReviewThreadsJson(
+      decodePullRequestActivityJson(
         JSON.stringify({
           data: {
             repository: {
               pullRequest: {
-                reviewThreads: { totalCount: 0, nodes: [] },
+                author: null,
+                comments: { nodes: [], pageInfo: LAST_PAGE },
+                reviews: { nodes: [], pageInfo: LAST_PAGE },
                 commits: {
-                  nodes: [
-                    {
-                      commit: {
-                        oid: "merge123",
-                        additions: 36_858,
-                        deletions: 12_928,
-                        parents: { totalCount: 2 },
-                      },
+                  nodes: [1, 2].map((parents) => ({
+                    commit: {
+                      id: "commit-" + parents,
+                      oid: "sha-" + parents,
+                      messageHeadline: "Commit",
+                      committedDate: "2026-07-05T00:00:00Z",
+                      parents: { totalCount: parents },
+                      authors: { nodes: [] },
                     },
-                  ],
+                  })),
                 },
               },
             },
@@ -664,8 +693,8 @@ describe("review thread decoding", () => {
         }),
       ),
     );
-
-    expect([...result.commitStats]).toEqual([]);
+    expect(result.nonMergeCommitIds).toEqual(["commit-1"]);
+    expect(result.commits?.map((commit) => commit.oid)).toEqual(["sha-1", "sha-2"]);
   });
 
   it("decodes the newest commits off the same connection, oldest to newest", () => {
@@ -1450,6 +1479,7 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.patch).toBe(
       [
         String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        "similarity index 100%",
         String.raw`rename from " old\\name.ts "`,
         String.raw`rename to " new\\name.ts "`,
         String.raw`--- "a/ old\\name.ts "`,
@@ -1505,6 +1535,7 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.patch).toBe(
       [
         "diff --git a/src/old.ts b/src/new.ts",
+        "similarity index 0%",
         "rename from src/old.ts",
         "rename to src/new.ts",
         "--- a/src/old.ts",
@@ -1613,6 +1644,40 @@ describe("host-native stack decoding", () => {
 const decodeWatchedResult = Schema.decodeUnknownSync(PullRequestWatchFingerprint.result);
 const decodeWatched = (pullRequest: object) =>
   decodeWatchedResult({ repository: { pullRequest } }).repository!.pullRequest!;
+
+describe("repository references", () => {
+  it.each([
+    [undefined, "repo:o/r sort:updated-desc"],
+    ["12", "repo:o/r sort:updated-desc"],
+    ['say "hi"', 'repo:o/r in:title "say \\"hi\\"" sort:updated-desc'],
+  ])("searches %j as %j", (query, q) => {
+    expect(referenceSearchQuery("o/r", query)).toBe(q);
+  });
+
+  it("puts the exact number first and maps issue and pull request states", () => {
+    const result = toRepositoryReferences({
+      search: {
+        pageInfo: { hasNextPage: true },
+        nodes: [
+          { __typename: "PullRequest", number: 3, title: "Merged", pullRequestState: "MERGED" },
+          { __typename: "Issue", number: 2, title: "Closed", issueState: "CLOSED" },
+          null,
+        ],
+      },
+      repository: {
+        issueOrPullRequest: { __typename: "Issue", number: 1, title: "Exact", issueState: "OPEN" },
+      },
+    });
+    expect(result).toEqual({
+      items: [
+        { reference: "#1", kind: "issue", number: 1, title: "Exact", state: "open" },
+        { reference: "#3", kind: "change-request", number: 3, title: "Merged", state: "merged" },
+        { reference: "#2", kind: "issue", number: 2, title: "Closed", state: "closed" },
+      ],
+      truncated: true,
+    });
+  });
+});
 
 describe("pull request lookups", () => {
   it("refuses what GitHub cannot name, so one bad row cannot fail a whole batch", () => {
