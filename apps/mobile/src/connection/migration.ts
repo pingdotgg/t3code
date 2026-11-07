@@ -13,6 +13,7 @@ import {
 } from "@t3tools/client-runtime/platform";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 const LegacySavedRemoteConnection = Schema.Struct({
@@ -29,9 +30,10 @@ const LegacySavedRemoteConnection = Schema.Struct({
 });
 
 const LegacyConnectionDocument = Schema.Struct({
-  connections: Schema.optionalKey(Schema.Array(LegacySavedRemoteConnection)),
+  connections: Schema.optionalKey(Schema.Array(Schema.Unknown)),
 });
 const decodeLegacyConnectionDocument = Schema.decodeUnknownEffect(LegacyConnectionDocument);
+const decodeLegacySavedRemoteConnection = Schema.decodeUnknownOption(LegacySavedRemoteConnection);
 
 export class LegacyConnectionMigrationError extends Schema.TaggedError<LegacyConnectionMigrationError>()(
   "LegacyConnectionMigrationError",
@@ -109,5 +111,14 @@ export const migrateLegacyConnectionCatalog = Effect.fn(
     ),
   );
 
-  return (legacy.connections ?? []).reduce(migrateConnection, EMPTY_CONNECTION_CATALOG_DOCUMENT);
+  const entries = legacy.connections ?? [];
+  const connections = entries.flatMap((entry) =>
+    Option.toArray(decodeLegacySavedRemoteConnection(entry)),
+  );
+  if (connections.length < entries.length) {
+    yield* Effect.logWarning("Dropping unreadable legacy mobile connections", {
+      count: entries.length - connections.length,
+    });
+  }
+  return connections.reduce(migrateConnection, EMPTY_CONNECTION_CATALOG_DOCUMENT);
 });

@@ -34,24 +34,35 @@ function makeStorage(initial: Readonly<Record<string, string>>) {
 }
 
 describe("mobile connection catalog storage", () => {
-  it.effect("recovers from a corrupt current catalog", () =>
+  it.effect("keeps a catalog it cannot read until an explicit update replaces it", () =>
     Effect.gen(function* () {
+      const raw = JSON.stringify({
+        schemaVersion: 1,
+        targets: [{ _tag: "FutureConnectionTarget", environmentId: "future-environment" }],
+        profiles: [],
+        credentials: [],
+        remoteDpopTokens: [],
+      });
       const memory = makeStorage({
-        [CONNECTION_CATALOG_KEY]: "{not-json",
+        [CONNECTION_CATALOG_KEY]: raw,
       });
       const catalog = yield* make().pipe(
         Effect.provideService(MobileSecureStorage.MobileSecureStorage, memory.storage),
       );
 
       expect((yield* catalog.read).targets).toEqual([]);
-      expect(memory.deleted).toEqual([CONNECTION_CATALOG_KEY]);
+      expect(memory.deleted).toEqual([]);
+      expect(memory.values.get(CONNECTION_CATALOG_KEY)).toBe(raw);
+
+      yield* catalog.update((document) => document);
+      expect(memory.values.get(CONNECTION_CATALOG_KEY)).not.toBe(raw);
     }),
   );
 
   it.effect("replaces and removes a corrupt legacy catalog", () =>
     Effect.gen(function* () {
       const memory = makeStorage({
-        [LEGACY_CONNECTIONS_KEY]: JSON.stringify({ connections: [{ invalid: true }] }),
+        [LEGACY_CONNECTIONS_KEY]: "{not-json",
       });
       const catalog = yield* make().pipe(
         Effect.provideService(MobileSecureStorage.MobileSecureStorage, memory.storage),
@@ -87,7 +98,7 @@ describe("mobile connection catalog storage", () => {
       );
 
       expect((yield* catalog.read).targets).toHaveLength(1);
-      expect(memory.deleted).toEqual([CONNECTION_CATALOG_KEY, LEGACY_CONNECTIONS_KEY]);
+      expect(memory.deleted).toEqual([LEGACY_CONNECTIONS_KEY]);
 
       yield* catalog.update((document) => document);
       expect(memory.values.has(CONNECTION_CATALOG_KEY)).toBe(true);

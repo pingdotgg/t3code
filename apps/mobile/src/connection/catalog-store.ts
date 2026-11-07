@@ -89,9 +89,9 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
     let catalog: ConnectionCatalogDocumentType;
     if (raw !== null && raw.trim() !== "") {
       catalog = yield* decodeCatalog(raw).pipe(
+        // Do not delete it: a newer bundle may have written a shape this one cannot read.
         Effect.catch((error) =>
-          Effect.logWarning("Discarding corrupt mobile connection catalog", error).pipe(
-            Effect.andThen(deleteItem(CONNECTION_CATALOG_KEY)),
+          Effect.logWarning("Ignoring unreadable mobile connection catalog", error).pipe(
             Effect.andThen(loadLegacyCatalog()),
           ),
         ),

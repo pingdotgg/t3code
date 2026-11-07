@@ -53,11 +53,23 @@ describe("migrateLegacyConnectionCatalog", () => {
     }),
   );
 
-  it.effect("drops invalid legacy bearer entries without credentials", () =>
+  it.effect("drops invalid legacy entries and keeps the valid ones", () =>
     Effect.gen(function* () {
+      const validEnvironmentId = EnvironmentId.make("valid-bearer");
       const catalog = yield* migrateLegacyConnectionCatalog(
         JSON.stringify({
           connections: [
+            { invalid: true },
+            {
+              environmentId: validEnvironmentId,
+              environmentLabel: "Valid",
+              pairingUrl: "https://valid.example.test/pair",
+              displayUrl: "https://valid.example.test",
+              httpBaseUrl: "https://valid.example.test",
+              wsBaseUrl: "wss://valid.example.test",
+              bearerToken: "valid-token",
+              authenticationMethod: "bearer",
+            },
             {
               environmentId: EnvironmentId.make("invalid-bearer"),
               environmentLabel: "Invalid",
@@ -72,7 +84,7 @@ describe("migrateLegacyConnectionCatalog", () => {
         }),
       );
 
-      expect(catalog.targets).toEqual([]);
+      expect(catalog.targets.map((target) => target.environmentId)).toEqual([validEnvironmentId]);
     }),
   );
 });
