@@ -12,6 +12,7 @@ import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import { resolveHostCliCommand } from "./invocation.ts";
 import { serviceCommand } from "./service.ts";
 
 afterEach(() => vi.restoreAllMocks());
@@ -129,11 +130,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
         Layer.succeed(BootService.BootService, service),
       );
 
-      yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+      const [lines, up] = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
         "install",
         "--base-dir",
         baseDir,
       ]).pipe(
+        Effect.andThen(
+          Effect.all([TestConsole.logLines, resolveHostCliCommand("up", ["--base-dir", baseDir])]),
+        ),
         Effect.provideService(HostProcess.Environment, {}),
         Effect.provide(
           Layer.mergeAll(
@@ -143,6 +147,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
         ),
       );
       expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe(input.expected);
+      expect(lines.map(String).filter((line) => line.includes("other devices"))).toEqual(
+        input.installed ? [] : [`Run \`${up.command}\` to choose how your other devices reach it.`],
+      );
     }),
   );
 
@@ -213,6 +220,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
         expect(output).toContain(script);
         expect(installOptions).toEqual([]);
       }),
+  );
+
+  it.effect.each([
+    {
+      label: "a missing service",
+      status: { ...status, installed: false },
+      hint: "service install",
+      args: [],
+    },
+    { label: "a newer service", status: newerServiceStatus, hint: "update", args: ["999.0.0"] },
+  ])("status of $label names its next step with --base-dir", (input) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, makeTestService(input.status).service),
+      );
+
+      const [lines, next] = yield* Command.runWith(serviceCommand, {
+        version: packageJson.version,
+      })(["status", "--base-dir", baseDir]).pipe(
+        Effect.andThen(
+          Effect.all([
+            TestConsole.logLines,
+            resolveHostCliCommand(input.hint, ["--base-dir", baseDir, ...input.args]),
+          ]),
+        ),
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+      expect(lines.join("\n")).toContain(`Next: Run \`${next.command}\``);
+    }),
   );
 
   it.effect.each([
