@@ -81,10 +81,11 @@ export function GuideTour({
   const stepFromKey = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || isCommandPaletteOpen()) return;
     if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-    if (event.key !== "j" && event.key !== "k") return;
+    const key = event.key.toLowerCase();
+    if (key !== "j" && key !== "k") return;
     if (isEditableFocused(event.target)) return;
     event.preventDefault();
-    step(event.key === "j" ? 1 : -1);
+    step(key === "j" ? 1 : -1);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document keydown listener for j/k tour stepping while the guide is active
   useEffect(() => {

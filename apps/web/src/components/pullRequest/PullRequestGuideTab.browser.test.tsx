@@ -166,6 +166,10 @@ it("steps with J and K after a click on guide prose beside a chat", async () => 
   await expect.element(screen.getByText("Prose for the third stop.")).toBeVisible();
   await userEvent.keyboard("k");
   await expect.element(screen.getByText("Prose for the second stop.")).toBeVisible();
+  (document.activeElement ?? document.body).dispatchEvent(
+    new KeyboardEvent("keydown", { key: "J", bubbles: true, cancelable: true, composed: true }),
+  );
+  await expect.element(screen.getByText("Prose for the third stop.")).toBeVisible();
   await userEvent.keyboard("a");
   expect(composerKeys).toEqual(["a"]);
 });
