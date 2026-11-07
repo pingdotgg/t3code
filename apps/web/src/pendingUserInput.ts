@@ -1,5 +1,12 @@
-import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import type {
+  ComposerContextRecord,
+  ThreadContextRecord,
+  UserInputQuestion,
+} from "@t3tools/contracts";
+import {
+  projectComposerContextForProvider,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   buildPendingUserInputAnswers,
@@ -11,16 +18,31 @@ import {
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
 
+const isAttachmentReference = (reference: { kind: string }) =>
+  reference.kind === "image" || reference.kind === "file";
+
+// Thread chips stay readable links. Other chips carry their payload as a normal send does, except
+// attachments: the server appends their paths, so they keep only their label.
 export function projectPendingUserInputAnswer(
   answer: unknown,
-  threadContexts: ReadonlyArray<ThreadContextRecord>,
+  records: ReadonlyArray<ComposerContextRecord>,
 ) {
-  if (typeof answer !== "string" || threadContexts.length === 0) return answer;
-  const recordsById = new Map(threadContexts.map((record) => [record.contextId, record]));
-  return replaceComposerContextReferences(answer, (reference) => {
-    const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
-    return record ? formatThreadLink(record, reference.label) : reference.source;
+  if (typeof answer !== "string" || records.length === 0) return answer;
+  const recordsById = new Map(records.map((record) => [record.contextId, record]));
+  let expandsPayload = false;
+  const text = replaceComposerContextReferences(answer, (reference) => {
+    const record = recordsById.get(reference.contextId);
+    if (record?.kind === "thread" && "threadId" in record) {
+      return formatThreadLink(record, reference.label);
+    }
+    expandsPayload ||= record !== undefined && !isAttachmentReference(reference);
+    return reference.source;
   });
+  if (!expandsPayload) return text;
+  const withoutAttachments = replaceComposerContextReferences(text, (reference) =>
+    isAttachmentReference(reference) ? reference.label : reference.source,
+  );
+  return projectComposerContextForProvider({ text: withoutAttachments, records });
 }
 
 // Question drafts retain deleted chip records for undo; only transfer referenced records.
