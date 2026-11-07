@@ -383,6 +383,7 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import { SecretDeliveryInput, SecretDeliveryError } from "./secretDelivery.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -554,6 +555,8 @@ export const WS_METHODS = {
   scheduledTasksDelete: "scheduledTasks.delete",
   scheduledTasksRunNow: "scheduledTasks.runNow",
   scheduledTasksRotateWebhookToken: "scheduledTasks.rotateWebhookToken",
+  secretsReadDelivery: "secrets.readDelivery",
+  secretsDeleteDelivery: "secrets.deleteDelivery",
   secretsAnswerRequest: "secrets.answerRequest",
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
@@ -2039,6 +2042,15 @@ const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
   error: Schema.Union([GuestShareCreateError, EnvironmentAuthorizationError]),
 });
 
+const WsSecretsReadDeliveryRpc = Rpc.make(WS_METHODS.secretsReadDelivery, {
+  payload: SecretDeliveryInput,
+  success: Schema.Struct({ value: Schema.String }),
+  error: Schema.Union([SecretDeliveryError, EnvironmentAuthorizationError]),
+});
+const WsSecretsDeleteDeliveryRpc = Rpc.make(WS_METHODS.secretsDeleteDelivery, {
+  payload: SecretDeliveryInput,
+  error: Schema.Union([SecretDeliveryError, EnvironmentAuthorizationError]),
+});
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
@@ -2147,6 +2159,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksDeleteRpc,
   WsScheduledTasksRunNowRpc,
   WsScheduledTasksRotateWebhookTokenRpc,
+  WsSecretsReadDeliveryRpc,
+  WsSecretsDeleteDeliveryRpc,
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,

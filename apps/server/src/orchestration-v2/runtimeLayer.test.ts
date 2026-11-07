@@ -92,6 +92,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as DeviceHost from "../device/DeviceHost.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as SecretDeliveries from "../secrets/SecretDeliveries.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
@@ -363,6 +364,7 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
           ),
         ),
       ).pipe(Layer.provide(ProjectionStore.layer)),
+      Layer.mock(SecretDeliveries.SecretDeliveries)({}),
       Layer.mock(SecretRequests.SecretRequests)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",

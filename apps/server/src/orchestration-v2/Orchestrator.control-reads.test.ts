@@ -2199,3 +2199,59 @@ it.effect("a user message dispatched first stays run 1 when its lineage read is 
     );
   }).pipe(Effect.provide(layerGatedLineageRead));
 });
+
+it.effect("records secret delivery metadata without reopening a deleted item", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:secret-delivery");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-secret-delivery"),
+      threadId,
+      projectId: ProjectId.make("project:secret-delivery"),
+      title: "Secret delivery",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-secret-delivery"),
+      threadId,
+      messageId: MessageId.make("message:secret-delivery"),
+      text: "Generate a credential",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (yield* projections.getThreadProjection(threadId)).runs[0]!;
+    const turnItemId = TurnItemId.make("a".repeat(64));
+    for (const [index, secretStatus] of (
+      ["available", "deleted", "available"] as const
+    ).entries()) {
+      yield* orchestrator.dispatch({
+        type: "secret_delivery.record",
+        commandId: CommandId.make(`delivery:${index}`),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        turnItemId,
+        label: "Generated credential",
+        secretStatus,
+        expiresAt: 86400000,
+      });
+    }
+    const items = (yield* projections.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["secret_delivery"],
+    })).turnItems;
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.type, "secret_delivery");
+    assert.equal(items[0]?.type === "secret_delivery" && items[0].secretStatus, "deleted");
+  }).pipe(Effect.provide(layerTest)),
+);

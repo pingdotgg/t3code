@@ -27,6 +27,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as SecretDeliveries from "../secrets/SecretDeliveries.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -206,6 +207,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretDeliveries.SecretDeliveries)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
@@ -306,6 +308,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretDeliveries.SecretDeliveries)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
@@ -441,6 +444,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretDeliveries.SecretDeliveries)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
@@ -571,6 +575,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretDeliveries.SecretDeliveries)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
@@ -666,6 +671,14 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .requestSecret(makeScope(), { label: "Secret", reason: "requires a run" })
       .pipe(Effect.flip);
     expect(secret.code).toBe("parent_not_active");
+    const delivery = yield* service
+      .sendSecret(makeScope(), {
+        label: "Synthetic secret",
+        filePath: "/home/user/.private/secret",
+        clientRequestId: "retry",
+      })
+      .pipe(Effect.flip);
+    expect(delivery.code).toBe("parent_not_active");
 
     parentShell = { ...parentShell, providerInstanceId: customCodexInstanceId };
     const switchedScope = {
@@ -753,6 +766,7 @@ it("requestSecret saves a pasted value to a file without opening a card", async 
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretDeliveries.SecretDeliveries)({}),
         Layer.mock(SecretRequests.SecretRequests)({
           savePasted: (input) =>
             Effect.sync(() => {
@@ -861,6 +875,7 @@ it("requestSecret returns the unsaved note for a declined, cancelled or timed-ou
             getProviders: Effect.succeed([]),
           } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
           Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretDeliveries.SecretDeliveries)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
