@@ -788,9 +788,14 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
-const decodeNpmViewVersion = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Union([Schema.String, Schema.Tuple([Schema.String])])),
-);
+// npm names the tarball `${name}-${version}.tgz`, dropping a scope's `@` and its `/`.
+function parseNpmPackVersion(stdout: string, packageName: string): string | null {
+  const prefix = `${packageName.replace(/^@/, "").replace("/", "-")}-`;
+  const filename = stdout.trim();
+  if (!filename.startsWith(prefix) || !filename.endsWith(".tgz")) return null;
+  const version = filename.slice(prefix.length, -".tgz".length);
+  return version && !/\s/.test(version) ? version : null;
+}
 
 const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
   capabilities: ProviderMaintenanceCapabilities,
@@ -808,22 +813,20 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
     ? update.args.indexOf("--prefix")
     : -1;
   const prefix = prefixIndex >= 0 ? update?.args[prefixIndex + 1] : undefined;
+  // `npm view` ignores min-release-age and `before`; pack resolves the release `npm install` picks.
+  // Without --json it prints only the tarball name, where the JSON lists every file in the package.
   const lookup = runProbe(
     npmPath,
     [
-      "view",
+      "pack",
+      "--dry-run",
       "--global",
       ...(prefix ? ["--prefix", prefix] : []),
-      "--json",
       `${packageName}@latest`,
-      "version",
     ],
     env,
   ).pipe(
-    Effect.map((stdout) => {
-      const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;
-      return nonEmptyString(typeof value === "string" ? value : value?.[0]);
-    }),
+    Effect.map((stdout) => (stdout ? parseNpmPackVersion(stdout, packageName) : null)),
     Effect.tap((version) =>
       version === null
         ? Effect.logWarning("Configured npm version lookup failed", { packageName })
