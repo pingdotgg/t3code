@@ -39,6 +39,19 @@ const decodeSpendBudget = Schema.decodeUnknownOption(
   Schema.Struct({ enabled: Schema.Boolean, used: SpendMoney, limit: SpendMoney }),
 );
 
+// The SDK does not yet type the per-window `unifiedWindows` the CLI streams on every change.
+const UnifiedWindow = Schema.Struct({
+  utilization: Schema.Finite,
+  resetsAt: Schema.optionalKey(Schema.Finite),
+});
+const decodeUnifiedWindows = Schema.decodeUnknownOption(
+  Schema.Struct({
+    five_hour: Schema.optionalKey(UnifiedWindow),
+    seven_day: Schema.optionalKey(UnifiedWindow),
+    [OVERAGE_INCLUDED_EVENT_TYPE]: Schema.optionalKey(UnifiedWindow),
+  }),
+);
+
 export interface ClaudeScopedLimitNames {
   readonly overageIncluded: string | undefined;
 }
@@ -151,24 +164,41 @@ function makeWindow(
   };
 }
 
+function streamedWindow(
+  type: string,
+  utilization: number,
+  resetsAtSeconds: number | undefined,
+  names: ClaudeScopedLimitNames,
+): ServerProviderUsageWindow | undefined {
+  const usedPercent = utilization * 100;
+  const resetsAt = isoFromEpochSeconds(resetsAtSeconds);
+  if (type in WINDOWS) return makeWindow(type, usedPercent, resetsAt);
+  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+    return scopedWindow(names.overageIncluded, usedPercent, resetsAt);
+  }
+  return undefined;
+}
+
 /** Stream utilization is 0-1. Drop unnamed overage buckets until probed to avoid unreconcilable rows. */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
+  const unified = Option.getOrUndefined(
+    decodeUnifiedWindows((info as { readonly unifiedWindows?: unknown }).unifiedWindows),
+  );
+  const windows: ServerProviderUsageWindow[] = [];
+  for (const [type, entry] of Object.entries(unified ?? {})) {
+    const window = streamedWindow(type, entry.utilization, entry.resetsAt, names);
+    if (window) windows.push(window);
+  }
+  // Older CLIs stream only the top-level bucket, and only past a warning threshold.
   const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
-    return undefined;
+  if (type && typeof info.utilization === "number") {
+    const window = streamedWindow(type, info.utilization, info.resetsAt, names);
+    if (window && !windows.some((existing) => existing.id === window.id)) windows.push(window);
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
-  }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  return windows.length > 0 ? { windows } : undefined;
 }
 
 /** get_usage percentages are already 0-100. */
