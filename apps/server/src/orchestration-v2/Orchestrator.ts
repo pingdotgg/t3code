@@ -5736,8 +5736,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
 
-    const continuedTaskId = projection.runs.find(
-      (run) => run.id === command.restartContinuationOfRunId,
+    // A run the thread queues for itself continues the task of the run that sent it.
+    const continuedTaskId = projection.runs.find((run) =>
+      command.restartContinuationOfRunId === undefined
+        ? command.senderThreadId === command.threadId && isActiveRun(run)
+        : run.id === command.restartContinuationOfRunId,
     )?.delegatedTaskId;
 
     if (projection.thread.settledOverride !== null) {
