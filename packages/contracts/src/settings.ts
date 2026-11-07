@@ -1316,7 +1316,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
   sideChatRuntimeMode: SideChatRuntimeMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed("approval-required")),
+    Schema.withDecodingDefault(Effect.succeed("inherit-parent")),
   ),
 
   projectSettingsOverrides: Schema.Record(

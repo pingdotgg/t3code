@@ -938,7 +938,7 @@ const sideChatPermissionCases: ReadonlyArray<{
   selectedMode?: RuntimeMode;
   expected: string;
 }> = [
-  { settings: {}, expected: "approval-required" },
+  { settings: {}, expected: "full-access" },
   { settings: { sideChatRuntimeMode: "full-access" }, expected: "full-access" },
   ...RuntimeMode.literals.map((parentMode) => ({
     settings: { sideChatRuntimeMode: "inherit-parent" as const },
