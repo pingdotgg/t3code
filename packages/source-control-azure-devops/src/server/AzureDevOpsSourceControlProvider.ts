@@ -58,7 +58,8 @@ export const discovery = {
  * Azure clone URLs carry no `.git` suffix, so a trailing `.git` is part of the name.
  */
 function repositoryNameFromRemote(remoteUrl: string): string | null {
-  const encoded = remoteUrl.trim().replace(/\/+$/u, "").split(/[/:]/u).at(-1);
+  const path = URL.parse(remoteUrl.trim())?.pathname ?? remoteUrl.trim();
+  const encoded = path.replace(/\/+$/u, "").split(/[/:]/u).at(-1);
   if (!encoded) return null;
   let name = encoded;
   try {
