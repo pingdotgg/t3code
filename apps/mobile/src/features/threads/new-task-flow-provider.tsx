@@ -16,7 +16,6 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
-  repositoryGroupingKeyOf,
   ThreadId,
 } from "@t3tools/contracts";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
@@ -93,7 +92,10 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  resolveEnvironmentProjectMatch,
+  resolveGenuineEnvironmentProjectMatch,
+} from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveNewThreadRuntimeMode } from "./thread-settings-options";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
@@ -182,6 +184,11 @@ type NewTaskFlowContextValue = {
    */
   readonly missingRouteDraftId: string | null;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
+  /**
+   * False when the machine holds no copy of the selected project, so the
+   * tap opens the project picker instead of a silent unrelated retarget.
+   */
+  readonly canSwitchEnvironmentDirectly: (environmentId: EnvironmentId) => boolean;
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly switchingToEnvironmentId: EnvironmentId | null;
   readonly setSelectedModelKey: (
@@ -597,6 +604,14 @@ export function NewTaskFlowProvider(
     });
   };
 
+  const canSwitchEnvironmentDirectly = (environmentId: EnvironmentId): boolean =>
+    selectedProject === null ||
+    isScratchDraft ||
+    resolveGenuineEnvironmentProjectMatch(
+      projects.filter((project) => project.environmentId === environmentId),
+      selectedProject,
+    ) !== null;
+
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
   const [switchingToEnvironmentId, setSwitchingToEnvironmentId] = useState<EnvironmentId | null>(
     null,
@@ -799,12 +814,6 @@ export function NewTaskFlowProvider(
       ) !== null,
   );
 
-  const selectedRepositoryKey = selectedProject?.repositoryIdentity
-    ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
-    : null;
-  // Use || null: placeholder workspaceRoot can be empty, and an empty basename rejects real hosts.
-  const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
-  const selectedProjectTitle = selectedProject?.title ?? null;
   const environments = (() => {
     if (isScratchDraft) {
       return scratchEnvironments.map((environment) => ({
@@ -817,25 +826,7 @@ export function NewTaskFlowProvider(
       readonly environmentId: EnvironmentId;
       readonly environmentLabel: string;
     }> = [];
-    const hostsSelectedRepository = (project: EnvironmentProject) => {
-      if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
-        return true;
-      }
-      const projectKey = project.repositoryIdentity
-        ? repositoryGroupingKeyOf(project.repositoryIdentity)
-        : null;
-      if (selectedRepositoryKey !== null && projectKey !== null) {
-        return projectKey === selectedRepositoryKey;
-      }
-      return (
-        project.workspaceRoot.split("/").at(-1) === selectedWorkspaceBasename ||
-        (selectedProjectTitle !== null && project.title === selectedProjectTitle)
-      );
-    };
     for (const project of projects) {
-      if (!hostsSelectedRepository(project)) {
-        continue;
-      }
       if (seen.has(project.environmentId)) {
         continue;
       }
@@ -892,6 +883,7 @@ export function NewTaskFlowProvider(
     missingRouteDraftId:
       routeDraftResolution.kind === "missing" ? (props.routeDraftId ?? null) : null,
     selectEnvironment,
+    canSwitchEnvironmentDirectly,
     switchEnvironment,
     switchingToEnvironmentId,
     setSelectedModelKey,

@@ -83,7 +83,10 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { resolveDraftProjectSelection } from "./new-task-project-selection";
+import {
+  resolveDraftProjectSelection,
+  resolveShareImportProject,
+} from "./new-task-project-selection";
 import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
@@ -302,24 +305,21 @@ export function NewTaskDraftScreen(props: {
   );
   const shareImportTarget = (() => {
     if (!props.incomingShareId || flowKey === undefined || !flow.draftKey) return null;
-    if (!selectedProject || !incomingShare || isIncomingShareAwaitingServerConfig) return null;
-    const initialEnvironmentId = props.initialProjectRef?.environmentId;
-    const initialProjectId = props.initialProjectRef?.projectId;
-    if (
-      initialEnvironmentId &&
-      initialProjectId &&
-      (selectedProject.environmentId !== initialEnvironmentId ||
-        selectedProject.id !== initialProjectId)
-    ) {
-      return null;
-    }
+    if (!incomingShare || isIncomingShareAwaitingServerConfig) return null;
+    const importProject = resolveShareImportProject({
+      selectedProject,
+      selectedProjectKey,
+      initialEnvironmentId: props.initialProjectRef?.environmentId,
+      initialProjectId: props.initialProjectRef?.projectId,
+    });
+    if (!importProject) return null;
     return {
       flowKey,
       routeKey: currentRoute.key,
       draftKey: flow.draftKey,
       destination: {
-        environmentId: String(selectedProject.environmentId),
-        projectId: String(selectedProject.id),
+        environmentId: String(importProject.environmentId),
+        projectId: String(importProject.id),
       },
       shareId: incomingShare.id,
     };
@@ -351,7 +351,14 @@ export function NewTaskDraftScreen(props: {
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
-    const next = nextEnvironmentId(environments, switchingToEnvironmentId ?? selectedEnvironmentId);
+    // The hardware shortcut only visits machines holding this project;
+    // others need an explicit project choice in the picker.
+    const next = nextEnvironmentId(
+      environments.filter((environment) =>
+        flow.canSwitchEnvironmentDirectly(environment.environmentId),
+      ),
+      switchingToEnvironmentId ?? selectedEnvironmentId,
+    );
     if (next !== null) void switchEnvironment(next);
     return true;
   };
@@ -710,7 +717,11 @@ export function NewTaskDraftScreen(props: {
     }
     promptInputRef.current?.blur();
     void KeyboardController.dismiss({ animated: true });
-    navigation.navigate(routeName);
+    if (routeName === "NewTaskEnvironment" && props.incomingShareId !== undefined) {
+      navigation.navigate(routeName, { incomingShareId: props.incomingShareId });
+    } else {
+      navigation.navigate(routeName);
+    }
   };
 
   const environmentControl = (

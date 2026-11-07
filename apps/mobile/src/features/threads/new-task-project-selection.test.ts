@@ -4,11 +4,15 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
+  filterScratchEnvironmentsToPreferred,
   getProjectScopeSelectionTarget,
   newTaskDestination,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  resolveExplicitProjectScopes,
+  resolveGenuineEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
+  resolveShareImportProject,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -115,6 +119,145 @@ describe("resolveEnvironmentProjectMatch", () => {
     const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/t3code" });
     expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
     expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+  });
+});
+
+describe("resolveShareImportProject", () => {
+  const initial = { initialEnvironmentId: "environment", initialProjectId: "t3code" };
+
+  it("targets the selected project when the route names no initial project", () => {
+    const selected = makeProject("t3code");
+    expect(
+      resolveShareImportProject({
+        selectedProject: selected,
+        selectedProjectKey: null,
+        initialEnvironmentId: undefined,
+        initialProjectId: undefined,
+      }),
+    ).toBe(selected);
+  });
+
+  it("targets the initial project while it is selected", () => {
+    const selected = makeProject("t3code");
+    expect(
+      resolveShareImportProject({
+        selectedProject: selected,
+        selectedProjectKey: "environment:t3code",
+        ...initial,
+      }),
+    ).toBe(selected);
+  });
+
+  it("holds the import while the catalog still resolves the initial project", () => {
+    const fallback = makeProject("other");
+    expect(
+      resolveShareImportProject({
+        selectedProject: fallback,
+        selectedProjectKey: null,
+        ...initial,
+      }),
+    ).toBeNull();
+  });
+
+  it("follows an explicit choice once the flow names it", () => {
+    const chosen = makeProject("chosen", "server");
+    expect(
+      resolveShareImportProject({
+        selectedProject: chosen,
+        selectedProjectKey: "server:chosen",
+        ...initial,
+      }),
+    ).toBe(chosen);
+  });
+
+  it("holds the import when the chosen project is gone from the catalog", () => {
+    const fallback = makeProject("other");
+    expect(
+      resolveShareImportProject({
+        selectedProject: fallback,
+        selectedProjectKey: "server:chosen",
+        ...initial,
+      }),
+    ).toBeNull();
+  });
+
+  it("holds the import without a selected project", () => {
+    expect(
+      resolveShareImportProject({
+        selectedProject: null,
+        selectedProjectKey: null,
+        ...initial,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveGenuineEnvironmentProjectMatch", () => {
+  it("matches the same repository and falls back like the full matcher", () => {
+    const selected = makeProject("t3code", "mac", { repositoryKey: "github.com/t3tools/t3code" });
+    const target = [
+      makeProject("other", "server", { repositoryKey: "github.com/t3tools/other" }),
+      makeProject("t3code-clone", "server", { repositoryKey: "github.com/t3tools/t3code" }),
+    ];
+    expect(resolveGenuineEnvironmentProjectMatch(target, selected)).toBe(target[1]);
+  });
+
+  it("returns null instead of an unrelated first project", () => {
+    const selected = makeProject("t3code", "mac", {
+      repositoryKey: "github.com/t3tools/t3code",
+      workspaceRoot: "/Users/me/t3code",
+    });
+    const fork = makeProject("fork", "server", {
+      repositoryKey: "github.com/someone/t3code",
+      title: "t3code",
+      workspaceRoot: "/home/me/t3code",
+    });
+    expect(resolveGenuineEnvironmentProjectMatch([fork], selected)).toBeNull();
+    expect(resolveGenuineEnvironmentProjectMatch([], selected)).toBeNull();
+  });
+
+  it("returns null when nothing is selected yet", () => {
+    const target = [makeProject("t3code", "server")];
+    expect(resolveGenuineEnvironmentProjectMatch(target, null)).toBeNull();
+  });
+});
+
+describe("resolveExplicitProjectScopes", () => {
+  const mac = makeProject("t3code", "mac", { repositoryKey: "github.com/t3tools/t3code" });
+  const server = makeProject("t3code", "server", { repositoryKey: "github.com/t3tools/t3code" });
+  const scopes = [makeScope([mac, server]), makeScope([makeProject("other", "mac")])];
+
+  it("offers every scope unchanged without a tapped machine", () => {
+    expect(resolveExplicitProjectScopes({ scopes, preferredEnvironmentId: undefined })).toBe(
+      scopes,
+    );
+  });
+
+  it("keeps only the tapped machine's projects and drops empty scopes", () => {
+    const filtered = resolveExplicitProjectScopes({ scopes, preferredEnvironmentId: "server" });
+    expect(filtered.map((scope) => scope.key)).toEqual(["github.com/t3tools/t3code"]);
+    expect(filtered[0]?.projects).toEqual([server]);
+    expect(filtered[0]?.representative).toBe(server);
+    expect(filtered[0]?.projectRefs).toEqual([
+      { environmentId: server.environmentId, projectId: server.id },
+    ]);
+  });
+});
+
+describe("filterScratchEnvironmentsToPreferred", () => {
+  const mac = { environmentId: EnvironmentId.make("mac"), connectionState: "connected" } as const;
+  const server = {
+    environmentId: EnvironmentId.make("server"),
+    connectionState: "connected",
+  } as const;
+
+  it("keeps every environment without a tapped machine", () => {
+    expect(filterScratchEnvironmentsToPreferred([mac, server], undefined)).toEqual([mac, server]);
+  });
+
+  it("never falls back to another environment from the picker", () => {
+    expect(filterScratchEnvironmentsToPreferred([mac, server], "mac")).toEqual([mac]);
+    expect(filterScratchEnvironmentsToPreferred([mac, server], "unknown")).toEqual([]);
   });
 });
 
