@@ -2427,7 +2427,7 @@ code {
 }
 
 @utility desktop-update-check-incoming {
-  animation: desktop-update-check-incoming 160ms 120ms ease-out both;
+  animation: desktop-update-check-incoming 160ms 40ms ease-out both;
 }
 
 @utility desktop-update-restart-ease {

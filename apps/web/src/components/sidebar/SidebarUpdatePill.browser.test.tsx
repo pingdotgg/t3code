@@ -84,7 +84,7 @@ function publish(update: DesktopUpdateState | null) {
 const releaseNotes = () => document.querySelector('[aria-label="Update release notes"]');
 
 describe("SidebarUpdatePill manual checks", () => {
-  it.each(["success", "failure"] as const)(
+  it.each(["success", "failure", "available"] as const)(
     "finishes the manual rotation after %s and keeps automatic checks static",
     async (outcome) => {
       const idle: DesktopUpdateState = {
@@ -115,11 +115,12 @@ describe("SidebarUpdatePill manual checks", () => {
       expect(button.getAttribute("aria-disabled")).toBe("true");
       expect(button.contains(spinner)).toBe(true);
 
+      const resultState = outcome === "available" ? nightlyUpdate(RELEASE_NOTES) : idle;
       await act(async () => {
-        mocks.update = idle;
+        mocks.update = resultState;
         mocks.notify();
-        if (outcome === "success") check.resolve({ checked: true, state: idle });
-        else check.reject(new Error("Update check failed"));
+        if (outcome === "failure") check.reject(new Error("Update check failed"));
+        else check.resolve({ checked: true, state: resultState });
         await check.promise.catch(() => undefined);
       });
       expect(button.getAttribute("aria-disabled")).toBe("true");
@@ -141,9 +142,17 @@ describe("SidebarUpdatePill manual checks", () => {
         ),
       );
       expect(button.hasAttribute("aria-disabled")).toBe(false);
+      if (outcome === "available") {
+        expect(button.getAttribute("aria-label")).toBe(
+          `Update ${resultState.availableVersion} ready to download`,
+        );
+      }
 
       await publish({ ...idle, status: "checking" });
       expect(button.querySelector('[class*="visible-animate-spin"]')).toBeNull();
+      await publish(resultState);
+      expect(button.querySelector('[class*="visible-animate-spin"]')).toBeNull();
+      expect(button.querySelector('[class*="desktop-update-check-incoming"]')).toBeNull();
     },
   );
 
