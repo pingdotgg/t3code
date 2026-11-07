@@ -231,15 +231,30 @@ function ColumnRow(props: {
 }
 
 function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const arrow = event.key === "ArrowDown" || event.key === "ArrowUp";
+  if (
+    (!arrow && (event.key.length !== 1 || event.key === " ")) ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.nativeEvent.isComposing
+  )
+    return;
   // An option's side menu is a React child here, but it moves through its own items.
   if (!event.currentTarget.contains(event.target as Node)) return;
   const rows = Array.from(
     event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-effort-row]:not(:disabled)"),
   );
   const index = rows.findIndex((row) => row === document.activeElement);
-  const next =
-    rows[Math.min(rows.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))];
+  if (index < 0) return;
+  const next = arrow
+    ? rows[Math.min(rows.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))]
+    : [...rows.slice(index + 1), ...rows.slice(0, index + 1)].find((row) =>
+        (row.getAttribute("aria-label") ?? row.textContent ?? "")
+          .trim()
+          .toLocaleLowerCase()
+          .startsWith(event.key.toLocaleLowerCase()),
+      );
   if (!next) return;
   event.preventDefault();
   event.stopPropagation();
