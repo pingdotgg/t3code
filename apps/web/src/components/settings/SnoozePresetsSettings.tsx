@@ -243,7 +243,7 @@ function SnoozePresetList(props: {
       return { tone: "muted", text: "Duplicate of an option above" } as const;
     }
     if (seenWakes.has(resolved.snoozedUntil)) {
-      return { tone: "muted", text: "Same time as an option above" } as const;
+      return { tone: "muted", text: "Combined with an option above" } as const;
     }
     seenIds.add(resolved.id);
     seenWakes.add(resolved.snoozedUntil);

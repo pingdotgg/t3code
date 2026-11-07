@@ -420,7 +420,7 @@ describe("resolveSnoozePresets", () => {
     expect(new Date(presets[0]!.snoozedUntil)).toEqual(localDate(2026, 4, 20, 9));
   });
 
-  it("names the real day gap: a Monday option on Sunday is Tomorrow, a weekday a week out is Next", () => {
+  it("keeps named weekdays visible and names a weekday a week out as Next", () => {
     const theo: ReadonlyArray<SnoozePresetSetting> = [
       { kind: "at", day: "tomorrow", time: "21:00" },
       { kind: "at", day: "monday", time: "18:00" },
@@ -428,7 +428,7 @@ describe("resolveSnoozePresets", () => {
     ];
     // Sunday 14:00.
     expect(menu(localDate(2026, 8, 30, 14), theo)).toEqual([
-      "Tomorrow 18:00",
+      "Monday 18:00",
       "Tomorrow 21:00",
       "Friday 17:00",
     ]);
@@ -446,7 +446,33 @@ describe("resolveSnoozePresets", () => {
       "In 1 hour 8:01",
       "In 3 hours 10:01",
       "This evening 18:00",
-      "Tomorrow 9:00",
+      "Tomorrow · Monday 9:00",
+    ]);
+  });
+
+  it("keeps every configured option visible when Tomorrow and Saturday coincide", () => {
+    const presets: ReadonlyArray<SnoozePresetSetting> = [
+      { kind: "after", minutes: 60 },
+      { kind: "after", minutes: 180 },
+      { kind: "at", day: "today", time: "18:00" },
+      { kind: "at", day: "tomorrow", time: "09:00" },
+      { kind: "at", day: "saturday", time: "09:00" },
+      { kind: "at", day: "monday", time: "09:00" },
+    ];
+    const now = localDate(2026, 11, 6, 12, 2);
+    expect(menu(now, presets)).toEqual([
+      "In 1 hour 13:02",
+      "In 3 hours 15:02",
+      "This evening 18:00",
+      "Tomorrow · Saturday 9:00",
+      "Next week Mon 9:00",
+    ]);
+    const merged = resolveSnoozePresets(now, { presets })[3]!;
+    expect(merged.id).toBe("at:tomorrow:09:00");
+    expect(merged.snoozedUntil).toBe(localDate(2026, 11, 7, 9).toISOString());
+    expect(menu(now, [...presets].reverse())[3]).toBe("Saturday · Tomorrow 9:00");
+    expect(menu(now, [presets[3]!, presets[3]!, presets[4]!])).toEqual([
+      "Tomorrow · Saturday 9:00",
     ]);
   });
 
@@ -458,7 +484,7 @@ describe("resolveSnoozePresets", () => {
         { kind: "after", minutes: 180 },
         { kind: "at", day: "today", time: "18:00" },
       ]),
-    ).toEqual(["In 3 hours 18:00"]);
+    ).toEqual(["In 3 hours · This evening 18:00"]);
   });
 });
 
