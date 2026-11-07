@@ -193,6 +193,9 @@ export function InsightsPanel({
   );
   const costs = costByRunId(priced.data?.items ?? null);
   const threadCost = threadCostEstimate(costs, measurableTurnCount(turnRows));
+  const pricingPending = priceItems.length > 0 && priced.isPending && priced.data === null;
+  const pricingError =
+    priceItems.length > 0 && priced.error !== null && priced.data === null ? priced.error : null;
   const costLabel = formatCostEstimate(threadCost);
   const headerBits = [
     trace !== null ? formatDuration(trace.totalMs) : null,
@@ -229,7 +232,12 @@ export function InsightsPanel({
         </div>
       ) : trace === null ? (
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
-          <TokenUsageSummary usage={tokenUsage} cost={threadCost} />
+          <TokenUsageSummary
+            usage={tokenUsage}
+            cost={threadCost}
+            pricingPending={pricingPending}
+            pricingError={pricingError}
+          />
           <TurnTokenBreakdown
             rows={turnRows}
             costs={costs}
@@ -249,6 +257,8 @@ export function InsightsPanel({
           turnRows={turnRows}
           costs={costs}
           threadCost={threadCost}
+          pricingPending={pricingPending}
+          pricingError={pricingError}
         />
       )}
     </div>
@@ -262,6 +272,8 @@ function FlameChartPanel({
   turnRows,
   costs,
   threadCost,
+  pricingPending,
+  pricingError,
 }: {
   readonly trace: ThreadTimingTrace;
   readonly turnItems: ReadonlyArray<ThreadStructureTurnItem>;
@@ -269,6 +281,8 @@ function FlameChartPanel({
   readonly turnRows: readonly ThreadTurnTokenUsageRow[];
   readonly costs: ReadonlyMap<string, TurnCostEstimate>;
   readonly threadCost: TurnCostEstimate | null;
+  readonly pricingPending: boolean;
+  readonly pricingError: string | null;
 }) {
   const layout = layoutThreadFlameChart(trace);
   const axis = buildCompressedTimingAxis(trace.turns);
@@ -389,6 +403,8 @@ function FlameChartPanel({
           collapsedIdleMs={axis.collapsedIdleMs}
           tokenUsage={tokenUsage}
           threadCost={threadCost}
+          pricingPending={pricingPending}
+          pricingError={pricingError}
         />
         <TurnTokenBreakdown
           rows={turnRows}
@@ -450,11 +466,15 @@ function Summary({
   collapsedIdleMs,
   tokenUsage,
   threadCost,
+  pricingPending,
+  pricingError,
 }: {
   readonly trace: ThreadTimingTrace;
   readonly collapsedIdleMs: number;
   readonly tokenUsage: ThreadTurnTokenUsageSummary | null;
   readonly threadCost: TurnCostEstimate | null;
+  readonly pricingPending: boolean;
+  readonly pricingError: string | null;
 }) {
   const showTokens =
     tokenUsage !== null &&
@@ -467,7 +487,14 @@ function Summary({
   return (
     <div className={cn("grid shrink-0 gap-4", showTokens ? "lg:grid-cols-2" : "grid-cols-1")}>
       <TimingSummary trace={trace} collapsedIdleMs={collapsedIdleMs} />
-      {showTokens ? <TokenUsageSummary usage={tokenUsage} cost={threadCost} /> : null}
+      {showTokens ? (
+        <TokenUsageSummary
+          usage={tokenUsage}
+          cost={threadCost}
+          pricingPending={pricingPending}
+          pricingError={pricingError}
+        />
+      ) : null}
     </div>
   );
 }
@@ -533,9 +560,13 @@ function tokenUsageAside(
 function TokenUsageSummary({
   usage,
   cost,
+  pricingPending = false,
+  pricingError = null,
 }: {
   readonly usage: ThreadTurnTokenUsageSummary | null;
   readonly cost: TurnCostEstimate | null;
+  readonly pricingPending?: boolean;
+  readonly pricingError?: string | null;
 }) {
   if (usage === null || usage.usageStatus === "unavailable") {
     return (
@@ -610,7 +641,11 @@ function TokenUsageSummary({
         (usage.cacheCreationTokens ?? 0) > 0 ||
         (usage.outputTokens ?? 0) > 0) ? (
         <p className="text-2xs text-muted-foreground">
-          Estimated API cost appears when Usage has rates for the models in this thread.
+          {pricingPending
+            ? "Estimating API cost…"
+            : pricingError !== null
+              ? "Could not estimate API cost."
+              : "Estimated API cost appears when Usage has rates for the models in this thread."}
         </p>
       ) : null}
     </section>
