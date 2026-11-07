@@ -95,5 +95,23 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   expect(drafts()?.prompt).toBe(
     `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "check this"))} `,
   );
-  await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
+  await expect
+    .element(page.getByRole("link", { name: "View cited assistant text: check this" }))
+    .toBeInTheDocument();
 });
+
+it.each(["click", "Enter", " "])(
+  "opens the citation comment editor with %s on the chip",
+  async (activation) => {
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+    const chip = screen.getByRole("link", { name: "View cited assistant text: hello" });
+    if (activation === "click") {
+      await chip.click();
+    } else {
+      screen.container.querySelector<HTMLElement>("[data-citation-comment-trigger]")?.focus();
+      await userEvent.keyboard(activation === "Enter" ? "{Enter}" : " ");
+    }
+    await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+  },
+);

@@ -4,7 +4,7 @@ import {
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRightIcon, PencilIcon, QuoteIcon } from "lucide-react";
+import { ArrowUpRightIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -21,10 +21,10 @@ import {
   assistantCitationNavigation,
 } from "../../lib/assistantCitationNavigation";
 import { cn } from "~/lib/utils";
-import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
+import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
-import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Popover, PopoverClose, PopoverPopup } from "../ui/popover";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
@@ -52,6 +52,7 @@ export function AssistantCitationChip({
   };
 }) {
   const navigate = useNavigate();
+  const chipRef = useRef<HTMLSpanElement>(null);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
@@ -123,19 +124,31 @@ export function AssistantCitationChip({
       }
       event.preventDefault();
       void navigate(assistantCitationNavigation(citation));
+      if (composer) commentEditor?.onOpenChange(true);
     },
   };
   const composerSourceLink = (
-    <Link
-      {...sourceLinkProps}
-      className="inline-flex min-w-0 items-center gap-[0.2em] self-baseline text-inherit no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm"
+    <ContextChip
+      kind="citation"
+      shape="pill"
+      ref={chipRef}
+      aria-haspopup={commentEditor ? "dialog" : undefined}
+      aria-expanded={commentEditor ? commentOpen : undefined}
+      render={<Link {...sourceLinkProps} />}
+      data-citation-comment-trigger={commentEditor ? "true" : undefined}
+      onKeyDown={(event) => {
+        if (event.key !== " " || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+          return;
+        event.preventDefault();
+        event.currentTarget.click();
+      }}
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]" dir={textDirection(label)}>
         {label}
       </ContextChipLabel>
-    </Link>
+    </ContextChip>
   );
   if (!composer) {
     return (
@@ -159,8 +172,7 @@ export function AssistantCitationChip({
     );
   }
   return (
-    <ContextChip
-      kind="citation"
+    <span
       contentEditable={false}
       data-assistant-citation-chip="true"
       data-markdown-copy={serializeAssistantCitation(citation)}
@@ -177,13 +189,6 @@ export function AssistantCitationChip({
             commentEditor.onOpenChange(open);
           }}
         >
-          <PopoverTrigger
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
-            data-citation-comment-trigger="true"
-            render={<ContextChipAction />}
-          >
-            <PencilIcon aria-hidden="true" />
-          </PopoverTrigger>
           {commentEditor.open ? (
             <PopoverPopup
               // The editor stays mounted while its voice setup dialog replaces the popover.
@@ -191,7 +196,7 @@ export function AssistantCitationChip({
               {...composerFloatingLayerProps}
               side={activeSourceAnchor ? "bottom" : "top"}
               align="end"
-              anchor={popupAnchor}
+              anchor={popupAnchor ?? chipRef}
               initialFocus={() => {
                 commentInputRef.current?.focus({ preventScroll: true });
                 return false;
@@ -251,7 +256,7 @@ export function AssistantCitationChip({
           ) : null}
         </Popover>
       ) : null}
-    </ContextChip>
+    </span>
   );
 }
 

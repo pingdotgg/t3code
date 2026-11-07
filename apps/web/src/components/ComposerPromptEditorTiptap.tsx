@@ -121,7 +121,10 @@ import {
   ComposerContextReferenceChip,
   ComposerContextRecordsContext,
 } from "./composerContextPresentation";
-import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import {
+  findAssistantCitationSourceAnchor,
+  type AssistantCitationSourceAnchor,
+} from "~/lib/assistantTextSelection";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
@@ -470,7 +473,11 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
         composer
         commentEditor={{
           open: commentTarget !== null,
-          sourceAnchor: commentTarget?.sourceAnchor,
+          sourceAnchor: commentTarget
+            ? (commentTarget.sourceAnchor ??
+              findAssistantCitationSourceAnchor(document, citation) ??
+              undefined)
+            : undefined,
           onOpenChange: (open) => {
             if (open && !editor.isEditable) return;
             commentContext.onOpenChange(citeKey, open);
