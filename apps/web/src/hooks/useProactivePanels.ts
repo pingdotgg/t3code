@@ -29,6 +29,8 @@ export function useProactivePanels(input: {
   // Null for drafts and while the thread is unavailable.
   readonly threadRef: ScopedThreadRef | null;
   readonly enabled: boolean;
+  /** Separate from `enabled`: opens the Activity panel when a turn starts. */
+  readonly activityEnabled: boolean;
   readonly settingsHydrated: boolean;
   readonly threadDetailLoading: boolean;
   readonly runningTurnId: RunId | null;
@@ -48,6 +50,7 @@ export function useProactivePanels(input: {
   const {
     threadRef,
     enabled: proactivePanelsEnabledSetting,
+    activityEnabled,
     settingsHydrated: clientSettingsHydrated,
     threadDetailLoading,
     runningTurnId: activeRunningTurnId,
@@ -109,6 +112,18 @@ export function useProactivePanels(input: {
       );
     }
     if (!clientSettingsHydrated) return;
+
+    if (
+      activityEnabled &&
+      activeRunningTurnId !== null &&
+      previousRunningTurnId !== activeRunningTurnId
+    ) {
+      panels.openProactive(
+        threadRef,
+        { kind: "activity", turnId: activeRunningTurnId },
+        userActionRevision,
+      );
+    }
 
     const proactivePanelsEnabled = proactivePanelsEnabledSetting;
     const eligibleLink =
@@ -188,6 +203,7 @@ export function useProactivePanels(input: {
     useDiffPanelStore.getState().selectGitScope(threadRef, "branch");
     onDiffPanelOpen?.();
   }, [
+    activityEnabled,
     activeLatestRun?.runId,
     activeLatestRun?.status,
     activeRunningTurnId,

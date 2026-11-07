@@ -82,6 +82,7 @@ describe("rightPanelStore", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "files");
     store.open(refA, "diff");
+    store.open(refA, "activity");
     store.open(refA, "device");
     store.activateSurface(refA, "diff");
     store.closeAllSurfaces(refA);
@@ -90,7 +91,7 @@ describe("rightPanelStore", () => {
       useClosedViewStore
         .getState()
         .entries.map((entry) => entry.kind === "panel-tab" && entry.surface.id),
-    ).toEqual(["diff", "device", "files"]);
+    ).toEqual(["diff", "device", "activity", "files"]);
   });
 
   it("does not save an incidental Files replacement when opening an existing file", () => {
@@ -296,7 +297,7 @@ describe("rightPanelStore", () => {
         store.closeTerminal(refA, "terminal:term-1", "term-1");
       },
     },
-  ])("keeps a later $choice choice when automatic requests arrive", ({ choose }) => {
+  ])("keeps a later $choice choice when automatic requests arrive", ({ choice, choose }) => {
     const store = useRightPanelStore.getState();
     store.open(refA, "diff");
     const revision = store.getUserActionRevision(refA);
@@ -304,6 +305,13 @@ describe("rightPanelStore", () => {
     const chosen = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
 
     expect(store.openProactive(refA, completedDiff, revision)).toBe(false);
+    expect(
+      store.openProactive(
+        refA,
+        { kind: "activity", turnId: RunId.make(`activity-${choice}`) },
+        revision,
+      ),
+    ).toBe(false);
     expect(store.openProactive(refA, linkedPullRequest, revision)).toBe(false);
     expect(
       store.openProactive(refA, { id: "pull-requests", kind: "pull-requests" }, revision),
@@ -317,6 +325,39 @@ describe("rightPanelStore", () => {
       activeSurfaceId: chosen.activeSurfaceId,
       surfaces: chosen.surfaces,
     });
+  });
+
+  it("offers Activity once per run and never over a pull request", () => {
+    const store = useRightPanelStore.getState();
+    const firstRun = { kind: "activity", turnId: RunId.make("activity-run-1") } as const;
+
+    expect(store.openProactive(refA, firstRun, store.getUserActionRevision(refA))).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "activity",
+    );
+
+    // Closing it is a user choice; the same run does not offer it again, a new run does.
+    store.closeSurface(refA, "activity");
+    expect(store.openProactive(refA, firstRun, store.getUserActionRevision(refA))).toBe(false);
+    expect(
+      store.openProactive(
+        refA,
+        { kind: "activity", turnId: RunId.make("activity-run-2") },
+        store.getUserActionRevision(refA),
+      ),
+    ).toBe(true);
+
+    store.openProactive(refA, linkedPullRequest, store.getUserActionRevision(refA));
+    expect(
+      store.openProactive(
+        refA,
+        { kind: "activity", turnId: RunId.make("activity-run-3") },
+        store.getUserActionRevision(refA),
+      ),
+    ).toBe(false);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+      linkedPullRequest,
+    );
   });
 
   it.each([

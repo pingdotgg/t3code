@@ -64,7 +64,7 @@ export function useSelectedThreadProjection(): EnvironmentThread | null {
   });
 }
 
-function useThreadVisibleTurnItems(
+export function useThreadVisibleTurnItems(
   target: ThreadDetailTarget,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
   return useAtomValue(

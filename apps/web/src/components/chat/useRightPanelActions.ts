@@ -110,6 +110,10 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }
   };
   const onToggleDiffStable = useStableCallback(onToggleDiff);
+  const onToggleActivity = () => {
+    if (!activeThreadRef || !isServerThread) return;
+    useRightPanelStore.getState().toggle(activeThreadRef, "activity");
+  };
   const createBrowserSurface = (profileId?: string) => {
     if (!activeThreadRef || !canOperatePreview) return;
     void addBrowserSurface({
@@ -142,6 +146,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     addDiffSurface();
   };
   const openChangesFromThreadPanelStable = useStableCallback(openChangesFromThreadPanel);
+  const addActivitySurface = () => {
+    if (!activeThreadRef || !isServerThread) return;
+    useRightPanelStore.getState().open(activeThreadRef, "activity");
+  };
+  const addActivitySurfaceStable = useStableCallback(addActivitySurface);
   const addFilesSurface = () => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -338,11 +347,13 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
     },
     "diff.toggle": () => onToggleDiff(),
+    "activity.toggle": () => onToggleActivity(),
   } satisfies ChatShortcutCommands;
 
   return {
     shortcuts,
     activateRightPanelSurfaceStable,
+    addActivitySurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
     addFilesSurfaceStable,
