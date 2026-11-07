@@ -99,9 +99,10 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
 });
 
-function TrayComposer() {
+function TrayComposer({ question = false }: { question?: boolean }) {
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [prompt, setPrompt] = useState(promptBefore);
+  const [answer, setAnswer] = useState("");
   const [tray, setTray] = useState<ReadonlyArray<AssistantCitation>>([]);
   return (
     <>
@@ -109,22 +110,26 @@ function TrayComposer() {
       <AssistantCitationTray
         citations={tray}
         onChange={setTray}
-        onInsertInline={(item) => {
-          setPrompt((text) => `${text}${serializeAssistantCitation(item)}`);
-          return true;
-        }}
+        onInsertInline={
+          question
+            ? undefined
+            : (item) => {
+                setPrompt((text) => `${text}${serializeAssistantCitation(item)}`);
+                return true;
+              }
+        }
       />
       <ComposerPromptEditor
         editorRef={editorRef}
-        value={prompt}
+        value={question ? answer : prompt}
         cursor={0}
         contextRecords={new Map()}
         skills={[]}
         disabled={false}
         placeholder=""
-        onChange={setPrompt}
+        onChange={question ? setAnswer : setPrompt}
         onPaste={() => {}}
-        onMoveCitationToTray={(item) => setTray((items) => [...items, item])}
+        onMoveCitationToTray={question ? undefined : (item) => setTray((items) => [...items, item])}
       />
     </>
   );
@@ -139,6 +144,12 @@ it("moves a citation and its edited comment from inline to tray and back", async
   expect(state()?.trayCount).toBe("1");
   expect(state()?.prompt).not.toContain("t3-citation");
   await page.getByRole("button", { name: "1 annotation", exact: true }).click();
+  await screen.rerender(<TrayComposer question />);
+  await expect
+    .element(page.getByRole("button", { name: "Insert inline", exact: true }))
+    .not.toBeInTheDocument();
+  expect(state()?.trayCount).toBe("1");
+  await screen.rerender(<TrayComposer />);
   await page.getByRole("button", { name: "Insert inline", exact: true }).click();
   expect(state()?.trayCount).toBe("0");
   expect(state()?.prompt).toContain(

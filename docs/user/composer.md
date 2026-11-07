@@ -411,4 +411,4 @@ Android opens a compatible installed file viewer.
 
 ### Citation tray
 
-In Settings ? Composer, set **New citations go** to **In the tray** to collect quotes above the input. The default is **Inline**. Open the annotations pill to review, edit, or delete quotes; use its ? to clear them all. In a citation comment editor, **Move to tray** and **Insert inline** move the quote between the tray and your text. Tray quotes are sent in their listed order before your message and stay with saved drafts and stashed prompts.
+In **Settings → Composer**, set **New citations go** to **In the tray** to collect quotes above the input. The default is **Inline**. Open the annotations pill to review, edit, or delete quotes; use **Clear all annotations** to clear them all. In a citation comment editor, **Move to tray** and **Insert inline** move the quote between the tray and your text. Tray quotes are sent in their listed order before your message and stay with saved drafts and stashed prompts.

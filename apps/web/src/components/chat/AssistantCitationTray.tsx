@@ -15,7 +15,7 @@ export function AssistantCitationTray({
 }: {
   citations: ReadonlyArray<AssistantCitation>;
   onChange: (citations: ReadonlyArray<AssistantCitation>) => void;
-  onInsertInline: (citation: AssistantCitation) => boolean;
+  onInsertInline?: ((citation: AssistantCitation) => boolean) | undefined;
 }) {
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const [open, setOpen] = useState(false);
@@ -29,15 +29,16 @@ export function AssistantCitationTray({
     <div className="mb-2 flex w-fit items-center overflow-hidden rounded-full border border-border">
       <Popover
         open={open && !voiceSetupOpen}
-        onOpenChange={(next, details) => {
+        onOpenChange={(next) => {
           if (voiceSetupOpen) return;
-          if (!next && details.reason === "trigger-press") return;
           setOpen(next);
         }}
       >
         <PopoverTrigger
           render={<Button variant="ghost" size="xs" />}
-          onMouseEnter={() => setOpen(true)}
+          openOnHover
+          delay={150}
+          closeDelay={150}
         >
           <QuoteIcon />
           {citations.length} {citations.length === 1 ? "annotation" : "annotations"}
@@ -70,25 +71,31 @@ export function AssistantCitationTray({
                     }}
                     onCancel={() => setEditing(null)}
                     moveLabel="Insert inline"
-                    onMove={(comment) => {
-                      if (onInsertInline(withAssistantCitationComment(citation, comment)))
-                        remove(index);
-                    }}
+                    onMove={
+                      onInsertInline
+                        ? (comment) => {
+                            if (onInsertInline(withAssistantCitationComment(citation, comment)))
+                              remove(index);
+                          }
+                        : undefined
+                    }
                   />
                 ) : (
                   <div className="flex gap-2">
                     <Button variant="outline" size="xs" onClick={() => setEditing(index)}>
                       Edit
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => {
-                        if (onInsertInline(citation)) remove(index);
-                      }}
-                    >
-                      Insert inline
-                    </Button>
+                    {onInsertInline ? (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => {
+                          if (onInsertInline(citation)) remove(index);
+                        }}
+                      >
+                        Insert inline
+                      </Button>
+                    ) : null}
                     <Button variant="outline" size="xs" onClick={() => remove(index)}>
                       Delete
                     </Button>

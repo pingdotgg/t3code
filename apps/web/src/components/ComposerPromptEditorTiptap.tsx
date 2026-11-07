@@ -180,7 +180,7 @@ export interface ComposerPromptEditorProps {
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
-  onMoveCitationToTray?: (citation: AssistantCitation) => void;
+  onMoveCitationToTray?: ((citation: AssistantCitation) => void) | undefined;
   onCitationSubmitAndSend?: () => void;
   /** Saves unsaved citation text into replacedValue when a controlled rewrite replaces the document. */
   onCitationDraftSave?: (replacedValue: string, savedValue: string) => void;

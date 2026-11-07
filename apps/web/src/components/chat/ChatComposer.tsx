@@ -3515,16 +3515,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     key={composerDraftTargetKey}
                     citations={composerDraft.trayCitations ?? []}
                     onChange={setTrayCitations}
-                    onInsertInline={(citation) =>
-                      insertComposerTextStable(
-                        formatAssistantCitationForComposer(citation, citation.comment),
-                        "cursor",
-                        { ensureLeadingBoundary: true },
-                      )
+                    onInsertInline={
+                      activePendingProgress
+                        ? undefined
+                        : (citation) =>
+                            insertComposerTextStable(
+                              formatAssistantCitationForComposer(citation, citation.comment),
+                              "cursor",
+                              { ensureLeadingBoundary: true },
+                            )
                     }
                   />
                   <ComposerPromptEditor
-                    onMoveCitationToTray={appendTrayCitation}
+                    onMoveCitationToTray={activePendingProgress ? undefined : appendTrayCitation}
                     draftKey={composerDraftTargetKey}
                     // Switching threads lands focus here, so the label names the thread.
                     ariaLabel={activeThread ? `Message ${activeThread.title}` : "Message"}
