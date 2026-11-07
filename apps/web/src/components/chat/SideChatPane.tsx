@@ -97,7 +97,7 @@ export default function SideChatPane(props: {
         api.dialogs.confirm(
           [
             `Delete side chat "${shell.title}"?`,
-            "This permanently clears its conversation history.",
+            "You can't restore it. Its conversation history stays in T3 Code's database.",
           ].join("\n"),
           { variant: "destructive" },
         ),
