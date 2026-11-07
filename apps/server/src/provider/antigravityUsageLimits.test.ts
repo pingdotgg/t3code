@@ -478,6 +478,42 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  // Oracle: reported payloads for a personal sign-in, whose runtime meters on the daily endpoint.
+  it.effect("reports a personal account's quota from the daily endpoint it is metered on", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-11-07T12:00:00Z")));
+      const argon = (remainingFraction: number, resetTime: string) => ({
+        groups: [
+          {
+            displayName: "Gemini 4 Argon",
+            buckets: [
+              {
+                bucketId: "gemini-argon-wtu-weekly",
+                window: "weekly",
+                remainingFraction,
+                resetTime,
+              },
+            ],
+          },
+        ],
+      });
+      const { probe } = yield* fixture({
+        authMethod: "oauth-personal",
+        summaryByHost: {
+          "daily-cloudcode-pa.googleapis.com": argon(0.8623059, "2026-11-14T08:41:35Z"),
+          "cloudcode-pa.googleapis.com": argon(0, "2026-11-08T18:27:14Z"),
+        },
+      });
+      expect((yield* probe).windows).toEqual([
+        expect.objectContaining({
+          id: "gemini-argon-wtu-weekly",
+          usedPercent: expect.closeTo(13.77, 2),
+          resetsAt: "2026-11-14T08:41:35.000Z",
+        }),
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("labels Argon's weekly quota apart from the default Gemini weekly quota", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
