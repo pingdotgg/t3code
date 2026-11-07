@@ -102,6 +102,33 @@ runVcsDriverContractSuite<GitVcsDriver.GitVcsDriver, GitContractError>({
   },
 });
 
+it("treats only reflog entries that create local commits as local", () => {
+  const local = [
+    "commit: own",
+    "commit (amend): own",
+    "pull: Merge made by the 'ort' strategy.",
+    "pull origin main: Merge made by the 'ort' strategy.",
+    "pull (pick): own",
+    "pull --rebase origin main (pick): own",
+    "rebase (pick): own",
+    "rebase (continue): own",
+    "rebase (merge): own",
+    "merge upstream/main: Merge made by the 'ort' strategy.",
+  ];
+  const fetched = [
+    "pull: Fast-forward",
+    "pull (finish): returning to refs/heads/main",
+    "merge upstream/main: Fast-forward",
+    "fetch upstream: fast-forward",
+  ];
+  for (const subject of local) {
+    assert.isTrue(GitVcsDriver.LOCAL_COMMIT_REFLOG_SUBJECT.test(subject), subject);
+  }
+  for (const subject of fetched) {
+    assert.isFalse(GitVcsDriver.LOCAL_COMMIT_REFLOG_SUBJECT.test(subject), subject);
+  }
+});
+
 it.effect("lists the fetch and push URLs of a partial clone remote", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

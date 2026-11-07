@@ -533,6 +533,123 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("leaves out recent upstream commits that a fetch brought in", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const upstream = yield* makeTmpDir("checkpoint-store-upstream-");
+        yield* initRepoWithCommit(tmp);
+        yield* git(upstream, ["clone", tmp, "."]);
+        yield* git(upstream, ["config", "user.email", "test@test.com"]);
+        yield* git(upstream, ["config", "user.name", "Test"]);
+        yield* git(tmp, ["remote", "add", "upstream", upstream]);
+        yield* git(tmp, ["fetch", "upstream"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-fetched-paths");
+        const refs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+
+        // Dated after the checkpoint, like an upstream commit pushed during the turn.
+        const afterCheckpoint = "2090-01-01T00:00:00Z";
+        yield* writeTextFile(NodePath.join(upstream, "upstream.txt"), "upstream\n");
+        yield* git(upstream, ["add", "."]);
+        yield* git(upstream, ["commit", "-m", "upstream"], { committedAt: afterCheckpoint });
+        yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
+        const branch = yield* git(tmp, ["branch", "--show-current"]);
+        yield* git(tmp, ["merge", "--ff-only", `upstream/${branch}`], {
+          committedAt: afterCheckpoint,
+        });
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+        expect(yield* git(tmp, ["status", "--porcelain"])).toBe("");
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set());
+
+        yield* writeTextFile(NodePath.join(tmp, "own.txt"), "own\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "own"], { committedAt: afterCheckpoint });
+        yield* git(tmp, ["push", "upstream", "HEAD:refs/heads/agent"], {
+          committedAt: afterCheckpoint,
+        });
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["own.txt"]));
+
+        yield* git(upstream, ["branch", "other", "agent"]);
+        yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["own.txt"]));
+
+        yield* writeTextFile(NodePath.join(tmp, "upstream.txt"), "local\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "local conflict"], { committedAt: afterCheckpoint });
+        yield* writeTextFile(NodePath.join(upstream, "upstream.txt"), "remote\n");
+        yield* git(upstream, ["add", "."]);
+        yield* git(upstream, ["commit", "-m", "remote conflict"], { committedAt: afterCheckpoint });
+        yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
+        yield* git(tmp, ["rebase", `upstream/${branch}`], {
+          committedAt: afterCheckpoint,
+          allowNonZeroExit: true,
+        });
+        expect(yield* git(tmp, ["diff", "--name-only", "--diff-filter=U"])).toBe("upstream.txt");
+        yield* writeTextFile(NodePath.join(tmp, "upstream.txt"), "resolved\n");
+        yield* git(tmp, ["add", "upstream.txt"]);
+        yield* git(tmp, ["-c", "core.editor=true", "rebase", "--continue"], {
+          committedAt: afterCheckpoint,
+        });
+        yield* git(tmp, ["push", "upstream", "HEAD:refs/heads/resolved"], {
+          committedAt: afterCheckpoint,
+        });
+        yield* git(upstream, ["branch", "rediscovered", "resolved"]);
+        yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(
+          new Set(["own.txt", "upstream.txt"]),
+        );
+      }),
+    );
+
+    it.effect("leaves out every upstream commit when several fetches advance a remote", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const upstream = yield* makeTmpDir("checkpoint-store-upstream-");
+        yield* initRepoWithCommit(tmp);
+        yield* git(upstream, ["clone", tmp, "."]);
+        yield* git(upstream, ["config", "user.email", "test@test.com"]);
+        yield* git(upstream, ["config", "user.name", "Test"]);
+        yield* git(tmp, ["remote", "add", "upstream", upstream]);
+        yield* git(tmp, ["fetch", "upstream"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-repeated-fetch-paths");
+        const refs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+
+        const afterCheckpoint = "2090-01-01T00:00:00Z";
+        for (const file of ["first.txt", "second.txt"]) {
+          yield* writeTextFile(NodePath.join(upstream, file), "upstream\n");
+          yield* git(upstream, ["add", "."]);
+          yield* git(upstream, ["commit", "-m", file], { committedAt: afterCheckpoint });
+          yield* git(tmp, ["fetch", "upstream"], { committedAt: afterCheckpoint });
+        }
+        const branch = yield* git(tmp, ["branch", "--show-current"]);
+        yield* git(tmp, ["merge", "--ff-only", `upstream/${branch}`], {
+          committedAt: afterCheckpoint,
+        });
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set());
+      }),
+    );
     it.effect("keeps paths from signed commits under log.showSignature", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
@@ -562,6 +679,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* writeTextFile(NodePath.join(tmp, "kept.txt"), "kept\n");
         yield* git(tmp, ["add", "kept.txt"]);
         yield* git(tmp, ["commit", "-S", "-m", "kept"]);
+        yield* git(tmp, ["fetch", ".", "HEAD:refs/remotes/upstream/main"]);
         yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
 
         expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["kept.txt"]));
