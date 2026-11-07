@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as BackgroundPolicy from "./BackgroundPolicy.ts";
@@ -178,6 +179,23 @@ describe("BackgroundPolicy", () => {
       const snapshot = yield* policy.snapshot;
       assert.equal(snapshot.activeForegroundLeaseCount, 0);
       assert.deepStrictEqual(snapshot.activeScopeKeys, ["vcs-status:/repo"]);
+      assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), false);
+    }).pipe(Effect.provide(layerFor(nominalHostPower))),
+  );
+
+  it.effect("stops counting a lease once it expires", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      yield* policy.reportClientActivity(
+        AuthSessionId.make("session-1"),
+        RpcClientId.make(1),
+        makeReport({ ttlMs: 50_000 }),
+      );
+      // 50s falls between 15-second sweeps, so only the snapshot's expiry filter drops it.
+      yield* TestClock.adjust("50 seconds");
+
+      const snapshot = yield* policy.snapshot;
+      assert.equal(snapshot.activeForegroundLeaseCount, 0);
       assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), false);
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
   );

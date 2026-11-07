@@ -109,8 +109,9 @@ function upsertClientActivityLease(
   return next;
 }
 
-function isForegroundLease(lease: ClientActivityLease, now: DateTime.Utc): boolean {
-  return isLeaseActive(lease, now) && lease.visible && (lease.focused || lease.recentlyInteracted);
+// Expects an unexpired lease; computeSnapshot owns the expiry check.
+function isForegroundLease(lease: ClientActivityLease): boolean {
+  return lease.visible && (lease.focused || lease.recentlyInteracted);
 }
 
 function leaseHasScope(lease: ClientActivityLease, scope: BackgroundScope): boolean {
@@ -145,20 +146,19 @@ function isClientConstrained(
   return settings.pauseWhenClientLowPower && lease.lowPowerMode === "true";
 }
 
+// Expects an unexpired lease; computeSnapshot owns the expiry check.
 function leaseMayRunScopedWork(
   lease: ClientActivityLease,
   scope: BackgroundScope,
-  now: DateTime.Utc,
   settings: ResolvedBackgroundActivitySettings,
 ): boolean {
-  const activeWithScope = isLeaseActive(lease, now) && leaseHasScope(lease, scope);
-  if (!activeWithScope || isClientConstrained(lease, settings)) {
+  if (!leaseHasScope(lease, scope) || isClientConstrained(lease, settings)) {
     return false;
   }
   if (settings.profile === "performance") {
     return true;
   }
-  return isForegroundLease(lease, now);
+  return isForegroundLease(lease);
 }
 
 function computeSnapshot(input: {
@@ -171,7 +171,7 @@ function computeSnapshot(input: {
   const activeLeases = [...input.leases.values()].filter((lease) =>
     isLeaseActive(lease, input.now),
   );
-  const foregroundLeases = activeLeases.filter((lease) => isForegroundLease(lease, input.now));
+  const foregroundLeases = activeLeases.filter(isForegroundLease);
   const activeScopeKeys = new Set<string>();
   for (const lease of activeLeases) {
     for (const scope of lease.scopes) {
@@ -256,9 +256,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     if (isHostConstrained(current.hostPower, settings)) {
       return false;
     }
-    return current.leases.some((lease) =>
-      leaseMayRunScopedWork(lease, scope, current.updatedAt, settings),
-    );
+    return current.leases.some((lease) => leaseMayRunScopedWork(lease, scope, settings));
   });
 
   const shouldRunOpportunisticWork = Effect.map(
