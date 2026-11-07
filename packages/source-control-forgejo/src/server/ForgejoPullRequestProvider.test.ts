@@ -128,7 +128,18 @@ const fastForwardOnly = {
   host: "forge.example:3000",
   number: 3,
 };
-const fastForwardOnlyProvider = (writes: Array<{ path: string; body: unknown }>) =>
+const fastForwardOnlySettings = {
+  allow_merge_commits: false,
+  allow_squash_merge: false,
+  allow_rebase: false,
+  allow_rebase_explicit: false,
+  allow_fast_forward_only_merge: true,
+  default_merge_style: "fast-forward-only",
+};
+const fastForwardOnlyProvider = (
+  writes: Array<{ path: string; body: unknown }>,
+  mergeSettings: object = fastForwardOnlySettings,
+) =>
   ForgejoPullRequestProvider.make.pipe(
     Effect.provide(
       Layer.mock(ForgejoCli.ForgejoCli)({
@@ -147,12 +158,7 @@ const fastForwardOnlyProvider = (writes: Array<{ path: string; body: unknown }>)
               return reply({
                 full_name: "maria/project",
                 permissions: { push: true, admin: true },
-                allow_merge_commits: false,
-                allow_squash_merge: false,
-                allow_rebase: false,
-                allow_rebase_explicit: false,
-                allow_fast_forward_only_merge: true,
-                default_merge_style: "fast-forward-only",
+                ...mergeSettings,
               });
             case "repos/maria/project/pulls/3":
               return reply({
@@ -191,6 +197,17 @@ it.effect("offers a fast-forward merge on a repository that only allows fast-for
       (method) => detail.mergeCapabilities[method],
     );
     assert.deepStrictEqual(allowed, ["fast-forward"]);
+  }),
+);
+
+it.effect("does not offer fast-forward when Forgejo omits the setting", () =>
+  Effect.gen(function* () {
+    const provider = yield* fastForwardOnlyProvider([], {});
+    const detail = yield* provider.getChangeRequest(fastForwardOnly);
+    const allowed = provider.capabilities.mergeMethods.filter(
+      (method) => detail.mergeCapabilities[method],
+    );
+    assert.deepStrictEqual(allowed, ["merge", "squash", "rebase"]);
   }),
 );
 
