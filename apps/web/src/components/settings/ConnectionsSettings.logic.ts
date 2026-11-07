@@ -438,6 +438,14 @@ export function endpointShareHint(endpoint: AdvertisedEndpoint, url: string): st
   }
 }
 
+/** Counts every environment the client knows, not only link hosts, since the page lists them all. */
+export function linkedEnvironmentsSectionLabel(input: {
+  readonly hostLabel: string;
+  readonly environmentCount: number;
+}): string | null {
+  return input.environmentCount > 1 ? input.hostLabel : null;
+}
+
 /** An explicit choice while it is listed, else the primary, else a connected environment. */
 export function resolveAccessEnvironmentId(input: {
   readonly primaryEnvironmentId: EnvironmentId | null;

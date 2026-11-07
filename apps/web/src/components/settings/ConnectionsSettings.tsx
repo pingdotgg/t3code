@@ -29,6 +29,7 @@ import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import {
   applyWslEnableSelection,
   isWslSettingsRowVisible,
+  linkedEnvironmentsSectionLabel,
   missingTailscaleEndpointDescription,
   resolveAccessEnvironmentId,
   resolveLocalVersionStatusLabel,
@@ -1650,7 +1651,10 @@ function ConnectionsSettingsContent({
         <LinkedEnvironmentsSettings
           key={environment.environmentId}
           environmentId={environment.environmentId}
-          environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
+          environmentLabel={linkedEnvironmentsSectionLabel({
+            hostLabel: environment.label,
+            environmentCount: environments.length,
+          })}
           isSearchTarget={index === 0}
         />
       ))}

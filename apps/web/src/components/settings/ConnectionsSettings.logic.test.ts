@@ -2,6 +2,7 @@ import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  linkedEnvironmentsSectionLabel,
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
@@ -197,6 +198,21 @@ describe("resolveAccessEnvironmentId", () => {
     },
   ])("$label", ({ primaryEnvironmentId, environments, selected, expected }) => {
     expect(resolveAccessEnvironmentId({ primaryEnvironmentId, environments, selected })).toBe(
+      expected,
+    );
+  });
+});
+
+describe("linkedEnvironmentsSectionLabel", () => {
+  it.each([
+    { label: "leaves the only environment unnamed", environmentCount: 1, expected: null },
+    {
+      label: "names the host when another known environment offers no links",
+      environmentCount: 2,
+      expected: "Laptop",
+    },
+  ])("$label", ({ environmentCount, expected }) => {
+    expect(linkedEnvironmentsSectionLabel({ hostLabel: "Laptop", environmentCount })).toBe(
       expected,
     );
   });
