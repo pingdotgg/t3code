@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -32,6 +33,11 @@ vi.mock(import("../../state/entities"), async (importOriginal) => ({
 vi.mock(import("../../state/server"), async (importOriginal) => ({
   ...(await importOriginal()),
   serverEnvironment: { createLesson: {} } as never,
+}));
+vi.mock(import("../../hooks/useSettings"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentSettings: ((_environmentId: unknown, select: (value: unknown) => unknown) =>
+    select(DEFAULT_UNIFIED_SETTINGS)) as never,
 }));
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: () => state.createLesson,

@@ -43,6 +43,7 @@ import {
 } from "../../providerInstances";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "../settings/settingsLayout";
@@ -58,10 +59,9 @@ export function openNewLesson(request: Request) {
 }
 
 const LESSON_MODEL = "claude-sonnet-5-5";
-const nullOr = Schema.NullOr;
-const LESSON_MODEL_SCHEMA = nullOr(ModelSelection);
+const LESSON_MODEL_SCHEMA = Schema.NullOr(ModelSelection);
 
-/** @public Used by the lesson model picker and its defaulting tests. */
+/** @public */
 export function lessonModelSelection(
   providers: Parameters<typeof deriveProviderInstanceEntries>[0],
   remembered: ModelSelection | null,
@@ -143,13 +143,17 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
         request.projectRef.projectId,
       ),
   );
-  const pickerSettings = serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
-  const pickerEntries = providerInstanceEntriesFor(providers, pickerSettings, null);
+  const pickerSettings = useEnvironmentSettings(request.projectRef.environmentId, (value) => value);
+  const pickerEntries = providerInstanceEntriesFor(
+    providers,
+    pickerSettings,
+    request.projectRef.projectId,
+  );
   const active = modelSelection
     ? pickerEntries.find((entry) => entry.instanceId === modelSelection.instanceId)
     : undefined;
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
-    pickerSettings as Parameters<typeof getCustomModelOptionsByInstance>[0],
+    pickerSettings,
     providers,
     modelSelection?.instanceId,
     modelSelection?.model,
