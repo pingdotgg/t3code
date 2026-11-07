@@ -177,7 +177,8 @@ export function claudeUsageResponseToLimits(input: {
   readonly checkedAt: string;
 }): { readonly limits: ServerProviderUsageLimits; readonly names: ClaudeScopedLimitNames } {
   const { response, checkedAt } = input;
-  if (!response.rate_limits_available || !response.rate_limits) {
+  // The SDK does not type it, but a refused usage read (e.g. HTTP 429) arrives as `rate_limits: { error }`.
+  if (!response.rate_limits_available || !response.rate_limits || "error" in response.rate_limits) {
     return {
       limits: makeUnavailableUsageLimits({
         checkedAt,

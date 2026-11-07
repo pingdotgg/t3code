@@ -260,7 +260,7 @@ export type ClaudeCapabilitiesProbe = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly models?: ReadonlyArray<ClaudeModelInfo>;
-  /** Undefined means get_usage failed; absent windows on success mean no subscription windows, as with API keys. */
+  /** Omitted when usage collection is skipped or fails; `rate_limits.error` also means failure. Absent windows on success mean no subscription windows. */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly usageCheckedAt?: string;
 };

@@ -107,6 +107,25 @@ describe("claudeUsageResponseToLimits", () => {
     ]);
   });
 
+  it("treats a refused usage read as a failed probe, not as zero windows", () => {
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            ...({
+              error: { type: "rate_limit_error", message: "Rate limited. Please try again later." },
+            } as object),
+          },
+        },
+      }),
+    ).toEqual({
+      names: noNames,
+      limits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+    });
+  });
+
   const enterpriseResponse = {
     rate_limits_available: true,
     rate_limits: {
