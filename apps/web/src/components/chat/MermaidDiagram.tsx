@@ -234,8 +234,14 @@ export function MermaidDiagram({
   onExpand: (imageUrl: string) => void;
 }) {
   const [, setAttempt] = useState(0);
-  const [renderError, setRenderError] = useState<string | null>(null);
+  // Tied to the source that failed so a corrected fence is not stuck behind a
+  // hidden, zero-width mount host from the previous error.
+  const [renderError, setRenderError] = useState<{
+    readonly source: string;
+    readonly message: string;
+  } | null>(null);
   const trimmedSource = source.trim();
+  const activeError = renderError?.source === trimmedSource ? renderError.message : null;
   const core = use(loadCore());
   const type = core.status === "loaded" ? detectDiagramType(core.pele, trimmedSource) : null;
   const load = core.status === "loaded" && type ? use(loadDiagramType(core.pele, type)) : core;
@@ -264,9 +270,10 @@ export function MermaidDiagram({
         // Pele already draws its own error chrome. Replacing a successful diagram — or one
         // that only failed while its host was collapsed — sticks a permanent React error.
         if (rendered || !diagramHostIsReady(container)) return;
-        setRenderError(
-          error instanceof Error ? error.message : "The diagram could not be rendered.",
-        );
+        setRenderError({
+          source: trimmedSource,
+          message: error instanceof Error ? error.message : "The diagram could not be rendered.",
+        });
       },
     };
 
@@ -311,11 +318,11 @@ export function MermaidDiagram({
       data-markdown-mermaid=""
       data-markdown-copy={serializeCodeBlockToMarkdown(source, "mermaid")}
     >
-      {renderError ? <DiagramError message={renderError} source={source} /> : null}
+      {activeError ? <DiagramError message={activeError} source={source} /> : null}
       <button
         type="button"
         aria-label="Expand diagram"
-        hidden={renderError !== null}
+        hidden={activeError !== null}
         className="block w-full cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-ring"
         onClick={(event) => {
           const svg = event.currentTarget.querySelector("svg");

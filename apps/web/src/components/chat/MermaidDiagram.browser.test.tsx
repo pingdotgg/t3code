@@ -149,4 +149,37 @@ describe("MermaidDiagram in collapsed containers", () => {
     expect(screen.container.textContent).not.toContain("Unable to render diagram");
     expect(screen.container.querySelector("[data-markdown-mermaid] svg")).not.toBeNull();
   });
+
+  it("recovers when source changes after a render error", async () => {
+    mountSpy.mockClear();
+    await using screen = await render(
+      <div style={{ width: 480 }}>
+        <Suspense fallback={null}>
+          <MermaidDiagram source={"flowchart LR\nA-->"} onExpand={() => undefined} />
+        </Suspense>
+      </div>,
+      // No router: this is an isolated diagram host.
+      { router: false },
+    );
+
+    await vi.waitFor(() => {
+      expect(screen.container.textContent).toContain("Unable to render diagram");
+    });
+    expect(screen.container.querySelector("[data-markdown-mermaid] button")).toHaveAttribute(
+      "hidden",
+    );
+
+    await screen.rerender(
+      <div style={{ width: 480 }}>
+        <Suspense fallback={null}>
+          <MermaidDiagram source={FLOW} onExpand={() => undefined} />
+        </Suspense>
+      </div>,
+    );
+
+    await vi.waitFor(() => {
+      expect(screen.container.querySelector("[data-markdown-mermaid] svg")).not.toBeNull();
+    });
+    expect(screen.container.textContent).not.toContain("Unable to render diagram");
+  });
 });
