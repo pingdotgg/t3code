@@ -1,5 +1,5 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
-import { Outlet, createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useMatches, useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { RestoreDeviceDefaultsButton } from "../components/settings/SettingsPanels";
 
@@ -92,26 +92,26 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
 
 function SettingsContentLayout({ children }: { children: ReactNode }) {
   const contentArea = workspaceAreaProps("settings", 1, "Settings content");
-  const location = useLayoutPageLocation();
+  const pathname = useMatches({ select: (matches) => matches.at(-1)!.pathname });
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
-    location.pathname === "/settings/diagnostics" || location.pathname === "/settings/providers"
+    pathname === "/settings/diagnostics" || pathname === "/settings/providers"
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
   return (
     <AppRouteModal label="Settings" variant="app-panel">
       <div className="relative flex min-h-0 flex-1">
-        <SettingsSidebarNav pathname={location.pathname} />
+        <SettingsSidebarNav pathname={pathname} />
         <div
           {...contentArea}
           data-app-modal-pane=""
           className="flex min-h-0 min-w-0 flex-1 flex-col"
         >
           <header className="flex h-13 shrink-0 items-center gap-3 ps-5 pe-3">
-            <SettingsBreadcrumb pathname={location.pathname} />
+            <SettingsBreadcrumb pathname={pathname} />
             <div className="relative z-20 ms-auto flex shrink-0 items-center gap-1">
-              {location.pathname === "/settings/general" ? (
+              {pathname === "/settings/general" ? (
                 <RestoreDeviceDefaultsButton
                   compact
                   onRestored={() => setRestoreSignal((value) => value + 1)}
@@ -122,7 +122,7 @@ function SettingsContentLayout({ children }: { children: ReactNode }) {
           </header>
 
           <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
-            <SettingsScopeBoundary pathname={location.pathname}>{children}</SettingsScopeBoundary>
+            <SettingsScopeBoundary pathname={pathname}>{children}</SettingsScopeBoundary>
           </div>
         </div>
       </div>
