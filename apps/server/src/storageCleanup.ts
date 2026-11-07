@@ -85,6 +85,8 @@ const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const REPORT_ENTRY_LIMIT = 200;
 const isGitCommandError = Schema.is(GitCommandError);
+const errorCode = (error: PlatformError) =>
+  error.cause instanceof Error && "code" in error.cause ? error.cause.code : undefined;
 
 function cleanupFailureReason(error: { readonly message: string }) {
   return isGitCommandError(error)
@@ -386,10 +388,7 @@ const make = Effect.gen(function* () {
         const isLink = yield* fs.readLink(target).pipe(
           Effect.as(true),
           Effect.catchIf(
-            (error) =>
-              error.cause instanceof Error &&
-              "code" in error.cause &&
-              error.cause.code === "EINVAL",
+            (error) => errorCode(error) === "EINVAL",
             () => Effect.succeed(false),
           ),
         );
@@ -616,6 +615,91 @@ const make = Effect.gen(function* () {
     return (name?.startsWith("(") ? null : name) !== branch;
   });
 
+  // Git status and non-forced worktree removal both skip assume-unchanged and skip-worktree files.
+  const hiddenTrackedChange = Effect.fn("StorageCleanup.hiddenTrackedChange")(function* (
+    cwd: string,
+  ) {
+    const inspect = (args: string[], stdin?: string) =>
+      git.execute({
+        operation: "StorageCleanup.hiddenTrackedChanges",
+        cwd,
+        args,
+        ...(stdin === undefined ? {} : { stdin }),
+        maxOutputBytes: 1024 * 1024,
+      });
+    const sparse = yield* inspect([
+      "config",
+      "--type=bool",
+      "--default=false",
+      "core.sparseCheckout",
+    ]);
+    // Sparse checkouts flag every file outside the cone; Git 2.37+ unflags those it finds on disk.
+    const hiddenTag = sparse.stdout.trim() === "true" ? /^[a-z]$/ : /^(?:S|[a-z])$/;
+    const flagged: Array<{ readonly mode: string; readonly id: string; readonly file: string }> =
+      [];
+    let overflow = false;
+    yield* git.execute({
+      operation: "StorageCleanup.hiddenTrackedChanges",
+      cwd,
+      args: ["-c", "core.quotePath=false", "ls-files", "-s", "-v"],
+      maxOutputBytes: 64 * 1024,
+      appendTruncationMarker: true,
+      keepLineCallbacksAfterTruncation: true,
+      progress: {
+        onStdoutLine: (line) =>
+          Effect.sync(() => {
+            const match = /^(\S) (\d+) ([0-9a-f]+) \d\t(.*)$/s.exec(line);
+            if (match === null || !hiddenTag.test(match[1]!) || match[2] === "160000") return;
+            if (flagged.length < 10_000)
+              flagged.push({ mode: match[2]!, id: match[3]!, file: match[4]! });
+            else overflow = true;
+          }),
+      },
+    });
+    if (overflow) return "hidden tracked files exceed the inspection limit";
+    const reason = (file: string) => `has uncommitted changes hidden from git status (${file})`;
+    // Quoted names (control characters, quotes, backslashes) and names that are not valid UTF-8
+    // decode to text that is not the path on disk.
+    const unreadable = flagged.find(({ file }) => file.startsWith('"') || file.includes("\uFFFD"));
+    if (unreadable !== undefined) return reason(unreadable.file);
+    const onDisk = yield* Effect.forEach(
+      flagged,
+      (entry) => {
+        const file = path.join(cwd, entry.file);
+        return fs.readLink(file).pipe(
+          Effect.map((target) => ({ ...entry, type: "SymbolicLink", target })),
+          Effect.catchIf(
+            (error) => errorCode(error) === "EINVAL",
+            () => fs.stat(file).pipe(Effect.map((info) => ({ ...entry, type: info.type }))),
+          ),
+          Effect.catchIf(
+            (error) => errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR",
+            () => Effect.succeed(null),
+          ),
+        );
+      },
+      { concurrency: 16 },
+    );
+    const files = [];
+    for (const entry of onDisk) {
+      if (entry === null) continue;
+      if (entry.type === "File" && entry.mode !== "120000") files.push(entry);
+      else if (!("target" in entry) || entry.mode !== "120000") return reason(entry.file);
+      // Hashing a link's path would hash the file it points to.
+      else if (
+        (yield* inspect(["hash-object", "--stdin"], entry.target)).stdout.trim() !== entry.id
+      )
+        return reason(entry.file);
+    }
+    if (files.length === 0) return null;
+    const worktreeIds = (yield* inspect(
+      ["hash-object", "--stdin-paths"],
+      files.map(({ file }) => `${file}\n`).join(""),
+    )).stdout.split("\n");
+    const changed = files.find(({ id }, i) => worktreeIds[i] !== id);
+    return changed === undefined ? null : reason(changed.file);
+  });
+
   const localChangesReason = Effect.fn("StorageCleanup.localChangesReason")(function* (
     cwd: string,
     rules: WorktreeCleanupRules,
@@ -642,6 +726,8 @@ const make = Effect.gen(function* () {
       if (/^[RC]|^.[RC]/.test(records[i]!)) i++;
     }
     if (count > 0) return `has uncommitted changes (${count} ${count === 1 ? "file" : "files"})`;
+    const hidden = yield* hiddenTrackedChange(cwd);
+    if (hidden !== null) return hidden;
     if (rules.worktreeKeepWhen !== "any-local-files") return null;
     const ignored = yield* git.execute({
       operation: "StorageCleanup.ignoredFiles",
