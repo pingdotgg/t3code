@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import type { ModelInfo } from "@github/copilot-sdk";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
@@ -88,16 +90,20 @@ it.effect("force stops a CLI that never finishes its handshake", () =>
 it.effect("force stops a CLI that will not shut down", () =>
   Effect.gen(function* () {
     let forced = false;
+    const stopping = yield* Deferred.make<void>();
     const probe = yield* readGitHubCopilotAccount(
       probeClient({
-        stop: () => new Promise(() => undefined),
+        stop: () => {
+          Deferred.doneUnsafe(stopping, Exit.void);
+          return new Promise(() => undefined);
+        },
         forceStop: async () => {
           forced = true;
         },
       }),
     ).pipe(Effect.forkChild);
 
-    yield* Effect.yieldNow;
+    yield* Deferred.await(stopping);
     yield* TestClock.adjust("2 seconds");
 
     assert.isTrue(Option.isSome(yield* Fiber.join(probe)));

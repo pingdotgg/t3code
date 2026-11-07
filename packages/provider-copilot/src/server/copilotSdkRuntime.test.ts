@@ -935,6 +935,25 @@ it.effect("rewinds to just after a turn, keeping that turn", () =>
   }).pipe(Effect.scoped),
 );
 
+it.effect("fails a rewind to a turn the session does not have", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    fakes.setHistory([{ id: "u1", type: "user.message" } as SessionEvent]);
+    const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
+    yield* runtime.start();
+
+    const failure = yield* runtime
+      .request(COPILOT_SDK_ROLLBACK_METHOD, { turnEventId: "gone" })
+      .pipe(
+        Effect.as(""),
+        Effect.catch((error) => Effect.succeed(error.message)),
+      );
+
+    assert.include(failure, "gone");
+    assert.deepEqual(fakes.calls, []);
+  }).pipe(Effect.scoped),
+);
+
 it.effect("carries a steer's images to Copilot", () =>
   Effect.gen(function* () {
     const fakes = makeFakes();
