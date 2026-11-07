@@ -5,7 +5,8 @@ import {
   presentPendingBackgroundWork,
   type PendingBackgroundWorkItem,
 } from "@t3tools/client-runtime/state/thread-execution";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId, ThreadPullRequestLink } from "@t3tools/contracts";
+import { findPullRequestForWatchTask } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Haptics from "expo-haptics";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -13,8 +14,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import * as Dialog from "../../components/ui/Dialog";
 import { ScreenContent } from "../../components/ui/ScreenContent";
+import { cn } from "../../lib/cn";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { environmentThreadShells } from "../../state/threads";
+import { pullRequestChecksStatus, pullRequestStatus } from "../pull-requests/pullRequestStatus";
 
 const KIND_LABELS = {
   subagent: "Subagent",
@@ -53,9 +58,17 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
           Nothing running in the background.
         </Text>
       ) : (
-        presentation.items.map((item) => (
-          <BackgroundWorkRow key={item.taskId} item={item} onOpen={openThread} />
-        ))
+        presentation.items.map((item) => {
+          const link =
+            item.kind === "monitor"
+              ? findPullRequestForWatchTask(item.taskId, thread?.pullRequests)
+              : undefined;
+          return link ? (
+            <PullRequestMonitorRow key={item.taskId} link={link} />
+          ) : (
+            <BackgroundWorkRow key={item.taskId} item={item} onOpen={openThread} />
+          );
+        })
       )}
     </ScrollView>
   );
@@ -64,6 +77,65 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
       <SheetHeader title="Background work" onClose={() => navigation.goBack()} />
       <ScreenContent>{content}</ScreenContent>
     </View>
+  );
+}
+
+const CHECKS_LABELS = {
+  passing: "checks passing",
+  pending: "checks pending",
+  failing: "checks failing",
+} as const;
+
+function PullRequestMonitorRow(props: { readonly link: ThreadPullRequestLink }) {
+  const { link } = props;
+  // The snapshot arrives from the host after the link, so the row must stay tappable without it.
+  const snapshot = link.snapshot;
+  const status = snapshot ? pullRequestStatus(snapshot) : null;
+  const checksState = snapshot?.state === "open" ? snapshot.checksState : undefined;
+  const checks = checksState ? pullRequestChecksStatus(checksState) : null;
+  const checksLabel = checksState ? CHECKS_LABELS[checksState] : undefined;
+  const title = snapshot?.title ?? `Pull request #${link.number}`;
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={`Watching pull request ${link.number}, ${title}${status ? `, ${status.label}` : ""}${checksLabel ? `, ${checksLabel}` : ""}`}
+      accessibilityHint="Opens this pull request externally"
+      onPress={() => {
+        void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
+          if (!opened) Dialog.alert("Unable to open PR", "The pull request could not be opened.");
+        });
+      }}
+      className="active:opacity-70"
+    >
+      <View className="flex-row items-center gap-3 border-b border-border py-3.5">
+        <SymbolView
+          name={{ ios: "bolt", android: "bolt" }}
+          size={15}
+          tintColorClassName="accent-foreground-muted"
+          type="monochrome"
+        />
+        <View className="min-w-0 flex-1 gap-0.5">
+          <Text className="font-t3-medium text-sm text-foreground" numberOfLines={2}>
+            {title}
+          </Text>
+          <View className="flex-row flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <Text className={cn("font-t3-medium text-xs", status?.text ?? "text-foreground-muted")}>
+              #{link.number}
+            </Text>
+            <Text className="text-xs text-foreground-muted">
+              {status ? `Watching · ${status.label}` : "Watching"}
+            </Text>
+            {checks ? (
+              <View className="flex-row items-center gap-1">
+                <SymbolView name={checks.icon} size={12} tintColorClassName={checks.tint} />
+                <Text className="text-xs text-foreground-muted">{checksLabel}</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        <SymbolView name="arrow.up.right" size={12} tintColorClassName="accent-icon-subtle" />
+      </View>
+    </Pressable>
   );
 }
 

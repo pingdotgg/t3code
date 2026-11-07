@@ -3,6 +3,7 @@ import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  findPullRequestForWatchTask,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
 describe("backgroundWorkHoldsCompletion", () => {
@@ -432,6 +433,29 @@ describe("derivePendingBackgroundWork kinds", () => {
         "pull-request-watch:github.com/acme/app#1",
         "pull-request-watch:github.com/acme/app#5",
       ]);
+    });
+
+    it("maps a watch monitor's task id back to its linked pull request", () => {
+      const [task] = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [],
+        pullRequests,
+      });
+      expect(findPullRequestForWatchTask(task!.taskId, pullRequests)).toBe(pullRequests[0]);
+      expect(
+        findPullRequestForWatchTask("pull-request-watch:github.com/acme/app#9", pullRequests),
+      ).toBe(undefined);
+      expect(findPullRequestForWatchTask("some-command-id", pullRequests)).toBe(undefined);
+      // Same number in another repository must not match.
+      const otherRepo = { ...pullRequests[0]!, repository: "acme/other" };
+      expect(findPullRequestForWatchTask(task!.taskId, [otherRepo])).toBe(undefined);
+      // Legacy link lists can repeat an identity; only the watched copy owns the monitor.
+      const dismissed = { ...pullRequests[0]!, source: "stack-dismissed" as const };
+      expect(findPullRequestForWatchTask(task!.taskId, [dismissed, pullRequests[0]!])).toBe(
+        pullRequests[0],
+      );
+      expect(findPullRequestForWatchTask(task!.taskId, [dismissed])).toBe(undefined);
     });
 
     it("lists no watch while a run is active", () => {
