@@ -113,6 +113,14 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("does not repeat a failure an older watch told by name", () => {
+    const older = watch({ headSha: "aaaaaaaaaa", failedChecks: ["lint"] });
+    const failed = detail({ checks: [check("lint", "failure")] });
+    const report = evaluatePullRequestWatch(older, failed, noRemarks);
+    assert.deepEqual(report.changes, []);
+    assert.deepEqual(report.next.failedCheckUrls, ["https://ci.example/lint"]);
+  });
+
   it("reports passed once the required checks pass, whatever the others do", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
       ...check(name, status),

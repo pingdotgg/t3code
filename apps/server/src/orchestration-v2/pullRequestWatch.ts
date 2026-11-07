@@ -47,14 +47,22 @@ export function evaluatePullRequestWatch(
 
   // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
+  let failedCheckUrls = headMoved ? [] : watch.failedCheckUrls;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   if (detail.checks.length > 0) {
     const failed = detail.checks.filter(isFailedCheck);
-    const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
+    // A new run URL under a failing name is a rerun that failed again between reads.
+    const toldUrls = failedCheckUrls;
+    const newlyFailed = failed.filter(
+      (check) =>
+        !failedChecks.includes(check.name) ||
+        (toldUrls !== undefined && check.url !== null && !toldUrls.includes(check.url)),
+    );
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
     failedChecks = failed.map((check) => check.name);
+    failedCheckUrls = failed.flatMap((check) => (check.url === null ? [] : [check.url]));
 
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
@@ -145,6 +153,7 @@ export function evaluatePullRequestWatch(
       startedAt: watch.startedAt,
       headSha,
       failedChecks,
+      ...(failedCheckUrls !== undefined && { failedCheckUrls }),
       passed,
       passedChecks,
       owedChecks,

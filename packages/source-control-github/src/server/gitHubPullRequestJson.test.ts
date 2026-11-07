@@ -328,7 +328,7 @@ describe("pull request detail decoding", () => {
   const inWorkflow = ({ workflowName, ...fields }: Record<string, unknown>) =>
     check({
       ...fields,
-      checkSuite: { workflowRun: { workflow: { name: workflowName } } },
+      checkSuite: { workflowRun: { event: "pull_request", workflow: { name: workflowName } } },
     });
 
   const coreJson = (
@@ -618,6 +618,29 @@ describe("pull request detail decoding", () => {
       [pullRequestPassed, pushFailed],
     ];
     expect(rollups.map(checksOf)).toEqual(rollups.map(() => [[["lint", "failure"]], "failing"]));
+  });
+
+  it("does not fail a check whose run of one event was cancelled beside a passing run", () => {
+    const run = (event: string, conclusion: string, completedAt: string) =>
+      check({
+        name: "lint",
+        conclusion,
+        completedAt,
+        checkSuite: { workflowRun: { event, workflow: { name: "CI" } } },
+      });
+    const passed = run("push", "SUCCESS", "2026-10-08T04:10:00Z");
+    const cancelled = run("pull_request", "CANCELLED", "2026-10-08T04:12:00Z");
+
+    for (const rollup of [
+      [passed, cancelled],
+      [cancelled, passed],
+    ]) {
+      const detail = detailOf(rollup);
+      expect([detail.checks.map((check) => check.status), detail.checksState]).toEqual([
+        ["success"],
+        "passing",
+      ]);
+    }
   });
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
