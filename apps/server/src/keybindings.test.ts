@@ -251,6 +251,59 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect("puts the pin selection shortcut after the file picker", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        {
+          key: "mod+alt+p",
+          command: "thread.pinSelection",
+          when: "!terminalFocus && !editableFocus",
+        },
+        { key: "mod+p", command: "filePicker.toggle", when: "!terminalFocus" },
+      ]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const pinIndex = persisted.findIndex((entry) => entry.command === "thread.pinSelection");
+      const pickerIndex = persisted.findIndex(
+        (entry) => entry.command === "filePicker.toggle" && entry.key === "mod+p",
+      );
+      const pin = persisted[pinIndex];
+      assert.isTrue(pinIndex > pickerIndex);
+      assert.equal(pin?.key, "mod+p");
+      assert.equal(pin?.when, "!terminalFocus && !editableFocus && textSelected");
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      assert.deepStrictEqual(yield* readKeybindingsConfig(keybindingsConfigPath), persisted);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("leaves a customized pin selection shortcut where it is", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const custom = {
+        key: "mod+shift+y",
+        command: "thread.pinSelection",
+        when: "!terminalFocus",
+      } as const;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        custom,
+        { key: "mod+p", command: "filePicker.toggle", when: "!terminalFocus" },
+      ]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepStrictEqual(
+        persisted.filter((entry) => entry.command === "thread.pinSelection"),
+        [custom],
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
   it.effect("adds a late default to an existing command once", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;

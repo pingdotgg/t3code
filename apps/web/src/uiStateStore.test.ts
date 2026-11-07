@@ -22,6 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     sidebarProjectScopeKeys: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    threadPinnedSelectionsById: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
     ...overrides,
@@ -133,6 +134,7 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
+      threadPinnedSelectionsById: {},
     });
   });
 
@@ -239,6 +241,8 @@ describe("uiStateStore persistence", () => {
           "turn-2": true,
         },
       },
+      pinnedSelectionsVersion: 1,
+      threadPinnedSelectionsById: {},
       pullRequestMergeMethod: "merge",
     });
     expect(parsePersistedState(persisted)).toEqual({
@@ -272,5 +276,32 @@ describe("uiStateStore persistence", () => {
       parsePersistedState({ sidebarProjectScopeKey: "github.com/pingdotgg/t3code" })
         .sidebarProjectScopeKeys,
     ).toEqual(["github.com/pingdotgg/t3code"]);
+  });
+
+  it("keeps saved pins and drops an unknown pin schema version", () => {
+    const pin = {
+      id: "pin-1",
+      messageId: "message-1",
+      text: "ship the pinned sentence",
+      start: 0,
+      end: 4,
+      prefix: "",
+      suffix: " the",
+      createdAt: "2026-04-01T00:00:00.000Z",
+    };
+
+    expect(
+      parsePersistedState({
+        pinnedSelectionsVersion: 1,
+        threadPinnedSelectionsById: { "environment:thread-1": [pin] },
+      }).threadPinnedSelectionsById,
+    ).toEqual({ "environment:thread-1": [pin] });
+    expect(parsePersistedState({}).threadPinnedSelectionsById).toEqual({});
+    expect(
+      parsePersistedState({
+        pinnedSelectionsVersion: 99,
+        threadPinnedSelectionsById: { "environment:thread-1": [pin] },
+      }).threadPinnedSelectionsById,
+    ).toEqual({});
   });
 });

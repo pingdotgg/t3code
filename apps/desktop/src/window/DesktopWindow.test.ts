@@ -667,6 +667,60 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("adds Pin to the host context menu for a text selection", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const templates: Electron.MenuItemConstructorOptions[][] = [];
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        onPopupTemplate: (input) =>
+          Effect.sync(() => {
+            templates.push([...input.template]);
+          }),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const onContextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        if (!onContextMenu) return yield* Effect.die("context-menu listener was not registered");
+
+        const params = {
+          selectionText: "pinned sentence",
+          isEditable: false,
+          mediaType: "none",
+          misspelledWord: "",
+          dictionarySuggestions: [],
+          linkURL: "",
+          editFlags: { canCut: false, canCopy: true, canPaste: true, canSelectAll: true },
+        };
+        onContextMenu({ preventDefault() {} }, params);
+        yield* Effect.yieldNow;
+        const labels = templates.at(-1)?.map((item) => item.label ?? item.role ?? item.type);
+        assert.deepEqual(labels?.slice(0, 2), ["Pin", "separator"]);
+        const pin = templates.at(-1)?.find((item) => item.label === "Pin");
+        assert.equal(pin?.accelerator, "CommandOrControl+P");
+        pin?.click?.({} as Electron.MenuItem, fakeWindow.window, {} as Electron.KeyboardEvent);
+        assert.deepEqual(fakeWindow.send.mock.calls.at(-1), [
+          "desktop:menu-action",
+          "thread.pinSelection",
+        ]);
+
+        templates.length = 0;
+        onContextMenu({ preventDefault() {} }, { ...params, selectionText: "  " });
+        yield* Effect.yieldNow;
+        assert.isUndefined(templates.at(-1)?.find((item) => item.label === "Pin"));
+        onContextMenu({ preventDefault() {} }, { ...params, isEditable: true });
+        yield* Effect.yieldNow;
+        assert.isUndefined(templates.at(-1)?.find((item) => item.label === "Pin"));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   // Chromium hands the main window's zoom level down to embedded preview
   // guests, so every app zoom has to put the preview browser back at its own
   // zoom or zooming the UI drags the previewed page with it.

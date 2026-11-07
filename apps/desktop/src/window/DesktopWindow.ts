@@ -547,6 +547,7 @@ export const make = Effect.gen(function* () {
     const installContextMenu = (
       ownerWindow: Electron.BrowserWindow,
       contents: Electron.WebContents,
+      host: boolean,
     ): void => {
       if (contextMenuContents.has(contents)) return;
       contextMenuContents.add(contents);
@@ -600,6 +601,26 @@ export const make = Effect.gen(function* () {
           menuTemplate.push({ type: "separator" });
         }
 
+        if (
+          host &&
+          !params.isEditable &&
+          params.mediaType === "none" &&
+          params.selectionText.trim().length > 0
+        ) {
+          menuTemplate.push(
+            {
+              label: "Pin",
+              accelerator: "CommandOrControl+P",
+              click: () => {
+                if (!contents.isDestroyed()) {
+                  contents.send(MENU_ACTION_CHANNEL, "thread.pinSelection");
+                }
+              },
+            },
+            { type: "separator" },
+          );
+        }
+
         menuTemplate.push(
           { role: "cut", enabled: params.editFlags.canCut },
           { role: "copy", enabled: params.editFlags.canCopy },
@@ -616,12 +637,12 @@ export const make = Effect.gen(function* () {
         );
       });
       contents.on("did-create-window", (popup) => {
-        installContextMenu(popup, popup.webContents);
+        installContextMenu(popup, popup.webContents, false);
       });
     };
-    installContextMenu(window, window.webContents);
+    installContextMenu(window, window.webContents, true);
     window.webContents.on("did-attach-webview", (_event, contents) => {
-      installContextMenu(window, contents);
+      installContextMenu(window, contents, false);
       void runPromise(previewManager.prepareWebview(contents));
     });
 
