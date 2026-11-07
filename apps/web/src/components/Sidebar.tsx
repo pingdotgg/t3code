@@ -2015,6 +2015,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       .join("\n") ?? "",
     visibleDraftSessionCount,
     routeDraftIdForRows ?? "",
+    // Labels shift rows without changing their order.
+    sectionsByProject,
   ].join("\0");
   const listMotionAnimate =
     dragState === null && sidebarListItems.length + visibleDraftSessionCount > 0;
