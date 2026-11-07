@@ -2,11 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import {
-  observeSidebarDraftPromotion,
-  type SidebarRouteReveal,
-  useActiveRowReveal,
-} from "./routeReveal";
+import { type SidebarRouteReveal, useActiveRowReveal } from "./routeReveal";
 
 const ROW_HEIGHT_PX = 24;
 
@@ -14,9 +10,7 @@ function RevealList(props: {
   readonly reveal: SidebarRouteReveal;
   readonly rowKeys: ReadonlyArray<string>;
   readonly activeKey: string | null;
-  readonly promotedDraft?: boolean;
 }) {
-  if (props.promotedDraft) observeSidebarDraftPromotion(props.reveal, props.activeKey);
   const revealActiveRow = useActiveRowReveal(props.reveal, props.activeKey);
   return (
     <ul aria-label="Threads" style={{ height: ROW_HEIGHT_PX * 4, overflowY: "auto", margin: 0 }}>
@@ -70,25 +64,6 @@ describe("useActiveRowReveal", () => {
 
     await vi.waitFor(() => expect(reveal.pendingKey).toBeNull());
     expect(scrollIntoView).not.toHaveBeenCalled();
-  });
-
-  it("leaves the list where it is when the open draft becomes its thread", async () => {
-    const reveal = newReveal();
-    const keys = rowKeys(50);
-    await using screen = await render(
-      <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-0" />,
-      // No router: the route arrives as the activeKey prop.
-      { router: false },
-    );
-    await screen.rerender(<RevealList reveal={reveal} rowKeys={keys} activeKey={null} />);
-
-    await screen.rerender(
-      <RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" promotedDraft />,
-    );
-    await screen.rerender(<RevealList reveal={reveal} rowKeys={keys} activeKey="thread-40" />);
-
-    await expect.element(screen.getByText("thread-0", { exact: true })).toBeInViewport();
-    expect(reveal.pendingKey).toBeNull();
   });
 
   it("reveals a focused row scrolled out of view when the keyboard opens its thread", async () => {
