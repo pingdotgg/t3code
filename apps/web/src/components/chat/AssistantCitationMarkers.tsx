@@ -77,13 +77,16 @@ function CitationMarkers({
           const rectKey = `${rect.right}:${rect.bottom}`;
           const occurrence = occurrences.get(rectKey) ?? 0;
           occurrences.set(rectKey, occurrence + 1);
-          const left = Math.min(
+          const base = Math.min(
             Math.max(0, bounds.width - 20),
             Math.max(0, rect.right - bounds.left + 3),
           );
+          const offset = occurrence * 22;
+          const left =
+            base + offset <= bounds.width - 20 ? base + offset : Math.max(0, base - offset);
           const top = Math.min(
             Math.max(0, bounds.height - 20),
-            Math.max(0, rect.bottom - bounds.top - 18 - occurrence * 22),
+            Math.max(0, rect.bottom - bounds.top - 18),
           );
           button.style.left = `${left}px`;
           button.style.top = `${top}px`;

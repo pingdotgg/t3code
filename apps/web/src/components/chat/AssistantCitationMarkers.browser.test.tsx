@@ -38,17 +38,25 @@ it("keeps source observations across typing and releases virtualized sources", a
   await using screen = await render(
     <AssistantCitationMarkers
       viewport={viewport}
-      prompt={prompt}
+      prompt={`${prompt} ${prompt}`}
       richTextEnabled
       onOpen={onOpen}
     />,
   );
+  const markers = screen.container.querySelectorAll<HTMLButtonElement>(
+    "[data-citation-marker-key]",
+  );
+  await vi.waitFor(() => {
+    expect(markers[0]!.style.left).not.toBe("");
+    expect(markers[0]!.style.left).not.toBe(markers[1]!.style.left);
+    expect(markers[0]!.style.top).toBe(markers[1]!.style.top);
+  });
   using disconnect = vi.spyOn(MutationObserver.prototype, "disconnect");
   const searches = mocks.findAnchor.mock.calls.length;
   await screen.rerender(
     <AssistantCitationMarkers
       viewport={viewport}
-      prompt={`${prompt} typing`}
+      prompt={`${prompt} ${prompt} typing`}
       richTextEnabled
       onOpen={onOpen}
     />,
