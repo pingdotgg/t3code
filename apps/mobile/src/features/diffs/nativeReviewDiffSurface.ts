@@ -331,7 +331,7 @@ function NativeReviewDiffContent(
     props.contentResetKey,
     onRowsFailure,
   );
-  useNativeReviewDiffPayload(nativeRef, "setTokensJson", tokensJson);
+  useNativeReviewDiffPayload(nativeRef, "setTokensJson", tokensJson, props.contentResetKey);
   const onDebugRef = useRef(onDebug);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the latest onDebug for callbacks the native diff view fires outside render
   useEffect(() => {

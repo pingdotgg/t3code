@@ -17,6 +17,7 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
+import { parseXcodeMarks, xcodeMarkMenuLabel } from "@t3tools/shared/xcodeMarks";
 import { DelimitedFilePreview } from "./DelimitedFilePreview";
 import { AudioFilePreview } from "./AudioFilePreview";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -43,6 +44,8 @@ import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
+import { reconcileMarkJump, type MarkJump } from "./markJump";
+import { prepareSourceFileDocument } from "./source-file-document";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
 import { AppBar } from "../../components/ui/AppBar";
@@ -98,6 +101,11 @@ function FileHeader(props: {
   readonly fileInspectorSupported: boolean;
   readonly onBack: () => void;
   readonly onReturnToThread: () => void;
+  readonly markItems: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly onPress: () => void;
+  }>;
   readonly actions: ReadonlyArray<{
     readonly id: string;
     readonly title: string;
@@ -152,6 +160,15 @@ function FileHeader(props: {
                       ...action,
                       selected: action.id === props.activeMode,
                     })),
+                  },
+                ]
+              : []),
+            ...(props.markItems.length > 0
+              ? [
+                  {
+                    id: "marks",
+                    title: "Jump to Mark",
+                    items: props.markItems,
                   },
                 ]
               : []),
@@ -212,6 +229,7 @@ function FileContent(props: {
   readonly relativePath: string;
   readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
+  readonly jumpRequestId?: number;
   readonly truncated: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
@@ -312,6 +330,7 @@ function FileContent(props: {
           contents={props.fileContents}
           path={props.relativePath}
           initialLine={props.initialLine}
+          jumpRequestId={props.jumpRequestId}
           headerInsetTop={props.truncated ? 0 : undefined}
           onRefresh={props.onRefresh}
         />
@@ -579,9 +598,22 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const { fileInspector } = useAdaptiveWorkspaceLayout();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const params = props.route.params;
-  const targetLine = normalizeRouteLine(firstRouteParam(params.line));
+  const routeLine = normalizeRouteLine(firstRouteParam(params.line));
   const { cwd, environmentId, projectName, relativePath, selectedThread, threadId } =
     useThreadFilesWorkspace(props.route.params);
+  const [markJump, setMarkJump] = useState<MarkJump | null>(null);
+  // Drop stale jumps when the route line or workspace changes so deep links cannot revive them.
+  const activeMarkJump = reconcileMarkJump(markJump, {
+    path: relativePath,
+    routeLine,
+    cwd,
+    environmentId,
+  });
+  if (markJump !== activeMarkJump) {
+    setMarkJump(activeMarkJump);
+  }
+  const targetLine = activeMarkJump?.line ?? routeLine;
+  const jumpRequestId = activeMarkJump?.requestId;
   const fileAccessSession = useEnvironmentQuery(
     environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
   );
@@ -968,6 +1000,33 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   }
 
   const headerSubtitle = fileHeaderSubtitle(projectName, relativePath);
+  const markItems =
+    fileData?.contents && resolvedActiveMode === "source"
+      ? parseXcodeMarks(prepareSourceFileDocument(fileData.contents).contents).flatMap((mark) => {
+          const title = xcodeMarkMenuLabel(mark);
+          if (title === null) return [];
+          return [
+            {
+              id: `mark:${mark.line}:${title}`,
+              title,
+              onPress: () =>
+                setMarkJump((current) => ({
+                  path: relativePath,
+                  line: mark.line,
+                  requestId:
+                    current?.path === relativePath &&
+                    current.cwd === cwd &&
+                    current.environmentId === environmentId
+                      ? (current.requestId ?? 0) + 1
+                      : 1,
+                  baselineRouteLine: routeLine,
+                  cwd,
+                  environmentId,
+                })),
+            },
+          ];
+        })
+      : [];
 
   return withInspector(
     <View className="flex-1 bg-sheet">
@@ -978,6 +1037,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         fileInspectorSupported={fileInspector.supported}
         onBack={handleBack}
         onReturnToThread={handleReturnToThread}
+        markItems={markItems}
         actions={fileMenuActions}
       />
       <ScreenContent>
@@ -995,6 +1055,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           fileContents={fileData?.contents ?? null}
           fileError={fileQuery.error}
           initialLine={targetLine}
+          jumpRequestId={jumpRequestId}
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileData?.truncated ?? false}

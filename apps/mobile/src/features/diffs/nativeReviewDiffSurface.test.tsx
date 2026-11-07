@@ -74,6 +74,11 @@ function RawView({
       }
     },
     async scrollToFile() {},
+    async setTokensJson(value: string) {
+      mocks.tokens(value);
+      // Full token payloads are a direct row-id map; patches wrap tokensByRowId.
+      setTokenRowIds(Object.keys(JSON.parse(value)));
+    },
     async setTokensPatchJson(value: string) {
       mocks.tokens(value);
       const accepted = mocks.tokenCompletion ? await mocks.tokenCompletion : mocks.tokenAccepted;
@@ -258,6 +263,20 @@ function setup(integrated = false) {
   }
   return {
     container,
+    async render(props: Partial<NativeReviewDiffViewProps> = {}) {
+      await act(async () =>
+        root.render(
+          <NativeDiff
+            rowsJson="[]"
+            appearanceScheme="light"
+            themeJson="{}"
+            rowHeight={20}
+            contentWidth={300}
+            {...props}
+          />,
+        ),
+      );
+    },
     async mountPullRequest(targetFileId?: string) {
       await act(async () => root.render(<PullRequestDiff targetFileId={targetFileId} />));
     },
@@ -355,6 +374,30 @@ it("renders identical rows after switching sections when the reset key prop land
   await screen.showSection("thread:git:working-tree");
   await screen.deliverPayloads();
   expect(screen.container.textContent).toBe("Rendered diff");
+});
+
+it("redelivers unchanged tokensJson after contentResetKey changes", async () => {
+  using screen = setup();
+  const tokensJson = JSON.stringify({
+    r0: [{ content: "const", color: "#ff0000", fontStyle: null }],
+  });
+  await screen.render({
+    rowsJson: '[{"kind":"line","id":"r0"}]',
+    tokensJson,
+    contentResetKey: "path:1",
+  });
+  await screen.deliverPayloads();
+  expect(screen.tokenRows).toBe("r0");
+
+  mocks.tokens.mockClear();
+  await screen.render({
+    rowsJson: '[{"kind":"line","id":"r0"}]',
+    tokensJson,
+    contentResetKey: "path:2",
+  });
+  await screen.deliverPayloads();
+  expect(mocks.tokens).toHaveBeenCalledTimes(1);
+  expect(screen.tokenRows).toBe("r0");
 });
 
 it.each([false, undefined])(
