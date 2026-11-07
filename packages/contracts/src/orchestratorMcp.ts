@@ -42,6 +42,8 @@ import {
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ServerProviderUsageWindow, UsageLimitSourceSnapshot } from "./providerUsageLimits.ts";
+import { ServerProviderState } from "./server.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
@@ -654,6 +656,85 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   }),
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
+
+export const OrchestratorMcpProviderUsageInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+});
+export type OrchestratorMcpProviderUsageInput = typeof OrchestratorMcpProviderUsageInput.Type;
+
+/** Unknown stays null: providers report percentages, never absolute amounts. */
+export const OrchestratorMcpProviderUsageWindow = Schema.Struct({
+  id: Schema.String,
+  kind: ServerProviderUsageWindow.fields.kind,
+  label: Schema.String,
+  usedPercent: Schema.Number,
+  remainingPercent: Schema.Number,
+  windowDurationMins: Schema.NullOr(NonNegativeInt),
+  resetsAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestratorMcpProviderUsageWindow = typeof OrchestratorMcpProviderUsageWindow.Type;
+
+/** Why `windows` is empty. `stale` keeps the last good windows after a failed read. */
+export const OrchestratorMcpProviderUsageUnavailableReason = Schema.Literals([
+  "disabled",
+  "notInstalled",
+  "providerUnavailable",
+  "unauthenticated",
+  "notReported",
+  "unsupported",
+  "probeFailed",
+  "noWindows",
+]);
+export type OrchestratorMcpProviderUsageUnavailableReason =
+  typeof OrchestratorMcpProviderUsageUnavailableReason.Type;
+
+const OrchestratorMcpProviderUsageLimitsFields = {
+  available: Schema.Boolean,
+  reason: Schema.NullOr(OrchestratorMcpProviderUsageUnavailableReason),
+  message: Schema.NullOr(Schema.String),
+  stale: Schema.Boolean,
+  plan: Schema.NullOr(Schema.String),
+  /** When these limits were read from the provider; null when never read. */
+  checkedAt: Schema.NullOr(IsoDateTime),
+  windows: Schema.Array(OrchestratorMcpProviderUsageWindow),
+  resetCredits: Schema.NullOr(
+    Schema.Struct({
+      availableCount: NonNegativeInt,
+      nextExpiresAt: Schema.NullOr(IsoDateTime),
+    }),
+  ),
+};
+
+export const OrchestratorMcpProviderUsage = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
+  displayName: Schema.NullOr(Schema.String),
+  enabled: Schema.Boolean,
+  status: ServerProviderState,
+  ...OrchestratorMcpProviderUsageLimitsFields,
+  externalUsageUrl: Schema.NullOr(Schema.String),
+});
+export type OrchestratorMcpProviderUsage = typeof OrchestratorMcpProviderUsage.Type;
+
+/** CLI Proxy hubs configured under Settings, read on the same refresh as provider limits. */
+export const OrchestratorMcpProviderUsageSource = Schema.Struct({
+  sourceId: Schema.String,
+  kind: UsageLimitSourceSnapshot.fields.kind,
+  label: Schema.String,
+  checkedAt: IsoDateTime,
+  error: Schema.NullOr(Schema.String),
+  accounts: Schema.Array(
+    Schema.Struct({ driverKind: ProviderDriverKind, ...OrchestratorMcpProviderUsageLimitsFields }),
+  ),
+});
+export type OrchestratorMcpProviderUsageSource = typeof OrchestratorMcpProviderUsageSource.Type;
+
+export const OrchestratorMcpProviderUsageResult = Schema.Struct({
+  generatedAt: IsoDateTime,
+  providers: Schema.Array(OrchestratorMcpProviderUsage),
+  sources: Schema.Array(OrchestratorMcpProviderUsageSource),
+});
+export type OrchestratorMcpProviderUsageResult = typeof OrchestratorMcpProviderUsageResult.Type;
 
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,

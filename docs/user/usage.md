@@ -147,6 +147,15 @@ current model's limits without leaving the conversation. The result opens above 
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
+Agents read the same snapshot through the `provider_usage` MCP tool, which an
+[outside agent](./outside-agents.md) can call with read-only access to decide where to send
+work. It lists every provider instance and hub account with each window's used and remaining
+percent, length, reset time, plan, and when it was read. Providers report percentages only, so
+there are no absolute amounts. A provider that is disabled, signed out, or reports no limits has
+`available: false` and a `reason`, and unknown values are `null`. Like opening **Usage → Limits**,
+a call re-checks every provider and hub when the last check it ran is more than five minutes old, so
+an agent gets fresh readings even when no app is open.
+
 To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
 The bottom of the thread details card then shows how much is left in each limit window of the
 current provider account. Some windows, such as a weekly Opus limit, count only one model. Hover a
