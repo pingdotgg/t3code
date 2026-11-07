@@ -121,6 +121,34 @@ export function threadHasQueuedTurnStart(
   ].every((value) => value === null || value < messageAtMs);
 }
 
+/**
+ * Providers drop finished work from the roster before the turn that reports it is requested
+ * (Claude: about 100ms). Settling in that gap detaches the session, so the report never arrives.
+ */
+function awaitsHeldWorkReport(
+  thread: Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "heldWorkEndedAt" | "latestUserMessageAt" | "latestRunRequestedAt" | "status"
+  >,
+  nowMs: number,
+): boolean {
+  const heldWorkEndedAtMs = toMillis(thread.heldWorkEndedAt);
+  // The grace bounds the hold when no report turn comes, as when the run was stopped.
+  if (
+    heldWorkEndedAtMs === null ||
+    Math.abs(nowMs - heldWorkEndedAtMs) > QUEUED_TURN_START_GRACE_MS
+  ) {
+    return false;
+  }
+  // A report requested behind another run stays queued until that run ends.
+  if (thread.status === "queued") return true;
+  const turnRequestedAtMs = latestMillis([
+    toMillis(thread.latestUserMessageAt),
+    toMillis(thread.latestRunRequestedAt),
+  ]);
+  return turnRequestedAtMs === null || turnRequestedAtMs < heldWorkEndedAtMs;
+}
+
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
@@ -145,7 +173,10 @@ function pullRequestSettles(
 }
 
 export function isAutoSettlementCandidate(
-  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
+  thread: Omit<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "heldWorkEndedAt"
+  >,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
@@ -329,7 +360,9 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
-    const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
+    const candidates = threads.filter(
+      (thread) => isAutoSettlementCandidate(thread, nowMs) && !awaitsHeldWorkReport(thread, nowMs),
+    );
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
     const settleThread = Effect.fnUntraced(

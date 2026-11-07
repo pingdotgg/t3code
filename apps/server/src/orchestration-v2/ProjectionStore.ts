@@ -82,6 +82,7 @@ import {
   isOrchestrationV2SupersededInterrupt,
 } from "@t3tools/shared/orchestrationV2Timeline";
 import {
+  backgroundWorkHoldsCompletion,
   deriveBlockedOnThreadWait,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -224,6 +225,8 @@ export type ProjectionSettlementCandidate = Pick<
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
     readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
+    /** When work last stopped holding one of the thread's provider threads. */
+    readonly heldWorkEndedAt: DateTime.Utc | null;
   };
 
 const ProjectionCheckpointContext = Schema.Struct({
@@ -1062,7 +1065,7 @@ type SettlementThreadRow = Pick<
   | "latest_run_completed_at"
   | "latest_user_message_at"
   | "latest_user_authored_message_at"
->;
+> & { readonly held_work_ended_at: string | null };
 
 type ShellRunItemCountRow = {
   readonly thread_id: string;
@@ -2376,6 +2379,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "provider-thread.updated": {
               const payloadJson = yield* encodeProviderThreadPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
+              const occurredAt = yield* encodePayloadTimestamp(event.occurredAt);
+              // Settlement waits for the turn that reports work which just stopped holding the
+              // thread; recording that here commits it with the roster that dropped the work.
               yield* sql`
               INSERT INTO orchestration_v2_projection_provider_threads (
                 provider_thread_id,
@@ -2389,7 +2395,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 first_run_ordinal,
                 last_run_ordinal,
                 updated_at,
-                payload_json
+                payload_json,
+                holds_completion
               )
               VALUES (
                 ${event.payload.id},
@@ -2403,7 +2410,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.firstRunOrdinal},
                 ${event.payload.lastRunOrdinal},
                 ${stringField(payload, "updatedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${booleanInt(backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? []))}
               )
               ON CONFLICT(provider_thread_id)
               DO UPDATE SET
@@ -2417,7 +2425,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 first_run_ordinal = excluded.first_run_ordinal,
                 last_run_ordinal = excluded.last_run_ordinal,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                held_work_ended_at = CASE
+                  WHEN orchestration_v2_projection_provider_threads.holds_completion = 1
+                    AND excluded.holds_completion = 0
+                  THEN ${occurredAt}
+                  ELSE orchestration_v2_projection_provider_threads.held_work_ended_at
+                END,
+                holds_completion = excluded.holds_completion
             `;
               if (
                 event.payload.appThreadId !== null &&
@@ -6596,7 +6611,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND NOT ${isIdleCompactionMessage("message")}
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
-              ) AS latest_user_authored_message_at
+              ) AS latest_user_authored_message_at,
+              (
+                SELECT MAX(provider_thread.held_work_ended_at)
+                FROM orchestration_v2_projection_provider_threads provider_thread
+                WHERE provider_thread.thread_id = t.thread_id
+              ) AS held_work_ended_at
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
               SELECT latest.run_id FROM orchestration_v2_projection_runs latest
@@ -6679,6 +6699,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     row.latest_user_authored_message_at === null
                       ? null
                       : DateTime.makeUnsafe(row.latest_user_authored_message_at),
+                  heldWorkEndedAt:
+                    row.held_work_ended_at === null
+                      ? null
+                      : DateTime.makeUnsafe(row.held_work_ended_at),
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,

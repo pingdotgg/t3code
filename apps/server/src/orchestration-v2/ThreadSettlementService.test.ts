@@ -53,7 +53,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "heldWorkEndedAt"
+  >;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
@@ -93,6 +96,7 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     latestRunCompletedAt: null,
     latestUserMessageAt: null,
     latestUserAuthoredMessageAt: overrides.latestUserMessageAt ?? null,
+    heldWorkEndedAt: null,
     createdAt: at(-30 * DAY_MS),
     updatedAt: at(-10 * DAY_MS),
     archivedAt: null,
@@ -1234,6 +1238,119 @@ describe("ThreadSettlementServiceV2 worker", () => {
           yield* reactor.drain;
           // The startup sweep, the first per-thread sweep, and one coalesced rerun.
           assert.strictEqual(yield* Ref.get(branchLookupCount), 3);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("full and merge sweeps wait for the turn that reports awaited work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const dispatched = yield* Queue.unbounded<ThreadId>();
+        // The roster that dropped the work committed, but its event has not reached this worker.
+        const held = makeThread("awaited-work", {
+          pullRequests: [
+            {
+              ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
+              snapshot: {
+                state: "merged",
+                title: "Pull request",
+                headBranch: "feature",
+                baseBranch: "main",
+                isDraft: false,
+                updatedAt: NOW,
+                syncedAt: NOW,
+                mergedAt: NOW,
+              },
+            },
+          ],
+          heldWorkEndedAt: DateTime.makeUnsafe(NOW),
+        });
+        // Only the merge event settles this one, so its dispatch marks that sweep's decisions.
+        const mergedInApp = makeThread("merged-in-app", {
+          latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+          linkedPullRequest: {
+            projectId: PROJECT_ID,
+            repository: "owner/repository",
+            number: 42,
+            url: "https://example.test/owner/repository/pull/42",
+          },
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([held, mergedInApp]),
+          onDispatch: (command) => Queue.offer(dispatched, command.threadId).pipe(Effect.asVoid),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          // The report turn was requested but waits behind another run.
+          const reportAt = DateTime.makeUnsafe(Date.parse(NOW) + 1_000);
+          const report = {
+            ...held,
+            latestRunId: RunId.make("run:report"),
+            latestUserMessageAt: reportAt,
+            latestRunRequestedAt: reportAt,
+          };
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([{ ...report, status: "queued" }, mergedInApp]),
+          );
+          yield* fixture.publishMerge;
+          assert.strictEqual(yield* Queue.take(dispatched), mergedInApp.id);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [mergedInApp.id],
+          );
+
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([
+              {
+                ...report,
+                status: "completed",
+                latestRunStartedAt: reportAt,
+                latestRunCompletedAt: DateTime.makeUnsafe(Date.parse(NOW) + 20_000),
+              },
+            ]),
+          );
+          // The next full sweep is within the hold's grace, so only the report turn releases it.
+          yield* TestClock.adjust("1 minute");
+          assert.strictEqual(yield* Queue.take(dispatched), held.id);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles an idle thread whose awaited work ended once no report turn came", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const settled = yield* Deferred.make<void>();
+        // Ended 90s ago, so the next full sweep, a minute later, falls past the hold's grace.
+        const thread = makeThread("awaited-work-idle", {
+          heldWorkEndedAt: DateTime.makeUnsafe(Date.parse(NOW) - 90_000),
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+          onDispatch: () => Deferred.succeed(settled, undefined),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* TestClock.adjust("1 minute");
+          yield* Deferred.await(settled);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [thread.id],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
