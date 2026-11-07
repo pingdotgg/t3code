@@ -180,24 +180,23 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   color: color-mix(in srgb, var(--code-foreground) 84%, var(--primary)) !important;
 }
 
-/* Expanding a file mounts its body all at once; revealing it over 200ms matches the app's
-   collapsibles. Appearance only: the viewer owns geometry, so layout height cannot animate.
-   Clip from the top so the body reads as expanding under the header into space the
-   virtualizer already opened. Departing content cuts, the same one-way rule the pull
-   request chrome fold follows. */
+/* Expanding a file mounts its body all at once. The virtualizer opens the row height
+   immediately, so a clip reveal leaves a blank hole; slide the body out from under the
+   header into that space instead. Timing matches the app's 200ms collapsibles.
+   Departing content cuts, the same one-way rule the pull request chrome fold follows. */
 [data-diff],
 [data-file] {
-  clip-path: inset(0 0 0 0);
+  transform: translateY(0);
   transition:
-    clip-path 200ms ease-out,
-    opacity 200ms ease-out;
+    opacity 200ms ease-out,
+    transform 200ms ease-out;
 }
 
 @starting-style {
   [data-diff],
   [data-file] {
-    clip-path: inset(0 0 100% 0);
     opacity: 0;
+    transform: translateY(-8px);
   }
 }
 
