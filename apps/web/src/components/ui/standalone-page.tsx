@@ -6,8 +6,7 @@ export function StandalonePage({
   size = "page",
   children,
 }: {
-  /** "card" is the compact auth card: 420px wide, 24px inset, 16px between blocks. */
-  readonly size?: "page" | "card";
+  readonly size?: "page" | "card" | "bare";
   readonly children: ReactNode;
 }) {
   return (
@@ -20,13 +19,17 @@ export function StandalonePage({
       <div
         className={`relative flex min-h-0 flex-1 items-center-safe justify-center overflow-y-auto scrollbar-gutter-both bg-background surface-grain px-4 py-10 sm:px-6 md:m-(--workspace-pane-inset) md:rounded-pane ${isElectron ? "md:mt-0" : "md:mt-(--workspace-pane-inset-top)"}`}
       >
-        <section
-          className={`relative w-full shrink-0 rounded-[16px] surface-popover ${size === "card" ? "max-w-[420px]" : "max-w-xl"}`}
-        >
-          <div className={size === "card" ? "flex flex-col gap-4 p-6" : "p-6 sm:p-8"}>
-            {children}
-          </div>
-        </section>
+        {size === "bare" ? (
+          children
+        ) : (
+          <section
+            className={`relative w-full shrink-0 rounded-[16px] surface-popover ${size === "card" ? "max-w-[420px]" : "max-w-xl"}`}
+          >
+            <div className={size === "card" ? "flex flex-col gap-4 p-6" : "p-6 sm:p-8"}>
+              {children}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );
