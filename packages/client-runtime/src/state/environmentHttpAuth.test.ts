@@ -259,6 +259,38 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
+  it.effect("filters future timeline items at HTTP read boundaries", () =>
+    Effect.gen(function* () {
+      const future = { type: "future_item" };
+      const row = {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: THREAD.projection.thread.id,
+        sourceItemId: "future-item",
+        item: future,
+      };
+      for (const loader of LOADERS.filter((entry) =>
+        ["bounded thread snapshot", "older thread history"].includes(entry.name),
+      )) {
+        const wire = loader.response as Record<string, unknown>;
+        const response =
+          "projection" in wire
+            ? {
+                ...wire,
+                projection: {
+                  ...(wire.projection as Record<string, unknown>),
+                  turnItems: [future],
+                  visibleTurnItems: [row],
+                },
+              }
+            : { ...wire, items: [row] };
+        const harness = makeHarness(() => Response.json(response));
+        const result = yield* loader.load(harness.input).pipe(Effect.provide(harness.httpLayer));
+        expect(result).toEqual(loader.expected);
+      }
+    }),
+  );
+
   it.effect.each(LOADERS)("rejects an invalid $name response", (loader) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json({}));

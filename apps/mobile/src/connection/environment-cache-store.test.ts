@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/platform";
 import {
   CommandId,
+  knownThreadDetailSnapshot,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -277,7 +278,7 @@ describe("mobile SQLite environment cache store", () => {
       const loaded = Option.getOrThrow(yield* store.loadThread(ENVIRONMENT_ID, THREAD_ID));
       expect(loaded).toEqual(snapshot);
       expect(memory.values.get(id)).toBe(raw);
-      yield* store.saveThread(ENVIRONMENT_ID, loaded);
+      yield* store.saveThread(ENVIRONMENT_ID, knownThreadDetailSnapshot(loaded));
       expect(memory.schemaVersions.get(id)).toBe(COMPACT_THREAD_CACHE_SCHEMA_VERSION);
       expect(Option.getOrThrow(yield* store.loadThread(ENVIRONMENT_ID, THREAD_ID))).toEqual(
         snapshot,

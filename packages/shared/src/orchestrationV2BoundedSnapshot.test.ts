@@ -2,9 +2,11 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  UnknownUnionMember,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type ReceivedOrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -90,6 +92,29 @@ describe("compact bounded snapshot turnItems", () => {
     expect(
       boundedSnapshotProjection({ projection: wire, turnItemsOmitLocalVisible: true }),
     ).toEqual(JSON.parse(JSON.stringify(full)));
+  });
+
+  it("drops turn items a newer server added before restoring local rows", () => {
+    const { projection: full } = forkWindow();
+    const compact = omitLocalVisibleTurnItems(full)!;
+    const future = new UnknownUnionMember("type", "hologram");
+    const received = {
+      ...compact,
+      turnItems: [future, ...compact.turnItems],
+      visibleTurnItems: [
+        ...compact.visibleTurnItems,
+        {
+          position: 7,
+          visibility: "local",
+          sourceThreadId: CHILD,
+          sourceItemId: "future",
+          item: future,
+        },
+      ],
+    } as unknown as ReceivedOrchestrationV2ThreadProjection;
+    expect(
+      boundedSnapshotProjection({ projection: received, turnItemsOmitLocalVisible: true }),
+    ).toEqual(full);
   });
 
   it("treats rows sourced from the thread itself as local", () => {

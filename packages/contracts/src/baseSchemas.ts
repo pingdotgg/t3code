@@ -201,28 +201,25 @@ export const isUnknownUnionMember = <A>(
   value: A,
 ): value is Extract<A, UnknownUnionMember<string>> => value instanceof UnknownUnionMember;
 
+/**
+ * Keeps members this build does not know as {@link UnknownUnionMember}, so decoding validates each
+ * known member once. Readers drop them with {@link knownUnionMembers}.
+ */
 export const ForwardCompatibleUnionArray = <
   const Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>,
   const Tag extends string,
 >(
   members: Members,
   tag: Tag,
-) =>
-  Schema.Array(ForwardCompatibleUnion(members, tag)).pipe(
-    Schema.decodeTo(
-      Schema.Array(Schema.toType(Schema.Union(members))),
-      SchemaTransformation.transform<
-        ReadonlyArray<Members[number]["Type"]>,
-        ReadonlyArray<Members[number]["Type"] | UnknownUnionMember<Tag>>
-      >({
-        decode: (values) =>
-          values.filter((value) => !isUnknownUnionMember(value)) as ReadonlyArray<
-            Members[number]["Type"]
-          >,
-        encode: (values) => values,
-      }),
-    ),
-  );
+) => Schema.Array(ForwardCompatibleUnion(members, tag));
+
+/** Returns `values` itself when every member is known. */
+export const knownUnionMembers = <Known, Tag extends string>(
+  values: ReadonlyArray<Known | UnknownUnionMember<Tag>>,
+): ReadonlyArray<Known> =>
+  (values.some(isUnknownUnionMember)
+    ? values.filter((value) => !isUnknownUnionMember(value))
+    : values) as ReadonlyArray<Known>;
 
 const knownTags = (
   members: ReadonlyArray<Schema.Top & { readonly fields: object }>,
