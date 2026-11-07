@@ -7,6 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type { Browser, BrowserContext, CDPSession } from "playwright-core";
 
+import { resolvePreviewEgressProxy } from "../htmlRender/publicProxy.ts";
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
 
 // Playwright needs its files on disk. createRequire also resolves it from a Node SEA executable.
@@ -92,11 +93,27 @@ export class ServerBrowserContexts {
   private async launchOptions() {
     const executable = await this.options.executable();
     const env = this.options.env ?? process.env;
+    const proxy = resolvePreviewEgressProxy(env);
+    if (proxy === "invalid") {
+      throw new Error("T3CODE_PREVIEW_EGRESS_PROXY must be an http://host:port URL.");
+    }
+    const host = proxy?.host.includes(":") ? `[${proxy.host}]` : proxy?.host;
     return {
       executable,
       env,
+      ...(proxy && {
+        proxy: {
+          server: `http://${host}:${proxy.port}`,
+          // Remove implicit link-local bypasses, then preserve local preview access.
+          bypass: "<-loopback>,localhost,*.localhost,127.0.0.0/8,[::1]",
+        },
+      }),
       args: [
         "--disable-gpu",
+        // QUIC and non-proxied WebRTC UDP would leave the browser outside the HTTP proxy.
+        ...(proxy
+          ? ["--disable-quic", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]
+          : []),
         "--force-device-scale-factor=2",
         "--disable-blink-features=AutomationControlled",
       ],

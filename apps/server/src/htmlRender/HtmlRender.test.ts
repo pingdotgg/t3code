@@ -26,6 +26,17 @@ import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 
 const TEST_BROWSER_ENV = "T3CODE_TEST_HEADLESS_SHELL";
 
+// Effect code may not read process.env, so the swap stays a plain function.
+const swapEgressProxyEnv = (value: string | undefined) => {
+  const previous = process.env.T3CODE_PREVIEW_EGRESS_PROXY;
+  if (value === undefined) delete process.env.T3CODE_PREVIEW_EGRESS_PROXY;
+  else process.env.T3CODE_PREVIEW_EGRESS_PROXY = value;
+  return () => {
+    if (previous === undefined) delete process.env.T3CODE_PREVIEW_EGRESS_PROXY;
+    else process.env.T3CODE_PREVIEW_EGRESS_PROXY = previous;
+  };
+};
+
 const layerHtmlRender = (
   executable?: string,
   installed: Effect.Effect<Option.Option<string>> = Effect.succeed(
@@ -315,6 +326,27 @@ describe("HtmlRender", () => {
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       );
     },
+  );
+
+  it.live("refuses to start the browser when the preview egress proxy setting is unusable", () =>
+    Effect.gen(function* () {
+      const outcome = yield* Effect.acquireUseRelease(
+        Effect.sync(() => swapEgressProxyEnv("socks5://127.0.0.1:1080")),
+        () =>
+          HtmlRender.HtmlRender.use((htmlRender) =>
+            htmlRender.preview({ html: "<p>x</p>" }).pipe(Effect.flip),
+          ).pipe(
+            Effect.provide(layerHtmlRender("/nonexistent/chrome-headless-shell")),
+            Effect.exit,
+          ),
+        (restore) => Effect.sync(restore),
+      );
+      assert(Exit.isSuccess(outcome), "Expected a typed preview error.");
+      expect(outcome.value).toBeInstanceOf(HtmlRenderBrowserError);
+      expect(outcome.value.message).toBe(
+        "Headless Chrome could not render the page: T3CODE_PREVIEW_EGRESS_PROXY must be an http://host:port URL.",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The fake browser is a shebang script, which Windows cannot execute.

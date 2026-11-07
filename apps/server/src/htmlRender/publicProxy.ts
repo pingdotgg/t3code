@@ -98,6 +98,79 @@ const publicAddresses = async (host: string, fakeIpHosts: Map<string, string>) =
   return undefined;
 };
 
+export type PreviewEgressProxy = { readonly host: string; readonly port: number };
+
+// T3CODE_PREVIEW_EGRESS_PROXY=http://host:port sends outside preview traffic through an
+// HTTP CONNECT proxy. "invalid" means it is set but unusable, so callers refuse instead of
+// connecting directly.
+export const resolvePreviewEgressProxy = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): PreviewEgressProxy | "invalid" | undefined => {
+  const raw = env.T3CODE_PREVIEW_EGRESS_PROXY;
+  if (raw === undefined) return undefined;
+  try {
+    const url = new URL(raw);
+    const port = Number(url.port || 80);
+    if (
+      url.protocol !== "http:" ||
+      !url.hostname ||
+      url.username ||
+      url.password ||
+      !Number.isInteger(port) ||
+      port <= 0
+    ) {
+      return "invalid";
+    }
+    return { host: url.hostname.replace(/^\[|\]$/g, ""), port };
+  } catch {
+    return "invalid";
+  }
+};
+
+/** Opens a CONNECT tunnel to host:port through the egress proxy. */
+const connectThroughProxy = (
+  proxy: PreviewEgressProxy,
+  host: string,
+  port: number,
+  done: (error: Error | undefined, rest: Buffer) => void,
+) => {
+  const socket = NodeNet.connect({ host: proxy.host, port: proxy.port });
+  const authority = (NodeNet.isIPv6(host) ? `[${host}]` : host) + ":" + port;
+  let head = Buffer.alloc(0);
+  let headerBytes = 0;
+  let finished = false;
+  const finish = (error: Error | undefined, rest = Buffer.alloc(0)) => {
+    if (finished) return;
+    finished = true;
+    socket.off("data", onData);
+    done(error, rest);
+  };
+  const onData = (chunk: Buffer) => {
+    head = Buffer.concat([head, chunk]);
+    while (true) {
+      const end = head.indexOf("\r\n\r\n");
+      if (headerBytes + (end === -1 ? head.length : end + 4) > 16 * 1024) {
+        return finish(new Error("oversized proxy response"));
+      }
+      if (end === -1) return;
+      const status = /^HTTP\/1\.[01] ([12]\d{2}) [^\r\n]*\r\n/.exec(head.toString("latin1"));
+      if (!status) return finish(new Error("egress proxy refused"));
+      headerBytes += end + 4;
+      head = head.subarray(end + 4);
+      // RFC 9110 sections 15.2 and 9.3.6: skip informational responses; any 2xx tunnels.
+      if (status[1]!.startsWith("1")) continue;
+      return finish(undefined, head);
+    }
+  };
+  socket.on("data", onData);
+  socket.once("error", (error) => finish(error));
+  socket.once("close", () => finish(new Error("egress proxy closed")));
+  socket.once("connect", () =>
+    socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`),
+  );
+  return socket;
+};
+
 // SOCKS5 (RFC 1928) replies: success, refused by rule, host unreachable, command unsupported.
 const reply = (code: number) => Buffer.from([5, code, 0, 1, 0, 0, 0, 0, 0, 0]);
 
@@ -176,25 +249,45 @@ export const publicProxy = Effect.acquireRelease(
           if (client.destroyed) return;
           client.off("data", holdEarly);
           if (addresses === undefined) return refuse(client, 2);
+          const proxy = resolvePreviewEgressProxy();
+          if (proxy === "invalid") return refuse(client, 2);
           client.pause();
-          // Try all checked addresses so broken IPv6 routes do not block IPv4 access.
-          const upstream = track(
-            NodeNet.connect({
-              host: request.host,
-              port: request.port,
-              autoSelectFamily: true,
-              lookup: (_host, options, callback) =>
-                options.all
-                  ? callback(null, addresses)
-                  : callback(null, addresses[0]!.address, addresses[0]!.family),
-            }),
-          );
-          upstream.once("connect", () => {
+          const relay = (upstream: NodeNet.Socket, rest: Buffer = Buffer.alloc(0)) => {
             client.write(reply(0));
+            if (rest.length > 0) client.write(rest);
             for (const chunk of early) upstream.write(chunk);
             upstream.pipe(client);
             client.pipe(upstream);
-          });
+            client.resume();
+          };
+          let upstream: NodeNet.Socket;
+          if (proxy === undefined) {
+            // Try all checked addresses so broken IPv6 routes do not block IPv4 access.
+            upstream = track(
+              NodeNet.connect({
+                host: request.host,
+                port: request.port,
+                autoSelectFamily: true,
+                lookup: (_host, options, callback) =>
+                  options.all
+                    ? callback(null, addresses)
+                    : callback(null, addresses[0]!.address, addresses[0]!.family),
+              }),
+            );
+            upstream.once("connect", () => relay(upstream));
+          } else {
+            // The proxy resolves the name again, so it must apply its own address policy.
+            upstream = track(
+              connectThroughProxy(proxy, request.host, request.port, (error, rest) => {
+                if (client.destroyed) return void upstream.destroy();
+                if (error !== undefined) {
+                  upstream.destroy();
+                  return refuse(client, 5);
+                }
+                relay(upstream, rest);
+              }),
+            );
+          }
           upstream.on("close", () => client.destroy());
           client.on("close", () => upstream.destroy());
         });
