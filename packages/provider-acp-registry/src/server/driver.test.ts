@@ -43,6 +43,40 @@ function catalogWithInspection(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
+  it("offers Devin's usage dashboard without inventing subscription limits or sign-in", () => {
+    for (const settings of [
+      { agentId: "devin" },
+      { agentId: "devin", commandPath: "/custom/devin" },
+      { agentId: "other-agent" },
+      { source: "local" as const, agentId: "devin", commandPath: "/custom/agent" },
+    ]) {
+      const snapshot = buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings(settings),
+        checkedAt: "2026-10-28T09:00:00.000Z",
+        inspection: {
+          status: "ready",
+          agentId: settings.agentId,
+          version: "1.0.0",
+          distribution: "binary",
+        },
+      });
+      expect(snapshot.auth.status).toBe("unknown");
+      if (settings.agentId === "devin" && settings.source !== "local") {
+        expect(snapshot.usageLimits).toMatchObject({
+          checkedAt: snapshot.checkedAt,
+          windows: [],
+          unavailable: {
+            reason: "unsupported",
+          },
+          externalUsage: { label: "Devin usage", url: "https://app.devin.ai/settings/usage" },
+        });
+      } else {
+        expect(snapshot.usageLimits).toBeUndefined();
+      }
+    }
+  });
+
   it("treats a live empty command advertisement as an authoritative replacement", () => {
     const provider = buildCheckedAcpRegistrySnapshot({
       ...identity,
