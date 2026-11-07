@@ -1812,6 +1812,51 @@ describe("AcpAdapterV2", () => {
     ],
   }));
 
+  // OMP 18.16 sends titled `oneOf` choices, each with an optional `<id>__other` text companion.
+  const titledChoiceSchema = {
+    type: "object",
+    properties: {
+      q0: {
+        type: "string",
+        title: "Deploy the rule now?",
+        description: "Global rule",
+        oneOf: [
+          { const: "Deploy now", title: "Deploy now", description: "Goes live after a restart." },
+          { const: "Not yet", title: "Not yet" },
+        ],
+        default: "Deploy now",
+      },
+      q0__other: { type: "string", title: "Other" },
+      q1: {
+        type: "array",
+        title: "Which harnesses?",
+        items: { type: "string", enum: ["Claude", "Codex"] },
+      },
+      q1__other: { type: "string", title: "Other" },
+    },
+  };
+  const titledChoiceQuestions = [
+    {
+      id: "q0",
+      header: "Deploy the rule now?",
+      question: "Global rule",
+      options: [
+        { label: "Deploy now", description: "Goes live after a restart.", value: "Deploy now" },
+        { label: "Not yet", description: "Not yet", value: "Not yet" },
+      ],
+    },
+    {
+      id: "q1",
+      header: "Which harnesses?",
+      question: "Your answer?",
+      options: [
+        { label: "Claude", description: "Claude", value: "Claude" },
+        { label: "Codex", description: "Codex", value: "Codex" },
+      ],
+      multiSelect: true,
+    },
+  ];
+
   // regression: #20417 Droid AskUser answers were sent as a cancel
   it.live.each([
     {
@@ -1857,7 +1902,31 @@ describe("AcpAdapterV2", () => {
       answers: { name: "Ada" },
       result: { action: "accept", content: { name: "Ada" } },
     },
-  ])("Droid elicitation $scenario", ({ schema, questions, answers, result, withAttachments }) =>
+    {
+      scenario: "offers titled single and multiple choices",
+      schema: titledChoiceSchema,
+      questions: titledChoiceQuestions,
+      answers: { q0: "Not yet", q1: ["Claude", "Codex"] },
+      result: { action: "accept", content: { q0: "Not yet", q1: ["Claude", "Codex"] } },
+    },
+    {
+      scenario: "sends custom answers through the text companion",
+      schema: titledChoiceSchema,
+      questions: titledChoiceQuestions,
+      answers: { q0: "Friday", q1: ["Codex", "Pi"] },
+      result: {
+        action: "accept",
+        content: { q0__other: "Friday", q1: ["Codex"], q1__other: "Pi" },
+      },
+    },
+    {
+      scenario: "keeps a typed listed value for a multiple choice",
+      schema: titledChoiceSchema,
+      questions: titledChoiceQuestions,
+      answers: { q0: "Not yet", q1: "Codex" },
+      result: { action: "accept", content: { q0: "Not yet", q1: ["Codex"] } },
+    },
+  ])("form elicitation $scenario", ({ schema, questions, answers, result, withAttachments }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
