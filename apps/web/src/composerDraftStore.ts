@@ -37,6 +37,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
+import * as Predicate from "effect/Predicate";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
 import {
@@ -124,34 +125,306 @@ type ComposerPersistState =
   | { capturedState: ComposerDraftStoreState }
   | PersistedComposerDraftStoreState;
 
-const composerDebouncedStorage = createDeferredStorage<StorageValue<ComposerPersistState>>(
-  typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
-  (value) =>
-    JSON.stringify({
-      state:
-        "capturedState" in value.state
-          ? partializeComposerDraftStoreState(value.state.capturedState)
-          : value.state,
-      version: value.version,
-    }),
+const composerDraftLocalStorage =
+  typeof localStorage !== "undefined" ? localStorage : createMemoryStorage();
+
+function readComposerDraftText(): string | null {
+  const text = composerDraftLocalStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
+  return typeof text === "string" ? text : null;
+}
+
+/** Persisted values by entry: one per record key and one per other field. */
+type ComposerDraftEntries = ReadonlyMap<string, unknown>;
+
+const entryId = (field: string, key?: string) =>
+  key === undefined ? field : `${field}\u0000${key}`;
+
+function entryIdParts(id: string): [field: string, key?: string] {
+  const separator = id.indexOf("\u0000");
+  return separator === -1 ? [id] : [id.slice(0, separator), id.slice(separator + 1)];
+}
+
+function entriesOf(state: Readonly<Record<string, unknown>>): ComposerDraftEntries {
+  const entries = new Map<string, unknown>();
+  for (const [field, value] of Object.entries(state)) {
+    const items = Predicate.isObject(value) ? Object.entries(value) : [[undefined, value] as const];
+    for (const [key, item] of items) {
+      if (item !== undefined) entries.set(entryId(field, key), item);
+    }
+  }
+  return entries;
+}
+
+/** The state `entries` describe, keeping each record field of `shape` even when it is empty. */
+function persistedStateOf(entries: ComposerDraftEntries, shape: Readonly<Record<string, unknown>>) {
+  const state: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(shape)) {
+    if (Predicate.isObject(value)) state[field] = {};
+  }
+  for (const [id, value] of entries) {
+    const [field, key] = entryIdParts(id);
+    const record = state[field];
+    if (key === undefined) state[field] = value;
+    else if (Predicate.isObject(record)) record[key] = value;
+    else state[field] = { [key]: value };
+  }
+  return state;
+}
+
+/** Equality of JSON values; key order is ignored. */
+function jsonEquals(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b))
+    return a.length === b.length && a.every((item, index) => jsonEquals(item, b[index]));
+  if (!Predicate.isObject(a) || !Predicate.isObject(b)) return false;
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => Object.hasOwn(b, key) && jsonEquals(a[key], b[key]))
+  );
+}
+
+function changedEntryIds(next: ComposerDraftEntries, base: ComposerDraftEntries): string[] {
+  return [...new Set([...next.keys(), ...base.keys()])].filter(
+    (id) => !jsonEquals(next.get(id), base.get(id)),
+  );
+}
+
+function withEntries(
+  base: ComposerDraftEntries,
+  ids: Iterable<string>,
+  source: ComposerDraftEntries,
+): ComposerDraftEntries {
+  const next = new Map(base);
+  for (const id of ids) {
+    const value = source.get(id);
+    if (value === undefined) next.delete(id);
+    else next.set(id, value);
+  }
+  return next;
+}
+
+/** `null` when storage holds nothing this build can read, so nothing is adopted or merged. */
+function storedStateOf(value: unknown): PersistedComposerDraftStoreState | null {
+  if (value === null) return EMPTY_PERSISTED_DRAFT_STORE_STATE;
+  if (!Predicate.isObject(value) || !Predicate.isObject(value.state)) return null;
+  const version =
+    typeof value.version === "number" ? value.version : COMPOSER_DRAFT_STORAGE_VERSION;
+  if (version > COMPOSER_DRAFT_STORAGE_VERSION) return null;
+  return version < COMPOSER_DRAFT_STORAGE_VERSION
+    ? migratePersistedComposerDraftStoreState(value.state)
+    : normalizeCurrentPersistedComposerDraftStoreState(value.state);
+}
+
+function readStoredComposerDrafts(text: string | null): PersistedComposerDraftStoreState | null {
+  try {
+    return storedStateOf(text === null ? null : JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+/** What this tab knew about storage when it last wrote, read or adopted it. */
+interface ComposerDraftSync {
+  /** Per entry: this tab's partialized value and storage's value at its last sync. */
+  readonly local: ComposerDraftEntries;
+  readonly stored: ComposerDraftEntries;
+  /** The storage text last written or read, its entries, and whether memory adopted them. */
+  readonly text?: string | null;
+  readonly textEntries?: ComposerDraftEntries | null;
+  readonly adopted?: boolean;
+}
+const UNSYNCED: ComposerDraftSync = { local: new Map(), stored: new Map() };
+let sync = UNSYNCED;
+
+/** Writes only the entries this tab changed since its last sync over what storage holds now. */
+function writeComposerDrafts(name: string, value: StorageValue<ComposerPersistState>): void {
+  if (!("capturedState" in value.state)) {
+    composerDraftLocalStorage.setItem(name, JSON.stringify(value));
+    return;
+  }
+  const partialized = partializeComposerDraftStoreState(value.state.capturedState);
+  const local = entriesOf(partialized);
+  const changed = changedEntryIds(local, sync.local);
+  if (changed.length === 0) return;
+  const text = readComposerDraftText();
+  const parsed = sync.text === text ? undefined : readStoredComposerDrafts(text);
+  const stored = parsed === undefined ? sync.textEntries : parsed && entriesOf(parsed);
+  // Unreadable or newer storage: overwrite it with this tab's state.
+  const merged = stored ? withEntries(stored, changed, local) : local;
+  const nextText = JSON.stringify({
+    state: persistedStateOf(merged, partialized),
+    version: value.version,
+  });
+  composerDraftLocalStorage.setItem(name, nextText);
+  sync = {
+    local,
+    stored: stored ? withEntries(sync.stored, changed, local) : local,
+    text: nextText,
+    textEntries: merged,
+    adopted: false,
+  };
+}
+
+const composerDebouncedStorage = createDeferredStorage(
+  composerDraftLocalStorage,
+  writeComposerDrafts,
   COMPOSER_PERSIST_DEBOUNCE_MS,
 );
 
 const composerPersistStorage: PersistStorage<ComposerPersistState> = {
-  getItem: (name) => {
-    const raw = composerDebouncedStorage.getItem(name);
-    if (typeof raw !== "string") {
-      return null;
-    }
-    return JSON.parse(raw) as StorageValue<ComposerPersistState>;
+  getItem: () => {
+    const text = readComposerDraftText();
+    const value = text === null ? null : (JSON.parse(text) as StorageValue<ComposerPersistState>);
+    const stored = storedStateOf(value);
+    const seen = stored && entriesOf(stored);
+    // onRehydrateStorage sets `local` once the state is hydrated.
+    sync = { ...UNSYNCED, stored: seen ?? new Map(), text, textEntries: seen, adopted: true };
+    return value;
   },
   setItem: (name, value) => composerDebouncedStorage.setItem(name, value),
-  removeItem: (name) => composerDebouncedStorage.removeItem(name),
+  removeItem: (name) => {
+    composerDebouncedStorage.removeItem(name);
+    sync = UNSYNCED;
+  },
 };
+
+function adoptStoredRecord<P, H, M extends Readonly<Partial<Record<string, H>>>>(
+  ids: ReadonlySet<string>,
+  field: keyof PersistedComposerDraftStoreState,
+  stored: Readonly<Partial<Record<string, P>>> | undefined,
+  memory: M,
+  hydrate: (stored: P | undefined, current: H | undefined) => H | undefined,
+): M | Record<string, H> {
+  const keys = [...ids]
+    .map(entryIdParts)
+    .flatMap(([idField, key]) => (idField === field && key !== undefined ? [key] : []));
+  if (keys.length === 0) return memory;
+  const next: Record<string, H> = {};
+  for (const [key, value] of Object.entries(memory)) {
+    if (value !== undefined) next[key] = value;
+  }
+  for (const key of keys) {
+    const value = hydrate(stored?.[key], memory[key]);
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+  }
+  return next;
+}
+
+/** Keeps `File` handles, decoded images, and images not yet persisted, in their current order. */
+function adoptStoredDraft(
+  stored: PersistedComposerThreadDraftState | undefined,
+  current: ComposerThreadDraftState | undefined,
+): ComposerThreadDraftState | undefined {
+  const attachments = stored?.attachments ?? [];
+  const storedIds = new Set(attachments.map((attachment) => attachment.id));
+  const persistedIds = new Set(current?.persistedAttachments.map((attachment) => attachment.id));
+  // An image is in persistedAttachments only once serializeComposerImages has finished.
+  const keptImages =
+    current?.images.filter((image) => storedIds.has(image.id) || !persistedIds.has(image.id)) ?? [];
+  const keptIds = new Set(keptImages.map((image) => image.id));
+  const currentFiles = new Map(current?.files.map((file) => [file.id, file.file]));
+  const adopted = stored
+    ? toHydratedThreadDraft({ ...stored, attachments: [] })
+    : createEmptyThreadDraft();
+  const next: ComposerThreadDraftState = {
+    ...adopted,
+    images: [
+      ...keptImages,
+      ...hydrateImagesFromPersisted(
+        attachments.filter((attachment) => !keptIds.has(attachment.id)),
+      ),
+    ],
+    nonPersistedImageIds: current?.nonPersistedImageIds ?? [],
+    persistedAttachments: [...attachments],
+    files: adopted.files.map((file) => ({ ...file, file: currentFiles.get(file.id) ?? file.file })),
+  };
+  for (const image of current?.images ?? []) {
+    if (!keptIds.has(image.id)) {
+      revokeObjectPreviewUrl(image.previewUrl);
+    }
+  }
+  return shouldRemoveDraft(next) ? undefined : next;
+}
+
+/** Takes in every entry another tab changed in storage that this tab has not changed itself. */
+function adoptStoredComposerDrafts(): void {
+  const text = readComposerDraftText();
+  if (sync.adopted && sync.text === text) return;
+  const stored = readStoredComposerDrafts(text);
+  const entries = stored && entriesOf(stored);
+  const fromStorage = entries ? changedEntryIds(entries, sync.stored) : [];
+  // Shares unchanged entries with the baseline instead of keeping a second parsed copy.
+  const seen = entries && withEntries(sync.stored, fromStorage, entries);
+  sync = { ...sync, text, textEntries: seen, adopted: true };
+  if (!stored || !seen || fromStorage.length === 0) return;
+  const state = composerDraftStore.getState();
+  const local = entriesOf(partializeComposerDraftStoreState(state));
+  const ids = new Set(fromStorage.filter((id) => jsonEquals(local.get(id), sync.local.get(id))));
+  if (ids.size === 0) return;
+  const keep = <T>(stored: T | undefined) => stored;
+  composerDraftStore.setState({
+    draftThreadsByThreadKey: adoptStoredRecord(
+      ids,
+      "draftThreadsByThreadKey",
+      stored.draftThreadsByThreadKey,
+      state.draftThreadsByThreadKey,
+      (value) => value && toHydratedDraftThreadState(value),
+    ),
+    logicalProjectDraftThreadKeyByLogicalProjectKey: adoptStoredRecord(
+      ids,
+      "logicalProjectDraftThreadKeyByLogicalProjectKey",
+      stored.logicalProjectDraftThreadKeyByLogicalProjectKey,
+      state.logicalProjectDraftThreadKeyByLogicalProjectKey,
+      keep,
+    ),
+    stickyModelSelectionByProvider: adoptStoredRecord(
+      ids,
+      "stickyModelSelectionByProvider",
+      stored.stickyModelSelectionByProvider,
+      state.stickyModelSelectionByProvider,
+      keep,
+    ),
+    stickyOptionsByModelByProvider: adoptStoredRecord(
+      ids,
+      "stickyOptionsByModelByProvider",
+      stored.stickyOptionsByModelByProvider,
+      state.stickyOptionsByModelByProvider,
+      (value): Partial<Record<string, ReadonlyArray<ProviderOptionSelection>>> | undefined => value,
+    ),
+    ...(ids.has(entryId("stickyActiveProvider")) && {
+      stickyActiveProvider: stored.stickyActiveProvider ?? null,
+    }),
+    // Last: adopting a draft revokes the preview URLs it replaces.
+    draftsByThreadKey: adoptStoredRecord(
+      ids,
+      "draftsByThreadKey",
+      stored.draftsByThreadKey,
+      state.draftsByThreadKey,
+      adoptStoredDraft,
+    ),
+  });
+  const adoptedLocal = entriesOf(partializeComposerDraftStoreState(composerDraftStore.getState()));
+  sync = {
+    ...sync,
+    local: withEntries(sync.local, ids, adoptedLocal),
+    stored: withEntries(sync.stored, ids, seen),
+  };
+}
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
     composerDebouncedStorage.flush();
+  });
+  // The event's newValue can predate this tab's own later write, so read storage instead.
+  window.addEventListener("storage", (event) => {
+    if (
+      event.storageArea === composerDraftLocalStorage &&
+      (event.key === COMPOSER_DRAFT_STORAGE_KEY || event.key === null)
+    ) {
+      adoptStoredComposerDrafts();
+    }
   });
 }
 
@@ -4236,6 +4509,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           stickyOptionsByModelByProvider: normalizedPersisted.stickyOptionsByModelByProvider ?? {},
           stickyActiveProvider: normalizedPersisted.stickyActiveProvider ?? null,
         };
+      },
+      onRehydrateStorage: () => (state) => {
+        if (state) sync = { ...sync, local: entriesOf(partializeComposerDraftStoreState(state)) };
       },
     },
   ),

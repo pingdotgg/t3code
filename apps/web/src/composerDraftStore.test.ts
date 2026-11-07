@@ -721,6 +721,153 @@ describe("composerDraftStore context persistence", () => {
       expect(draft?.previewAnnotations).toEqual([annotation]);
     }
   });
+
+  // Each tab is a fresh module instance sharing one localStorage. A browser sends a write's
+  // storage event only to the other tabs, whenever it gets to it.
+  const openTabs = () => {
+    const storage = createMockStorage();
+    vi.stubGlobal("localStorage", storage);
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const read = () => storage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
+    const openTab = async () => {
+      const page = new EventTarget();
+      vi.stubGlobal("window", page);
+      vi.resetModules();
+      const store = (await import("./composerDraftStore")).useComposerDraftStore;
+      return {
+        store,
+        write: () => page.dispatchEvent(new Event("beforeunload")),
+        receive: (newValue = read(), key: string | null = COMPOSER_DRAFT_STORAGE_KEY) =>
+          page.dispatchEvent(
+            Object.assign(new Event("storage"), { key, newValue, storageArea: storage }),
+          ),
+        prompts: () =>
+          Object.fromEntries(
+            Object.entries(store.getState().draftsByThreadKey).map(([key, draft]) => [
+              key,
+              draft.prompt,
+            ]),
+          ),
+      };
+    };
+    return { storage, read, openTab };
+  };
+  const crossTabRef = (id: string) =>
+    scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make(`cross-tab-${id}`));
+  const crossTabKey = (id: string) => scopedThreadKey(crossTabRef(id));
+
+  it("keeps drafts written in other tabs and does not restore drafts they cleared", async () => {
+    const { storage, read, openTab } = openTabs();
+    const tabA = await openTab();
+    const tabB = await openTab();
+
+    tabB.store.getState().setPrompt(crossTabRef("x"), "from tab B");
+    tabB.store.getState().setStickyModelSelection(modelSelection(CODEX_DRIVER, "gpt-5.4"));
+    tabB.write();
+    const tabBWrite = read();
+    tabA.store.getState().setPrompt(crossTabRef("y"), "from tab A");
+    tabA.write();
+    const both = { [crossTabKey("x")]: "from tab B", [crossTabKey("y")]: "from tab A" };
+    expect((await openTab()).prompts()).toEqual(both);
+    // The late event still carries tab B's write, which predates tab A's.
+    tabA.receive(tabBWrite);
+    tabB.receive();
+    expect(tabA.prompts()).toEqual(both);
+    expect(tabA.store.getState().stickyActiveProvider).toBe(CODEX_INSTANCE);
+    expect(tabA.store.getState().stickyModelSelectionByProvider).toEqual(
+      tabB.store.getState().stickyModelSelectionByProvider,
+    );
+    const settled = read();
+    tabA.write();
+    tabB.write();
+    expect(read()).toBe(settled);
+
+    tabA.store.getState().setPrompt(crossTabRef("x"), "");
+    tabA.write();
+    tabB.store.getState().setPrompt(crossTabRef("z"), "from tab B again");
+    tabB.write();
+    tabA.receive();
+    tabB.receive();
+    const expected = { [crossTabKey("y")]: "from tab A", [crossTabKey("z")]: "from tab B again" };
+    expect((await openTab()).prompts()).toEqual(expected);
+    expect(tabA.prompts()).toEqual(expected);
+    expect(tabB.prompts()).toEqual(expected);
+
+    // localStorage.clear() reports a null key.
+    storage.removeItem(COMPOSER_DRAFT_STORAGE_KEY);
+    tabA.receive(null, null);
+    expect(tabA.prompts()).toEqual({});
+    expect(tabA.store.getState().stickyActiveProvider).toBeNull();
+    tabA.write();
+    expect(read()).toBeNull();
+  });
+
+  it("does not overwrite another tab's edit with an edit undone before the write", async () => {
+    const { storage, openTab } = openTabs();
+    const tabA = await openTab();
+    const tabB = await openTab();
+
+    tabB.store.getState().setPrompt(crossTabRef("z"), "from tab B");
+    tabB.write();
+    tabA.receive();
+    tabB.store.getState().setPrompt(crossTabRef("z"), "edited in tab B");
+    tabB.write();
+    tabA.store.getState().setPrompt(crossTabRef("z"), "undone in tab A");
+    tabA.receive();
+    tabA.store.getState().setPrompt(crossTabRef("z"), "from tab B");
+    tabA.store.getState().setPrompt(crossTabRef("w"), "from tab A");
+    tabA.write();
+    expect((await openTab()).prompts()).toEqual({
+      [crossTabKey("z")]: "edited in tab B",
+      [crossTabKey("w")]: "from tab A",
+    });
+
+    // Storage from a newer build is neither adopted nor merged into: this tab's write replaces it.
+    const newerBuild = { [crossTabKey("v")]: { prompt: "from a newer build", attachments: [] } };
+    storage.setItem(
+      COMPOSER_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        version: Number.MAX_SAFE_INTEGER,
+        state: { draftsByThreadKey: newerBuild },
+      }),
+    );
+    tabA.receive();
+    expect(tabA.prompts()[crossTabKey("v")]).toBeUndefined();
+    tabA.store.getState().setPrompt(crossTabRef("y"), "from tab A");
+    tabA.write();
+    expect((await openTab()).prompts()).toEqual(tabA.prompts());
+  });
+
+  it("does not take a draft thread rebuilt in another key order as an edit", async () => {
+    const { openTab } = openTabs();
+    const tabA = await openTab();
+    const tabB = await openTab();
+    const draftId = DraftId.make("cross-tab-draft");
+
+    tabA.store
+      .getState()
+      .setProjectDraftThreadId(
+        scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("cross-tab-project")),
+        draftId,
+        { environmentSelection: "auto", loadBalancedEnvironmentId: TEST_ENVIRONMENT_ID },
+      );
+    tabA.write();
+    tabB.receive();
+    tabA.store.getState().setDraftThreadContext(draftId, { branch: "feature" });
+    tabA.write();
+    // Rebuilds tab B's copy with the same content in another key order.
+    tabB.store.getState().setDraftThreadContext(draftId, { branch: "scratch" });
+    tabB.store
+      .getState()
+      .setDraftThreadContext(draftId, { branch: null, environmentSelection: "auto" });
+    tabB.store.getState().setPrompt(crossTabRef("w"), "unrelated");
+    tabB.write();
+    tabB.receive();
+    expect((await openTab()).store.getState().getDraftThread(draftId)?.branch).toBe("feature");
+    expect(tabB.store.getState().getDraftThread(draftId)?.branch).toBe("feature");
+  });
 });
 
 describe("composerDraftStore thread contexts", () => {
@@ -2236,11 +2383,8 @@ function createMockStorage() {
 }
 
 describe("createDeferredStorage", () => {
-  const serialize = vi.fn((value: string) => `s:${value}`);
-
   beforeEach(() => {
     vi.useFakeTimers();
-    serialize.mockClear();
   });
 
   afterEach(() => {
@@ -2249,29 +2393,27 @@ describe("createDeferredStorage", () => {
 
   it("removeItem cancels a pending setItem write", () => {
     const base = createMockStorage();
-    const storage = createDeferredStorage(base, serialize);
+    const storage = createDeferredStorage(base, base.setItem);
 
     storage.setItem("key", "v1");
     storage.removeItem("key");
 
     vi.advanceTimersByTime(300);
-    expect(serialize).not.toHaveBeenCalled();
     expect(base.setItem).not.toHaveBeenCalled();
     expect(base.removeItem).toHaveBeenCalledWith("key");
   });
 
-  it("flush serializes and writes the pending value immediately", () => {
+  it("flush writes the pending value immediately", () => {
     const base = createMockStorage();
-    const storage = createDeferredStorage(base, serialize);
+    const storage = createDeferredStorage(base, base.setItem);
 
     storage.setItem("key", "v1");
     expect(base.setItem).not.toHaveBeenCalled();
 
     storage.flush();
-    expect(base.setItem).toHaveBeenCalledWith("key", "s:v1");
+    expect(base.setItem).toHaveBeenCalledWith("key", "v1");
 
     vi.advanceTimersByTime(300);
-    expect(serialize).toHaveBeenCalledTimes(1);
     expect(base.setItem).toHaveBeenCalledTimes(1);
   });
 });

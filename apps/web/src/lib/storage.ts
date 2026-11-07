@@ -44,16 +44,11 @@ export function resolveStorage(storage: Partial<StateStorage> | null | undefined
 
 export function createDeferredStorage<TValue>(
   baseStorage: Partial<StateStorage> | null | undefined,
-  serialize: (value: TValue) => string,
+  write: (name: string, value: TValue) => void,
   debounceMs: number = 300,
 ): DeferredStorage<TValue> {
   const resolvedStorage = resolveStorage(baseStorage);
-  const debouncedSetItem = new Debouncer(
-    (name: string, value: TValue) => {
-      resolvedStorage.setItem(name, serialize(value));
-    },
-    { wait: debounceMs },
-  );
+  const debouncedSetItem = new Debouncer(write, { wait: debounceMs });
 
   return {
     getItem: (name) => resolvedStorage.getItem(name),
