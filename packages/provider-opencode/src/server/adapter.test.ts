@@ -2833,15 +2833,97 @@ describe("OpenCodeAdapterV2", () => {
   });
 
   it("uses the next native user message as the exclusive fork and revert boundary", () => {
-    const first = providerTurn({ id: "turn:first", ordinal: 1, nativeId: "msg-user-1" });
-    const synthetic = providerTurn({ id: "turn:synthetic", ordinal: 2, nativeId: null });
-    const third = providerTurn({ id: "turn:third", ordinal: 3, nativeId: "msg-user-3" });
+    const first = providerTurn({ id: "turn:first", ordinal: 3, nativeId: "msg-user-1" });
+    const synthetic = providerTurn({ id: "turn:synthetic", ordinal: 4, nativeId: null });
+    const third = providerTurn({ id: "turn:third", ordinal: 5, nativeId: "msg-user-3" });
+    const later = providerTurn({ id: "turn:later", ordinal: 7, nativeId: "msg-later" });
+    const earlier = providerTurn({ id: "turn:earlier", ordinal: 2, nativeId: "msg-earlier" });
+    const sameOrdinal = providerTurn({ id: "turn:same", ordinal: 3, nativeId: "msg-same" });
+    const tie = providerTurn({ id: "turn:tie", ordinal: 5, nativeId: "msg-tie" });
+    const emptyId = providerTurn({ id: "turn:empty", ordinal: 5, nativeId: "" });
+    const nullNativeId: OrchestrationV2ProviderTurn = {
+      ...synthetic,
+      ordinal: 5,
+      nativeTurnRef: { driver: OPENCODE_PROVIDER, nativeId: null, strength: "weak" },
+    };
+    const duplicateSelected = { ...first, ordinal: 6 };
+    const cases = [
+      {
+        name: "unsorted input skips null refs and selects the minimum later ordinal",
+        turns: [tie, synthetic, first, third],
+        selected: first.id,
+        expected: "msg-tie",
+      },
+      {
+        name: "a smaller later ordinal replaces the first candidate",
+        turns: [later, first, third, synthetic],
+        selected: first.id,
+        expected: "msg-user-3",
+      },
+      {
+        name: "earlier and equal ordinals are excluded",
+        turns: [sameOrdinal, earlier, third, first],
+        selected: first.id,
+        expected: "msg-user-3",
+      },
+      {
+        name: "null native IDs and null refs do not hide the next native message",
+        turns: [nullNativeId, synthetic, third, first],
+        selected: first.id,
+        expected: "msg-user-3",
+      },
+      {
+        name: "equal minimum ordinals keep the first eligible native ID",
+        turns: [third, first, tie],
+        selected: first.id,
+        expected: "msg-user-3",
+      },
+      {
+        name: "empty native IDs are accepted and win ties",
+        turns: [emptyId, tie, first],
+        selected: first.id,
+        expected: "",
+      },
+      {
+        name: "the first selected ID match supplies the ordinal",
+        turns: [first, duplicateSelected, third],
+        selected: first.id,
+        expected: "msg-user-3",
+      },
+      {
+        name: "the history head has no exclusive boundary",
+        turns: [first, synthetic, third],
+        selected: third.id,
+        expected: undefined,
+      },
+      {
+        name: "only synthetic later turns have no boundary",
+        turns: [earlier, sameOrdinal, first, nullNativeId, synthetic],
+        selected: first.id,
+        expected: undefined,
+      },
+      {
+        name: "missing selected ID does not choose a boundary",
+        turns: [third, first],
+        selected: synthetic.id,
+        expected: undefined,
+      },
+      { name: "empty history has no boundary", turns: [], selected: first.id, expected: undefined },
+    ];
 
-    assert.equal(
-      openCodeBoundaryAfterProviderTurn([third, first, synthetic], first.id),
-      "msg-user-3",
-    );
-    assert.isUndefined(openCodeBoundaryAfterProviderTurn([first, synthetic, third], third.id));
+    for (const { name, turns, selected, expected } of cases) {
+      const frozenTurns = Object.freeze(
+        turns.map((turn) =>
+          Object.freeze({
+            ...turn,
+            nativeTurnRef: turn.nativeTurnRef === null ? null : Object.freeze(turn.nativeTurnRef),
+          }),
+        ),
+      );
+      const before = structuredClone(frozenTurns);
+      assert.equal(openCodeBoundaryAfterProviderTurn(frozenTurns, selected), expected, name);
+      assert.deepEqual(frozenTurns, before, name);
+    }
   });
 });
 

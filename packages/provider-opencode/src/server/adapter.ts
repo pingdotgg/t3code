@@ -726,11 +726,22 @@ export function openCodeBoundaryAfterProviderTurn(
 ): string | undefined {
   const selected = providerTurns.find((turn) => turn.id === selectedProviderTurnId);
   if (selected === undefined) return undefined;
-  return providerTurns
-    .filter((turn) => turn.ordinal > selected.ordinal)
-    .toSorted((left, right) => left.ordinal - right.ordinal)
-    .map((turn) => turn.nativeTurnRef?.nativeId)
-    .find((nativeId): nativeId is string => nativeId !== null && nativeId !== undefined);
+  let boundary: string | undefined;
+  let boundaryOrdinal = selected.ordinal;
+  for (const turn of providerTurns) {
+    if (turn.ordinal > selected.ordinal) {
+      const nativeId = turn.nativeTurnRef?.nativeId;
+      if (
+        nativeId !== null &&
+        nativeId !== undefined &&
+        (boundary === undefined || turn.ordinal < boundaryOrdinal)
+      ) {
+        boundary = nativeId;
+        boundaryOrdinal = turn.ordinal;
+      }
+    }
+  }
+  return boundary;
 }
 
 function toolStatus(part: ToolPart): {
