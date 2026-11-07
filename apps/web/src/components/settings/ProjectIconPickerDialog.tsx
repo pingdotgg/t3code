@@ -32,6 +32,9 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const DEFAULT_ICON = "folder-code";
 const isMonogramText = Schema.is(ProjectMonogramText);
+// The contract still decodes longer legacy monograms; the server rejects new ones
+// past two graphemes, counted with this same segmenter.
+const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function PickerIcon({ name }: { name: string }) {
   const icon = lucideIconByName(name);
@@ -102,7 +105,8 @@ function ProjectIconPickerBody({
   const icons = filterProjectIconNames(query);
   const selectedColorClassName = projectIconColorClassName(color);
   const monogram = letters.normalize("NFKC").trim().toUpperCase();
-  const validMonogram = isMonogramText(monogram);
+  const validMonogram =
+    isMonogramText(monogram) && Array.from(monogramSegmenter.segment(monogram)).length <= 2;
   const save = () => {
     if (mode === "monogram" && !validMonogram) return;
     onSelect(
