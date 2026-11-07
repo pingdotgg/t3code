@@ -36,16 +36,16 @@ export function SettingsRow(props: {
     detail: valueBelow ? undefined : props.value,
     disabled: props.disabled,
   };
-  const clearListSearch = () => workspace?.dispatch({ type: "cancel", tab: "settings" });
+  // Choosing a destination ends list search so the index is not left filtered behind an open page.
+  const endListSearch = () => workspace?.dispatch({ type: "cancel", tab: "settings" });
   const onPress = () => {
     if (props.target) {
       if (inList) {
-        // Leaving the list for a page; clear search so Back shows the full index.
-        clearListSearch();
+        endListSearch();
         openSettings(navigation, props.target);
       } else navigation.navigate(props.target);
     } else if (props.fullScreenTarget) {
-      if (inList) clearListSearch();
+      if (inList) endListSearch();
       navigation.navigate(props.fullScreenTarget);
     } else {
       props.onPress?.();
