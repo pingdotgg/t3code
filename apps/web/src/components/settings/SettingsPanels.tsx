@@ -760,7 +760,7 @@ const DEFAULT_INACTIVITY_SETTINGS = {
   sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
   sidebarAutoSettleScope: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleScope,
 };
-const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_INACTIVITY_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_INACTIVITY_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
 
 function AutoSettleDaysInput({
   value,

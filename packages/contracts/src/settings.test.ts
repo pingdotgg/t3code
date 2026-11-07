@@ -855,9 +855,9 @@ describe("ClientSettings follow-up behavior", () => {
 });
 
 describe("ServerSettings thread settlement", () => {
-  it("defaults merge settlement on and inactivity settlement to three days", () => {
+  it("defaults merge settlement on and inactivity settlement to seven days", () => {
     const settings = decodeServerSettings({});
-    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarAutoSettleAfterDays).toBe(7);
     expect(settings.sidebarAutoSettleScope).toBe("all");
     expect(settings.sidebarAutoSettleOnMerge).toBe(true);
     expect(settings.sidebarAutoSettlePinnedThreads).toBe(false);

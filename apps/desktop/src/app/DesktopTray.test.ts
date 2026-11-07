@@ -49,6 +49,7 @@ const makeElectronAppLayer = (onQuit?: () => Effect.Effect<void>) =>
     metadata: Effect.die("unexpected metadata read"),
     name: Effect.succeed("T3 Code"),
     systemLocale: Effect.succeed("en-US"),
+    preferredSystemLanguages: Effect.succeed(["en-US"]),
     whenReady: Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
     quit: onQuit ? onQuit() : Effect.void,

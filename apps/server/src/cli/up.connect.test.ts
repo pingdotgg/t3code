@@ -127,5 +127,56 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe("T3CODE_LAN=false\n");
       }),
     );
+
+    it.effect("--connect signs in to nothing for another home's service", () =>
+      Effect.gen(function* () {
+        events.length = 0;
+        link.desired = false;
+        link.mode = "managed";
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-connect-test-" });
+        vi.spyOn(BootService, "layer").mockReturnValue(
+          Layer.succeed(
+            BootService.BootService,
+            BootService.BootService.of({
+              status: Effect.succeed({
+                supported: true,
+                installed: true,
+                current: false,
+                kind: "systemd",
+                otherBaseDir: "/srv/t3",
+                unitPath: "/home/me/.config/systemd/user/t3code.service",
+                logPath: "/home/me/.t3/userdata/logs/boot-service.log",
+              }),
+              withStopped: (operation) => operation,
+              restart: Effect.sync(() => events.push("restart")).pipe(
+                Effect.as("skipped" as const),
+              ),
+              install: () => Effect.die("another home's service is not reinstalled"),
+              uninstall: Effect.succeed(false),
+            }),
+          ),
+        );
+
+        const error = yield* Command.runWith(upCommand, { version: packageJson.version })([
+          "--base-dir",
+          baseDir,
+          "--connect",
+        ]).pipe(
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+              Layer.fresh(TestConsole.layer),
+            ),
+          ),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({ _tag: "BootServiceOtherBaseDirError" });
+        expect(events).toEqual([]);
+        expect(link).toEqual({ desired: false, mode: "managed" });
+      }),
+    );
   },
 );
