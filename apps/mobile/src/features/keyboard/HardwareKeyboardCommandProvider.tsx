@@ -43,6 +43,14 @@ const COPY_FEEDBACK_DISMISS_MS = 3_000;
 
 const CommandPaletteContext = createContext<ReactNode>(null);
 
+/**
+ * The React Compiler memoizes on the values a callback reads and drops unread entries from a
+ * dependency list, so the registry version must be read for a new registration to show up.
+ */
+function registeredCommands(_registrationVersion: number) {
+  return getRegisteredHardwareKeyboardCommands();
+}
+
 /** Render inside the workspace so palette actions share its navigation and pane state. */
 export function HardwareKeyboardCommandOverlay() {
   return use(CommandPaletteContext);
@@ -105,7 +113,7 @@ export function HardwareKeyboardCommandProvider({
     getHardwareKeyboardCommandRegistrationVersion,
   );
   const enabledCommands = useMemo(() => {
-    const commands = new Set<HardwareKeyboardCommand>(getRegisteredHardwareKeyboardCommands());
+    const commands = new Set<HardwareKeyboardCommand>(registeredCommands(registrationVersion));
     commands.add("newTask");
     commands.add("commandPalette");
     if (pathname !== "/" && !pathname.startsWith("/threads/")) {
@@ -121,7 +129,6 @@ export function HardwareKeyboardCommandProvider({
       if (pathname.split("/")[4] !== "terminal") commands.add("copyThreadReference");
     }
     return [...commands];
-    // oxlint-disable-next-line react/memo-dependencies -- registrationVersion invalidates the snapshot of the external keyboard-command registry.
   }, [activeThreadRef, pathname, registrationVersion, navigation]);
 
   const onCommand = useCallback(
