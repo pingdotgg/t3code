@@ -312,8 +312,8 @@ failed reads in a row, or when you press Stop on the thread. A rate limit only p
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
 watch. Watching a pull request again does not repeat check or conflict news its last
 watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
-it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
-watched pull request shows an eye; click it to stop watching.
+it yourself, click the eye next to the pull request in the thread details card, or use the row menu
+in the **Linked pull requests** panel. A crossed-out eye means the pull request is not watched.
 
 A watched thread counts as working between wakes, so it stays in the **Working** section and does
 not auto-settle. Agents stop watching when they hand the work back to you, and the thread then

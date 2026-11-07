@@ -1,6 +1,11 @@
 import { pipe } from "effect/Function";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ScopedThreadRef,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import {
   pullRequestListLines,
   resolveThreadPullRequestChains,
@@ -13,7 +18,8 @@ import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } fro
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { findProjectOnChangeRequestHost } from "@t3tools/client-runtime/change-request-links";
 
-import { useProjects } from "~/state/entities";
+import { useProjects, useQuietThreadShell, useServerConfigs } from "~/state/entities";
+import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -27,13 +33,13 @@ function ThreadDetailsPrLinkRow({
   link,
   onOpen,
   onActed,
-  onStopWatching,
+  watch,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
-  onStopWatching?: (() => void) | undefined;
+  watch?: ComponentProps<typeof ThreadDetailsPrRow>["watch"];
 }) {
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
@@ -57,7 +63,7 @@ function ThreadDetailsPrLinkRow({
       label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
       openAriaLabel={link.url}
       onOpen={onOpen}
-      onStopWatching={onStopWatching}
+      watch={watch}
       {...(onActed ? { onActed } : {})}
     />
   );
@@ -76,22 +82,42 @@ export function ThreadDetailsPrRows({
   onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
-  const stopWatching = (link: ThreadPullRequestLink | null) =>
-    link?.watch === undefined
-      ? undefined
-      : () =>
-          void watch({
-            environmentId: threadRef.environmentId,
-            input: {
-              threadId: threadRef.threadId,
-              host: link.host,
-              repository: link.repository,
-              number: link.number,
-              watching: false,
-            },
-          });
-  const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
+  const setWatching = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
+  const thread = useQuietThreadShell(threadRef);
+  const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
+  const supportsWatch =
+    useServerConfigs().get(threadRef.environmentId)?.environment.capabilities
+      .threadPullRequestWatch === true;
+  // The server refuses new watches on settled, archived and subagent threads.
+  const canStartWatch =
+    supportsWatch &&
+    canOperate &&
+    thread !== null &&
+    thread.archivedAt === null &&
+    thread.settledAt === null &&
+    thread.settledOverride !== "settled" &&
+    thread.lineage.relationshipToParent !== "subagent";
+  // A watch that already exists can always be stopped.
+  const watchOf = (link: ThreadPullRequestLink | null) => {
+    if (link === null) return undefined;
+    const watching = link.watch !== undefined;
+    if (!watching && !canStartWatch) return undefined;
+    return {
+      watching,
+      onToggle: () =>
+        void setWatching({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            host: link.host,
+            repository: link.repository,
+            number: link.number,
+            watching: !watching,
+          },
+        }),
+    };
+  };
+  const currentRow = <ThreadDetailsPrRow {...row} watch={watchOf(currentLink)} />;
   const rest =
     currentLink === null
       ? []
@@ -112,7 +138,7 @@ export function ThreadDetailsPrRows({
               link={link}
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
-              onStopWatching={stopWatching(link)}
+              watch={watchOf(link)}
             />
           ))}
         </div>
