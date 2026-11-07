@@ -305,6 +305,13 @@ export function resolveSidebarSweepKeys(
   return orderedKeys.slice(Math.min(origin, target), Math.max(origin, target) + 1).filter(canApply);
 }
 
+export function resolveSidebarRowActionKeys(
+  rowKey: string,
+  selectedKeys: ReadonlySet<string>,
+): string[] {
+  return selectedKeys.has(rowKey) ? [...selectedKeys] : [rowKey];
+}
+
 export function sidebarThreadKeyAtY(list: HTMLElement, y: number): string | null {
   const viewport = list.closest('[data-slot="scroll-area-viewport"]')?.getBoundingClientRect();
   const visibleY = viewport ? Math.min(Math.max(y, viewport.top), viewport.bottom - 1) : y;
