@@ -11,6 +11,7 @@ import {
   formatOutgoingPrompt,
   optimisticMessageAttachments,
   planComposerTurn,
+  releasesModelPickAfterSend,
   sendTitleFallbackLabels,
   snapshotComposerSend,
   withMessageContext,
@@ -72,6 +73,7 @@ import {
   markPromotedDraftThreadByRef,
   restoreFailedDraftThread,
   composerDraftHasUserContent,
+  draftModelPick,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -149,6 +151,7 @@ import type { useWorktreeSetup } from "./useWorktreeSetup";
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 
 const selectPlanModeEnabled = (settings: UnifiedSettings) => settings.planModeEnabled;
+const selectNadirRouting = (settings: UnifiedSettings) => settings.nadirRouting;
 
 function readEnvironmentPresentation(environmentId: EnvironmentId) {
   return appAtomRegistry.get(environmentPresentations.presentationsAtom).get(environmentId);
@@ -344,6 +347,8 @@ export function useComposerSend(input: ComposerSendInput) {
   const navigate = useNavigate();
   const clientSettingsHydrated = useClientSettingsHydrated();
   const planModeEnabled = useEnvironmentSettings(environmentId, selectPlanModeEnabled);
+  const nadirRouting = useEnvironmentSettings(environmentId, selectNadirRouting);
+  const releaseModelPick = useComposerDraftStore((store) => store.releaseModelPick);
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
@@ -857,6 +862,9 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const threadIdForSend = activeThread.id;
+    const modelPickAtSend = draftModelPick(
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+    );
     const sendSnapshot = snapshotComposerSend({
       prompt: promptForSend,
       images: composerImages,
@@ -1413,6 +1421,10 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        // Nadir may run the turn on another model; the picker then shows the one that ran.
+        if (releasesModelPickAfterSend({ nadirRouting, turnDispatchMode, phase })) {
+          releaseModelPick(scopeThreadRef(environmentId, threadIdForSend), modelPickAtSend);
+        }
         setKeepFullHistory(routeThreadKey, false);
         if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
         clearUsageLimitsFor(routeThreadKey);

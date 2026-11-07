@@ -1327,6 +1327,18 @@ function updateComposerDrafts(
   schedulePersistComposerState();
 }
 
+/** Drops a thread draft's model pick that a send used, so the picker follows the thread's model. */
+export function releaseComposerModelPick(draftKey: string, sentPick: ModelSelection): void {
+  updateComposerDrafts((current) => {
+    const draft = current[draftKey];
+    if (!draft?.modelSelection || !draftModelPickMatchesThread(draft.modelSelection, sentPick)) {
+      return current;
+    }
+    const { modelSelection: _modelSelection, ...rest } = draft;
+    return withComposerDraft(current, draftKey, rest);
+  });
+}
+
 export function setStickyComposerModelSelection(modelSelection: ModelSelection): void {
   appAtomRegistry.set(stickyComposerModelSelectionAtom, modelSelection);
   schedulePersistComposerState();

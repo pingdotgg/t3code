@@ -611,6 +611,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["claude context compaction idle cache tokens usage summary resume"],
   },
   {
+    id: "nadir-routing",
+    title: "Nadir model routing",
+    to: "/settings/providers",
+    scope: "environment-defaults",
+    searchTerms: ["auto model picker cheaper haiku sonnet opus router cost savings getnadir"],
+  },
+  {
+    id: "nadir-compaction",
+    title: "Nadir compaction",
+    to: "/settings/providers",
+    scope: "environment-defaults",
+    searchTerms: ["context tool output read bash shrink tokens claude plugin getnadir"],
+  },
+  {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/threads",

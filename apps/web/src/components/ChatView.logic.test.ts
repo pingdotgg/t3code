@@ -3,6 +3,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
   planComposerTurn,
+  releasesModelPickAfterSend,
   restorePlanFollowUpComposer,
   snapshotComposerSend,
   withMessageContext,
@@ -1061,6 +1062,18 @@ describe("snapshotComposerSend", () => {
     expect(snapshot.messageText).toBe(
       ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
     );
+  });
+});
+
+describe("releasesModelPickAfterSend", () => {
+  it("hands the pick back only after a new turn Nadir may route", () => {
+    const newTurn = { nadirRouting: true, turnDispatchMode: "auto", phase: "ready" } as const;
+    expect(releasesModelPickAfterSend(newTurn)).toBe(true);
+    // A queued or steered send keeps the pick for the turn it waits for.
+    expect(releasesModelPickAfterSend({ ...newTurn, turnDispatchMode: "queue" })).toBe(false);
+    expect(releasesModelPickAfterSend({ ...newTurn, turnDispatchMode: "steer" })).toBe(false);
+    expect(releasesModelPickAfterSend({ ...newTurn, phase: "running" })).toBe(false);
+    expect(releasesModelPickAfterSend({ ...newTurn, nadirRouting: false })).toBe(false);
   });
 });
 

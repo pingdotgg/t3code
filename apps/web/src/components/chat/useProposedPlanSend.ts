@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type UnifiedSettings,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -21,7 +22,8 @@ import { truncate } from "@t3tools/shared/String";
 import { useNavigate } from "@tanstack/react-router";
 import type { Dispatch, SetStateAction } from "react";
 import { newMessageId, newThreadId } from "~/lib/utils";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { draftModelPick, useComposerDraftStore } from "../../composerDraftStore";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { buildMessageContext } from "../../lib/composerContextRecords";
 import {
@@ -77,6 +79,8 @@ interface PlanFollowUpSendInput extends PlanSendBase {
  * Answers a proposed plan on this thread: refine it in plan mode, or implement it here
  * (which links the turn to the plan). Resolves whether the turn started.
  */
+const selectNadirRouting = (settings: UnifiedSettings) => settings.nadirRouting;
+
 export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
   const {
     environmentId,
@@ -101,6 +105,8 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
+  const releaseModelPick = useComposerDraftStore((store) => store.releaseModelPick);
+  const nadirRouting = useEnvironmentSettings(environmentId, selectNadirRouting);
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
 
   return async function submitPlanFollowUp({
@@ -133,6 +139,10 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     }
 
     const threadIdForSend = activeThread.id;
+    const threadRefForSend = scopeThreadRef(activeThread.environmentId, threadIdForSend);
+    const modelPickAtSend = draftModelPick(
+      useComposerDraftStore.getState().getComposerDraft(threadRefForSend),
+    );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
@@ -212,6 +222,8 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     }
 
     if (failure === null) {
+      // Nadir may run the turn on another model; the picker then shows the one that ran.
+      if (nadirRouting) releaseModelPick(threadRefForSend, modelPickAtSend);
       sendInFlightRef.current = false;
       resetLocalDispatch();
       return true;
