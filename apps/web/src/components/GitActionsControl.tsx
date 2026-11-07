@@ -1,3 +1,4 @@
+import { addGitFailureToComposer } from "./gitFixPrompt";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
@@ -933,6 +934,18 @@ export default function GitActionsControl({
   showChanges = true,
   onOpenChanges,
 }: GitActionsControlProps) {
+  const gitFixAction = (error: unknown) => {
+    const target = draftId ?? activeThreadRef;
+    if (!target) return {};
+    return {
+      actionProps: {
+        children: "Fix with agent",
+        onClick: () => {
+          addGitFailureToComposer(target, error);
+        },
+      },
+    };
+  };
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
@@ -1226,6 +1239,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: "Action failed",
+          ...gitFixAction(error),
           description: error instanceof Error ? error.message : "An error occurred.",
           timeout: errorToastTiming.timeout,
           ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
@@ -1300,6 +1314,7 @@ export default function GitActionsControl({
             stackedThreadToast({
               type: "error",
               title: "Pull failed",
+              ...gitFixAction(error),
               description: error instanceof Error ? error.message : "An error occurred.",
               timeout: errorToastTiming.timeout,
               ...(threadToastData !== undefined ? { data: threadToastData } : {}),
@@ -1407,6 +1422,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: "Git initialization failed",
+          ...gitFixAction(error),
           description: error instanceof Error ? error.message : "An error occurred.",
           ...(threadToastData !== undefined ? { data: threadToastData } : {}),
         }),

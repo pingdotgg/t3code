@@ -29,6 +29,21 @@ describe("GitCommandError", () => {
       "Git command failed in GitVcsDriver.createWorktree (/repo): git worktree add failed",
     );
   });
+
+  it("keeps a known actionable failure reason", () => {
+    const error = decodeGitCommandError({
+      _tag: "GitCommandError",
+      operation: "GitVcsDriver.commit.commit",
+      command: "git",
+      cwd: "/repo",
+      detail:
+        "Nothing to commit. Stage changes first, or make sure the selected files have changes.",
+      reason: "nothing_to_commit",
+    });
+
+    expect(error.reason).toBe("nothing_to_commit");
+    expect(error.message).toContain("(nothing_to_commit)");
+  });
 });
 
 describe("GitPreparePullRequestThreadResult", () => {

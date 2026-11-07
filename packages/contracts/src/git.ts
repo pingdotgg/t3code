@@ -347,16 +347,21 @@ export const VcsPullResult = Schema.Struct({
 });
 export type VcsPullResult = typeof VcsPullResult.Type;
 
-// Git stderr can echo credentials from argv and remote URLs. Only a fixed
-// reason reaches the error and its diagnostic suffix; newer, unknown reasons
-// decode as absent through GitCommandError.
+// Git stderr can echo credentials from argv and remote URLs. Classified failures
+// use a closed reason tag plus a fixed actionable detail. Unclassified failures
+// may carry a capped, redacted diagnostic excerpt in `detail` instead. Newer
+// unknown reasons decode as absent through GitCommandError.
 export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
+  "author_identity_unknown",
   "branch_already_exists",
   "branch_checked_out_in_worktree",
+  "commit_signing_failed",
   "config_locked",
   "host_key_unverified",
+  "index_locked",
   "not_a_repository",
+  "nothing_to_commit",
   "path_already_exists",
   "push_rejected_by_remote",
   "push_rejected_non_fast_forward",
