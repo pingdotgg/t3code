@@ -298,7 +298,7 @@ describe("AntigravityAdapterV2 prompt recovery", () => {
         respond("authenticate", { result: {} }),
       ];
       const completedPrompt = [
-        request("session/prompt"),
+        request("session/prompt", { sessionId: "antigravity-session", prompt: "<any>" }),
         respond("session/prompt", { result: { stopReason: "end_turn" } }),
       ];
       const failedPrompt = [
