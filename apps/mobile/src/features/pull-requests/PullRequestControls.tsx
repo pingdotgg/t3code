@@ -141,7 +141,7 @@ export function PullRequestActionToolbar(props: {
   if (!props.pr && !props.params.initialSummary) return null;
   const primaryDisabled = pendingReview ? false : agent.disabled;
   // Keep the bar for initialSummary, but do not offer Work on PR until detail exists.
-  const showPrimary = pendingReview || canOpenThread;
+  const showPrimary = pendingReview || (props.pr !== null && canOpenThread);
   if (Platform.OS === "android") {
     const primary = (
       <Button

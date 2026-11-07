@@ -156,7 +156,10 @@ export function threadGitControlsContentKey(props: ThreadGitControlsMenuKeyInput
     status?.sourceControlProvider?.kind ?? "",
     // Script edits keep the same id; include fields so the retained menu runs the new command.
     props.projectScripts
-      .map((script) => `${script.id}\t${script.name}\t${script.command}\t${script.icon}`)
+      .map(
+        (script) =>
+          `${script.id}\t${script.name}\t${script.command}\t${script.icon}\t${script.stopOnSettle ? "1" : "0"}`,
+      )
       .join("\0"),
     props.terminalSessions
       .map(
