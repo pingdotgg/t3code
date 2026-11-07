@@ -1,3 +1,4 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
@@ -77,17 +78,17 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
 }
 
 export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowIndex: number) {
-  const element = list?.getState?.().elementAtIndex(rowIndex);
-  if (element instanceof HTMLElement) {
-    element.scrollIntoView({ block: "nearest" });
-    return;
-  }
-  void list?.scrollIndexIntoView?.({ index: rowIndex, animated: false });
+  void list?.scrollIndexIntoView({
+    index: rowIndex,
+    animated: false,
+    viewportMargin: { start: 24, end: 24 },
+  });
 }
 
 interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResultsProps, "groups"> {
   rows: ReadonlyArray<CommandPaletteRow>;
   listRef: RefObject<LegendListRef | null>;
+  dataKey: string;
 }
 
 /** Pass flat items with virtualized to Command, scroll highlights via listRef, and handle Enter for
@@ -96,15 +97,15 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   const { listRef } = props;
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
   const updateScrollFade = () => {
-    const scrollElement = listRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) return;
-    const top = scrollElement.scrollTop > 1;
-    const bottom =
-      scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop > 1;
+    const metrics = listRef.current?.getState();
+    if (!metrics) return;
+    const top = !metrics.isAtStart;
+    const bottom = !metrics.isAtEnd;
     setScrollFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
   };
+  const scrollRef = useLegendListRef(listRef, updateScrollFade);
 
   if (props.rows.length === 0) {
     return <CommandPaletteEmptyState {...props} />;
@@ -113,8 +114,10 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   return (
     <CommandListVirtualized>
       <LegendList<CommandPaletteRow>
-        ref={listRef}
+        ref={scrollRef}
         data={props.rows}
+        dataKey={props.dataKey}
+        initialScrollOffset={0}
         keyExtractor={(row) => row.key}
         getItemType={(row) => row.kind}
         extraData={props.highlightedItemValue}
@@ -139,9 +142,11 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
         drawDistance={400}
         onLayout={updateScrollFade}
         onScroll={updateScrollFade}
+        onReady={updateScrollFade}
+        style={{ paddingTop: 8, paddingBottom: 8 }}
         contentContainerClassName="px-2"
         className={cn(
-          "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain py-2 [&::-webkit-scrollbar-track]:my-2",
+          "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain [&::-webkit-scrollbar-track]:my-2",
           getVirtualizedScrollFadeClassName(scrollFade),
         )}
       />
