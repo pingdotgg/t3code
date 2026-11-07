@@ -37,6 +37,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
+  editQueuedRun,
   interruptThreadTurn,
   revertThreadCheckpoint,
   resumeThreadQueue,
@@ -149,6 +150,41 @@ describe("V2 environment commands", () => {
       expect(commands).toEqual([
         { type: "queued-run.start", commandId: "send-selected", threadId, runId: "selected" },
         { type: "queue.resume", commandId: "resume-queue", threadId },
+      ]);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("clears queued message context when an edit removes every context item", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const threadId = ThreadId.make("thread-1");
+      const runId = RunId.make("run-1");
+      yield* editQueuedRun({
+        commandId: CommandId.make("edit-cleared"),
+        threadId,
+        runId,
+        text: "edited",
+        edit: { messageId: MessageId.make("message-1"), attachments: [] },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* editQueuedRun({
+        commandId: CommandId.make("edit-text"),
+        threadId,
+        runId,
+        text: "text only",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([
+        {
+          type: "queued-run.edit",
+          commandId: "edit-cleared",
+          threadId,
+          runId,
+          text: "edited",
+          attachments: [],
+          context: { version: 1, records: [] },
+        },
+        { type: "queued-run.edit", commandId: "edit-text", threadId, runId, text: "text only" },
       ]);
     }).pipe(Effect.provide(layerTestRandom)),
   );

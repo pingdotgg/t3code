@@ -1085,16 +1085,16 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
     threadId: input.threadId,
     runId: input.runId,
     text: input.text,
-    ...(attachments === undefined ? {} : { attachments }),
-    ...(input.edit?.context && attachments
-      ? {
+    ...(input.edit === undefined || attachments === undefined
+      ? {}
+      : {
+          attachments,
           context: remapComposerContextAttachments(
             input.edit.context,
             input.edit.attachments,
             attachments,
-          ),
-        }
-      : {}),
+          ) ?? { version: 1, records: [] },
+        }),
   });
 });
 
