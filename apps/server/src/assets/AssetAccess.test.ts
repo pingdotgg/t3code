@@ -524,50 +524,53 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("resolves home-relative media paths independently of the workspace", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-home-" });
-      const home = path.join(directory, "var", "home", "alice");
-      const filePath = path.join(home, "Downloads", "repro.mp4");
-      yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
-      yield* fs.writeFileString(filePath, "recording bytes");
-      const canonicalFile = yield* fs.realPath(filePath);
-      yield* Effect.gen(function* () {
-        for (const workspaceRoot of [
-          path.join(home, "project"),
-          path.join(directory, "srv", "project"),
-          undefined,
-        ]) {
-          if (workspaceRoot) yield* fs.makeDirectory(workspaceRoot, { recursive: true });
-          for (const requestedPath of ["~/Downloads/repro.mp4", "~\\Downloads/repro.mp4"]) {
-            const result = yield* issueAssetUrl({
-              resource: {
-                _tag: "media-file",
-                threadId: ThreadId.make("thread-1"),
-                path: requestedPath,
-              },
-              ...(workspaceRoot ? { workspaceRoot } : {}),
-            });
-            const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-            const separator = suffix.indexOf("/");
-            const asset = yield* resolveAsset(
-              suffix.slice(0, separator),
-              suffix.slice(separator + 1),
-            );
-            expect(asset).toMatchObject({
-              kind: "file",
-              path: canonicalFile,
-              mimeType: "video/mp4",
-            });
-            if (asset?.kind !== "file") throw new Error("Expected a resolved home media file");
-            const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
-            expect(yield* Effect.promise(() => response.text())).toBe("recording bytes");
+  it.effect.each(["media-file", "draft-workspace-file"] as const)(
+    "resolves home-relative %s paths independently of the workspace",
+    (tag) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-home-" });
+        const home = path.join(directory, "var", "home", "alice");
+        const filePath = path.join(home, "Downloads", "repro.mp4");
+        yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+        yield* fs.writeFileString(filePath, "recording bytes");
+        const canonicalFile = yield* fs.realPath(filePath);
+        yield* Effect.gen(function* () {
+          for (const workspaceRoot of [
+            path.join(home, "project"),
+            path.join(directory, "srv", "project"),
+            undefined,
+          ]) {
+            if (workspaceRoot) yield* fs.makeDirectory(workspaceRoot, { recursive: true });
+            for (const requestedPath of ["~/Downloads/repro.mp4", "~\\Downloads/repro.mp4"]) {
+              const result = yield* issueAssetUrl({
+                resource: {
+                  ...(tag === "media-file"
+                    ? { _tag: tag, threadId: ThreadId.make("thread-1") }
+                    : { _tag: tag, cwd: workspaceRoot ?? directory }),
+                  path: requestedPath,
+                },
+                ...(workspaceRoot ? { workspaceRoot } : {}),
+              });
+              const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+              const separator = suffix.indexOf("/");
+              const asset = yield* resolveAsset(
+                suffix.slice(0, separator),
+                suffix.slice(separator + 1),
+              );
+              expect(asset).toMatchObject({
+                kind: "file",
+                path: canonicalFile,
+                mimeType: "video/mp4",
+              });
+              if (asset?.kind !== "file") throw new Error("Expected a resolved home media file");
+              const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+              expect(yield* Effect.promise(() => response.text())).toBe("recording bytes");
+            }
           }
-        }
-      }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
-    }).pipe(Effect.provide(layerTest)),
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+      }).pipe(Effect.provide(layerTest)),
   );
 
   // Resolving `file://attacker.test/share/cat.jpg` from an agent's markdown sent the
