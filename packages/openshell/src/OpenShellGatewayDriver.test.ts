@@ -829,6 +829,35 @@ describe("OpenShellGatewayDriver.bundle import", () => {
     expect(row?.lastError).toContain("the import store is broken");
   });
 
+  it("importer warnings land on the fleet row next to drain warnings", async () => {
+    const { client } = fakeClient();
+    const { executor } = fakeExecutor({
+      outcome: () => ({
+        ...ackOutcome(),
+        warnings: ["Attachments of thread:a exceeded the drain size cap and were skipped."],
+      }),
+    });
+    const index = memoryFleetWorkerIndex();
+    const driver = makeDriver({
+      client,
+      settings: DEFAULT_SETTINGS,
+      drainExecutor: executor,
+      index,
+      bundleImporter: {
+        import: async () => ({
+          imported: 1,
+          skipped: 1,
+          warnings: ["Bundle thread:b could not be imported: decode"],
+        }),
+      },
+    });
+    const spawned = await spawnEphemeral(driver);
+    await driver.drain(spawned.environmentId);
+    const row = await index.get(spawned.environmentId);
+    expect(row?.lastError).toContain("exceeded the drain size cap");
+    expect(row?.lastError).toContain("Bundle thread:b");
+  });
+
   it("a drain without warnings clears the row error", async () => {
     const { client } = fakeClient();
     const { executor } = fakeExecutor();

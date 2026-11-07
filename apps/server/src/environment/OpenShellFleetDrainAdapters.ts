@@ -1,9 +1,15 @@
 import { isLiveSubagentShell, type EnvironmentId } from "@t3tools/contracts";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Hex from "effect/encoding/Hex";
+import * as Base64 from "effect/encoding/Base64";
+import * as Result from "effect/Result";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+
+import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
 
 /** The parts of a worker's thread shell that decide whether it is still working. */
 interface DrainShellThread {
@@ -17,6 +23,8 @@ interface DrainShellThread {
 
 import {
   FleetDrainStepError,
+  type DrainAttachmentManifestEntry,
+  type DrainAttachments,
   type DrainGitPush,
   type DrainSink,
   type DrainSinkRecord,
@@ -38,11 +46,21 @@ const decodeEnvelope = (raw: string): DrainSinkRecord | null => {
   try {
     const parsed = JSON.parse(raw) as Partial<DrainSinkRecord>;
     if (typeof parsed.threadId !== "string" || typeof parsed.body !== "string") return null;
+    const attachments = Array.isArray(parsed.attachments)
+      ? parsed.attachments.filter(
+          (entry): entry is DrainAttachmentManifestEntry =>
+            typeof entry?.name === "string" &&
+            typeof entry?.hash === "string" &&
+            typeof entry?.size === "number",
+        )
+      : undefined;
     return {
       threadId: parsed.threadId,
       snapshotSequence:
         typeof parsed.snapshotSequence === "number" ? parsed.snapshotSequence : null,
       body: parsed.body,
+      ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+      ...(parsed.attachmentsSkipped === true ? { attachmentsSkipped: true } : {}),
     };
   } catch {
     return null;
@@ -55,6 +73,12 @@ const toEnvelope = Schema.encodeEffect(
       threadId: Schema.String,
       snapshotSequence: Schema.NullOr(Schema.Number),
       body: Schema.String,
+      attachments: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({ name: Schema.String, hash: Schema.String, size: Schema.Number }),
+        ),
+      ),
+      attachmentsSkipped: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 );
@@ -64,72 +88,100 @@ export const fileDrainSink = (input: {
   readonly stateDir: string;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
-}): DrainSink => {
-  const { fs, path, stateDir } = input;
-  return {
-    write: Effect.fn("DrainSink.write")(
-      function* (input: {
-        readonly environmentId: EnvironmentId;
-        readonly drainId: string;
-        readonly threadId: string;
-        readonly body: string;
-        readonly snapshotSequence: number | null;
-      }) {
-        const environment = segmentOf(input.environmentId);
-        const drain = segmentOf(input.drainId);
-        const thread = segmentOf(input.threadId);
-        if (environment === null || drain === null || thread === null) {
-          return yield* new FleetDrainStepError({
-            step: "write",
-            message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
+}): Effect.Effect<DrainSink> =>
+  Effect.fn("DrainSink.make")(function* () {
+    const { fs, path, stateDir } = input;
+    // Attachment hashes come from the digest service; the sink is built once
+    // per drain and carries it.
+    const digest = yield* Digest.Digest;
+    return {
+      write: Effect.fn("DrainSink.write")(
+        function* (input: {
+          readonly environmentId: EnvironmentId;
+          readonly drainId: string;
+          readonly threadId: string;
+          readonly body: string;
+          readonly snapshotSequence: number | null;
+          readonly attachments?: DrainAttachments;
+        }) {
+          const environment = segmentOf(input.environmentId);
+          const drain = segmentOf(input.drainId);
+          const thread = segmentOf(input.threadId);
+          if (environment === null || drain === null || thread === null) {
+            return yield* new FleetDrainStepError({
+              step: "write",
+              message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
+            });
+          }
+          const dir = path.join(stateDir, "fleet-drain", environment, drain);
+          const target = path.join(dir, `thread-${thread}.json`);
+          yield* fs.makeDirectory(dir, { recursive: true });
+          // Attachments land as sibling files so the manifest in the envelope stays
+          // small; the hash keys the file name and is what read-back verifies.
+          const manifest: Array<DrainAttachmentManifestEntry> = [];
+          for (const file of input.attachments?.files ?? []) {
+            const decoded = Base64.decode(file.bytes.replace(/\s/g, ""));
+            if (Result.isFailure(decoded)) {
+              return yield* new FleetDrainStepError({
+                step: "write",
+                message: `Attachment ${file.name} was not valid base64.`,
+              });
+            }
+            const bytes = decoded.success;
+            const hash = Hex.encode(yield* digest.digest(Digest.sha256, bytes));
+            yield* fs.writeFile(
+              path.join(dir, `thread-${thread}-att-${hash.slice(0, 16)}.bin`),
+              bytes,
+            );
+            manifest.push({ name: file.name, hash, size: bytes.byteLength });
+          }
+          // Write then rename: a retry must never accept a half-written copy as done.
+          const envelope = yield* toEnvelope({
+            threadId: input.threadId,
+            snapshotSequence: input.snapshotSequence,
+            body: input.body,
+            ...(manifest.length === 0 ? {} : { attachments: manifest }),
+            ...(input.attachments?.oversizeSkipped === true ? { attachmentsSkipped: true } : {}),
           });
-        }
-        const dir = path.join(stateDir, "fleet-drain", environment, drain);
-        const target = path.join(dir, `thread-${thread}.json`);
-        yield* fs.makeDirectory(dir, { recursive: true });
-        // Write then rename: a retry must never accept a half-written copy as done.
-        const envelope = yield* toEnvelope({
-          threadId: input.threadId,
-          snapshotSequence: input.snapshotSequence,
-          body: input.body,
-        });
-        yield* fs.writeFileString(`${target}.partial`, envelope);
-        yield* fs.rename(`${target}.partial`, target);
-        return { bytes: new TextEncoder().encode(envelope).byteLength };
-      },
-      Effect.mapError(
-        (cause) => new FleetDrainStepError({ step: "write", message: String(cause) }),
+          yield* fs.writeFileString(`${target}.partial`, envelope);
+          yield* fs.rename(`${target}.partial`, target);
+          return { bytes: new TextEncoder().encode(envelope).byteLength };
+        },
+        Effect.mapError(
+          (cause) => new FleetDrainStepError({ step: "write", message: String(cause) }),
+        ),
       ),
-    ),
-    read: Effect.fn("DrainSink.read")(
-      function* (input: {
-        readonly environmentId: EnvironmentId;
-        readonly drainId: string;
-        readonly threadId: string;
-      }) {
-        const environment = segmentOf(input.environmentId);
-        const drain = segmentOf(input.drainId);
-        const thread = segmentOf(input.threadId);
-        if (environment === null || drain === null || thread === null) {
-          return yield* new FleetDrainStepError({
-            step: "read",
-            message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
-          });
-        }
-        const file = path.join(
-          stateDir,
-          "fleet-drain",
-          environment,
-          drain,
-          `thread-${thread}.json`,
-        );
-        const raw = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
-        return raw === null ? null : decodeEnvelope(raw);
-      },
-      Effect.mapError((cause) => new FleetDrainStepError({ step: "read", message: String(cause) })),
-    ),
-  };
-};
+      read: Effect.fn("DrainSink.read")(
+        function* (input: {
+          readonly environmentId: EnvironmentId;
+          readonly drainId: string;
+          readonly threadId: string;
+        }) {
+          const environment = segmentOf(input.environmentId);
+          const drain = segmentOf(input.drainId);
+          const thread = segmentOf(input.threadId);
+          if (environment === null || drain === null || thread === null) {
+            return yield* new FleetDrainStepError({
+              step: "read",
+              message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
+            });
+          }
+          const file = path.join(
+            stateDir,
+            "fleet-drain",
+            environment,
+            drain,
+            `thread-${thread}.json`,
+          );
+          const raw = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
+          return raw === null ? null : decodeEnvelope(raw);
+        },
+        Effect.mapError(
+          (cause) => new FleetDrainStepError({ step: "read", message: String(cause) }),
+        ),
+      ),
+    };
+  })().pipe(Effect.provide(Digest.layerWebCrypto));
 
 const toJsonBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const fromJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -290,3 +342,66 @@ export const execDrainGitPush = (input: {
       "refs/t3/*:refs/t3/*",
     ]),
 });
+
+/** Total decoded attachment bytes drained per thread before skipping the set. */
+const MAX_DRAIN_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
+/** Marks the start of one attachment file's base64 body on exec stdout. */
+const ATTACHMENT_FRAME_MARKER = "==T3ATT ";
+
+/**
+ * Attachment files over gateway exec (the worker's HTTP API serves no
+ * attachment bytes): the sandbox streams each file of the thread's attachment
+ * segment base64-encoded on stdout, from the server default attachments
+ * layout; a worker keeping state elsewhere yields no files (spec 7.4 OPEN).
+ */
+export const execDrainAttachments = (input: {
+  readonly exec: (
+    sandboxName: string,
+    command: ReadonlyArray<string>,
+  ) => Effect.Effect<
+    { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
+    FleetDrainStepError
+  >;
+  readonly maxBytes?: number;
+}): NonNullable<DrainSource["attachments"]> => {
+  const maxBytes = input.maxBytes ?? MAX_DRAIN_ATTACHMENT_BYTES;
+  const listCommand = (segment: string) => [
+    "sh",
+    "-c",
+    `d="\${T3CODE_HOME:-$HOME/.t3}/userdata/attachments/${segment}"; ` +
+      'if [ -d "$d" ]; then for f in "$d"/*; do if [ -f "$f" ]; then ' +
+      `printf '%s\\n' "${ATTACHMENT_FRAME_MARKER}$(basename "$f")"; base64 "$f"; fi; done; fi`,
+  ];
+  return ({ sandboxName, threadId }) =>
+    Effect.gen(function* () {
+      const segment = toSafeThreadAttachmentSegment(threadId);
+      if (segment === null) return { files: [], oversizeSkipped: false } as const;
+      const result = yield* input.exec(sandboxName, listCommand(segment));
+      if (result.exitCode !== 0) {
+        return yield* new FleetDrainStepError({
+          step: "attachments",
+          message: `The worker did not list attachments for ${threadId} (exit ${result.exitCode}).`,
+        });
+      }
+      const files: Array<{ name: string; bytes: string }> = [];
+      let totalBytes = 0;
+      let current: { name: string; lines: string[] } | undefined;
+      for (const line of result.stdout.split("\n")) {
+        if (line.startsWith(ATTACHMENT_FRAME_MARKER)) {
+          if (current !== undefined) {
+            files.push({ name: current.name, bytes: current.lines.join("") });
+          }
+          current = { name: line.slice(ATTACHMENT_FRAME_MARKER.length).trim(), lines: [] };
+          continue;
+        }
+        const body = line.trim();
+        if (body === "" || current === undefined) continue;
+        current.lines.push(body);
+        totalBytes += Math.floor((body.length * 3) / 4);
+      }
+      if (current !== undefined) files.push({ name: current.name, bytes: current.lines.join("") });
+      if (totalBytes > maxBytes) return { files: [], oversizeSkipped: true } as const;
+      return { files, oversizeSkipped: false } as const;
+    });
+};

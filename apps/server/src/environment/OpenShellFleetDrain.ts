@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 export class FleetDrainStepError extends Schema.TaggedError<FleetDrainStepError>()(
   "FleetDrainStepError",
   {
-    step: Schema.Literals(["shell", "thread", "history", "write", "read", "push"]),
+    step: Schema.Literals(["shell", "thread", "history", "write", "read", "push", "attachments"]),
     message: Schema.String,
   },
 ) {}
@@ -29,6 +29,28 @@ export interface DrainSinkRecord {
   readonly threadId: string;
   readonly snapshotSequence: number | null;
   readonly body: string;
+  /** Manifest of the attachment files stored next to the bundle, if any. */
+  readonly attachments?: ReadonlyArray<DrainAttachmentManifestEntry>;
+  /** True when the worker's attachments exceeded the drain's size cap. */
+  readonly attachmentsSkipped?: boolean;
+}
+
+/** One attachment file in a bundle, base64-encoded. */
+export interface DrainAttachmentFile {
+  readonly name: string;
+  readonly bytes: string;
+}
+
+export interface DrainAttachmentManifestEntry {
+  readonly name: string;
+  readonly hash: string;
+  readonly size: number;
+}
+
+/** A thread's attachment files as the worker holds them, plus cap outcome. */
+export interface DrainAttachments {
+  readonly files: ReadonlyArray<DrainAttachmentFile>;
+  readonly oversizeSkipped: boolean;
 }
 
 /** Where a drain writes: one directory per run, one file per thread. */
@@ -39,6 +61,7 @@ export interface DrainSink {
     readonly threadId: string;
     readonly body: string;
     readonly snapshotSequence: number | null;
+    readonly attachments?: DrainAttachments;
   }) => Effect.Effect<{ readonly bytes: number }, FleetDrainStepError>;
   readonly read: (input: {
     readonly environmentId: EnvironmentId;
@@ -77,6 +100,12 @@ export interface DrainSource {
     { readonly body: string; readonly snapshotSequence: number | null },
     FleetDrainStepError
   >;
+  /** The thread's attachment files; absent, the source cannot serve them. */
+  readonly attachments?: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly sandboxName: string;
+    readonly threadId: string;
+  }) => Effect.Effect<DrainAttachments, FleetDrainStepError>;
 }
 
 export interface DrainDependencies {
@@ -119,6 +148,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
   const drain = Effect.fn("FleetDrainExecutor.drain")(function* (input: DrainInput) {
     const threads = zero();
     const worktrees = zero();
+    const warnings: string[] = [];
     let failure: string | undefined;
     let deadlineHit = false;
     let shellFailed = false;
@@ -178,18 +208,40 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
             environmentId: input.environmentId,
             threadId: thread.threadId,
           });
-          if (current.snapshotSequence === prior.snapshotSequence) return true;
+          // A copy from before attachments were drained carries no manifest, so
+          // it is re-copied once to pick the attachment files up.
+          if (
+            current.snapshotSequence === prior.snapshotSequence &&
+            prior.attachments !== undefined
+          )
+            return true;
         }
         const history = yield* deps.source.threadHistory({
           environmentId: input.environmentId,
           threadId: thread.threadId,
         });
+        const attachments =
+          deps.source.attachments === undefined
+            ? ({ files: [], oversizeSkipped: false } as const)
+            : yield* deps.source.attachments({
+                environmentId: input.environmentId,
+                sandboxName: input.sandboxName,
+                threadId: thread.threadId,
+              });
+        if (attachments.oversizeSkipped) {
+          warnings.push(
+            `Attachments of ${thread.threadId} exceeded the drain size cap and were skipped.`,
+          );
+        }
         const written = yield* deps.sink.write({
           environmentId: input.environmentId,
           drainId: input.drainId,
           threadId: thread.threadId,
           body: history.body,
           snapshotSequence: history.snapshotSequence,
+          ...(attachments.files.length === 0 && !attachments.oversizeSkipped
+            ? {}
+            : { attachments }),
         });
         // Read it back: an ack means the bytes are here, not that a write was attempted.
         const back = yield* deps.sink.read({
@@ -197,7 +249,16 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
           drainId: input.drainId,
           threadId: thread.threadId,
         });
-        return back !== null && back.body === history.body && written.bytes > 0;
+        if (
+          back === null ||
+          back.body !== history.body ||
+          written.bytes <= 0 ||
+          (back.attachmentsSkipped === true) !== attachments.oversizeSkipped
+        )
+          return false;
+        const sent = attachments.files.map((file) => file.name).sort();
+        const stored = (back.attachments ?? []).map((entry) => entry.name).sort();
+        return sent.length === stored.length && sent.every((name, index) => name === stored[index]);
       }).pipe(
         Effect.catch((cause) =>
           Effect.sync(() => {
@@ -246,6 +307,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
       worktrees,
       state: complete ? "acked" : "failed",
       finishedAt: complete ? yield* deps.now : null,
+      ...(warnings.length === 0 ? {} : { warnings }),
     });
   });
 
