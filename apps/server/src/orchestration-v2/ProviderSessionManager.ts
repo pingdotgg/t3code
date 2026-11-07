@@ -42,6 +42,7 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -230,6 +231,7 @@ interface LiveSessionEntry {
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
+  readonly releasePortDiscovery: (() => void) | null;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly pinnedSinceMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
@@ -329,11 +331,13 @@ export const layerWithOptions = (
   | ProjectionStore.ProjectionStoreV2
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  | PortScanner.PortDiscovery
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+      const portDiscovery = yield* PortScanner.PortDiscovery;
       const fileSystem = yield* FileSystem.FileSystem;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -966,6 +970,7 @@ export const layerWithOptions = (
               }
               const updated = new Map(current);
               updated.delete(key);
+              existing.releasePortDiscovery?.();
               return ["removed", updated] as const;
             }),
             DateTime.now,
@@ -1451,6 +1456,7 @@ export const layerWithOptions = (
               updated.set(key, {
                 ...entry,
                 busyTurns: new Set(entry.busyTurns).add(turnKey),
+                releasePortDiscovery: entry.releasePortDiscovery ?? portDiscovery.trackAgent(),
                 idleFiber: null,
                 pinnedSinceMs: null,
               });
@@ -1462,19 +1468,48 @@ export const layerWithOptions = (
           }),
         );
 
+      // Rechecked on provider events, including streaming updates; avoid a span per event.
+      const releaseIdlePortDiscovery = Effect.fnUntraced(function* (
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+      ) {
+        const key = sessionKey(runtime.providerSessionId);
+        const entry = (yield* Ref.get(sessions)).get(key);
+        if (
+          entry?.runtime !== runtime ||
+          entry.busyTurns.size > 0 ||
+          entry.releasePortDiscovery === null
+        ) {
+          return;
+        }
+        const pending =
+          runtime.hasPendingBackgroundWork === undefined
+            ? false
+            : yield* runtime.hasPendingBackgroundWork.pipe(
+                Effect.catchCause(() => Effect.succeed(true)),
+              );
+        if (pending) return;
+        yield* Ref.update(sessions, (current) => {
+          const latest = current.get(key);
+          if (latest?.runtime !== runtime || latest.busyTurns !== entry.busyTurns) return current;
+          latest.releasePortDiscovery?.();
+          return new Map(current).set(key, { ...latest, releasePortDiscovery: null });
+        });
+      });
+
       const markIdle = (
         providerSessionId: ProviderSessionId,
         providerThreadId: ProviderThreadId,
         runOrdinal: number,
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
       ) =>
         withActivityError(
           providerSessionId,
           Effect.gen(function* () {
             const key = sessionKey(providerSessionId);
-            yield* Ref.update(sessions, (current) => {
+            const marked = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
-              if (entry === undefined) {
-                return current;
+              if (entry === undefined || entry.runtime !== runtime) {
+                return [false, current] as const;
               }
               const busyTurns = new Set(entry.busyTurns);
               busyTurns.delete(busyTurnKey(providerThreadId, runOrdinal));
@@ -1483,8 +1518,10 @@ export const layerWithOptions = (
                 ...entry,
                 busyTurns,
               });
-              return updated;
+              return [true, updated] as const;
             });
+            if (!marked) return;
+            yield* releaseIdlePortDiscovery(runtime);
             yield* scheduleIdleReleaseInternal(providerSessionId);
             yield* scheduleThreadUnload(providerSessionId, providerThreadId);
           }),
@@ -1881,7 +1918,12 @@ export const layerWithOptions = (
                     Exit.isFailure(exit)
                       ? observeActivity(
                           providerSessionId,
-                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                          markIdle(
+                            providerSessionId,
+                            input.providerThread.id,
+                            input.runOrdinal,
+                            runtime,
+                          ),
                         )
                       : Effect.void,
                 ),
@@ -1991,10 +2033,13 @@ export const layerWithOptions = (
                     entry.runtime.providerSessionId,
                     event.providerThreadId,
                     event.runOrdinal,
+                    entry.runtime,
                   )
                 : metadataOnly
                   ? Effect.void
-                  : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
+                  : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }).pipe(
+                      Effect.andThen(releaseIdlePortDiscovery(entry.runtime)),
+                    ),
             ).pipe(
               Effect.andThen(
                 event.type === "provider_session.updated"
@@ -2272,6 +2317,7 @@ export const layerWithOptions = (
                 scope: sessionScope,
                 idleGeneration: 0,
                 busyTurns: new Set(),
+                releasePortDiscovery: null,
                 idleFiber: null,
                 pinnedSinceMs: null,
                 idleThreadUnloads: new Map(),

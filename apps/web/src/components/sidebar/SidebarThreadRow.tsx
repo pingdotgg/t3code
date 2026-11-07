@@ -1,3 +1,5 @@
+import { useClientSettings } from "../../hooks/useSettings";
+import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -43,6 +45,7 @@ import {
   ClockIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
+  NetworkIcon,
   PinIcon,
   PinOffIcon,
   ShieldQuestionIcon,
@@ -54,6 +57,7 @@ import {
 } from "lucide-react";
 import {
   memo,
+  useId,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -132,6 +136,44 @@ export type SidebarProviderEntry = Pick<
   | "acpRegistryIconUrl"
   | "models"
 >;
+function ThreadPorts({
+  thread,
+  descriptionId,
+}: {
+  thread: SidebarThreadSummary;
+  descriptionId: string;
+}) {
+  const enabled = useClientSettings((settings) => settings.sidebarShowPorts);
+  const servers = useThreadDiscoveredPorts({
+    environmentId: enabled ? thread.environmentId : null,
+    threadId: thread.id,
+  });
+  const ports = [...new Set(servers.map((server) => server.port))].sort((a, b) => a - b);
+  if (ports.length === 0) return null;
+  const description = `Running ports: ${ports.join(", ")}`;
+  return (
+    <>
+      <span id={descriptionId} className="sr-only">
+        {description}
+      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              aria-hidden="true"
+              className="inline-flex max-w-[40%] shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums"
+            />
+          }
+        >
+          <NetworkIcon className="size-3 shrink-0" />
+          <span className="min-w-0 truncate">{ports.join(", ")}</span>
+        </TooltipTrigger>
+        <TooltipPopup>{description}</TooltipPopup>
+      </Tooltip>
+    </>
+  );
+}
+
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
@@ -652,6 +694,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     variant,
     variantAction,
   } = props;
+  const portsDescriptionId = useId();
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
@@ -1217,6 +1260,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 data-sidebar-row={threadKey}
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
+                aria-describedby={portsDescriptionId}
                 aria-current={accessibility.current}
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
@@ -1253,6 +1297,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
+              <ThreadPorts thread={thread} descriptionId={portsDescriptionId} />
               {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1413,6 +1458,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               data-sidebar-row={threadKey}
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
+              aria-describedby={portsDescriptionId}
               aria-current={accessibility.current}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
@@ -1578,6 +1624,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
               {title}
+              <ThreadPorts thread={thread} descriptionId={portsDescriptionId} />
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
@@ -1635,6 +1682,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     projectDisplayName: props.projectDisplayName,
     isActive: props.isRouteActive,
   });
+  const portsDescriptionId = useId();
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(
     props.isHighlighted || props.isRouteActive,
@@ -1701,7 +1749,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               tabIndex={-1}
               aria-selected={props.isHighlighted}
               aria-current={accessibility.current}
-              aria-describedby={`${props.resultId}-pr`}
+              aria-describedby={`${props.resultId}-pr ${portsDescriptionId}`}
               aria-label={accessibility.label}
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
@@ -1742,6 +1790,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               >
                 {thread.title}
               </span>
+              <ThreadPorts thread={thread} descriptionId={portsDescriptionId} />
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber
                   thread={thread}

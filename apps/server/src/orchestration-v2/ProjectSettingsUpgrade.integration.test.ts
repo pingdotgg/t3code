@@ -23,6 +23,7 @@ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -117,7 +118,7 @@ const unusedEnrichment = {
 
 const layerRuntime = (dbPath: string) => {
   const layerPlatform = Layer.merge(
-    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, PortScanner.layerTest),
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
       resolveLink: () => Effect.die("unused"),
     }),
