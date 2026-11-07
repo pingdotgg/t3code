@@ -299,6 +299,7 @@ function SettingsSecretsEditor(props: {
               className="rounded-lg border border-border-subtle px-3 py-2 text-base text-foreground"
               placeholderTextColorClassName="accent-foreground-muted"
               placeholder="Label"
+              maxLength={64}
               value={label}
               onChangeText={setLabel}
             />
@@ -316,6 +317,10 @@ function SettingsSecretsEditor(props: {
               label="Add provider"
               disabled={props.pending || label.trim().length === 0 || account.trim().length === 0}
               onPress={() => {
+                if (label.trim().length > 64) {
+                  Dialog.alert("Invalid label", "Label must be 64 characters or fewer.");
+                  return;
+                }
                 const id = SecretProviderId.make(
                   `one_password_${label
                     .trim()
