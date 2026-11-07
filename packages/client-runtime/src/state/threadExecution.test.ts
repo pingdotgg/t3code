@@ -301,6 +301,49 @@ describe("thread execution presentation", () => {
     });
   });
 
+  // The server marks a run running before the provider opens, which can take minutes.
+  it("labels an open run whose provider has not started a turn", () => {
+    const attemptId = RunAttemptId.make("attempt-starting");
+    const openRun = { ...run("run-starting", 1, "running"), activeAttemptId: attemptId };
+    const session = {
+      id: ProviderSessionId.make("session-starting"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: openRun.providerInstanceId,
+      status: "starting" as const,
+      cwd: "/repo",
+      model: null,
+      // The label reads only the driver.
+      capabilities: {} as never,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+    const starting = { ...v2Projection, runs: [openRun], providerSessions: [session] };
+
+    expect(deriveThreadActivityRun(starting)?.providerStartingLabel).toBe("Starting Claude");
+    expect(
+      deriveThreadActivityRun({ ...starting, providerSessions: [] })?.providerStartingLabel,
+    ).toBe("Starting");
+    expect(
+      deriveThreadActivityRun({
+        ...starting,
+        providerTurns: [
+          {
+            id: ProviderTurnId.make("provider-turn-starting"),
+            providerThreadId: ProviderThreadId.make("provider-thread-starting"),
+            nodeId: NodeId.make("node-starting"),
+            runAttemptId: attemptId,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "running",
+            startedAt: now,
+            completedAt: null,
+          },
+        ],
+      })?.providerStartingLabel,
+    ).toBeUndefined();
+  });
+
   it("presents a held queue as the stopped run instead of queued work", () => {
     const interrupted = { ...run("run-interrupted", 1, "interrupted"), completedAt: now };
     const held = { ...run("run-held", 2, "queued"), queueHeld: true };
