@@ -464,6 +464,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
             icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
             label={label}
+            openOnHover
           >
             <UserMessageReviewCommentCard
               comment={{

@@ -8,7 +8,7 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, PullRequestRef, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArrowUpRightIcon,
   EyeIcon,
@@ -20,6 +20,7 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import type { DraftId } from "~/composerDraftStore";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
 import { cn } from "~/lib/utils";
@@ -34,7 +35,7 @@ import {
 
 import {
   buildFixFindingsHandoff,
-  buildResolveConflictsPrompt,
+  buildResolveConflictsHandoff,
   classifyPullRequestChecks,
   describePullRequestChecks,
   isPullRequestConflicting,
@@ -93,6 +94,7 @@ export function ThreadDetailsPrRow({
   onOpen,
   onActed,
   onStopWatching,
+  composerDraftTarget,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -105,6 +107,7 @@ export function ThreadDetailsPrRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
+  composerDraftTarget?: ScopedThreadRef | DraftId | null | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
@@ -167,7 +170,15 @@ export function ThreadDetailsPrRow({
       onActed?.();
     },
   });
-  const { handoff, startHandoff } = usePullRequestHandoffs({ environmentId, detail });
+  const { handoff, startHandoff } = usePullRequestHandoffs({
+    environmentId,
+    detail,
+    composerDraftTarget,
+  });
+  const handoffSuffix =
+    composerDraftTarget === undefined ? (
+      <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />
+    ) : null;
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const resolveProjectDefaultMergeMethod = usePullRequestDefaultMergeMethodResolver(
     environmentId,
@@ -191,14 +202,7 @@ export function ThreadDetailsPrRow({
 
   const startResolveConflicts = () => {
     if (detail === null) return;
-    void startHandoff("conflicts", {
-      prompt: buildResolveConflictsPrompt({
-        number: detail.number,
-        url: detail.url,
-        headBranch: detail.headBranch,
-        baseBranch: detail.baseBranch,
-      }),
-    });
+    void startHandoff("conflicts", buildResolveConflictsHandoff(detail));
   };
 
   const startFixChecks = () => {
@@ -325,8 +329,11 @@ export function ThreadDetailsPrRow({
           pendingLabel: "Preparing...",
           pending: handoff === "conflicts",
           destructive: true,
-          suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-          tooltip: "Check the branch out and resolve the conflicts in a new thread",
+          suffix: handoffSuffix,
+          tooltip:
+            composerDraftTarget === undefined
+              ? "Check the branch out and resolve the conflicts in a new thread"
+              : "Resolve the conflicts in this thread",
           onClick: startResolveConflicts,
         }
       : rowAction === "ready"
@@ -345,8 +352,8 @@ export function ThreadDetailsPrRow({
               pendingLabel: "Preparing...",
               pending: handoff === "findings",
               destructive: true,
-              suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-              tooltip: "Fix the failing checks in a new thread",
+              suffix: handoffSuffix,
+              tooltip: `Fix the failing checks in ${composerDraftTarget === undefined ? "a new" : "this"} thread`,
               onClick: startFixChecks,
             }
           : rowAction === "merge"
@@ -360,6 +367,9 @@ export function ThreadDetailsPrRow({
                 onClick: () => setConfirmingMerge(true),
               }
             : null;
+
+  const handoffBlocked =
+    composerDraftTarget === null && (rowAction === "fix" || rowAction === "resolve");
 
   const watching =
     onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";
@@ -462,6 +472,8 @@ export function ThreadDetailsPrRow({
                       part="meta"
                       tone={trailingAction.destructive ? "destructive" : "primary"}
                       disabled={actionPending || handoff !== null}
+                      // Disabled buttons take no pointer or focus, which would hide the reason.
+                      aria-disabled={handoffBlocked || undefined}
                       onClick={trailingAction.onClick}
                     />
                   }
@@ -469,7 +481,11 @@ export function ThreadDetailsPrRow({
                   {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
                   {trailingAction.suffix}
                 </TooltipTrigger>
-                <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
+                <TooltipPopup side="top">
+                  {handoffBlocked
+                    ? "Finish editing the queued message first"
+                    : trailingAction.tooltip}
+                </TooltipPopup>
               </Tooltip>
             ) : null}
           </div>

@@ -1,11 +1,12 @@
 import { EnvironmentId, ProjectId, ThreadId, type PullRequestCheck } from "@t3tools/contracts";
-import { DraftId } from "~/composerDraftStore";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
+  mergeability: "mergeable" as "mergeable" | "conflicting",
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
   perform: vi.fn(),
   newThread: vi.fn(),
@@ -34,7 +35,7 @@ const queryData = () => ({
   title: "Test PR",
   state: "open",
   isDraft: false,
-  mergeability: "mergeable",
+  mergeability: state.mergeability,
   headBranch: "feature",
   baseBranch: "main",
   changedFiles: 1,
@@ -177,6 +178,87 @@ it("requires a new merge click after passing checks become pending and pass agai
   expect(state.perform).not.toHaveBeenCalled();
 });
 
+it("adds the failing checks to the current composer instead of opening a thread", async () => {
+  await using screen = await setup();
+  const draftId = DraftId.make("current-draft");
+  await act(async () => {
+    state.status = "failure";
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+        composerDraftTarget={null}
+      />,
+    );
+  });
+  const blockedFix = [...screen.container.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "Fix",
+  )!;
+  expect(blockedFix.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => blockedFix.click());
+  expect(state.newThread).not.toHaveBeenCalled();
+  await act(async () => {
+    state.status = "failure";
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+        composerDraftTarget={draftId}
+      />,
+    );
+  });
+  await act(async () => {
+    [...screen.container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Fix")!
+      .click();
+  });
+  const fixDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
+  expect(fixDraft?.prompt).toContain("Fix the actionable findings attached");
+  expect(fixDraft?.prompt).not.toContain("> CI-failure");
+  expect(fixDraft?.reviewComments.map((comment) => comment.rangeLabel)).toEqual([
+    "Test PR",
+    "CI-failure",
+  ]);
+  await act(async () => {
+    state.mergeability = "conflicting";
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+        composerDraftTarget={draftId}
+      />,
+    );
+  });
+  await act(async () => {
+    [...screen.container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Resolve")!
+      .click();
+  });
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toContain(
+    "Resolve the conflicts between the attached pull request",
+  );
+  expect(state.newThread).not.toHaveBeenCalled();
+  expect(state.prepareThread).not.toHaveBeenCalled();
+});
+
 async function setup() {
   state.perform.mockReset();
   state.checkoutError = null;
@@ -190,6 +272,7 @@ async function setup() {
 
   state.status = "success";
   state.extraStatus = null;
+  state.mergeability = "mergeable";
   state.mergeMethods = ["merge"];
   useUiStateStore.getState().setPullRequestMergeMethod("merge");
   return renderUi(null);
