@@ -853,6 +853,9 @@ describe("worktreesDirectory", () => {
     expect(reset.previousWorktreesDirectories).toEqual(["/a", "/b"]);
     const back = applyServerSettingsPatch(reset, { worktreesDirectory: "/a" });
     expect(back.previousWorktreesDirectories).toEqual(["/b"]);
+    const inProject = applyServerSettingsPatch(back, { worktreesDirectory: ".claude/worktrees" });
+    const resetAgain = applyServerSettingsPatch(inProject, { worktreesDirectory: "" });
+    expect(resetAgain.previousWorktreesDirectories).toEqual(["/b", "/a", ".claude/worktrees"]);
   });
 });
 

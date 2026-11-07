@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
@@ -32,6 +33,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
@@ -56,6 +58,7 @@ const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
       Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
       ServerSettings.layerTest(),
       Layer.mock(GitWorkflow.GitWorkflowService)({}),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
       Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(unrelatedProject) }),
     ),
   ),
@@ -174,17 +177,30 @@ it.effect.each([
   { order: "cleanup-first", restoreFiles: true },
   { order: "rollback-first", restoreFiles: true },
   { order: "cleanup-first", restoreFiles: false, unmanaged: true },
-])("locks rollback with %s", ({ order, restoreFiles, unmanaged = false }) =>
+  // The persisted project's main checkout anchors an in-project worktree folder.
+  { order: "cleanup-first", restoreFiles: true, inProject: true },
+])("locks rollback with %s", ({ order, restoreFiles, unmanaged = false, inProject = false }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const workspaceRoot = yield* fileSystem.realPath(
       yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-rollback-" }),
     );
+    const layerGit = GitVcsDriver.layer.pipe(
+      Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-rollback-git-" })),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+    if (inProject) {
+      yield* GitVcsDriver.GitVcsDriver.use((git) =>
+        git.execute({ operation: "test.rollbackRepository", cwd: workspaceRoot, args: ["init"] }),
+      ).pipe(Effect.provide(layerGit));
+    }
     const worktreesDir = path.join(workspaceRoot, "worktrees");
     const worktreePath = unmanaged
       ? path.join(workspaceRoot, "elsewhere", "feature")
-      : path.join(worktreesDir, "repo", "feature");
+      : inProject
+        ? path.join(workspaceRoot, ".claude", "worktrees", "feature")
+        : path.join(worktreesDir, "repo", "feature");
     yield* fileSystem.makeDirectory(worktreePath, { recursive: true });
     const threadId = ThreadId.make("rollback-worktree");
     const projectId = ProjectId.make("rollback-worktree-project");
@@ -225,7 +241,8 @@ it.effect.each([
           ThreadCommandExecutor.layer,
           NodeServices.layer,
           Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as never),
-          ServerSettings.layerTest(),
+          ServerSettings.layerTest(inProject ? { worktreesDirectory: ".claude/worktrees" } : {}),
+          inProject ? layerGit : Layer.mock(GitVcsDriver.GitVcsDriver)({}),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: (id) => {
               assert.equal(id, projectId);

@@ -67,11 +67,14 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (
+  worktreesDir = managedWorktreesDir,
+  settings?: Parameters<typeof ServerSettings.layerTest>[0],
+) =>
   Layer.mergeAll(
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest(settings),
   );
 
 function startWithMissingWorktree(
@@ -152,6 +155,7 @@ function startWithMissingWorktree(
                 ),
         } as never),
         layerWorktreeLocation(),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(GitWorkflow.GitWorkflowService)({
           pruneWorktrees,
           createWorktree,
@@ -273,6 +277,8 @@ function makeLocalCommandHarness(input: {
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
   readonly gitWorkflow?: GitWorkflow.GitWorkflowService["Service"];
+  readonly gitDriver?: GitVcsDriver.GitVcsDriver["Service"];
+  readonly worktreeSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly fileSystem?: FileSystem.FileSystem;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
@@ -941,7 +947,10 @@ function makeLocalCommandHarness(input: {
             }),
         }),
         IdAllocator.layer,
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(input.worktreesDir, input.worktreeSettings),
+        input.gitDriver === undefined
+          ? Layer.mock(GitVcsDriver.GitVcsDriver)({})
+          : Layer.succeed(GitVcsDriver.GitVcsDriver, input.gitDriver),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -1173,6 +1182,74 @@ effectIt.effect(
         );
         expect(harness.projection().runs.at(-1)?.status).toBe("running");
       }
+    }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
+);
+
+effectIt.effect(
+  "recreates a cleaned in-project worktree after a settings reset, only in its own project",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const root = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-recreate-relative-" }),
+      );
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        driver
+          .execute({ operation: "test.relativeWorktreeRecovery", cwd, args })
+          .pipe(Effect.map((result) => result.stdout.trim()));
+      const initRepository = (repository: string) =>
+        Effect.gen(function* () {
+          yield* fileSystem.makeDirectory(repository);
+          yield* git(repository, ["init", "-b", "main"]);
+          yield* git(repository, ["config", "user.name", "Test"]);
+          yield* git(repository, ["config", "user.email", "test@example.com"]);
+          yield* git(repository, ["commit", "--allow-empty", "-m", "base"]);
+        });
+      const main = path.join(root, "project");
+      const other = path.join(root, "other");
+      yield* initRepository(main);
+      yield* initRepository(other);
+      // A project in a subfolder still keeps its worktrees at the main checkout.
+      const workspaceRoot = path.join(main, "packages", "app");
+      yield* fileSystem.makeDirectory(workspaceRoot, { recursive: true });
+      const { worktree } = yield* driver.createWorktree(
+        { cwd: workspaceRoot, refName: "main", newRefName: "feature/restore", path: null },
+        { worktreesDirectory: ".claude/worktrees" },
+      );
+      expect(worktree.path).toBe(path.join(main, ".claude", "worktrees", "feature-restore"));
+      yield* fileSystem.writeFileString(path.join(worktree.path, "thread.txt"), "thread work");
+      yield* git(worktree.path, ["add", "."]);
+      yield* git(worktree.path, ["commit", "-m", "thread tip"]);
+      const threadTip = yield* git(worktree.path, ["rev-parse", "HEAD"]);
+      // Cleanup removed the folder and Git's record of it; only the thread remembers the path.
+      yield* fileSystem.remove(worktree.path, { recursive: true });
+      yield* git(main, ["worktree", "prune"]);
+      const foreignPath = path.join(other, ".claude", "worktrees", "feature-restore");
+
+      for (const worktreePath of [foreignPath, worktree.path]) {
+        const harness = makeLocalCommandHarness({
+          text: "Continue",
+          workspaceRoot,
+          worktreePath,
+          worktreesDir: path.join(root, "worktrees"),
+          worktreeSettings: {
+            worktreesDirectory: "",
+            previousWorktreesDirectories: [".claude/worktrees"],
+          },
+          fileSystem,
+          gitWorkflow,
+          gitDriver: driver,
+          failReadsAfterRunning: true,
+        });
+        yield* harness.start;
+        expect(harness.open).toHaveBeenCalledOnce();
+      }
+      expect(yield* fileSystem.exists(foreignPath)).toBe(false);
+      expect(yield* git(worktree.path, ["branch", "--show-current"])).toBe("feature/restore");
+      expect(yield* git(worktree.path, ["rev-parse", "HEAD"])).toBe(threadTip);
     }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
 );
 

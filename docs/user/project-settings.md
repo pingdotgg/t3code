@@ -200,6 +200,15 @@ such as another drive, set **Settings → Worktrees → Worktree location** to a
 `D:\worktrees` or `~/worktrees`. The setting is per machine. Existing worktrees stay where they
 are, and cleanup covers both the default folder and the custom one.
 
+Use a relative folder such as `.claude/worktrees` to create worktrees at
+`<main checkout>/.claude/worktrees/<branch>`, separately for each repository. Subfolder and linked
+worktree projects use the same main checkout; bare repositories need an absolute folder.
+T3 Code excludes the folder locally in Git without editing `.gitignore`, and refuses tracked-file
+collisions, symlinks, or ignore rules that would expose the worktrees to `git add`.
+Search, file watchers, and builds can see nested checkouts unless they skip ignored folders.
+Relative folders require support on every selected connected server. Changing or clearing the
+setting keeps existing worktrees, their threads, and cleanup working at their original locations.
+
 ## Storage cleanup
 
 Open **Settings → Worktrees → Cleanup** to enable automatic cleanup on one machine or all connected

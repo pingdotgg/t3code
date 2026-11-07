@@ -5015,6 +5015,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(localBranches).not.toContain("feature/no-pull-ref");
 
       const { manager } = yield* makeManager({
+        serverSettings: { worktreesDirectory: ".claude/worktrees" },
         providerScenario: {
           pullRequest: {
             number: 78,
@@ -5035,6 +5036,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
 
       expect(result.branch).toBe("feature/no-pull-ref");
+      // PR threads share thread creation's in-project location.
+      expect(result.worktreePath).toBe(
+        NodePath.join(NodeFS.realpathSync(repoDir), ".claude", "worktrees", "feature-no-pull-ref"),
+      );
       const worktreeHead = (yield* runGit(result.worktreePath as string, [
         "rev-parse",
         "HEAD",

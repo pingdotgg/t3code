@@ -16,6 +16,7 @@ import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -100,6 +101,7 @@ it.effect.each([
           ThreadCommandExecutor.layer,
           IdAllocator.layer,
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+          Layer.mock(GitVcsDriver.GitVcsDriver)({}),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: () => Effect.succeedSome({ workspaceRoot: parent } as never),
           }),

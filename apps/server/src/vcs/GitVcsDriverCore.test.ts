@@ -1608,10 +1608,14 @@ it.effect("lets a worktree checkout that is still working run past five minutes"
   Effect.gen(function* () {
     const checkoutStarted = yield* Deferred.make<void>();
     const checkoutFinished = yield* Deferred.make<void>();
+    const path = yield* Path.Path;
+    const cwd = yield* makeTmpDir();
+    const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "worktree");
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (!ChildProcess.isStandardCommand(command))
           return yield* Effect.die("expected Git command");
+        if (command.args.includes("list")) return makeSuccessfulHandle(`worktree ${cwd}\0\0`);
         if (!command.args.includes("worktree")) return makeSuccessfulHandle("");
         yield* Deferred.succeed(checkoutStarted, undefined);
         return ChildProcessSpawner.makeHandle({
@@ -1635,9 +1639,6 @@ it.effect("lets a worktree checkout that is still working run past five minutes"
     const driver = yield* makeGitVcsDriverCore().pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
-    const path = yield* Path.Path;
-    const cwd = yield* makeTmpDir();
-    const worktreePath = path.join(cwd, "worktree");
 
     const creation = yield* driver
       .createWorktree({ cwd, refName: "main", newRefName: "t3/slow-checkout", path: worktreePath })
@@ -1664,7 +1665,12 @@ it.effect("cancels a slow submodule checkout without reporting best-effort succe
     const updateStopped = yield* Deferred.make<void>();
     const finished = yield* Ref.make<ReadonlyArray<{ ok: boolean; detail: string | null }>>([]);
     const claimed = yield* Ref.make<string | null>(null);
+    const path = yield* Path.Path;
+    const cwd = yield* makeTmpDir();
+    const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "worktree");
     const spawner = ChildProcessSpawner.make((command) => {
+      if (ChildProcess.isStandardCommand(command) && command.args.includes("list"))
+        return Effect.succeed(makeSuccessfulHandle(`worktree ${cwd}\0\0`));
       if (
         ChildProcess.isStandardCommand(command) &&
         command.args[0] === "submodule" &&
@@ -1687,9 +1693,6 @@ it.effect("cancels a slow submodule checkout without reporting best-effort succe
     const driver = yield* makeGitVcsDriverCore().pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
-    const cwd = yield* makeTmpDir();
-    const path = yield* Path.Path;
-    const worktreePath = path.join(cwd, "worktree");
     yield* writeTextFile(worktreePath, ".gitmodules", "");
     const creation = yield* driver
       .createWorktree(
@@ -1947,7 +1950,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const spawner = ChildProcessSpawner.make((command) => {
             if (
               ChildProcess.isStandardCommand(command) &&
-              (command.args.includes("worktree") ||
+              ((command.args.includes("worktree") && command.args.includes("add")) ||
                 command.args[0] === "branch" ||
                 command.args[0] === "checkout")
             ) {
@@ -4949,6 +4952,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const pathService = yield* Path.Path;
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const gitignore = "node_modules/\n";
+        yield* writeTextFile(cwd, ".gitignore", gitignore);
+        yield* git(cwd, ["add", ".gitignore"]);
+        yield* git(cwd, ["commit", "-m", "track gitignore"]);
         const worktreesDirectory = yield* makeTmpDir("custom-worktrees-");
         const driver = yield* GitVcsDriver.GitVcsDriver;
 
@@ -4964,13 +4971,62 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(created.worktree.path, expected);
         assert.equal(yield* fileSystem.exists(expected), true);
 
-        const error = yield* driver
-          .createWorktree(
-            { cwd, path: null, refName: initialBranch, newRefName: "feature/relative-dir" },
-            { worktreesDirectory: "relative/worktrees" },
-          )
-          .pipe(Effect.flip);
-        assert.match(error.detail, /must be an absolute folder on this machine/);
+        // Relative settings live under each repository's main checkout, with no repo-name level.
+        const relativeBranch = "feature/relative-dir";
+        const nested = yield* driver.createWorktree(
+          { cwd, path: null, refName: initialBranch, newRefName: relativeBranch },
+          { worktreesDirectory: ".claude/worktrees" },
+        );
+        assert.isTrue(pathService.isAbsolute(nested.worktree.path));
+        assert.equal(
+          NodeFS.realpathSync.native(nested.worktree.path),
+          pathService.join(
+            NodeFS.realpathSync.native(cwd),
+            ".claude",
+            "worktrees",
+            "feature-relative-dir",
+          ),
+        );
+        assert.equal(
+          yield* git(nested.worktree.path, ["branch", "--show-current"]),
+          relativeBranch,
+        );
+
+        const otherRepo = yield* makeTmpDir();
+        const { initialBranch: otherInitialBranch } = yield* initRepoWithCommit(otherRepo);
+        const otherNested = yield* driver.createWorktree(
+          { cwd: otherRepo, path: null, refName: otherInitialBranch, newRefName: relativeBranch },
+          { worktreesDirectory: ".claude/worktrees" },
+        );
+        assert.equal(
+          NodeFS.realpathSync.native(otherNested.worktree.path),
+          pathService.join(
+            NodeFS.realpathSync.native(otherRepo),
+            ".claude",
+            "worktrees",
+            "feature-relative-dir",
+          ),
+        );
+
+        // The nested checkout must stay out of the parent index without touching tracked files.
+        yield* git(cwd, ["add", "-A"]);
+        const index = (yield* git(cwd, ["ls-files", "--stage", "-z"]))
+          .split("\0")
+          .filter((entry) => entry !== "");
+        assert.isFalse(index.some((entry) => entry.startsWith("160000 ")));
+        assert.deepEqual(
+          index.map((entry) => entry.slice(entry.indexOf("\t") + 1)),
+          [".gitignore", "README.md"],
+        );
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only", "HEAD"]), "");
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(cwd, ".gitignore")),
+          gitignore,
+        );
+        assert.equal(
+          yield* git(cwd, ["check-ignore", "--", ".claude/worktrees/feature-relative-dir"]),
+          ".claude/worktrees/feature-relative-dir",
+        );
 
         const rootError = yield* driver
           .createWorktree(
@@ -4981,6 +5037,331 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.match(rootError.detail, /not a drive root/);
       }),
     );
+
+    describe("worktrees inside the project", () => {
+      const RELATIVE = ".claude/worktrees";
+
+      // Staging everything is how a nested checkout would leak in, as a 160000 gitlink.
+      const stagedPaths = (repo: string) =>
+        Effect.gen(function* () {
+          yield* git(repo, ["add", "-A"]);
+          const entries = (yield* git(repo, ["ls-files", "--stage", "-z"]))
+            .split("\0")
+            .filter((entry) => entry !== "");
+          assert.isFalse(entries.some((entry) => entry.startsWith("160000 ")));
+          return entries.map((entry) => entry.slice(entry.indexOf("\t") + 1));
+        });
+
+      const readExclude = (repo: string) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          return yield* fileSystem.readFileString(
+            pathService.join(repo, ".git", "info", "exclude"),
+          );
+        });
+
+      // A refusal must land before the branch or the worktree registration exists.
+      const expectRefused = (
+        cwd: string,
+        target: { readonly path?: string; readonly worktreesDirectory?: string },
+        detail: RegExp,
+      ) =>
+        Effect.gen(function* () {
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const worktreesBefore = yield* git(cwd, ["worktree", "list", "--porcelain"]);
+          const error = yield* driver
+            .createWorktree(
+              {
+                cwd,
+                path: target.path ?? null,
+                refName: "HEAD",
+                newRefName: "feature/refused",
+              },
+              { worktreesDirectory: target.worktreesDirectory ?? "" },
+            )
+            .pipe(Effect.flip);
+          assert.match(error.detail, detail);
+          assert.equal(yield* git(cwd, ["branch", "--list", "feature/refused"]), "");
+          assert.equal(yield* git(cwd, ["worktree", "list", "--porcelain"]), worktreesBefore);
+        });
+
+      it.effect("anchors at the main checkout from subdirectories and linked worktrees", () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const repo = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(repo);
+          // Tracked instructions beside the storage folder are not a collision.
+          yield* writeTextFile(repo, ".claude/settings.json", "{}\n");
+          yield* writeTextFile(repo, "packages/app/index.ts", "export {};\n");
+          yield* git(repo, ["add", "."]);
+          yield* git(repo, ["commit", "-m", "project files"]);
+          yield* writeTextFile(repo, ".git/info/exclude", "# local\n*.log");
+
+          const fromSubdirectory = yield* driver.createWorktree(
+            {
+              cwd: pathService.join(repo, "packages", "app"),
+              path: null,
+              refName: initialBranch,
+              newRefName: "feature/from-subdir",
+            },
+            { worktreesDirectory: RELATIVE },
+          );
+          const fromLinked = yield* driver.createWorktree(
+            {
+              cwd: pathService.join(fromSubdirectory.worktree.path, "packages", "app"),
+              path: null,
+              refName: initialBranch,
+              newRefName: "feature/from-linked",
+            },
+            { worktreesDirectory: RELATIVE },
+          );
+
+          const storage = pathService.join(
+            NodeFS.realpathSync.native(repo),
+            ".claude",
+            "worktrees",
+          );
+          assert.deepEqual(
+            [fromSubdirectory, fromLinked].map((created) =>
+              NodeFS.realpathSync.native(created.worktree.path),
+            ),
+            [
+              pathService.join(storage, "feature-from-subdir"),
+              pathService.join(storage, "feature-from-linked"),
+            ],
+          );
+          assert.equal(yield* readExclude(repo), "# local\n*.log\n/.claude/worktrees/\n");
+          assert.deepEqual(yield* stagedPaths(repo), [
+            ".claude/settings.json",
+            "README.md",
+            "packages/app/index.ts",
+          ]);
+          assert.equal(
+            yield* fileSystem.readFileString(pathService.join(repo, ".claude", "settings.json")),
+            "{}\n",
+          );
+        }),
+      );
+
+      it.effect("refuses project folders when the main repository is bare", () =>
+        Effect.gen(function* () {
+          const pathService = yield* Path.Path;
+          const source = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(source);
+          const bare = pathService.join(yield* makeTmpDir(), "repo.git");
+          yield* git(source, ["clone", "--bare", source, bare]);
+          const linked = pathService.join(yield* makeTmpDir(), "linked");
+          yield* git(source, ["--git-dir", bare, "worktree", "add", linked, initialBranch]);
+
+          yield* expectRefused(linked, { worktreesDirectory: RELATIVE }, /no main checkout/);
+        }),
+      );
+
+      it.effect.each(["../escape", "C:worktrees", ".git/worktrees"])(
+        "refuses the unsafe setting %j",
+        (setting) =>
+          Effect.gen(function* () {
+            const repo = yield* makeTmpDir();
+            yield* initRepoWithCommit(repo);
+            yield* expectRefused(
+              repo,
+              { worktreesDirectory: setting },
+              /must be a folder inside the project/,
+            );
+          }),
+      );
+
+      it.effect.skipIf(!symlinksSupported)("refuses to follow links out of the checkout", () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          for (const { link, detail } of [
+            { link: ".claude", detail: /passes through a link/ },
+            { link: ".claude/worktrees", detail: /passes through a link/ },
+            { link: ".git/info", detail: /info\/exclude is a link/ },
+            { link: ".git/info/exclude", detail: /info\/exclude is a link/ },
+          ]) {
+            const repo = yield* makeTmpDir();
+            yield* initRepoWithCommit(repo);
+            const outside = yield* makeTmpDir("git-link-target-");
+            const linkPath = pathService.join(repo, link);
+            yield* fileSystem.makeDirectory(pathService.dirname(linkPath), { recursive: true });
+            yield* fileSystem.remove(linkPath, { recursive: true, force: true });
+            const target = link.endsWith("exclude")
+              ? pathService.join(outside, "exclude")
+              : outside;
+            if (target !== outside) yield* fileSystem.writeFileString(target, "# outside\n");
+            yield* fileSystem.symlink(target, linkPath);
+
+            yield* expectRefused(repo, { worktreesDirectory: RELATIVE }, detail);
+            assert.deepEqual(
+              yield* fileSystem.readDirectory(outside),
+              target === outside ? [] : ["exclude"],
+            );
+            if (target !== outside) {
+              assert.equal(yield* fileSystem.readFileString(target), "# outside\n");
+            }
+          }
+        }),
+      );
+
+      it.effect.each([
+        ".claude/worktrees/README.md",
+        ".claude/worktrees",
+        ".Claude/Worktrees/notes.md",
+      ])("refuses storage where the project tracks %j", (tracked) =>
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          yield* writeTextFile(repo, tracked, "tracked\n");
+          yield* git(repo, ["add", "."]);
+          yield* git(repo, ["commit", "-m", "track storage path"]);
+
+          yield* expectRefused(
+            repo,
+            { worktreesDirectory: RELATIVE },
+            /tracks files at \.claude\/worktrees/,
+          );
+        }),
+      );
+
+      it.effect.each([
+        { file: ".gitignore", rule: "!/.claude/worktrees/\n" },
+        { file: ".claude/.gitignore", rule: "!worktrees/\n" },
+      ])("refuses when $file re-includes the storage folder", ({ file, rule }) =>
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          yield* writeTextFile(repo, file, rule);
+
+          yield* expectRefused(repo, { worktreesDirectory: RELATIVE }, /re-include/);
+        }),
+      );
+
+      it.effect("guards explicit and absolute destinations inside the checkout", () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const repo = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(repo);
+          const storage = pathService.join(repo, ".agents", "wt");
+
+          // A recorded nested path stays protected after the setting is cleared.
+          const revived = yield* driver.createWorktree({
+            cwd: repo,
+            path: pathService.join(storage, "revived"),
+            refName: initialBranch,
+            newRefName: "feature/revived",
+          });
+          const absolute = yield* driver.createWorktree(
+            { cwd: repo, path: null, refName: initialBranch, newRefName: "feature/absolute" },
+            { worktreesDirectory: pathService.join(repo, ".wt") },
+          );
+          assert.equal(
+            absolute.worktree.path,
+            pathService.join(repo, ".wt", pathService.basename(repo), "feature-absolute"),
+          );
+          const excludeLines = (yield* readExclude(repo)).split("\n");
+          assert.includeMembers(excludeLines, [
+            "/.agents/wt/",
+            `/.wt/${pathService.basename(repo)}/`,
+          ]);
+          assert.deepEqual(yield* stagedPaths(repo), ["README.md"]);
+
+          yield* fileSystem.makeDirectory(pathService.join(storage, "occupied"));
+          yield* expectRefused(
+            repo,
+            { path: pathService.join(storage, "occupied") },
+            /already exists/,
+          );
+          yield* expectRefused(
+            repo,
+            { path: pathService.join(revived.worktree.path, "nested", "child") },
+            /inside another worktree/,
+          );
+          yield* expectRefused(
+            repo,
+            { path: pathService.join(repo, ".git", "child") },
+            /plain subfolder/,
+          );
+          yield* expectRefused(
+            repo,
+            { path: `${storage}${pathService.sep}..${pathService.sep}traversal` },
+            /without.*traversal/,
+          );
+        }),
+      );
+
+      it.effect("escapes special characters in the exclude pattern", () =>
+        Effect.gen(function* () {
+          const pathService = yield* Path.Path;
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const repo = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(repo);
+
+          const created = yield* driver.createWorktree(
+            { cwd: repo, path: null, refName: initialBranch, newRefName: "feature/special" },
+            { worktreesDirectory: "work trees/[wip] #1 !x/ünï" },
+          );
+          assert.equal(
+            NodeFS.realpathSync.native(created.worktree.path),
+            pathService.join(
+              NodeFS.realpathSync.native(repo),
+              "work trees",
+              "[wip] #1 !x",
+              "ünï",
+              "feature-special",
+            ),
+          );
+          assert.include(
+            (yield* readExclude(repo)).split("\n"),
+            "/work trees/\\[wip\\] #1 !x/ünï/",
+          );
+          assert.deepEqual(yield* stagedPaths(repo), ["README.md"]);
+        }),
+      );
+
+      it.effect("keeps every exclude entry when creations run concurrently", () =>
+        Effect.gen(function* () {
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const repo = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(repo);
+          const original = yield* readExclude(repo);
+
+          // Enough creations that, without the repository lock, two read the file before either appends.
+          yield* Effect.all(
+            Array.from({ length: 8 }, (_, index) =>
+              driver.createWorktree(
+                {
+                  cwd: repo,
+                  path: null,
+                  refName: initialBranch,
+                  newRefName: `feature/concurrent-${index}`,
+                },
+                { worktreesDirectory: index % 2 === 0 ? RELATIVE : ".agents/worktrees" },
+              ),
+            ),
+            { concurrency: "unbounded" },
+          );
+
+          const exclude = yield* readExclude(repo);
+          assert.isTrue(exclude.startsWith(original));
+          assert.deepEqual(
+            exclude
+              .slice(original.length)
+              .split("\n")
+              .filter((line) => line !== "")
+              .toSorted(),
+            ["/.agents/worktrees/", "/.claude/worktrees/"],
+          );
+          assert.deepEqual(yield* stagedPaths(repo), ["README.md"]);
+        }),
+      );
+    });
 
     it.effect("keeps generated worktree folders short without changing long branch names", () =>
       Effect.gen(function* () {

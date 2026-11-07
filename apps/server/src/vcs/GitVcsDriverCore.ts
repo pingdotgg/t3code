@@ -44,7 +44,12 @@ import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
-import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
+import { parseWorktreeList } from "./worktreeList.ts";
+import {
+  isGitDirectoryName,
+  parseRelativeWorktreesDirectory,
+  resolveWorktreesDirectory,
+} from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
@@ -278,34 +283,21 @@ function paginateBranches(input: {
 
 function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
   const worktreePaths = new Map<string, string>();
-  let currentPath: string | null = null;
-  let currentBranch: string | null = null;
-  let currentPrunable = false;
-
-  const flush = () => {
-    if (currentPath !== null && currentBranch !== null && !currentPrunable) {
-      worktreePaths.set(currentBranch, currentPath);
-    }
-    currentPath = null;
-    currentBranch = null;
-    currentPrunable = false;
-  };
-
-  for (const field of stdout.split("\0")) {
-    if (field === "") {
-      flush();
-    } else if (field.startsWith("worktree ")) {
-      currentPath = field.slice("worktree ".length);
-    } else if (field.startsWith("branch refs/heads/")) {
-      currentBranch = field.slice("branch refs/heads/".length);
-    } else if (field === "prunable" || field.startsWith("prunable ")) {
-      currentPrunable = true;
-    }
+  for (const entry of parseWorktreeList(stdout)) {
+    if (entry.branch !== null && !entry.prunable) worktreePaths.set(entry.branch, entry.path);
   }
-  flush();
-
   return worktreePaths;
 }
+
+interface RepositoryCheckouts {
+  /** Git's spelling of the main checkout, null for a bare repository. */
+  readonly listedMain: string | null;
+  readonly main: string | null;
+  readonly linked: ReadonlyArray<string>;
+}
+
+// Git-ignore patterns treat these as wildcards or escapes; a backslash makes each literal.
+const escapeGitIgnoreSegment = (segment: string) => segment.replace(/[[\]*?\\]/g, "\\$&");
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
   const parts = input.split("\0");
@@ -4215,6 +4207,221 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // Missing components keep their spelling under the nearest real ancestor, as Git creates them.
+  const realLocation = (target: string): Effect.Effect<string> =>
+    fileSystem.realPath(target).pipe(
+      Effect.catch(() => {
+        const parent = path.dirname(target);
+        return parent === target
+          ? Effect.succeed(target)
+          : Effect.map(realLocation(parent), (real) => path.join(real, path.basename(target)));
+      }),
+    );
+  const isWithin = (parent: string, child: string) => {
+    const relative = path.relative(parent, child);
+    return relative === "" || (!path.isAbsolute(relative) && relative.split(path.sep)[0] !== "..");
+  };
+  const isSymbolicLink = (target: string) =>
+    fileSystem.readLink(target).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+  const ignoreAlreadyExists = <R>(effect: Effect.Effect<void, PlatformError.PlatformError, R>) =>
+    effect.pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "AlreadyExists",
+        () => Effect.void,
+      ),
+    );
+
+  const readCheckouts = Effect.fn("readCheckouts")(function* (
+    cwd: string,
+  ): Effect.fn.Return<RepositoryCheckouts, GitCommandError> {
+    const result = yield* executeWorktreeList("GitVcsDriver.createWorktree.listWorktrees", cwd, []);
+    const entries = parseWorktreeList(result.stdout);
+    const [main, ...linked] = entries;
+    if (result.stdoutTruncated || main === undefined || !path.isAbsolute(main.path)) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.createWorktree.listWorktrees",
+          cwd,
+          args: ["worktree", "list", "--porcelain"],
+        }),
+        detail: "Could not read this repository's worktrees.",
+      });
+    }
+    return {
+      listedMain: main.bare ? null : main.path,
+      main: main.bare ? null : yield* realLocation(main.path),
+      linked: yield* Effect.forEach(linked, (entry) => realLocation(entry.path)),
+    };
+  });
+
+  // Called under the repository's shared-config lock so concurrent creations append in turn.
+  const ensureLocallyIgnored = Effect.fn("ensureLocallyIgnored")(function* (
+    main: string,
+    storage: ReadonlyArray<string>,
+    refuse: (detail: string, cause?: unknown) => GitCommandError,
+  ) {
+    const output = yield* runGitStdout("GitVcsDriver.createWorktree.excludePath", main, [
+      "rev-parse",
+      "--git-path",
+      "info/exclude",
+    ]);
+    const reported = output.replace(/\r?\n$/, "");
+    if (reported === "") return yield* refuse("Git did not report its info/exclude path.");
+    const excludePath = path.resolve(main, reported);
+    const infoDirectory = path.dirname(excludePath);
+    yield* fileSystem.makeDirectory(infoDirectory).pipe(
+      ignoreAlreadyExists,
+      Effect.mapError((cause) => refuse("Could not create Git's info folder.", cause)),
+    );
+    if ((yield* isSymbolicLink(infoDirectory)) || (yield* isSymbolicLink(excludePath))) {
+      return yield* refuse("Git's info/exclude is a link. T3 Code will not write through it.");
+    }
+    const existing = yield* fileSystem.readFileString(excludePath).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(""),
+      ),
+      Effect.mapError((cause) => refuse("Could not read Git's info/exclude.", cause)),
+    );
+    const pattern = `/${storage.map(escapeGitIgnoreSegment).join("/")}/`;
+    if (existing.split(/\r?\n/).includes(pattern)) return;
+    const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
+    // One appending write keeps every earlier line, including other processes' additions.
+    yield* fileSystem
+      .writeFileString(excludePath, `${separator}${pattern}\n`, { flag: "a" })
+      .pipe(Effect.mapError((cause) => refuse("Could not update Git's info/exclude.", cause)));
+  });
+
+  // Inside a checkout, a worktree must never be committed as a nested repository or land on
+  // something the parent owns, so its storage folder is created, checked, and ignored first.
+  const guardWorktreeDestination = Effect.fn("guardWorktreeDestination")(function* (
+    cwd: string,
+    worktreePath: string,
+    checkouts: RepositoryCheckouts,
+  ) {
+    const refuse = (detail: string, cause?: unknown) =>
+      new GitCommandError({
+        operation: "GitVcsDriver.createWorktree",
+        command: "git worktree add",
+        cwd,
+        detail,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    if (worktreePath.split(/[\\/]/).includes("..")) {
+      return yield* refuse("Choose a worktree path without parent-directory traversal.");
+    }
+    const lexical = path.resolve(cwd, worktreePath);
+    const destination = yield* realLocation(lexical);
+    if (checkouts.linked.some((linked) => isWithin(linked, destination))) {
+      return yield* refuse(
+        "The worktree folder is inside another worktree. Choose another folder.",
+      );
+    }
+    const { main, listedMain } = checkouts;
+    if (main === null || listedMain === null) return;
+    // Lexical first, so a link inside the checkout is caught below instead of followed out of it.
+    const relative = isWithin(main, lexical)
+      ? path.relative(main, lexical)
+      : isWithin(listedMain, lexical)
+        ? path.relative(listedMain, lexical)
+        : isWithin(main, destination)
+          ? path.relative(main, destination)
+          : null;
+    if (relative === null) return;
+    const segments = relative.split(path.sep);
+    // The folder holding the worktree is ignored as a whole; one directly in the checkout ignores itself.
+    const storage = segments.length > 1 ? segments.slice(0, -1) : segments;
+    if (
+      parseRelativeWorktreesDirectory(storage.join("/")) === null ||
+      isGitDirectoryName(segments.at(-1) ?? "")
+    ) {
+      return yield* refuse(
+        "A worktree inside the project must sit in a plain subfolder, like .claude/worktrees.",
+      );
+    }
+    const storagePath = storage.join("/");
+    const prefixes = storage.map((_, index) => storage.slice(0, index + 1).join("/"));
+    const tracked = yield* executeGit(
+      "GitVcsDriver.createWorktree.trackedCollisions",
+      main,
+      [
+        "ls-files",
+        "-z",
+        "--cached",
+        "--",
+        ...prefixes.map((prefix) => `:(literal,icase)${prefix}`),
+      ],
+      // Pathspec magic would otherwise be read literally under an inherited override.
+      { env: { GIT_LITERAL_PATHSPECS: "0" } },
+    );
+    const trackedPrefixes = new Set(prefixes.map((prefix) => prefix.toLowerCase()));
+    const storagePrefix = `${storagePath.toLowerCase()}/`;
+    if (
+      tracked.stdoutTruncated ||
+      splitNullSeparatedGitStdoutPaths(tracked).some((file) => {
+        const folded = file.toLowerCase();
+        return trackedPrefixes.has(folded) || folded.startsWith(storagePrefix);
+      })
+    ) {
+      return yield* refuse(
+        `The project tracks files at ${storagePath}. Choose a worktree folder Git does not track.`,
+      );
+    }
+
+    if (
+      (yield* fileSystem.exists(lexical).pipe(Effect.orElseSucceed(() => true))) ||
+      (yield* isSymbolicLink(lexical))
+    ) {
+      return yield* refuse("The worktree folder already exists. Choose another branch or folder.");
+    }
+
+    let current = main;
+    for (const segment of storage) {
+      current = path.join(current, segment);
+      yield* fileSystem.makeDirectory(current).pipe(
+        ignoreAlreadyExists,
+        Effect.mapError((cause) => refuse(`Could not create ${storagePath}.`, cause)),
+      );
+      const real = yield* fileSystem.realPath(current).pipe(Effect.option);
+      const info = yield* fileSystem.stat(current).pipe(Effect.option);
+      if (
+        Option.isNone(real) ||
+        real.value !== current ||
+        Option.isNone(info) ||
+        info.value.type !== "Directory"
+      ) {
+        return yield* refuse(
+          `${storagePath} passes through a link or a file. T3 Code only creates worktrees in plain folders inside the project.`,
+        );
+      }
+      if (
+        yield* fileSystem.exists(path.join(current, ".git")).pipe(Effect.orElseSucceed(() => true))
+      ) {
+        return yield* refuse(
+          `${storagePath} passes through another repository or worktree. Choose another folder.`,
+        );
+      }
+    }
+
+    yield* withSharedConfigLock(main, ensureLocallyIgnored(main, storage, refuse));
+    const ignored = yield* executeGit(
+      "GitVcsDriver.createWorktree.checkIgnore",
+      main,
+      ["check-ignore", "-q", "--no-index", "--", storagePath],
+      { allowNonZeroExit: true },
+    );
+    if (ignored.exitCode !== 0) {
+      return yield* refuse(
+        ignored.exitCode === 1
+          ? `The project's ignore rules re-include ${storagePath}, so its worktrees would be committed as nested repositories. Remove that rule or choose another folder.`
+          : `Could not confirm that Git ignores ${storagePath}.`,
+      );
+    }
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -4223,21 +4430,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const targetBranch = input.newRefName ?? input.refName;
     // Resolve sub/.. before taking the basename.
     const repoName = path.basename(path.resolve(input.cwd));
+    const checkouts = yield* readCheckouts(input.cwd);
     let worktreePath = input.path;
     if (worktreePath == null) {
-      const parentDir = resolveWorktreesDirectory(
-        options?.worktreesDirectory ?? "",
+      const setting = options?.worktreesDirectory ?? "";
+      const absoluteParent = resolveWorktreesDirectory(
+        setting,
         worktreesDir,
         path,
         yield* HostProcess.HomeDirectory,
       );
-      if (parentDir === null) {
+      const relativeSegments =
+        absoluteParent === null ? parseRelativeWorktreesDirectory(setting) : null;
+      let parentDir: string;
+      if (absoluteParent !== null) {
+        parentDir = path.join(absoluteParent, repoName);
+      } else if (relativeSegments === null) {
         return yield* new GitCommandError({
           operation: "GitVcsDriver.createWorktree",
           command: "git worktree add",
           cwd: input.cwd,
-          detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
+          detail: `The worktree location "${setting}" must be a folder inside the project, like .claude/worktrees, or an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
         });
+      } else if (checkouts.main === null) {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.createWorktree",
+          command: "git worktree add",
+          cwd: input.cwd,
+          detail: `The worktree location "${setting}" is inside the project, but this repository has no main checkout to hold it. Use an absolute folder in Settings → Worktrees.`,
+        });
+      } else {
+        // Anchored at the main checkout, never the linked one asking; one repository needs no repo level.
+        parentDir = path.join(checkouts.main, ...relativeSegments);
       }
       let directoryName = targetBranch.replace(/\//g, "-");
       // Leave room for files beneath the worktree on Windows, regardless of branch length.
@@ -4247,8 +4471,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const prefix = directoryName.slice(0, 23).replace(/[\uD800-\uDBFF]$/, "");
         directoryName = `${prefix}-${Hex.encode(hash).slice(0, 16)}`;
       }
-      worktreePath = path.join(parentDir, repoName, directoryName);
+      worktreePath = path.join(parentDir, directoryName);
     }
+    yield* guardWorktreeDestination(input.cwd, worktreePath, checkouts);
     const newRefName = input.newRefName;
     if (newRefName) {
       // Kept apart from the checkout so the shared-config lock only covers the tracking write.
