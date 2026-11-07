@@ -49,11 +49,4 @@ describe("verifyOpenCodeServerVersion", () => {
       expect(error.detail).toContain("v1.14.18 is too old");
     }),
   );
-
-  for (const {} of [
-    { healthy: true },
-    { healthy: true, version: "not-a-version" },
-    { healthy: false, version: "1.14.19" },
-  ]) {
-  }
 });

@@ -7,9 +7,8 @@ import * as NodeUtil from "node:util";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
-export const SHOWCASE_PROJECT_ID = "t3code";
-export const SHOWCASE_THREAD_ID = "remote-command-center";
-export const SHOWCASE_TERMINAL_ID = "term-1";
+const SHOWCASE_PROJECT_ID = "t3code";
+const SHOWCASE_THREAD_ID = "remote-command-center";
 
 export const SHOWCASE_SCENES = [
   "threads",
@@ -42,7 +41,7 @@ const PROJECT_SCRIPTS = JSON.stringify([
 const SHOWCASE_TERMINAL_PROMPT =
   "\u001b[1;32m→\u001b[0m \u001b[1;36mt3code\u001b[0m \u001b[1;34mgit:(\u001b[1;31mfeat/remote-command-center\u001b[1;34m)\u001b[0m \u001b[1;33m✗\u001b[0m ";
 
-export const SHOWCASE_TERMINAL_BUFFER = [
+const SHOWCASE_TERMINAL_BUFFER = [
   `${SHOWCASE_TERMINAL_PROMPT}vpr dev`,
   "",
   "  \u001b[1;32mVITE\u001b[0m \u001b[32mv7.1.1\u001b[0m  \u001b[2mready in\u001b[0m \u001b[1m1.24s\u001b[0m",

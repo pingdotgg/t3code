@@ -1,7 +1,7 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, ErrorKind, Read, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
     time::{Duration, Instant},
@@ -62,6 +62,33 @@ impl Window {
         serde_json::json!({"title": self.title, "appName": self.class, "appIdentifier": self.class,
             "processId": self.pid, "bounds": self.bounds(), "clientBounds": self.bounds()})
     }
+    /// Same window, geometry and state; only a CLI title spinner may differ.
+    pub fn matches_after_capture(&self, current: &Self) -> bool {
+        self.address == current.address
+            && self.pid == current.pid
+            && self.class == current.class
+            && self.at == current.at
+            && self.size == current.size
+            && self.mapped == current.mapped
+            && self.hidden == current.hidden
+            && capture_title(&self.title) == capture_title(&current.title)
+    }
+}
+
+/// Match the same leading CLI spinner accepted by the Wayland AT-SPI window matcher.
+fn capture_title(title: &str) -> &str {
+    let mut chars = title.chars();
+    if matches!(
+        chars.next(),
+        Some('⠋' | '⠙' | '⠹' | '⠸' | '⠼' | '⠴' | '⠦' | '⠧' | '⠇' | '⠏')
+    ) && chars.clone().next().is_some_and(char::is_whitespace)
+    {
+        let label = chars.as_str().trim_start();
+        if !label.is_empty() {
+            return label;
+        }
+    }
+    title
 }
 
 pub fn session_directory() -> Result<PathBuf> {
@@ -161,16 +188,30 @@ pub fn activate(pid: u32, title: &str) -> Result<()> {
             }
             return Ok(());
         }
-        events.get_ref().set_read_timeout(Some(
-            deadline
-                .checked_duration_since(Instant::now())
-                .ok_or("T3 Code did not become visible.")?,
-        ))?;
-        let mut event = Vec::new();
-        if events.by_ref().take(8193).read_until(b'\n', &mut event)? == 0 || event.len() > 8192 {
-            return Err("Hyprland's event stream closed or returned an invalid event.".into());
-        }
+        next_event(&mut events, deadline)?;
     }
+}
+
+/// Waits for one Hyprland event, or explains that T3 Code never appeared before `deadline`.
+fn next_event(events: &mut BufReader<UnixStream>, deadline: Instant) -> Result<()> {
+    let not_visible = "T3 Code did not become visible.";
+    let left = deadline.checked_duration_since(Instant::now());
+    events.get_ref().set_read_timeout(Some(
+        left.filter(|left| !left.is_zero()).ok_or(not_visible)?,
+    ))?;
+    let mut event = Vec::new();
+    let read = events.by_ref().take(8193).read_until(b'\n', &mut event);
+    // The read timeout ends at the deadline, and Linux reports its expiry as WouldBlock.
+    if read
+        .as_ref()
+        .is_err_and(|error| matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut))
+    {
+        return Err(not_visible.into());
+    }
+    if read? == 0 || event.len() > 8192 {
+        return Err("Hyprland's event stream closed or returned an invalid event.".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -209,6 +250,25 @@ mod tests {
             destination(vec![window(2, "T3"), window(1, "T3")], 1, "T3")
                 .unwrap()
                 .is_some()
+        );
+    }
+    #[test]
+    fn event_wait_explains_an_activation_timeout() {
+        let (socket, mut hyprland) = UnixStream::pair().unwrap();
+        // A quiet socket reports the same WouldBlock as an expired read timeout, without waiting.
+        socket.set_nonblocking(true).unwrap();
+        let mut events = BufReader::new(socket);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        assert_eq!(
+            next_event(&mut events, deadline).unwrap_err().to_string(),
+            "T3 Code did not become visible."
+        );
+        hyprland.write_all(b"openwindow>>1,1,t3,T3 Code\n").unwrap();
+        assert!(next_event(&mut events, deadline).is_ok());
+        drop(hyprland);
+        assert_eq!(
+            next_event(&mut events, deadline).unwrap_err().to_string(),
+            "Hyprland's event stream closed or returned an invalid event."
         );
     }
     #[test]
