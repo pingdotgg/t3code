@@ -434,35 +434,55 @@ const make = Effect.gen(function* () {
         ) {
           branch = flattenTemporaryWorktreeBranchName(branch);
         }
-        yield* setupTracker.stageStatus(threadId, "checkout", "running");
-        const worktree = yield* git
-          .createWorktree(
-            {
-              cwd: project.workspaceRoot,
-              refName: startRef,
-              newRefName: branch!,
-              baseRefName,
-              path: null,
-            },
-            {
-              progress: {
-                onWorktreeClaimed: (path) =>
-                  Effect.sync(() => {
-                    createdWorktreePath = path;
-                    createdBranch = branch;
-                  }),
-                onCheckoutProgress: (progress) =>
-                  setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
+        // `git worktree add` needs a commit. After fetch, if neither the start
+        // ref nor HEAD has one, run in the project folder like a non-Git project.
+        const hasCommit = (refName: string) =>
+          git
+            .hasCommit({ cwd: project.workspaceRoot, refName })
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (!(yield* hasCommit(startRef)) && !(yield* hasCommit("HEAD"))) {
+          branch = null;
+          yield* setupTracker.stageStatus(
+            threadId,
+            "checkout",
+            "skipped",
+            "no commits yet, using project folder",
+          );
+        } else {
+          yield* setupTracker.stageStatus(threadId, "checkout", "running");
+          const worktree = yield* git
+            .createWorktree(
+              {
+                cwd: project.workspaceRoot,
+                refName: startRef,
+                newRefName: branch!,
+                baseRefName,
+                path: null,
               },
-            },
-          )
-          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
-        worktreePath = worktree.worktree.path;
-        branch = worktree.worktree.refName;
-        createdWorktreePath = worktreePath;
-        createdBranch = branch;
-        yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
-        yield* setupTracker.stageStatus(threadId, "checkout", "done");
+              {
+                progress: {
+                  onWorktreeClaimed: (path) =>
+                    Effect.sync(() => {
+                      createdWorktreePath = path;
+                      createdBranch = branch;
+                    }),
+                  onCheckoutProgress: (progress) =>
+                    setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
+                },
+              },
+            )
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+          worktreePath = worktree.worktree.path;
+          branch = worktree.worktree.refName;
+          createdWorktreePath = worktreePath;
+          createdBranch = branch;
+          yield* setupTracker.update(threadId, (snapshot) => ({
+            ...snapshot,
+            worktreePath,
+            branch,
+          }));
+          yield* setupTracker.stageStatus(threadId, "checkout", "done");
+        }
       }
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.

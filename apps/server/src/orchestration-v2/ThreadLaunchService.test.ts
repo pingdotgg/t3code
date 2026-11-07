@@ -207,7 +207,7 @@ function makeHarness(options: HarnessOptions = {}) {
       fetchWorktreeBaseCommit:
         options.fetchWorktreeBaseCommit ??
         (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
-      hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      hasCommit: options.hasCommit ?? (() => Effect.succeed(true)),
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
@@ -1167,6 +1167,85 @@ it.effect("fetches the origin base from the remote it already resolved", () => {
     });
   }).pipe(Effect.provide(harness.layer));
 });
+
+// Issue 22017: `git worktree add` has no commit to start from when the
+// repository (and any requested origin base) is still empty.
+it.effect.each([
+  {
+    name: "without a resolvable origin base",
+    startFromOrigin: false,
+    fetchBase: null as { commitSha: string; remoteRefName: string } | null,
+  },
+  {
+    name: "whose origin has no base branch",
+    startFromOrigin: true,
+    fetchBase: null as { commitSha: string; remoteRefName: string } | null,
+  },
+])("runs in the project folder for a repository with no commits $name", (testCase) => {
+  const suffix = testCase.startFromOrigin ? "empty-origin" : "empty-local";
+  const harness = makeHarness({
+    hasCommit: () => Effect.succeed(false),
+    fetchWorktreeBaseCommit: () => Effect.succeed(testCase.fetchBase),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: `command:launch:${suffix}`,
+        thread: `thread:launch:${suffix}`,
+        message: "Reply with OK only",
+        workspace: {
+          type: "worktree",
+          baseRef: "main",
+          startFromOrigin: testCase.startFromOrigin,
+        },
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "starting");
+    assert.isNull(projection.thread.worktreePath);
+    assert.isNull(projection.thread.branch);
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+    const checkout = (yield* tracker.get(launched.threadId))?.stages.find(
+      (stage) => stage.id === "checkout",
+    );
+    assert.equal(checkout?.status, "skipped");
+    assert.equal(checkout?.detail, "no commits yet, using project folder");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([
+  { baseRef: "main", startRef: "remote-main-sha" },
+  { baseRef: "origin/main", startRef: "remote-main-sha" },
+])(
+  "checks out $baseRef fetched from origin when the local repository has no commits",
+  (testCase) => {
+    const suffix = testCase.baseRef.replaceAll("/", "-");
+    const harness = makeHarness({
+      hasCommit: ({ refName }) => Effect.succeed(refName === testCase.startRef),
+    });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: `command:launch:empty-repo-origin:${suffix}`,
+          thread: `thread:launch:empty-repo-origin:${suffix}`,
+          message: "Reply with OK only",
+          workspace: {
+            type: "worktree",
+            baseRef: testCase.baseRef,
+            startFromOrigin: true,
+          },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, "/repo-worktrees/feature");
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.refName, testCase.startRef);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
 
 it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
   const detail =
