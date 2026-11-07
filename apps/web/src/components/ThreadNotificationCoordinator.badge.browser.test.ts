@@ -254,6 +254,53 @@ it("presents completion notifications and sound as soon as the shell completes",
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
 });
 
+it("stays quiet for runs a pending Monitor wakes and notifies when the agent finishes", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  app.start();
+  const monitor = [{ taskId: "monitor-1", kind: "monitor" }];
+  const completedRun = (
+    ordinal: number,
+    pendingBackgroundTasks: ReadonlyArray<{ taskId: string; kind: string }>,
+  ) => {
+    const requestedAt = `2026-09-13T07:0${ordinal}:00.000Z`;
+    const raw = toV2ThreadShell({
+      ...thread,
+      latestTurn: {
+        turnId: `turn-${ordinal}`,
+        state: "completed",
+        completedAt: `2026-09-13T07:0${ordinal}:03.000Z`,
+      },
+    });
+    return {
+      status: "live",
+      snapshot: Option.some({
+        threads: [
+          {
+            ...raw,
+            latestRunRequestedAt: DateTime.makeUnsafe(requestedAt),
+            latestUserAuthoredMessageAt: SHELL_NOW,
+            pendingBackgroundTasks,
+          },
+        ],
+      }),
+    };
+  };
+  // Run 0 answers the user, runs 1-3 are Monitor wakes, run 4 is the wake after it ended.
+  state.shells.set("one", completedRun(0, monitor));
+  for (const ordinal of [1, 2, 3]) {
+    state.shells.set("one", shell());
+    state.shells.set("one", completedRun(ordinal, monitor));
+  }
+  state.shells.set("one", shell());
+  state.shells.set("one", completedRun(4, []));
+  expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+    "Thread completed",
+    "Thread completed",
+  ]);
+  expect(state.sound).toHaveBeenCalledTimes(2);
+});
+
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "notifies for offline completion and %s once across reconnects",
   async (flag) => {

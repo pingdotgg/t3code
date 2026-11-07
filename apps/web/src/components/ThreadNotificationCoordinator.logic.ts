@@ -1,3 +1,6 @@
+import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+
 export type ThreadNotificationKind = "input" | "completion";
 
 export interface ThreadNotificationObservation {
@@ -44,4 +47,24 @@ export function createThreadNotificationGate<Key>(
       handled.clear();
     },
   };
+}
+
+// A Monitor wakes the agent on every event it prints. The run for each wake ends as completed
+// once the agent acknowledges the event, although the task it is monitoring has not finished.
+export function isMonitorWakeRun(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "latestRunRequestedAt" | "latestUserAuthoredMessageAt" | "pendingBackgroundTasks"
+  >,
+): boolean {
+  const { latestRunRequestedAt, latestUserAuthoredMessageAt } = thread;
+  // Servers without latestUserAuthoredMessageAt cannot tell a wake from the user's own run.
+  if (latestRunRequestedAt == null || latestUserAuthoredMessageAt === undefined) return false;
+  const startedByUser =
+    latestUserAuthoredMessageAt !== null &&
+    !DateTime.isGreaterThan(latestRunRequestedAt, latestUserAuthoredMessageAt);
+  const monitorPending = (thread.pendingBackgroundTasks ?? []).some(
+    (task) => task.kind === "monitor",
+  );
+  return !startedByUser && monitorPending;
 }
