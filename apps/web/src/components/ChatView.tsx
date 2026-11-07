@@ -114,7 +114,15 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
-import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type MouseEvent,
+  type SetStateAction,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -414,6 +422,19 @@ type ChatViewProps =
     };
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
+
+function focusMessageArea(event: MouseEvent<HTMLDivElement>) {
+  const target = event.target;
+  if (
+    !(target instanceof Element) ||
+    target.closest(
+      'a, button, input, textarea, select, [contenteditable], [role="button"], [role="textbox"], [tabindex]',
+    ) !== event.currentTarget ||
+    !window.getSelection()?.isCollapsed
+  )
+    return;
+  event.currentTarget.focus({ preventScroll: true });
+}
 
 export default function ChatView(props: ChatViewProps) {
   const {
@@ -2128,6 +2149,8 @@ export default function ChatView(props: ChatViewProps) {
     timelineAnchorMessageId,
     setTimelineAnchor,
   });
+  const onScrollToEnd = () => scrollToEnd(true);
+  const onScrollToEndStable = useStableCallback(onScrollToEnd);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
   useEffect(() => {
@@ -2688,7 +2711,9 @@ export default function ChatView(props: ChatViewProps) {
     if (activeThreadRef && !embedded) return focusTerminalOnThreadEnter(activeThreadRef);
   }, [activeThreadRef, embedded]);
 
+  const messageAreaRef = useRef<HTMLDivElement | null>(null);
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
+    messageAreaFocus: document.activeElement === messageAreaRef.current,
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
     previewFocus: isPreviewFocused(),
@@ -2720,6 +2745,7 @@ export default function ChatView(props: ChatViewProps) {
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
     composerElement: composerOverlayElement,
+    messageAreaRef,
     keybindings,
     scriptKeybindings,
     getShortcutContext,
@@ -2737,6 +2763,7 @@ export default function ChatView(props: ChatViewProps) {
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
+      "chat.scrollToEnd": onScrollToEndStable,
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
           return false;
@@ -3418,6 +3445,10 @@ export default function ChatView(props: ChatViewProps) {
             />
             <div
               {...conversationArea}
+              ref={messageAreaRef}
+              tabIndex={0}
+              aria-label="Conversation messages"
+              onClick={focusMessageArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
@@ -3525,7 +3556,7 @@ export default function ChatView(props: ChatViewProps) {
                 <ScrollToEndButton
                   bottom={scrollToEndClearance + 4}
                   summary={scrollToEndSummary}
-                  onScrollToEnd={() => scrollToEnd(true)}
+                  onScrollToEnd={onScrollToEndStable}
                 />
               )}
             </div>

@@ -1,5 +1,9 @@
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+} from "@t3tools/shared/keybindings";
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -186,4 +190,169 @@ it("runs a side chat's composer chords only from its composer, and never thread 
 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
+});
+
+function ScrollChat(props: {
+  onEnd: () => void;
+  composerKeys?: string[];
+  embedded?: boolean;
+  context?: Record<string, boolean>;
+  keybindings?: ResolvedKeybindingsConfig;
+}) {
+  const messageAreaRef = useRef<HTMLDivElement | null>(null);
+  const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
+  useChatShortcuts({
+    enabled: true,
+    embedded: props.embedded === true,
+    messageAreaRef,
+    composerElement,
+    keybindings: props.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
+    scriptKeybindings: [],
+    getShortcutContext: (target) => ({
+      ...shortcutContext,
+      messageAreaFocus: document.activeElement === messageAreaRef.current,
+      composerFocus:
+        target instanceof Element && target.getAttribute("aria-label") === "Chat input",
+      ...props.context,
+    }),
+    threadFindActive: false,
+    composerRef: {
+      current: {
+        insertTextAtEnd: (key: string) => {
+          props.composerKeys?.push(key);
+          return true;
+        },
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: { "chat.scrollToEnd": props.onEnd },
+    fallback: () => undefined,
+  });
+  return (
+    <div data-side-chat-pane={props.embedded ? "true" : undefined}>
+      <div ref={messageAreaRef} tabIndex={0} aria-label="Messages">
+        <button>Message action</button>
+      </div>
+      <div ref={setComposerElement}>
+        <textarea aria-label="Chat input" />
+      </div>
+      <textarea aria-label="Other editor" defaultValue={"first line\nsecond line"} />
+    </div>
+  );
+}
+
+it.each([
+  { embedded: false, key: "ctrl+end", keyboard: "{Control>}{End}{/Control}", defaults: true },
+  { embedded: true, key: "ctrl+end", keyboard: "{Control>}{End}{/Control}", defaults: true },
+  { embedded: false, key: "end", keyboard: "{End}", defaults: false },
+  { embedded: true, key: "end", keyboard: "{End}", defaults: false },
+  { embedded: false, key: "g", keyboard: "g", defaults: false },
+  { embedded: true, key: "g", keyboard: "g", defaults: false },
+])(
+  "routes $key in main/embedded chat ($embedded) and reads the current thread callback",
+  async ({ embedded, key, keyboard, defaults }) => {
+    const calls: string[] = [];
+    const composerKeys: string[] = [];
+    const keybindings = defaults
+      ? DEFAULT_RESOLVED_KEYBINDINGS
+      : compileResolvedKeybindingsConfig([
+          { key, command: "chat.scrollToEnd", when: "messageAreaFocus || composerFocus" },
+        ]);
+    await using screen = await render(
+      <ScrollChat
+        embedded={embedded}
+        composerKeys={composerKeys}
+        keybindings={keybindings}
+        onEnd={() => {
+          calls.push("first");
+        }}
+      />,
+      options,
+    );
+    screen.getByLabelText("Messages").element().focus();
+    await userEvent.keyboard(keyboard);
+    await screen.rerender(
+      <ScrollChat
+        embedded={embedded}
+        composerKeys={composerKeys}
+        keybindings={keybindings}
+        onEnd={() => {
+          calls.push("second");
+        }}
+      />,
+    );
+    await userEvent.click(screen.getByLabelText("Chat input"));
+    if (defaults) {
+      await userEvent.type(screen.getByLabelText("Chat input"), "first line\nsecond line");
+      await userEvent.keyboard("{Control>}{Home}{/Control}{End}");
+      expect(calls).toEqual(["first"]);
+      expect((document.activeElement as HTMLTextAreaElement).selectionStart).toBe(10);
+    }
+    await userEvent.keyboard(keyboard);
+    await userEvent.click(screen.getByRole("button", { name: "Message action" }));
+    await userEvent.keyboard("{End}");
+    await userEvent.click(screen.getByLabelText("Other editor"));
+    await userEvent.keyboard("{Control>}{Home}{/Control}{End}");
+    expect(calls).toEqual(["first", "second"]);
+    expect(composerKeys).toEqual([]);
+    expect((document.activeElement as HTMLTextAreaElement).selectionStart).toBe(10);
+  },
+);
+
+it.each([{ terminalFocus: true }, { previewFocus: true }, { modelPickerOpen: true }])(
+  "keeps unconditioned custom shortcuts out of excluded controls: %j",
+  async (context) => {
+    const calls: string[] = [];
+    await using screen = await render(
+      <ScrollChat
+        context={context}
+        onEnd={() => {
+          calls.push("end");
+        }}
+        keybindings={compileResolvedKeybindingsConfig([
+          { key: "end", command: "chat.scrollToEnd" },
+        ])}
+      />,
+      options,
+    );
+    await userEvent.click(screen.getByLabelText("Chat input"));
+    await userEvent.keyboard("{End}");
+    expect(calls).toEqual([]);
+  },
+);
+
+it("preserves custom precedence and leaves dialogs alone", async () => {
+  const calls: string[] = [];
+  const custom = compileResolvedKeybindingsConfig([
+    { key: "end", command: "chat.scrollToEnd" },
+    { key: "end", command: "thread.stop" },
+  ]);
+  await using screen = await render(
+    <ScrollChat
+      onEnd={() => {
+        calls.push("end");
+      }}
+      keybindings={custom}
+    />,
+    options,
+  );
+  await userEvent.click(screen.getByLabelText("Chat input"));
+  await userEvent.keyboard("{End}");
+  expect(calls).toEqual([]);
+  await screen.rerender(
+    <>
+      <ScrollChat
+        onEnd={() => {
+          calls.push("end");
+        }}
+      />
+      <div role="dialog" aria-modal="true">
+        Dialog
+      </div>
+    </>,
+  );
+  await userEvent.click(screen.getByLabelText("Chat input"));
+  await userEvent.keyboard("{End}");
+  expect(calls).toEqual([]);
 });
