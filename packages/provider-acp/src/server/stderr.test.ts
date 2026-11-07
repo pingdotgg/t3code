@@ -27,6 +27,18 @@ describe("AcpStderr", () => {
     expect(excerpt).not.toContain("sk-abcdefghijklmnopqrstuv");
   });
 
+  it("withholds multiline private-key bodies, including unterminated keys", () => {
+    for (const end of ["-----END PRIVATE KEY-----", ""]) {
+      const excerpt = sanitizeAcpStderrExcerpt(
+        `Configuration failed.\n-----BEGIN PRIVATE KEY-----\nZml4dHVyZS1wcml2YXRlLWJvZHk=\n${end}`,
+        "/home/server",
+        {},
+      );
+      expect(excerpt).toContain("Configuration failed.");
+      expect(excerpt).not.toContain("Zml4dHVyZS1wcml2YXRlLWJvZHk=");
+    }
+  });
+
   it("redacts hyphenated OpenAI project keys and header credentials", () => {
     const excerpt = sanitizeAcpStderrExcerpt(
       [
@@ -35,6 +47,7 @@ describe("AcpStderr", () => {
         "anthropic=sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345",
         "Authorization: Basic dXNlcjpwYXNz",
         "x-api-key: ant-api-key-value",
+        "github_pat_fixture_123 gho_fixture123 ghu_fixture123 ghs_fixture123 ghr_fixture123",
       ].join("\n"),
       "/Users/ada",
       {},
@@ -49,6 +62,8 @@ describe("AcpStderr", () => {
     expect(excerpt).not.toContain("abcdefghijklmnopqrstuvwxyz012345");
     expect(excerpt).not.toContain("dXNlcjpwYXNz");
     expect(excerpt).not.toContain("ant-api-key-value");
+    expect(excerpt).not.toContain("fixture123");
+    expect(excerpt).not.toContain("fixture_123");
   });
 
   it("redacts the whole key when its body contains underscores", () => {
