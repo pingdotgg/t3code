@@ -242,6 +242,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "voice.settings.language.fixed": "{model} 使用一种固定语言。",
   "voice.settings.language.chooseEnvironment": "请先在上方选择一个环境，查看其转写模型支持的语言。",
   "voice.settings.language.selectAria": "转写语言",
+  "voice.settings.language.cloudDetects": "云端提供商可以自动检测你的语言。",
   "voice.settings.language.auto": "自动",
   "voice.settings.language.autoDetect": "自动检测",
   "voice.settings.language.unavailable": "{language} 不可用",
@@ -316,6 +317,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "voice.settings.test.noSpeech": "没有识别到语音，请重试。",
   "voice.settings.test.waiting": "正在等待环境连接",
   "voice.settings.silence.title": "静音过滤",
+  "voice.settings.silence.openaiHandles": "OpenAI 会自动处理静音。",
   "voice.settings.silence.description":
     "转写前跳过静音和其他非语音音频，同时保留一小段缓冲，避免把词切掉。",
   "voice.settings.fillers.title": "移除填充词",
