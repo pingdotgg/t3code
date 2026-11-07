@@ -81,6 +81,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { RightPanelTabs } from "../RightPanelTabs";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
+import { OVERLAY_PANEL_CONTROLS_CLASS } from "~/workspaceTitlebar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
@@ -1132,7 +1133,10 @@ export function PullRequestsPage() {
   );
   const openPanelControls = (
     <div
-      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      className={cn(
+        "absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        isElectron && rightPanelState.isOpen && OVERLAY_PANEL_CONTROLS_CLASS,
+      )}
       data-workspace-titlebar-controls
     >
       {rightPanelState.isOpen ? (

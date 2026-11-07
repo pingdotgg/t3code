@@ -1343,7 +1343,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "drag-region",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-          ownsDesktopTitleBar && "wco:pl-2",
+          ownsDesktopTitleBar && "wco:pl-2!",
         )}
         data-right-panel-tabbar
       >
@@ -1520,7 +1520,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         {ownsDesktopTitleBar ? (
           <span
             aria-hidden
-            className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+            className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 wco:hidden [-webkit-app-region:no-drag]"
           />
         ) : null}
       </div>
