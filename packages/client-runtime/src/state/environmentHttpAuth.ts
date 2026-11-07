@@ -16,6 +16,7 @@ import {
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { withGatewayTicket } from "../environment/endpoint.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -177,8 +178,14 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   Effect.Services<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>> | R
 > {
   let httpBaseUrl = input.prepared.httpBaseUrl;
-  const requestUrlFor = (baseUrl: string) =>
-    input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
+  const requestUrlFor = (baseUrl: string) => {
+    const built = input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
+    const ticket = new URL(baseUrl).searchParams.get("gatewayTicket");
+    // The URL builder strips query from the base, so reattach the hop ticket for DPoP and fetch.
+    return ticket === null || ticket.length === 0
+      ? built
+      : withGatewayTicket(built, Option.some(ticket));
+  };
   return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
     for (;;) {
@@ -212,11 +219,10 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         authorization = current.httpAuthorization;
       }
 
-      const requestUrl = requestUrlFor(httpBaseUrl);
-      const client = yield* makeEnvironmentHttpApiGroupClient(
+      const requestBase =
         input.prepared.gatewayTicket === undefined
           ? httpBaseUrl
-          : yield* ticketedHttpBaseUrl(input.prepared).pipe(
+          : yield* ticketedHttpBaseUrl({ ...input.prepared, httpBaseUrl }).pipe(
               Effect.mapError(
                 (cause) =>
                   new RemoteEnvironmentAuthFetchError({
@@ -224,9 +230,9 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
                     cause,
                   }),
               ),
-            ),
-        input.group,
-      );
+            );
+      const requestUrl = requestUrlFor(requestBase);
+      const client = yield* makeEnvironmentHttpApiGroupClient(requestBase, input.group);
       const headers = yield* buildEnvironmentAuthHeaders(
         authorization,
         input.method,
