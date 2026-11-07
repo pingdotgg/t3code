@@ -1,7 +1,7 @@
 export type ThreadNotificationKind = "input" | "completion";
 
 export interface ThreadNotificationObservation {
-  /** Run and status key while the thread needs attention, otherwise null. */
+  /** Run, status and request key while the thread needs attention, otherwise null. */
   readonly attention: string | null;
   /** The thread is idle and its latest run completed. */
   readonly settled: boolean;
