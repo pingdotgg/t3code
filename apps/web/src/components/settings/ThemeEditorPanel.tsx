@@ -1,11 +1,17 @@
+import {
+  THEME_EDITOR_ROLE_GROUPS,
+  type ThemeEditorColorFamily,
+  resolveThemeSource,
+  themeSourceFromColors,
+  editThemeSource,
+} from "@t3tools/shared/themeResolution";
+import type { ThemeSource } from "@t3tools/shared/themePalettes";
 import { MousePointer2Icon, PaintbrushIcon, PlusIcon, XIcon } from "lucide-react";
 import { ChevronDown, ChevronUp } from "lucide";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   applyThemeColorPreview,
   THEME_COLOR_ROLES,
-  THEME_FILE_VERSION,
-  createVividThemeColors,
   getCustomThemes,
   getStandardThemeColors,
   getThemeColorsForMode,
@@ -15,7 +21,6 @@ import {
   parseThemeFile,
   removeCustomTheme,
   themeIdFromName,
-  updateThemeColorFamily,
   updateCustomTheme,
   type ThemeAppearance,
   type ThemeColors,
@@ -44,193 +49,6 @@ import {
 
 const THEME_EDITOR_SIMPLE_ROLES: ReadonlyArray<ThemeColorRole> = ["canvas", "accent"];
 
-type ThemeEditorColorFamily = Readonly<{
-  id: string;
-  label: string;
-  role: ThemeColorRole;
-  roles: ReadonlyArray<ThemeColorRole>;
-}>;
-
-const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
-  id: string;
-  title: string;
-  families: ReadonlyArray<ThemeEditorColorFamily>;
-}> = [
-  {
-    id: "foundation",
-    title: "Foundation",
-    families: [
-      {
-        id: "background",
-        label: "Background",
-        role: "canvas",
-        roles: ["canvas", "chrome", "toolbar"],
-      },
-      { id: "surface", label: "Surface", role: "surface", roles: ["surface"] },
-      {
-        id: "raised-surface",
-        label: "Raised surface",
-        role: "surfaceRaised",
-        roles: ["surfaceRaised"],
-      },
-      {
-        id: "overlay",
-        label: "Overlay",
-        role: "surfaceOverlay",
-        roles: ["surfaceOverlay"],
-      },
-      {
-        id: "text",
-        label: "Text",
-        role: "text",
-        roles: ["text", "toolbarForeground", "toolbarControlForeground"],
-      },
-      {
-        id: "muted-text",
-        label: "Muted text",
-        role: "mutedForeground",
-        roles: [
-          "textMuted",
-          "mutedForeground",
-          "placeholder",
-          "secondaryLabel",
-          "iconMuted",
-          "sidebarMutedForeground",
-        ],
-      },
-      {
-        id: "border",
-        label: "Border",
-        role: "border",
-        roles: ["border", "toolbarBorder", "sidebarBorder"],
-      },
-      { id: "input", label: "Input", role: "input", roles: ["input"] },
-    ],
-  },
-  {
-    id: "brand-content",
-    title: "Brand & content",
-    families: [
-      {
-        id: "subtle-surface",
-        label: "Subtle surface",
-        role: "secondary",
-        roles: ["secondary", "secondaryForeground", "muted", "toolbarControl"],
-      },
-      {
-        id: "highlight-surface",
-        label: "Highlight surface",
-        role: "accentSurface",
-        roles: ["accentSurface", "accentSurfaceForeground", "toolbarControlHover"],
-      },
-      {
-        id: "accent",
-        label: "Accent",
-        role: "accent",
-        roles: [
-          "accent",
-          "accentForeground",
-          "focus",
-          "update",
-          "updateForeground",
-          "updateSurface",
-          "terminalCursor",
-        ],
-      },
-      {
-        id: "action",
-        label: "Action",
-        role: "messageAction",
-        roles: ["messageAction", "messageActionForeground", "messageActionHover"],
-      },
-      {
-        id: "message-surface",
-        label: "Message surface",
-        role: "messageSurface",
-        roles: ["messageSurface", "messageForeground"],
-      },
-      {
-        id: "code-surface",
-        label: "Code surface",
-        role: "codeBackground",
-        roles: ["codeBackground", "codeForeground"],
-      },
-    ],
-  },
-  {
-    id: "search",
-    title: "Search",
-    families: [
-      {
-        id: "search-matches",
-        label: "Search matches",
-        role: "searchMatchBackground",
-        roles: ["searchMatchBackground", "searchMatchForeground"],
-      },
-      {
-        id: "current-match",
-        label: "Current match",
-        role: "searchMatchActiveBackground",
-        roles: ["searchMatchActiveBackground", "searchMatchActiveForeground"],
-      },
-    ],
-  },
-  {
-    id: "context",
-    title: "Context",
-    families: [
-      {
-        id: "sidebar-background",
-        label: "Sidebar background",
-        role: "sidebar",
-        roles: ["sidebar", "sidebarForeground"],
-      },
-      {
-        id: "sidebar-controls",
-        label: "Sidebar controls",
-        role: "sidebarControlSurface",
-        roles: ["sidebarControlSurface"],
-      },
-      {
-        id: "sidebar-selection",
-        label: "Sidebar selection",
-        role: "sidebarRowSelected",
-        roles: ["sidebarRowHover", "sidebarRowActive", "sidebarRowSelected"],
-      },
-      {
-        id: "terminal-background",
-        label: "Terminal background",
-        role: "terminalBackground",
-        roles: [
-          "terminalBackground",
-          "terminalForeground",
-          "terminalSelection",
-          "terminalScrollbar",
-          "terminalScrollbarHover",
-        ],
-      },
-    ],
-  },
-  {
-    id: "status",
-    title: "Status",
-    families: [
-      {
-        id: "error",
-        label: "Error",
-        role: "error",
-        roles: ["error", "errorForeground", "errorSurface"],
-      },
-      {
-        id: "warning",
-        label: "Warning",
-        role: "warning",
-        roles: ["warning", "warningForeground", "warningSurface"],
-      },
-    ],
-  },
-];
-
 const THEME_EDITOR_COLOR_FAMILIES = THEME_EDITOR_ROLE_GROUPS.flatMap((group) => group.families);
 const THEME_EDITOR_COLOR_FAMILY_BY_ROLE = new Map(
   THEME_EDITOR_COLOR_FAMILIES.flatMap((family) =>
@@ -258,18 +76,6 @@ function getThemeEditorColorsByAppearance(): ThemeEditorColorsByAppearance {
 
 function isThemeEditorColor(value: string): boolean {
   return isThemeColor(value.trim());
-}
-
-function getManagedEditorColors(
-  appearance: ThemeAppearance,
-  colors: ThemeEditorColors,
-): ThemeEditorColors {
-  const defaults = getStandardThemeColors(appearance);
-  return createVividThemeColors(
-    appearance,
-    isThemeEditorColor(colors.canvas) ? colors.canvas : defaults.canvas,
-    isThemeEditorColor(colors.accent) ? colors.accent : defaults.accent,
-  );
 }
 
 const PANEL_MARGIN = 8;
@@ -336,13 +142,28 @@ export function ThemeEditorPanel({
   const [name, setName] = useState("");
   const [activeAppearance, setActiveAppearance] = useState<ThemeAppearance>(initialAppearance);
   const [isAdvanced, setIsAdvanced] = useState(false);
-  const [colorsByAppearance, setColorsByAppearance] = useState<ThemeEditorColorsByAppearance>(() =>
-    getThemeEditorColorsByAppearance(),
-  );
-  const [simpleColorsDirtyByAppearance, setSimpleColorsDirtyByAppearance] = useState<
-    Record<ThemeAppearance, boolean>
-  >({ light: false, dark: false });
-  const [shouldRegenerateGuidedColors, setShouldRegenerateGuidedColors] = useState(false);
+  const [sourcesByAppearance, setSourcesByAppearance] = useState<
+    Record<ThemeAppearance, ThemeSource>
+  >(() => ({
+    light: {
+      version: 2,
+      seed: {
+        canvas: getThemeEditorDefaults("light").canvas,
+        accent: getThemeEditorDefaults("light").accent,
+      },
+    },
+    dark: {
+      version: 2,
+      seed: {
+        canvas: getThemeEditorDefaults("dark").canvas,
+        accent: getThemeEditorDefaults("dark").accent,
+      },
+    },
+  }));
+  const colorsByAppearance = {
+    light: resolveThemeSource(sourcesByAppearance.light, "light"),
+    dark: resolveThemeSource(sourcesByAppearance.dark, "dark"),
+  };
   const [error, setError] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [roleQuery, setRoleQuery] = useState("");
@@ -355,9 +176,7 @@ export function ThemeEditorPanel({
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const colorEditSnapshotRef = useRef<{
-    colorsByAppearance: ThemeEditorColorsByAppearance;
-    simpleColorsDirtyByAppearance: Record<ThemeAppearance, boolean>;
-    shouldRegenerateGuidedColors: boolean;
+    sourcesByAppearance: Record<ThemeAppearance, ThemeSource>;
   } | null>(null);
   const dragOffsetRef = useRef<{ dx: number; dy: number; width: number } | null>(null);
   const resizeStartRef = useRef<{
@@ -392,9 +211,24 @@ export function ThemeEditorPanel({
       setActiveAppearance(nextAppearance);
       // Open unmanaged themes in advanced mode to preserve imported or hand-tuned colors.
       setIsAdvanced(sourceTheme !== null && sourceTheme.managed !== true);
-      setSimpleColorsDirtyByAppearance({ light: false, dark: false });
-      setShouldRegenerateGuidedColors(sourceTheme !== null && sourceTheme.managed !== true);
-      setColorsByAppearance(nextColors);
+      setSourcesByAppearance({
+        light:
+          sourceTheme?.sources?.light ??
+          (sourceTheme
+            ? themeSourceFromColors(nextColors.light)
+            : {
+                version: 2,
+                seed: { canvas: nextColors.light.canvas, accent: nextColors.light.accent },
+              }),
+        dark:
+          sourceTheme?.sources?.dark ??
+          (sourceTheme
+            ? themeSourceFromColors(nextColors.dark)
+            : {
+                version: 2,
+                seed: { canvas: nextColors.dark.canvas, accent: nextColors.dark.accent },
+              }),
+      });
       setSelectedRole(null);
       setUsageCount(null);
       setIsInspecting(false);
@@ -454,50 +288,45 @@ export function ThemeEditorPanel({
   }, [open, restoreTheme]);
 
   const updateColor = (role: ThemeColorRole, value: string) => {
-    setColorsByAppearance((current) => {
-      const nextColors = { ...current[activeAppearance], [role]: value };
-      const shouldManageColors =
-        !isAdvanced && THEME_EDITOR_SIMPLE_ROLES.includes(role) && isThemeEditorColor(value);
-
-      return {
-        ...current,
-        [activeAppearance]: isAdvanced
-          ? updateThemeColorFamily(activeAppearance, current[activeAppearance], role, value)
-          : shouldManageColors
-            ? getManagedEditorColors(activeAppearance, nextColors)
-            : nextColors,
-      };
+    if (!isThemeEditorColor(value)) return;
+    setSourcesByAppearance((current) => {
+      let source = current[activeAppearance];
+      if (isAdvanced) {
+        source = editThemeSource(
+          editThemeSource(source, "overrides", role, null),
+          "palette",
+          role,
+          value,
+        );
+      } else {
+        const colors = resolveThemeSource(source, activeAppearance);
+        source = {
+          ...source,
+          seed: { canvas: colors.canvas, accent: colors.accent, [role]: value },
+        };
+        source = editThemeSource(
+          editThemeSource(source, "overrides", role, null),
+          "palette",
+          role,
+          null,
+        );
+      }
+      return { ...current, [activeAppearance]: source };
     });
-    if (!isAdvanced && THEME_EDITOR_SIMPLE_ROLES.includes(role) && isThemeEditorColor(value)) {
-      setSimpleColorsDirtyByAppearance((current) => ({
-        ...current,
-        [activeAppearance]: true,
-      }));
-    }
-    if (isAdvanced) setShouldRegenerateGuidedColors(true);
   };
 
-  // A color edit also rewrites derived roles, so cancelling restores the whole snapshot rather than
-  // replaying the previous value through updateColor.
   const startColorEdit = () => {
-    colorEditSnapshotRef.current = {
-      colorsByAppearance,
-      simpleColorsDirtyByAppearance,
-      shouldRegenerateGuidedColors,
-    };
+    colorEditSnapshotRef.current = { sourcesByAppearance };
   };
 
   const cancelColorEdit = () => {
     const snapshot = colorEditSnapshotRef.current;
     colorEditSnapshotRef.current = null;
-    if (!snapshot) return;
-    setColorsByAppearance(snapshot.colorsByAppearance);
-    setSimpleColorsDirtyByAppearance(snapshot.simpleColorsDirtyByAppearance);
-    setShouldRegenerateGuidedColors(snapshot.shouldRegenerateGuidedColors);
+    if (snapshot) setSourcesByAppearance(snapshot.sourcesByAppearance);
   };
 
   const selectThemeRole = (role: ThemeColorRole, reveal = false) => {
-    const visibleRole = getThemeEditorColorFamily(role)?.role ?? role;
+    const visibleRole = role;
     setSelectedRole(visibleRole);
     if (!THEME_EDITOR_SIMPLE_ROLES.includes(visibleRole)) {
       setIsAdvanced(true);
@@ -725,25 +554,6 @@ export function ThemeEditorPanel({
     if (selectedRole && !THEME_EDITOR_SIMPLE_ROLES.includes(selectedRole)) {
       setSelectedRole(null);
     }
-    if (!shouldRegenerateGuidedColors) return;
-
-    const managedAppearances: ReadonlyArray<ThemeAppearance> =
-      editingTheme && getThemeModes(editingTheme).length > 1
-        ? ["light", "dark"]
-        : [activeAppearance];
-    setSimpleColorsDirtyByAppearance((current) => {
-      const next = { ...current };
-      for (const appearance of managedAppearances) next[appearance] = true;
-      return next;
-    });
-    setColorsByAppearance((current) => {
-      const next = { ...current };
-      for (const appearance of managedAppearances) {
-        next[appearance] = getManagedEditorColors(appearance, current[appearance]);
-      }
-      return next;
-    });
-    setShouldRegenerateGuidedColors(false);
   };
 
   const handleSubmit = () => {
@@ -753,16 +563,7 @@ export function ThemeEditorPanel({
     }
 
     try {
-      const colorsForSave = !isAdvanced
-        ? {
-            light: simpleColorsDirtyByAppearance.light
-              ? getManagedEditorColors("light", colorsByAppearance.light)
-              : colorsByAppearance.light,
-            dark: simpleColorsDirtyByAppearance.dark
-              ? getManagedEditorColors("dark", colorsByAppearance.dark)
-              : colorsByAppearance.dark,
-          }
-        : colorsByAppearance;
+      const colorsForSave = colorsByAppearance;
 
       let savedTheme: ThemeDefinition;
       let mergedAppearance: ThemeAppearance | null = null;
@@ -777,7 +578,16 @@ export function ThemeEditorPanel({
         mergedAppearance = editedModes[0] ?? null;
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
-            version: THEME_FILE_VERSION,
+            version: 2,
+            sources: {
+              ...mergeTarget?.sources,
+              ...Object.fromEntries(
+                (editingTheme ? getThemeModes(editingTheme) : [activeAppearance]).map((mode) => [
+                  mode,
+                  sourcesByAppearance[mode],
+                ]),
+              ),
+            },
             id: mergeTarget.id,
             name: mergeTarget.label,
             appearance: mergeTarget.appearance,
@@ -797,7 +607,16 @@ export function ThemeEditorPanel({
         const variantAppearance = baseAppearance === "light" ? "dark" : "light";
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
-            version: THEME_FILE_VERSION,
+            version: 2,
+            sources: {
+              ...mergeTarget?.sources,
+              ...Object.fromEntries(
+                (editingTheme ? getThemeModes(editingTheme) : [activeAppearance]).map((mode) => [
+                  mode,
+                  sourcesByAppearance[mode],
+                ]),
+              ),
+            },
             id: editingTheme.id,
             name,
             appearance: baseAppearance,
@@ -819,7 +638,16 @@ export function ThemeEditorPanel({
         mergedAppearance = activeAppearance;
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
-            version: THEME_FILE_VERSION,
+            version: 2,
+            sources: {
+              ...mergeTarget?.sources,
+              ...Object.fromEntries(
+                (editingTheme ? getThemeModes(editingTheme) : [activeAppearance]).map((mode) => [
+                  mode,
+                  sourcesByAppearance[mode],
+                ]),
+              ),
+            },
             id: mergeTarget.id,
             name: mergeTarget.label,
             appearance: mergeTarget.appearance,
@@ -835,7 +663,8 @@ export function ThemeEditorPanel({
       } else {
         savedTheme = installCustomTheme(
           parseThemeFile({
-            version: THEME_FILE_VERSION,
+            version: 2,
+            sources: { [activeAppearance]: sourcesByAppearance[activeAppearance] },
             name,
             appearance: activeAppearance,
             colors: colorsForSave[activeAppearance],
@@ -940,6 +769,25 @@ export function ThemeEditorPanel({
       </div>
       <div className="flex min-w-0 items-start gap-3">
         {isAdvanced ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() =>
+              setSourcesByAppearance((current) => ({
+                ...current,
+                [activeAppearance]: {
+                  version: 2,
+                  ...(current[activeAppearance].seed
+                    ? { seed: current[activeAppearance].seed }
+                    : {}),
+                },
+              }))
+            }
+          >
+            Reset {activeAppearance}
+          </Button>
+        ) : null}
+        {isAdvanced ? (
           <Input
             aria-label="Filter colors"
             className="min-w-0 flex-1"
@@ -961,25 +809,60 @@ export function ThemeEditorPanel({
     </div>
   );
 
+  const resetRole = (role: ThemeColorRole) =>
+    setSourcesByAppearance((current) => ({
+      ...current,
+      [activeAppearance]: editThemeSource(
+        editThemeSource(current[activeAppearance], "overrides", role, null),
+        "palette",
+        role,
+        null,
+      ),
+    }));
+  const source = sourcesByAppearance[activeAppearance];
+  const roleIsExplicit = (role: ThemeColorRole) =>
+    source.overrides?.[role] !== undefined || source.palette?.[role] !== undefined;
+
   const renderRoleFields = (
     families: ReadonlyArray<ThemeEditorColorFamily>,
     gridClassName = "grid gap-2 sm:grid-cols-2",
   ) => (
     <div className={gridClassName}>
-      {families.map((family) => (
-        <ThemeColorField
-          key={family.id}
-          label={family.label}
-          onChange={updateColor}
-          onEditCancel={cancelColorEdit}
-          onEditStart={startColorEdit}
-          onSelect={selectThemeRole}
-          onToggleSelected={toggleThemeRole}
-          role={family.role}
-          selected={selectedRole === family.role}
-          value={colorsByAppearance[activeAppearance][family.role]}
-        />
-      ))}
+      {families.map((family) => {
+        const query = roleQuery.trim().toLowerCase();
+        const exactRole = query
+          ? family.roles.find(
+              (role) =>
+                role.toLowerCase() === query || getThemeRoleLabel(role).toLowerCase() === query,
+            )
+          : undefined;
+        const role =
+          exactRole ??
+          (selectedRole && family.roles.includes(selectedRole) ? selectedRole : family.role);
+        return (
+          <ThemeColorField
+            key={family.id}
+            label={role === family.role ? family.label : getThemeRoleLabel(role)}
+            explicit={roleIsExplicit(role)}
+            onReset={() => resetRole(role)}
+            resetSource={
+              role === family.role
+                ? source.seed
+                  ? "guided colors"
+                  : "appearance defaults"
+                : family.label
+            }
+            onChange={updateColor}
+            onEditCancel={cancelColorEdit}
+            onEditStart={startColorEdit}
+            onSelect={selectThemeRole}
+            onToggleSelected={toggleThemeRole}
+            role={role}
+            selected={selectedRole === role}
+            value={colorsByAppearance[activeAppearance][role]}
+          />
+        );
+      })}
     </div>
   );
 

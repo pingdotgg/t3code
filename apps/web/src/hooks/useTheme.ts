@@ -171,7 +171,7 @@ export function readAppearanceModePreference(theme: Theme): ThemePreferenceMode 
   }
 
   if (readStoredFollowSystem(theme)) return "system";
-  return getThemePreferenceMode(theme) ?? "light";
+  return getThemePreferenceMode(theme) ?? "system";
 }
 
 function writeAppearanceModePreference(appearanceMode: ThemePreferenceMode): void {

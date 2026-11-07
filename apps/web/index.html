@@ -314,7 +314,9 @@
             THEME_FOLLOW_SYSTEM_STORAGE_KEY,
           );
           const preferenceMode =
-            theme === "light" || theme === "dark" ? theme : (legacyMode ?? baseAppearance);
+            theme === "light" || theme === "dark"
+              ? theme
+              : (legacyMode ?? (themeModes === null ? "system" : baseAppearance));
           const appearanceMode = isThemePreferenceMode(storedAppearanceMode)
             ? storedAppearanceMode
             : storedFollowSystem === "true"

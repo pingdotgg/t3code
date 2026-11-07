@@ -52,7 +52,9 @@ without replaying its transitions.
 
 On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code
 theme. The theme editor's color picker lets you select an area of the app to find the color to
-change. Export your theme as JSON to share it.
+change. Guided background and accent changes preserve advanced overrides. Reset a color to
+restore inheritance, or reset the current appearance to clear its custom colors. Export your
+theme as JSON to share it.
 
 ## Environment themes
 

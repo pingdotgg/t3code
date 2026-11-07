@@ -1,3 +1,4 @@
+import { RotateCcwIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
@@ -323,6 +324,9 @@ export const ThemeColorField = memo(function ThemeColorField({
   onToggleSelected,
   selected = false,
   label: customLabel,
+  explicit = true,
+  onReset,
+  resetSource,
 }: {
   role: ThemeColorRole;
   value: string;
@@ -333,7 +337,11 @@ export const ThemeColorField = memo(function ThemeColorField({
   onToggleSelected?: (role: ThemeColorRole) => void;
   selected?: boolean;
   label?: string;
+  explicit?: boolean;
+  onReset?: () => void;
+  resetSource?: string;
 }) {
+  const [textDraft, setTextDraft] = useState<string | null>(null);
   const label = customLabel ?? getThemeRoleLabel(role);
   const isColorValue = isThemeColor(value);
   const swatchValue = isColorValue ? value : "#000000";
@@ -359,13 +367,32 @@ export const ThemeColorField = memo(function ThemeColorField({
               onClick={() => onToggleSelected?.(role)}
               type="button"
             >
-              <span className="min-w-0 flex-1 truncate">{label}</span>
+              <span className={cn("min-w-0 flex-1 truncate", explicit && "text-foreground")}>
+                {label}
+              </span>
             </button>
           }
         />
         <TooltipPopup side="top">{`${selected ? "Hide" : "Show"} where ${label} is used`}</TooltipPopup>
       </Tooltip>
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        {explicit && onReset ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`Reset ${label}`}
+                  onClick={onReset}
+                  className="cursor-pointer text-muted-foreground hover:text-foreground"
+                >
+                  <RotateCcwIcon className="size-3.5" />
+                </button>
+              }
+            />
+            <TooltipPopup>{`Reset ${label} to ${resetSource ?? "derived colors"}`}</TooltipPopup>
+          </Tooltip>
+        ) : null}
         <ThemeColorPicker
           label={label}
           onChange={(nextValue) => onChange(role, nextValue)}
@@ -375,17 +402,21 @@ export const ThemeColorField = memo(function ThemeColorField({
           value={swatchValue}
         />
         <Input
-          aria-invalid={!isColorValue}
+          aria-invalid={textDraft !== null ? !isThemeColor(textDraft) : !isColorValue}
           aria-label={`${label} hex value`}
           className="w-28 shrink-0"
           font="mono"
           id={`${role}-hex`}
           nativeInput
-          onChange={(event) => onChange(role, event.currentTarget.value)}
+          onChange={(event) => {
+            setTextDraft(event.currentTarget.value);
+            onChange(role, event.currentTarget.value);
+          }}
+          onBlur={() => setTextDraft(null)}
           onFocus={() => onSelect?.(role)}
           onPointerDown={() => onSelect?.(role)}
           size="compact"
-          value={editorValue}
+          value={textDraft ?? editorValue}
         />
       </div>
     </div>
