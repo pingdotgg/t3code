@@ -1607,7 +1607,7 @@ const make = Effect.gen(function* () {
   ): Promise<PreviewAutomationStatus> => {
     if (!tab) {
       return {
-        available: false,
+        available: true,
         visible: false,
         tabId: null,
         url: null,

@@ -2039,6 +2039,39 @@ it.live("agents read a human's tab with no arguments and act on it only while no
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("browser automation stays available without an open tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const emptyScope = {
+        ...scope,
+        thread: { ...scope.thread, threadId: ThreadId.make("empty-browser-thread") },
+      };
+      const empty = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: emptyScope,
+        operation: "status",
+        input: {},
+      });
+      expect(empty).toMatchObject({ available: true, visible: false, tabId: null });
+      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
+      const closed = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(closed).toMatchObject({ available: true, visible: false, tabId: null });
+      expect(contexts).toHaveLength(1);
+      const reopened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { show: false },
+      });
+      expect(reopened.available).toBe(true);
+      expect(reopened.tabId).not.toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a session's own tab stays its default while other sessions' tabs are listed", () =>
   Effect.scoped(
     Effect.gen(function* () {
