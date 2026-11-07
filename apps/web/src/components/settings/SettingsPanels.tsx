@@ -1,3 +1,4 @@
+import { requestCoordinatedDesktopUpdate } from "../desktop/desktopUpdateRequest";
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
@@ -36,7 +37,6 @@ import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDisabledReason,
-  getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
@@ -188,90 +188,10 @@ function AboutVersionSection() {
     ).length;
 
   const handleButtonClick = async () => {
-    const bridge = window.desktopBridge;
-    if (!bridge) return;
-
-    const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-
-    if (action === "download") {
-      void bridge.downloadUpdate().catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not download update",
-            description: error instanceof Error ? error.message : "Download failed.",
-          }),
-        );
-      });
-      return;
-    }
-
-    if (action === "install") {
-      if (isUpdateActionPending) return;
-      setIsUpdateActionPending(true);
-      let confirmed = false;
-      try {
-        confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(
-            updateState ?? { availableVersion: null, downloadedVersion: null },
-          ),
-        );
-      } catch (error) {
-        setIsUpdateActionPending(false);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
-          }),
-        );
-        return;
-      }
-      if (!confirmed) {
-        setIsUpdateActionPending(false);
-        return;
-      }
-      void bridge
-        .installUpdate()
-        .catch((error: unknown) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "Install failed.",
-            }),
-          );
-        })
-        .finally(() => setIsUpdateActionPending(false));
-      return;
-    }
-
-    if (typeof bridge.checkForUpdate !== "function") return;
-    void bridge
-      .checkForUpdate()
-      .then((result) => {
-        if (!result.checked) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not check for updates",
-              description:
-                updatesDenial ??
-                result.state.message ??
-                "Automatic updates are not available in this build.",
-            }),
-          );
-        }
-      })
-      .catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
-          }),
-        );
-      });
+    if (!window.desktopBridge || isUpdateActionPending) return;
+    setIsUpdateActionPending(true);
+    await requestCoordinatedDesktopUpdate();
+    setIsUpdateActionPending(false);
   };
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
@@ -285,8 +205,6 @@ function AboutVersionSection() {
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
     downloading: "Downloading…",
-    // Off its track, "up to date" only means no switch is pending; Review moves it.
-    ...(appOffTrack ? {} : { "up-to-date": "Up to Date" }),
   };
   const buttonLabel =
     actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";

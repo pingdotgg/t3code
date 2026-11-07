@@ -9,7 +9,11 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import type { DesktopAppActivationRequest } from "@t3tools/contracts";
+import type {
+  DesktopAppActivationRequest,
+  DesktopAppControlRequest,
+  DesktopUpdateCommandRequest,
+} from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
@@ -17,6 +21,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Exit from "effect/Exit";
 import { Command } from "effect/cli";
 import { describe, expect } from "vite-plus/test";
 
@@ -71,12 +76,14 @@ const pathExists = (path: string) =>
     ),
   );
 
-async function startFakeDesktop(input: {
+async function startFakeDesktop<
+  Request extends DesktopAppControlRequest = DesktopAppActivationRequest,
+>(input: {
   readonly baseDir: string;
   readonly stateSubdirectory?: "userdata" | "dev";
   readonly platform: NodeJS.Platform;
   readonly userId: number | undefined;
-  readonly reply?: (request: DesktopAppActivationRequest) => unknown;
+  readonly reply?: (request: Request) => unknown;
 }) {
   const target = resolveDesktopAppControlAddress({
     stateDir: NodePath.join(input.baseDir, input.stateSubdirectory ?? "userdata"),
@@ -92,7 +99,7 @@ async function startFakeDesktop(input: {
     });
   }
 
-  const received: DesktopAppActivationRequest[] = [];
+  const received: Request[] = [];
   const server = NodeNet.createServer((socket) => {
     socket.setEncoding("utf8");
     let buffer = "";
@@ -100,7 +107,7 @@ async function startFakeDesktop(input: {
       buffer += chunk;
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
-      const request = JSON.parse(buffer.slice(0, newline)) as DesktopAppActivationRequest;
+      const request = JSON.parse(buffer.slice(0, newline)) as Request;
       received.push(request);
       const response = input.reply
         ? input.reply(request)
@@ -134,12 +141,17 @@ async function startFakeDesktop(input: {
 }
 
 const fakeDesktop = Effect.fn(function* (
-  input: Omit<Parameters<typeof startFakeDesktop>[0], "platform" | "userId">,
+  input: Omit<
+    Parameters<typeof startFakeDesktop<DesktopAppActivationRequest>>[0],
+    "platform" | "userId"
+  >,
 ) {
   const platform = yield* HostProcess.Platform;
   const userId = yield* HostProcess.UserId;
   return yield* Effect.acquireRelease(
-    Effect.promise(() => startFakeDesktop({ ...input, platform, userId })),
+    Effect.promise(() =>
+      startFakeDesktop<DesktopAppActivationRequest>({ ...input, platform, userId }),
+    ),
     (server) => Effect.promise(() => server.close()),
   );
 });
@@ -391,3 +403,79 @@ describe("t3 app", () => {
       ),
   );
 });
+
+it.effect("routes a legacy desktop shim's update and read-only check through desktop control", () =>
+  Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    const userId = yield* HostProcess.UserId;
+    const root = yield* Effect.promise(() =>
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-desktop-update-")),
+    );
+    const restore = setProcessEnv("T3CODE_CLI_PATH", NodePath.join(root, "bin/t3"));
+    let unsupported = false;
+    const desktop = yield* Effect.promise(() =>
+      startFakeDesktop<DesktopUpdateCommandRequest>({
+        baseDir: root,
+        platform,
+        userId,
+        reply: (request) =>
+          unsupported
+            ? {
+                version: 1,
+                requestId: request.requestId,
+                ok: false,
+                code: "invalid-request",
+                message: "The desktop app request is invalid.",
+              }
+            : {
+                version: 1,
+                requestId: request.requestId,
+                ok: true,
+                ...(request.type === "update-check"
+                  ? {
+                      check: {
+                        schema: "t3.update-check.v1",
+                        coordinated: true,
+                        owner: "desktop",
+                        pathway: "desktop-coordinated",
+                        currentVersion: "0.1.7",
+                        targetVersion: "0.1.8",
+                        state: "ready",
+                      },
+                    }
+                  : { status: "cancelled" }),
+              },
+      }),
+    );
+    try {
+      yield* runCli(["update", "--check", "--json", "--base-dir", root]);
+      assert.equal(desktop.received[0]?.type, "update-check");
+      assert.deepStrictEqual(yield* Effect.promise(() => NodeFSP.readdir(root)), []);
+      yield* runCli(["update", "--base-dir", root]);
+      assert.equal(desktop.received[1]?.type, "update");
+      yield* runCli(["service", "update", "--base-dir", root]);
+      assert.equal(desktop.received[2]?.type, "update");
+      for (const options of [
+        ["--yes"],
+        ["--channel", "stable"],
+        ["--allow-downgrade"],
+        ["0.1.8"],
+      ]) {
+        const refused = yield* runCli(["update", ...options, "--base-dir", root]).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(refused));
+      }
+      assert.equal(desktop.received.length, 3);
+      unsupported = true;
+      const oldDesktop = yield* runCli(["update", "--base-dir", root]).pipe(Effect.flip);
+      expect(oldDesktop).toMatchObject({
+        _tag: "DesktopCliUpdateError",
+        reason:
+          "This desktop app cannot coordinate t3 update. Update the desktop app first. No standalone update was attempted.",
+      });
+    } finally {
+      restore();
+      yield* Effect.promise(() => desktop.close());
+      yield* Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true }));
+    }
+  }),
+);

@@ -1,3 +1,4 @@
+import * as DesktopUpdateCommand from "./DesktopUpdateCommand.ts";
 import type {
   DesktopTelemetryRequestDesktopUpdate,
   DesktopUpdateRemoteOutcome,
@@ -48,11 +49,13 @@ export const listen: Effect.Effect<
   void,
   never,
   | DesktopUpdates.DesktopUpdates
+  | DesktopUpdateCommand.DesktopUpdateCommand
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
   | DesktopBackendPool.DesktopBackendPool
   | Scope.Scope
 > = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
+  const command = yield* DesktopUpdateCommand.DesktopUpdateCommand;
   const backends = yield* DesktopBackendPool.DesktopBackendPool;
   const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
   const activeRequestIdRef = yield* Ref.make(Option.none<string>());
@@ -135,6 +138,19 @@ export const listen: Effect.Effect<
   const handleRequest = (request: DesktopTelemetryRequestDesktopUpdate): Effect.Effect<void> =>
     Effect.scoped(
       Effect.gen(function* () {
+        const reservation = yield* command.reserve;
+        if (reservation === null) {
+          yield* publishReport(
+            yield* updates.getState,
+            {
+              outcome: "failed",
+              reason: "A desktop update or confirmation is already in progress.",
+            },
+            request.requestId,
+          );
+          return;
+        }
+        yield* Effect.addFinalizer(() => command.finish(reservation));
         const cancellation = yield* Deferred.make<void>();
         const shouldStart = yield* Ref.modify(requestControlRef, (control) => {
           if (control.cancelledBeforeStart.includes(request.requestId)) {
@@ -484,7 +500,16 @@ export const listen: Effect.Effect<
         }
         return;
       }
-      const result = yield* updates.installPrepared(claim.prepared.downloadedVersion);
+      const reservation = yield* command.reserve;
+      if (reservation === null) {
+        const reason = "A desktop update or confirmation is already in progress.";
+        yield* recordPreparedFailure(commit.requestId, reason);
+        yield* publishReport(current, { outcome: "failed", reason }, commit.requestId);
+        return;
+      }
+      const result = yield* updates
+        .installPrepared(claim.prepared.downloadedVersion)
+        .pipe(Effect.ensuring(command.finish(reservation)));
       if (
         !result.accepted &&
         result.state.downloadedVersion === claim.prepared.downloadedVersion &&

@@ -32,6 +32,11 @@ import {
   getUpdateState,
   installUpdate,
   setUpdateChannel,
+  updateCommandReady,
+  updateCommandComplete,
+  updateCommandRun,
+  updateCommandReserve,
+  updateCommandFinish,
 } from "./methods/updates.ts";
 import {
   getAppBranding,
@@ -159,6 +164,11 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(downloadUpdate);
   yield* ipc.handle(installUpdate);
   yield* ipc.handle(checkForUpdate);
+  yield* ipc.handle(updateCommandReady);
+  yield* ipc.handle(updateCommandComplete);
+  yield* ipc.handle(updateCommandRun);
+  yield* ipc.handle(updateCommandReserve);
+  yield* ipc.handle(updateCommandFinish);
   yield* ipc.handle(getCliCommandState);
   yield* ipc.handle(installCliCommand);
   yield* ipc.handle(uninstallCliCommand);

@@ -1,10 +1,11 @@
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateCommandRequest, DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { act, render } from "../../../test/render";
+import { act, render, stubGlobal } from "../../../test/render";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { DesktopUpdateCoordinator } from "../desktop/DesktopUpdateCoordinator";
 
 const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
@@ -81,6 +82,34 @@ function publish(update: DesktopUpdateState | null) {
   });
 }
 
+function coordinateUpdates() {
+  let listener: ((request: DesktopUpdateCommandRequest) => void) | undefined;
+  return stubGlobal("desktopBridge", {
+    getUpdateState: async () => ({
+      ...nightlyUpdate([]),
+      status: "up-to-date",
+      availableVersion: null,
+    }),
+    checkForUpdate: async () => ({
+      state: { ...nightlyUpdate([]), status: "up-to-date", availableVersion: null },
+    }),
+    updateCommand: {
+      setReady: async () => undefined,
+      complete: async () => true,
+      request: async () => {
+        listener?.({ version: 1, requestId: "sidebar", type: "update" });
+        return { version: 1, requestId: "sidebar", ok: true, status: "cancelled" };
+      },
+      onRequest: (callback: typeof listener) => {
+        listener = callback;
+        return () => {
+          listener = undefined;
+        };
+      },
+    },
+  });
+}
+
 const releaseNotes = () => document.querySelector('[aria-label="Update release notes"]');
 
 describe("SidebarUpdatePill release notes", () => {
@@ -117,9 +146,34 @@ describe("SidebarUpdatePill release notes", () => {
 });
 
 describe("SidebarUpdatePill update everything", () => {
+  it("uses the shared check when no local or remote offers are known", async () => {
+    setup({ ...nightlyUpdate([]), status: "up-to-date", availableVersion: null });
+    const request = vi.fn(async () => ({
+      version: 1,
+      requestId: "sidebar",
+      ok: true,
+      status: "up-to-date",
+    }));
+    const localCheck = vi.fn(async () => ({ checked: true, state: mocks.update }));
+    using _bridge = stubGlobal("desktopBridge", {
+      updateCommand: { request },
+      checkForUpdate: localCheck,
+    });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates", exact: true }));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+    expect(localCheck).not.toHaveBeenCalled();
+  });
+
   it("does not refocus the update button after a pointer cancel", async () => {
     setup(null, { hasUpdates: true });
-    await using screen = await render(<SidebarUpdatePill />);
+    using _bridge = coordinateUpdates();
+    await using screen = await render(
+      <>
+        <SidebarUpdatePill />
+        <DesktopUpdateCoordinator />
+      </>,
+    );
     const button = screen.getByRole("button", { name: "Update everything" });
     await userEvent.click(button);
     const cancel = page.getByRole("button", { name: "Cancel" });
@@ -132,7 +186,13 @@ describe("SidebarUpdatePill update everything", () => {
 
   it("returns focus to the update button after Escape", async () => {
     setup(null, { hasUpdates: true });
-    await using screen = await render(<SidebarUpdatePill />);
+    using _bridge = coordinateUpdates();
+    await using screen = await render(
+      <>
+        <SidebarUpdatePill />
+        <DesktopUpdateCoordinator />
+      </>,
+    );
     const button = screen.getByRole("button", { name: "Update everything" });
     await userEvent.click(button);
     await expect.element(page.getByRole("button", { name: "Cancel" })).toBeVisible();

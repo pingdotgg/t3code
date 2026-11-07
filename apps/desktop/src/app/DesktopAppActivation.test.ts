@@ -63,7 +63,7 @@ function startOkServer(target: ReturnType<typeof makeTarget>, userId: number | u
   });
 }
 
-function exchange(address: string, payload: DesktopAppActivationRequest) {
+function exchange(address: string, payload: unknown) {
   return new Promise<DesktopAppActivationResponse>((resolve, reject) => {
     const socket = NodeNet.createConnection(address);
     socket.setEncoding("utf8");
@@ -81,6 +81,47 @@ function exchange(address: string, payload: DesktopAppActivationRequest) {
 }
 
 describe("desktop app control server", () => {
+  it.effect("routes a read-only update check without activating a workspace", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcess.Platform;
+      const userId = yield* HostProcess.UserId;
+      yield* Effect.promise(async () => {
+        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-update-check-"));
+        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const server = await startDesktopAppControlServer({
+          ...target,
+          userId,
+          handle: async () => {
+            throw new Error("A check must not activate a workspace");
+          },
+          handleUpdate: async (input) => ({
+            version: 1,
+            requestId: input.requestId,
+            ok: true,
+            check: {
+              schema: "t3.update-check.v1",
+              coordinated: true,
+              owner: "desktop",
+              pathway: "desktop-coordinated",
+              currentVersion: "0.1.7",
+              targetVersion: "0.1.8",
+              state: "ready",
+            },
+          }),
+          cancel: () => undefined,
+          onReclaimError: () => undefined,
+        });
+        openServers.push(server);
+        const response = await exchange(target.address, {
+          version: 1,
+          requestId: "update-check",
+          type: "update-check",
+        });
+        expect(response).toMatchObject({ ok: true, check: { coordinated: true, state: "ready" } });
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      });
+    }),
+  );
   it.effect("cancels a queued request when the client disconnects", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;

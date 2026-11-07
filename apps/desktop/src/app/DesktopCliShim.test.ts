@@ -35,7 +35,7 @@ const writeShim = (root: string, target: CliShimTarget) => {
 const run = (shim: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv = {}) =>
   NodeChildProcess.spawnSync(shim, args, {
     encoding: "utf8",
-    env: { PATH: process.env.PATH, ...env },
+    env: { PATH: process.env.PATH, TMPDIR: NodePath.dirname(shim), ...env },
   });
 
 const REPORTER =

@@ -96,56 +96,79 @@ function SwitchPlan({
   const run = async () => {
     const bridge = window.desktopBridge;
     if (!bridge) return;
-    // Stay open while the feed is checked; the run's own progress takes over after.
-    setChecking(true);
-    const fail = (description: string) =>
+    const reservation = await bridge.updateCommand?.reserve();
+    if (reservation == null) {
       toastManager.add(
-        stackedThreadToast({ type: "error", title: `Could not switch to ${label}`, description }),
+        stackedThreadToast({
+          type: "error",
+          title: "Could not switch tracks",
+          description: "Another update is in progress, or the coordinated updater is unavailable.",
+        }),
       );
-    const prepared = await prepareLocalTrackSwitch(bridge, {
-      channel: release.channel,
-      version: release.version,
-      reinstall: switchesLocal,
-    });
-    onClose();
-    if (!prepared.ok) {
-      fail(prepared.message);
       return;
     }
-    const { local } = prepared;
-    const result = await settlePromise(() =>
-      everything.run(
-        local === null
-          ? {}
-          : {
-              ...(local.status === "available"
-                ? {
-                    downloadLocal: (reportError) =>
-                      downloadLocalUpdate(bridge, { notifyDownloaded: false, reportError }),
-                  }
-                : {}),
-              // Install only a build the database check covers, pinned so nothing replaces it.
-              installLocal: async (reportError) => {
-                const { downloadedVersion } = await bridge.getUpdateState();
-                if (
-                  downloadedVersion === null ||
-                  !acceptsTrackSwitchRelease(downloadedVersion, release.channel, release.version)
-                ) {
-                  reportError(
-                    "Could not install update",
-                    `This app downloaded ${downloadedVersion ?? "nothing"}, not ${release.version} or newer.`,
-                  );
-                  return false;
-                }
-                return installLocalUpdate(bridge, reportError, downloadedVersion);
-              },
-            },
-      ),
-    );
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      fail(error instanceof Error ? error.message : "An unexpected error occurred.");
-    }
+    await Promise.resolve()
+      .then(async () => {
+        // Stay open while the feed is checked; the run's own progress takes over after.
+        setChecking(true);
+        const fail = (description: string) =>
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Could not switch to ${label}`,
+              description,
+            }),
+          );
+        const prepared = await prepareLocalTrackSwitch(bridge, {
+          channel: release.channel,
+          version: release.version,
+          reinstall: switchesLocal,
+        });
+        onClose();
+        if (!prepared.ok) {
+          fail(prepared.message);
+          return;
+        }
+        const { local } = prepared;
+        const result = await settlePromise(() =>
+          everything.run(
+            local === null
+              ? {}
+              : {
+                  ...(local.status === "available"
+                    ? {
+                        downloadLocal: (reportError) =>
+                          downloadLocalUpdate(bridge, { notifyDownloaded: false, reportError }),
+                      }
+                    : {}),
+                  // Install only a build the database check covers, pinned so nothing replaces it.
+                  installLocal: async (reportError) => {
+                    const { downloadedVersion } = await bridge.getUpdateState();
+                    if (
+                      downloadedVersion === null ||
+                      !acceptsTrackSwitchRelease(
+                        downloadedVersion,
+                        release.channel,
+                        release.version,
+                      )
+                    ) {
+                      reportError(
+                        "Could not install update",
+                        `This app downloaded ${downloadedVersion ?? "nothing"}, not ${release.version} or newer.`,
+                      );
+                      return false;
+                    }
+                    return installLocalUpdate(bridge, reportError, downloadedVersion);
+                  },
+                },
+          ),
+        );
+        if (result._tag === "Failure") {
+          const error = squashAtomCommandFailure(result);
+          fail(error instanceof Error ? error.message : "An unexpected error occurred.");
+        }
+      })
+      .finally(() => bridge.updateCommand.finish(reservation));
   };
 
   return (

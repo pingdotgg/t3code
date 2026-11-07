@@ -1,3 +1,4 @@
+import { requestCoordinatedDesktopUpdate } from "../desktop/desktopUpdateRequest";
 import {
   type DesktopBridge,
   type DesktopUpdateState,
@@ -10,7 +11,6 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
-import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -21,7 +21,6 @@ import {
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateIdleTooltip,
-  getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -42,11 +41,7 @@ import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
 import { SidebarUpdateCapsule } from "./SidebarUpdateCapsule";
 import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
 import type { UpdateEverythingRun, UpdateRunLocalState } from "./updateEverything.logic";
-import {
-  clearSavedUpdateEverythingResult,
-  saveUpdateEverythingResult,
-  useUpdateEverythingRun,
-} from "./updateEverythingRun";
+import { useUpdateEverythingRun } from "./updateEverythingRun";
 import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
@@ -281,45 +276,18 @@ function SidebarUpdateControl() {
     const bridge = window.desktopBridge;
     if (isInteractionDisabled) return;
 
+    if (isElectron) {
+      setIsActionPending(true);
+      await requestCoordinatedDesktopUpdate();
+      setIsActionPending(false);
+      return;
+    }
     if (runsEverything) {
       setIsConfirmingEverything(true);
       return;
     }
-
     if (!bridge || !state) return;
     setIsActionPending(true);
-
-    if (action === "download") {
-      void downloadLocalUpdate(bridge, { notifyDownloaded: true }).finally(() =>
-        setIsActionPending(false),
-      );
-      return;
-    }
-
-    if (action === "install") {
-      let confirmed = false;
-      try {
-        confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(state),
-        );
-      } catch (error) {
-        setIsActionPending(false);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
-          }),
-        );
-        return;
-      }
-      if (!confirmed) {
-        setIsActionPending(false);
-        return;
-      }
-      void installLocalUpdate(bridge).finally(() => setIsActionPending(false));
-      return;
-    }
 
     if (!prefersReducedMotion) {
       setIsCheckAnimationLatched(true);
@@ -429,18 +397,7 @@ function SidebarUpdateControl() {
           icon={statusIcon}
           {...(run.localVersion === null && action === "install" && window.desktopBridge
             ? {
-                onRestart: async () => {
-                  saveUpdateEverythingResult({
-                    localVersion: localUpdateVersion,
-                    updatedServers: 0,
-                    updatedProviders: 0,
-                    failures: [],
-                    restarting: [],
-                  });
-                  if (!(await installLocalUpdate(window.desktopBridge!))) {
-                    clearSavedUpdateEverythingResult();
-                  }
-                },
+                onRestart: () => requestCoordinatedDesktopUpdate(),
               }
             : {})}
         />

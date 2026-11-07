@@ -51,3 +51,46 @@ export const DesktopAppActivationResponse = Schema.Union([
   DesktopAppActivationFailure,
 ]);
 export type DesktopAppActivationResponse = typeof DesktopAppActivationResponse.Type;
+
+export const T3UpdateCheck = Schema.Struct({
+  schema: Schema.Literal("t3.update-check.v1"),
+  coordinated: Schema.Boolean,
+  owner: Schema.Literals(["desktop", "standalone"]),
+  pathway: Schema.Literals(["desktop-coordinated", "standalone"]),
+  currentVersion: TrimmedNonEmptyString,
+  targetVersion: Schema.NullOr(TrimmedNonEmptyString),
+  state: Schema.Literals(["ready", "up-to-date", "unavailable", "busy", "blocked", "error"]),
+  reason: Schema.optional(TrimmedNonEmptyString),
+});
+export type T3UpdateCheck = typeof T3UpdateCheck.Type;
+
+export const DesktopUpdateCommandRequest = Schema.Struct({
+  version: Schema.Literal(1),
+  requestId: TrimmedNonEmptyString,
+  type: Schema.Literals(["update", "update-check"]),
+});
+export type DesktopUpdateCommandRequest = typeof DesktopUpdateCommandRequest.Type;
+
+export const DesktopUpdateCommandResponse = Schema.Union([
+  Schema.Struct({
+    version: Schema.Literal(1),
+    requestId: TrimmedNonEmptyString,
+    ok: Schema.Literal(true),
+    check: T3UpdateCheck,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    requestId: TrimmedNonEmptyString,
+    ok: Schema.Literal(true),
+    status: Schema.Literals(["started", "cancelled", "up-to-date"]),
+  }),
+  DesktopAppActivationFailure,
+]);
+export type DesktopUpdateCommandResponse = typeof DesktopUpdateCommandResponse.Type;
+
+export const DesktopAppControlRequest = Schema.Union([
+  DesktopAppActivationRequest,
+  DesktopUpdateCommandRequest,
+]);
+export type DesktopAppControlRequest = typeof DesktopAppControlRequest.Type;
+export type DesktopAppControlResponse = DesktopAppActivationResponse | DesktopUpdateCommandResponse;

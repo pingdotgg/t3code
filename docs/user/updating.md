@@ -36,6 +36,33 @@ The confirmation counts the running threads that the restarts will interrupt,
 and how many can resume afterwards. See **Continue threads after restarts**
 below.
 
+Manual checks from the sidebar, **Settings → About**, and the desktop menu review the same
+connected servers and providers even when this app is current.
+
+## Update from a terminal
+
+The `t3` command installed by the desktop app uses the same coordinated updater as the sidebar and
+Settings → About. Run `t3 update` with the app open, then review its confirmation in the app. Cancelling
+the confirmation starts no update. Another update cannot start while that confirmation or run is active.
+The command reports when the run starts; follow its progress and restart result in the app.
+
+Desktop updates use the app's update track and confirmation. Exact versions, `--channel`,
+`--allow-downgrade`, and `--yes` are refused for this command; switch tracks in Settings → About.
+If the desktop app is closed or too old to coordinate the request, the command asks you to open or
+update it. It does not install a separate CLI runtime instead. A standalone CLI without a desktop
+launcher retains `t3 update` and its background-service restart options. The deprecated
+`t3 service update` command follows the same routing.
+
+Maintenance tools can run `t3 update --check --json`. The `t3.update-check.v1` result reports the
+installation owner, coordinated-updater availability, cached local version and offered target, and
+readiness. This inspection does not check the network, open the app, download, install, restart, or
+rewrite launchers. `ready` means the desktop coordinator is available, not that an update exists or
+that every connected server and provider has been checked. A closed or old app reports unavailable;
+a standalone CLI reports its separate update pathway. Use the normal update action for a fresh check.
+
+The startup recovery screen can still install an app update when the normal interface cannot load.
+That recovery updates this app only; it cannot plan updates for unavailable connections.
+
 ## Switch between Stable and Nightly
 
 In the desktop app, change **Settings → About → Update track**. T3 Code shows each

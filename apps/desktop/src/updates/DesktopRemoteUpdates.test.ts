@@ -1,3 +1,4 @@
+import * as DesktopUpdateCommand from "./DesktopUpdateCommand.ts";
 import { assert, describe, it } from "@effect/vitest";
 import type {
   DesktopTelemetryRequestDesktopUpdate,
@@ -74,7 +75,18 @@ function runRemoteUpdatesTest(
       yield* settle;
       yield* body({ reports, requests, commits, cancellations });
     }),
-  ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        TestClock.layer(),
+        harness.layer,
+        Layer.mock(DesktopUpdateCommand.DesktopUpdateCommand, {
+          reserve: Effect.succeed("test-reservation"),
+          finish: () => Effect.void,
+        }),
+      ),
+    ),
+  );
 }
 
 function terminalReports(reports: DesktopUpdateStatusReport[]): DesktopUpdateStatusReport[] {
