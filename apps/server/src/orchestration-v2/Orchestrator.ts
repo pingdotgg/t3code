@@ -6374,11 +6374,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection:
           delegatedCompletion === undefined && command.notification === undefined
             ? modelSelection
-            : (projection.runs.find((run) => run.id === dispatchMode.targetRunId)?.modelSelection ??
+            : (projection.runs.find((run) => run.id === steerMode.targetRunId)?.modelSelection ??
               modelSelection),
         delegatedCompletion,
         ...(command.notification === undefined ? {} : { notification: command.notification }),
-        targetRunId: dispatchMode.targetRunId,
+        targetRunId: steerMode.targetRunId,
         messageId: command.messageId,
         text: dispatchText,
         ...(command.context ? { context: command.context } : {}),
@@ -6390,10 +6390,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
-        forceRestart: dispatchMode.type === "restart_active",
+        forceRestart: steerMode.type === "restart_active",
       }).pipe(
         Effect.as(true),
-        // A user's steer the provider can't take in place (it switches provider) runs next instead.
+        // A user's steer the provider can't take in place runs after the turn instead of failing.
         Effect.catchIf(
           (error) =>
             steerMode.type === "steer_active" &&
