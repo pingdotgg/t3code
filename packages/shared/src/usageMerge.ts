@@ -21,6 +21,7 @@ export interface ProviderTotals {
   readonly totalTokens: number;
   readonly records: number;
   readonly sessions: number;
+  readonly unpricedRecords: number;
   readonly costShare: number;
   readonly tokenShare: number;
 }
@@ -39,8 +40,8 @@ export interface ModelTotals {
 }
 
 /** When every record lacks rates, costUsd is unknown and must not be displayed as a dollar figure. */
-export function isModelCostUnknown(model: ModelTotals): boolean {
-  return model.records > 0 && model.unpricedRecords >= model.records;
+export function isCostUnknown(totals: Pick<ModelTotals, "records" | "unpricedRecords">): boolean {
+  return totals.records > 0 && totals.unpricedRecords >= totals.records;
 }
 
 export interface DailyTotals {
@@ -347,7 +348,13 @@ export function mergeUsage(
 
   const providerAccumulator = new Map<
     UsageProviderKind,
-    { costUsd: number; totalTokens: number; records: number; sessions: number }
+    {
+      costUsd: number;
+      totalTokens: number;
+      records: number;
+      sessions: number;
+      unpricedRecords: number;
+    }
   >();
   const modelAccumulator = new Map<
     string,
@@ -398,6 +405,7 @@ export function mergeUsage(
         totalTokens: 0,
         records: 0,
         sessions: 0,
+        unpricedRecords: 0,
       };
       provider.sessions += providerSessions;
       providerAccumulator.set(providerKind, provider);
@@ -431,10 +439,12 @@ export function mergeUsage(
         totalTokens: 0,
         records: 0,
         sessions: 0,
+        unpricedRecords: 0,
       };
       provider.costUsd += bucket.costUsd;
       provider.totalTokens += tokens;
       provider.records += bucket.records;
+      provider.unpricedRecords += bucket.unpricedRecords;
       providerAccumulator.set(bucket.provider, provider);
 
       const modelKey = `${bucket.provider} ${bucket.model}`;
@@ -513,6 +523,7 @@ export function mergeUsage(
       totalTokens: totals.totalTokens,
       records: totals.records,
       sessions: totals.sessions,
+      unpricedRecords: totals.unpricedRecords,
       costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
       tokenShare: totalTokens === 0 ? 0 : totals.totalTokens / totalTokens,
     }))

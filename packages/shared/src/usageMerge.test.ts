@@ -10,7 +10,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import { isCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
 
 const decodeSummary = Schema.decodeUnknownSync(UsageSummary);
 
@@ -438,7 +438,7 @@ describe("mergeUsage", () => {
     expect(merged.models[0]).toMatchObject({ model: "gpt-5", costUsd: 20, totalTokens: 2320 });
   });
 
-  it("marks a model with no known rates as unpriced rather than free", () => {
+  it("marks a model or provider with no known rates as unpriced rather than free", () => {
     const merged = mergeUsage(
       [
         environment(
@@ -465,8 +465,15 @@ describe("mergeUsage", () => {
     );
 
     expect(merged.models.find((model) => model.model === "unknown-model")?.unpricedRecords).toBe(5);
-    expect(merged.models.filter(isModelCostUnknown).map((model) => model.model)).toEqual([
+    expect(merged.models.filter(isCostUnknown).map((model) => model.model)).toEqual([
       "unknown-model",
+    ]);
+    expect(merged.providers.find((provider) => provider.provider === "codex")).toMatchObject({
+      costUsd: 0,
+      unpricedRecords: 5,
+    });
+    expect(merged.providers.filter(isCostUnknown).map((provider) => provider.provider)).toEqual([
+      "codex",
     ]);
   });
 

@@ -10,7 +10,7 @@ import {
 } from "@t3tools/client-runtime/state/usage-progress";
 import {
   isCompatibleUsageContractVersion,
-  isModelCostUnknown,
+  isCostUnknown,
   type DailyTotals,
   type MergedUsage,
 } from "@t3tools/shared/usageMerge";
@@ -521,6 +521,7 @@ function ProviderSection(props: {
     <SettingsSection title="Providers">
       {ordered.map((provider, index) => {
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
+        const costUnknown = isCostUnknown(provider);
         return (
           <View
             key={provider.provider}
@@ -550,9 +551,11 @@ function ProviderSection(props: {
                     : "text-lg tabular-nums text-foreground"
                 }
               >
-                {metric === "cost"
-                  ? formatUsd(provider.costUsd)
-                  : formatTokens(provider.totalTokens)}
+                {metric === "tokens"
+                  ? formatTokens(provider.totalTokens)
+                  : costUnknown
+                    ? "Unpriced"
+                    : formatUsd(provider.costUsd)}
               </Text>
             </View>
             {props.compact ? null : (
@@ -565,9 +568,13 @@ function ProviderSection(props: {
               </View>
             )}
             <Text className="text-sm text-foreground-muted">
-              {metric === "cost"
-                ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+              {metric === "tokens"
+                ? `${formatPercent(share)} of tokens · ${
+                    costUnknown ? "no known rates" : formatUsd(provider.costUsd)
+                  }`
+                : costUnknown
+                  ? `no known rates · ${formatTokens(provider.totalTokens)} tokens`
+                  : `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`}
             </Text>
           </View>
         );
@@ -779,9 +786,9 @@ function ModelsSection(props: {
               <Text className="text-sm text-foreground-muted">
                 {metric === "tokens"
                   ? `${formatPercent(model.tokenShare)} of tokens · ${
-                      isModelCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
+                      isCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
                     }`
-                  : isModelCostUnknown(model)
+                  : isCostUnknown(model)
                     ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
                     : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
               </Text>
@@ -789,7 +796,7 @@ function ModelsSection(props: {
             <Text className="text-base tabular-nums text-foreground">
               {metric === "tokens"
                 ? formatTokens(model.totalTokens)
-                : isModelCostUnknown(model)
+                : isCostUnknown(model)
                   ? "Unpriced"
                   : formatUsd(model.costUsd)}
             </Text>

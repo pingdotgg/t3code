@@ -23,7 +23,7 @@ import {
 
 import {
   isCompatibleUsageContractVersion,
-  isModelCostUnknown,
+  isCostUnknown,
   type DailyTotals,
   type HourlyTotals,
   type MergedUsage,
@@ -702,6 +702,7 @@ function UsageOverview({
             const totals = merged.providers.find((entry) => entry.provider === provider);
             const share = metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
             const providerSessions = totals?.sessions ?? 0;
+            const costUnknown = totals !== undefined && isCostUnknown(totals);
             const sessionLabel = `${formatCount(providerSessions)} ${
               providerSessions === 1 ? "session" : "sessions"
             }`;
@@ -738,11 +739,15 @@ function UsageOverview({
                       figureClass(providerLoading),
                     )}
                   >
-                    {awaitingData
-                      ? "-"
-                      : metric === "cost"
-                        ? formatUsd(totals?.costUsd ?? 0)
-                        : formatTokens(totals?.totalTokens ?? 0)}
+                    {awaitingData ? (
+                      "-"
+                    ) : metric === "tokens" ? (
+                      formatTokens(totals?.totalTokens ?? 0)
+                    ) : costUnknown ? (
+                      <span className="text-muted-foreground">Unpriced</span>
+                    ) : (
+                      formatUsd(totals?.costUsd ?? 0)
+                    )}
                   </span>
                 </div>
                 <span
@@ -752,9 +757,13 @@ function UsageOverview({
                     awaitingData && "invisible",
                   )}
                 >
-                  {metric === "cost"
-                    ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
-                    : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
+                  {metric === "tokens"
+                    ? `${formatPercent(share)} of tokens · ${
+                        costUnknown ? "Unpriced" : formatUsd(totals?.costUsd ?? 0)
+                      }`
+                    : costUnknown
+                      ? `${formatTokens(totals?.totalTokens ?? 0)} tokens`
+                      : `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`}
                 </span>
               </div>
             );
@@ -923,7 +932,7 @@ function UsageOverview({
                         ) : null}
                       </td>
                       <td className={cn("py-2.5 pl-6 text-foreground", rowFigures)}>
-                        {isModelCostUnknown(model) ? (
+                        {isCostUnknown(model) ? (
                           <span className="text-muted-foreground">Unpriced</span>
                         ) : (
                           formatUsd(model.costUsd)

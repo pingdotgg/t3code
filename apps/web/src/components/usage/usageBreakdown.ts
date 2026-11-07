@@ -1,6 +1,6 @@
 import type { UsageTokenTotals } from "@t3tools/contracts";
 import {
-  isModelCostUnknown,
+  isCostUnknown,
   type CategoryCost,
   type ModelTotals,
   type SpeedCost,
@@ -17,7 +17,7 @@ export function sortModelsByTokens(models: readonly ModelTotals[]) {
 /** Unknown cost yields null cost share; unpriced models still have token shares. */
 export function modelShare(model: ModelTotals, metric: "cost" | "tokens"): number | null {
   if (metric === "tokens") return model.tokenShare;
-  return isModelCostUnknown(model) ? null : model.costShare;
+  return isCostUnknown(model) ? null : model.costShare;
 }
 
 /** Returns null without input; cache writes count as misses because input was fully processed. */
@@ -29,7 +29,7 @@ export function cacheHitRate({ tokens }: ModelTotals): number | null {
 /** Effective USD per million priced tokens, or `null` when none were priced. */
 export function costPerMillionTokens(model: ModelTotals): number | null {
   const pricedTokens = model.totalTokens - model.unpricedTokens;
-  return pricedTokens <= 0 || isModelCostUnknown(model)
+  return pricedTokens <= 0 || isCostUnknown(model)
     ? null
     : (model.costUsd / pricedTokens) * 1_000_000;
 }
