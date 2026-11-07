@@ -174,7 +174,14 @@ vi.mock("../state/session", () => ({
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://example.com" } }),
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
-vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironment: {} }));
+vi.mock("../state/threads", async () => {
+  const Option = await import("effect/Option");
+  return {
+    environmentThreadShells: {},
+    threadEnvironment: {},
+    useEnvironmentThread: () => ({ data: Option.none() }),
+  };
+});
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),

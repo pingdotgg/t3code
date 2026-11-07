@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+import * as DateTime from "effect/DateTime";
 
 import type { ThreadStructure } from "./models.ts";
 
@@ -129,6 +130,20 @@ export function getUserQueuedThreadRuns(
   return projection.runs.filter(
     (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
   );
+}
+
+export function latestQueuedUserMessageCreatedAt(
+  projection: Pick<Projection, "runs" | "messages" | "thread">,
+): string | null {
+  let latest: string | null = null;
+  for (const run of getUserQueuedThreadRuns(projection)) {
+    const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+    const createdAt = message === undefined ? null : DateTime.formatIso(message.createdAt);
+    if (createdAt !== null && (latest === null || createdAt > latest)) {
+      latest = createdAt;
+    }
+  }
+  return latest;
 }
 
 export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {

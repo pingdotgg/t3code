@@ -57,6 +57,44 @@ it("shows a captured MCP app for a failed deferred write", () => {
   expect(buildThreadFeed([projected(item, 0)])).toMatchObject([{ type: "mcp-app", app: mcpApp }]);
 });
 
+it("keeps a completed quiz card as its own feed entry", () => {
+  const item: OrchestrationV2TurnItem = {
+    ...base("quiz-item", "2026-08-29T00:00:00.000Z", 1),
+    type: "dynamic_tool",
+    toolName: "quiz_card",
+    status: "completed",
+    input: {},
+    output: {
+      quizCard: {
+        answer: "A",
+        explanation: "Because",
+        level: "remember",
+        question: "Which?",
+        wrongOptions: [
+          { option: "B", wrongIdea: "Mistake" },
+          { option: "C", wrongIdea: "Another" },
+        ],
+      },
+    },
+  };
+
+  const feed = buildThreadFeed([
+    projected(userMessage(), 0),
+    projected(item, 1),
+    projected(assistantMessage(), 2),
+  ]);
+  expect(feed.find((entry) => entry.type === "quiz-card")).toMatchObject({
+    type: "quiz-card",
+    id: item.id,
+    quizCard: { answer: "A" },
+  });
+  expect(deriveThreadFeedPresentation(feed, null, new Set()).map((entry) => entry.type)).toEqual([
+    "message",
+    "quiz-card",
+    "message",
+  ]);
+});
+
 it("keeps historical plan detail accessible from its paged turn item", () => {
   const item = {
     ...base("historical-plan", "2026-08-29T00:00:00.000Z", 1),
