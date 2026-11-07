@@ -28,7 +28,7 @@ type UndoNotice = {
 
 export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => ({ notice: null }));
 
-export function threadUndoNoticeSummary(notice: Pick<UndoNotice, "action" | "count">): string {
+function threadUndoNoticeSummary(notice: Pick<UndoNotice, "action" | "count">): string {
   const noun = notice.action === "Discarded" ? "draft" : "thread";
   return `${notice.action} ${notice.count} ${noun}${notice.count === 1 ? "" : "s"}`;
 }

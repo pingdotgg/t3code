@@ -50,17 +50,26 @@ import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
+/** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */
+export const PROVIDER_INTERRUPT_TIMEOUT_MS = 15 * 1000;
 
 const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
+const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
@@ -180,6 +189,25 @@ export interface ProviderSessionManagerV2Shape {
     readonly detail?: string;
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  /**
+   * Releases the session unless, at the moment of removal, a turn of a provider thread outside
+   * `ownProviderThreadIds` is busy on it. Checked atomically with turn starts. Succeeds with
+   * whether it was released.
+   */
+  readonly releaseUnlessBusy: (input: {
+    readonly providerSessionId: ProviderSessionId;
+    readonly ownProviderThreadIds: ReadonlyArray<ProviderThreadId>;
+    readonly reason: ProviderSessionReleaseReason;
+    readonly detail?: string;
+  }) => Effect.Effect<boolean, ProviderSessionManagerV2Error>;
+  /**
+   * Other threads with a run or background work on this session's shared process; empty when
+   * it serves one thread.
+   */
+  readonly otherWorkingThreads: (input: {
+    readonly providerSessionId: ProviderSessionId;
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<ReadonlyArray<ThreadId>>;
 }
 
 export class ProviderSessionManagerV2 extends Context.Service<
@@ -593,6 +621,9 @@ export const layerWithOptions = (
         const payload: OrchestrationV2ProviderSession = {
           ...input.entry.runtime.providerSession,
           status: releaseStatusFor(input.reason),
+          ...(input.entry.runtime.providerSession.extensionStatuses === undefined
+            ? {}
+            : { extensionStatuses: [] }),
           updatedAt: now,
           lastError:
             input.reason === "runtime_error" ? (input.detail ?? "Provider runtime failed.") : null,
@@ -624,8 +655,8 @@ export const layerWithOptions = (
         for (const threadId of input.entry.attachedThreadIds) {
           const projection = yield* projectionStore.getThreadRecords(
             threadId,
-            ["runtimeRequests", "nodes", "turnItems"],
-            { turnItemTypes: ["approval_request", "user_input_request"] },
+            ["runtimeRequests"],
+            { runtimeRequestStatuses: ["pending"] },
           );
           const releasedRequests = projection.runtimeRequests.filter(
             (request) =>
@@ -637,6 +668,16 @@ export const layerWithOptions = (
               !(input.reason === "server_shutdown" && request.kind === "user_input"),
           );
 
+          if (releasedRequests.length === 0) continue;
+          const records = yield* projectionStore.getThreadRecords(
+            threadId,
+            ["nodes", "turnItems"],
+            {
+              nodeIds: releasedRequests.map((request) => request.nodeId),
+              turnItemRequestIds: releasedRequests.map((request) => request.id),
+              turnItemTypes: ["approval_request", "user_input_request"],
+            },
+          );
           for (const request of releasedRequests) {
             events.push({
               id: yield* idAllocator.allocate.event({
@@ -659,7 +700,7 @@ export const layerWithOptions = (
               },
             });
 
-            const requestNode = projection.nodes.find((node) => node.id === request.nodeId);
+            const requestNode = records.nodes.find((node) => node.id === request.nodeId);
             if (requestNode !== undefined) {
               events.push({
                 id: yield* idAllocator.allocate.event({
@@ -680,7 +721,7 @@ export const layerWithOptions = (
               });
             }
 
-            const turnItem = projection.turnItems.find(
+            const turnItem = records.turnItems.find(
               (item) =>
                 (item.type === "approval_request" || item.type === "user_input_request") &&
                 item.requestId === request.id,
@@ -894,6 +935,7 @@ export const layerWithOptions = (
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
           readonly onlyIfIdleGeneration?: number;
+          readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
         }): Effect.fn.Return<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> {
           const key = sessionKey(input.providerSessionId);
           const candidate = (yield* Ref.get(sessions)).get(key);
@@ -910,6 +952,15 @@ export const layerWithOptions = (
                 input.onlyIfIdleGeneration !== undefined &&
                 (existing.busyTurns.size > 0 ||
                   existing.idleGeneration !== input.onlyIfIdleGeneration)
+              ) {
+                return ["kept", current] as const;
+              }
+              const own = input.keepIfBusyOtherThan;
+              if (
+                own !== undefined &&
+                [...existing.busyTurns].some(
+                  (turnKey) => !own.some((id) => turnKey.startsWith(busyTurnPrefix(id))),
+                )
               ) {
                 return ["kept", current] as const;
               }
@@ -971,6 +1022,7 @@ export const layerWithOptions = (
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
@@ -1163,8 +1215,8 @@ export const layerWithOptions = (
 
       // Provider activity restarts the pin budget, so background work that keeps
       // reporting progress (a long Claude workflow) is never cut off; only work
-      // that went silent for maxIdlePinMs is released. This runs for every
-      // provider event, so keep it untraced.
+      // that went silent for maxIdlePinMs is released. Progress events can be
+      // frequent, so keep this untraced.
       const scheduleIdleReleaseInternal = Effect.fnUntraced(function* (
         providerSessionId: ProviderSessionId,
         options?: { readonly providerActivity?: boolean },
@@ -1379,15 +1431,21 @@ export const layerWithOptions = (
             .pipe(Effect.ensuring(Effect.sync(dropReservation)));
         });
 
-      const markBusy = (providerSessionId: ProviderSessionId, turnKey: string) =>
+      // Marks only the entry this runtime belongs to: a released or replaced session must not
+      // gain a busy turn that never ends. Succeeds with whether the turn was marked.
+      const markBusy = (
+        providerSessionId: ProviderSessionId,
+        turnKey: string,
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+      ) =>
         withActivityError(
           providerSessionId,
           Effect.gen(function* () {
             const key = sessionKey(providerSessionId);
-            const idleFiber = yield* Ref.modify(sessions, (current) => {
+            const marked = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
-              if (entry === undefined) {
-                return [null, current] as const;
+              if (entry === undefined || entry.runtime !== runtime) {
+                return [undefined, current] as const;
               }
               const updated = new Map(current);
               updated.set(key, {
@@ -1396,9 +1454,11 @@ export const layerWithOptions = (
                 idleFiber: null,
                 pinnedSinceMs: null,
               });
-              return [entry.idleFiber, updated] as const;
+              return [{ idleFiber: entry.idleFiber }, updated] as const;
             });
-            yield* cancelIdleFiber(idleFiber);
+            if (marked === undefined) return false;
+            yield* cancelIdleFiber(marked.idleFiber);
+            return true;
           }),
         );
 
@@ -1663,6 +1723,10 @@ export const layerWithOptions = (
           });
         return {
           ...runtime,
+          // Pi replaces its session snapshot as metadata changes.
+          get providerSession() {
+            return runtime.providerSession;
+          },
           subscribeEvents,
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
@@ -1784,11 +1848,31 @@ export const layerWithOptions = (
               ),
               Effect.andThen(
                 Effect.acquireUseRelease(
-                  observeActivity(
+                  markBusy(
                     providerSessionId,
-                    markBusy(
-                      providerSessionId,
-                      busyTurnKey(input.providerThread.id, input.runOrdinal),
+                    busyTurnKey(input.providerThread.id, input.runOrdinal),
+                    runtime,
+                  ).pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("orchestration-v2.driver-session.activity-failed", {
+                        providerSessionId,
+                        cause,
+                      }).pipe(Effect.as(true)),
+                    ),
+                    // A release between attach and markBusy leaves nothing to mark: fail the
+                    // start instead of running it on a runtime being torn down.
+                    Effect.flatMap((marked) =>
+                      marked
+                        ? Effect.void
+                        : Effect.fail(
+                            new ProviderAdapter.ProviderAdapterTurnStartError({
+                              driver: runtime.driver,
+                              threadId: input.threadId,
+                              providerThreadId: input.providerThread.id,
+                              runId: input.runId,
+                              cause: "The provider session was released while the turn started.",
+                            }),
+                          ),
                     ),
                   ),
                   () =>
@@ -1807,9 +1891,26 @@ export const layerWithOptions = (
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
             ),
+          // A provider starved of memory can stop answering, so no caller may wait on it unbounded.
           interruptTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(runtime.interruptTurn(input).pipe(turnMetrics("interrupt"))),
+              Effect.andThen(
+                runtime.interruptTurn(input).pipe(
+                  Effect.timeoutOrElse({
+                    duration: PROVIDER_INTERRUPT_TIMEOUT_MS,
+                    orElse: () =>
+                      Effect.fail(
+                        new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+                          driver: runtime.driver,
+                          providerThreadId: input.providerThread.id,
+                          providerTurnId: input.providerTurnId,
+                          timeoutMs: PROVIDER_INTERRUPT_TIMEOUT_MS,
+                        }),
+                      ),
+                  }),
+                  turnMetrics("interrupt"),
+                ),
+              ),
             ),
           respondToRuntimeRequest: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
@@ -1858,6 +1959,7 @@ export const layerWithOptions = (
 
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
+        let lastSessionStatus = entry.runtime.providerSession.status;
         return entry.runtime.events.pipe(
           Stream.runForEach((event) => {
             if (shutdownSignal.received) return Effect.void;
@@ -1874,11 +1976,13 @@ export const layerWithOptions = (
                     itemId: event.turnItem.id,
                   })
                 : Effect.void;
-            if (
+            // Metadata can change while idle without extending the runtime's lifetime.
+            const metadataOnly =
               event.type === "provider_session.updated" &&
-              event.providerSession.status === "stopped"
-            ) {
-              stoppedByProvider = true;
+              event.providerSession.status === lastSessionStatus;
+            if (event.type === "provider_session.updated") {
+              lastSessionStatus = event.providerSession.status;
+              if (lastSessionStatus === "stopped") stoppedByProvider = true;
             }
             return observeActivity(
               entry.runtime.providerSessionId,
@@ -1888,7 +1992,9 @@ export const layerWithOptions = (
                     event.providerThreadId,
                     event.runOrdinal,
                   )
-                : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
+                : metadataOnly
+                  ? Effect.void
+                  : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
             ).pipe(
               Effect.andThen(
                 event.type === "provider_session.updated"
@@ -1987,10 +2093,16 @@ export const layerWithOptions = (
                 cause,
               });
               yield* Ref.set(entry.eventSubscribers, new Map());
+              // lastError is the thread banner, so it gets the same bounded
+              // message as a failed turn; the raw cause survives only in the log.
+              yield* Effect.logWarning("orchestration-v2.provider-session-runtime-failed", {
+                providerSessionId: entry.runtime.providerSessionId,
+                cause,
+              });
               yield* releaseEntry({
                 providerSessionId: entry.runtime.providerSessionId,
                 reason: "runtime_error",
-                detail: Cause.pretty(cause),
+                detail: makeProviderFailure({ cause }).message,
               }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
             }),
           ),
@@ -2018,7 +2130,7 @@ export const layerWithOptions = (
             ),
           { concurrency: "unbounded", discard: true },
         );
-      });
+      }).pipe(Effect.withSpan("ProviderSessionManager.shutdown"));
       yield* Effect.addFinalizer(() =>
         shutdown.pipe(
           Effect.ensuring(closeScopeWithin(sessionScopes, { reason: "server_shutdown" })),
@@ -2269,6 +2381,40 @@ export const layerWithOptions = (
             ),
         ),
         release: releaseEntry,
+        releaseUnlessBusy: Effect.fn("ProviderSessionManager.releaseUnlessBusy")(function* (input) {
+          const key = sessionKey(input.providerSessionId);
+          const before = (yield* Ref.get(sessions)).get(key);
+          yield* releaseEntry({
+            providerSessionId: input.providerSessionId,
+            reason: input.reason,
+            ...(input.detail === undefined ? {} : { detail: input.detail }),
+            keepIfBusyOtherThan: input.ownProviderThreadIds,
+          });
+          // Identity, not presence: open can install a replacement under the same id meanwhile.
+          return before !== undefined && (yield* Ref.get(sessions)).get(key) !== before;
+        }),
+        otherWorkingThreads: Effect.fn("ProviderSessionManager.otherWorkingThreads")(
+          function* (input) {
+            const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+            if (entry === undefined || !entry.supportsMultipleProviderThreads) return [];
+            return yield* Effect.filter(
+              [...entry.attachedThreadIds].filter((threadId) => threadId !== input.threadId),
+              (threadId) =>
+                // Runs, not the shell's activeRunId: the shell omits silent runs such as idle
+                // compaction. Background work outlives its run and still needs the process.
+                Effect.zipWith(
+                  projectionStore.getThreadRecords(threadId, ["runs"]),
+                  projectionStore.getThreadShell(threadId),
+                  ({ runs }, shell) =>
+                    runs.some((run) => WORKING_RUN_STATUSES.has(run.status)) ||
+                    (shell?.pendingBackgroundTasks?.length ?? 0) > 0,
+                ).pipe(
+                  // An unreadable thread may still be working; never kill it unseen.
+                  Effect.orElseSucceed(() => true),
+                ),
+            );
+          },
+        ),
         detach: Effect.fn("ProviderSessionManager.detach")(
           function* (input) {
             const key = sessionKey(input.providerSessionId);
@@ -2385,38 +2531,38 @@ export const layerWithOptions = (
             }
             const unloadThread = detached.value.exposedRuntime.unloadThread;
             if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
-              // Serialize unload with attachment so attached threads stay loaded and later attaches resume after unload.
-              yield* threadAttachment.withLock(
-                threadAttachmentKey(input),
-                Effect.gen(function* () {
-                  const entry = (yield* Ref.get(sessions)).get(key);
-                  if (
-                    entry?.runtime !== detached.value.runtime ||
-                    entry.attachedThreadIds.has(input.threadId)
-                  ) {
-                    return;
-                  }
-                  yield* Effect.forEach(
-                    detachedProviderThreads.filter((thread) => thread.nativeThreadRef !== null),
-                    (providerThread) =>
-                      unloadThread({ providerThread }).pipe(
-                        Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
-                        Effect.catchCause((cause) =>
-                          Effect.logWarning(
-                            "orchestration-v2.driver-session.detach-unload-failed",
-                            {
-                              providerSessionId: input.providerSessionId,
-                              threadId: input.threadId,
-                              providerThreadId: providerThread.id,
-                              cause,
-                            },
-                          ),
-                        ),
+              // The projection includes native children owned by other app threads;
+              // lock each owner so an attached child stays loaded and later attaches wait.
+              for (const providerThread of detachedProviderThreads) {
+                if (providerThread.nativeThreadRef === null) continue;
+                const ownerThreadId = providerThread.appThreadId ?? input.threadId;
+                yield* threadAttachment.withLock(
+                  threadAttachmentKey({
+                    providerSessionId: input.providerSessionId,
+                    threadId: ownerThreadId,
+                  }),
+                  Effect.gen(function* () {
+                    const entry = (yield* Ref.get(sessions)).get(key);
+                    if (
+                      entry?.runtime !== detached.value.runtime ||
+                      entry.attachedThreadIds.has(ownerThreadId)
+                    ) {
+                      return;
+                    }
+                    yield* unloadThread({ providerThread }).pipe(
+                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {
+                          providerSessionId: input.providerSessionId,
+                          threadId: ownerThreadId,
+                          providerThreadId: providerThread.id,
+                          cause,
+                        }),
                       ),
-                    { concurrency: 1, discard: true },
-                  );
-                }),
-              );
+                    );
+                  }),
+                );
+              }
             }
             yield* scheduleIdleRelease(input.providerSessionId);
           },

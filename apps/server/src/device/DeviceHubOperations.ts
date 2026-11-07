@@ -6,14 +6,20 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost.ts";
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
+// Let the hub's 30 s simctl timeout report its cause first.
+const LIST_TIMEOUT_SECONDS = 40;
+// expo-device-hub 0.19.1 reports a failed simulator listing only as text; its error ids are hashes.
+const SIMULATOR_LIST_FAILED =
+  /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
 
 const HubDevice = Schema.Struct({
   id: Schema.String,
@@ -56,6 +62,21 @@ const HubActionResult = Schema.Struct({
   ),
 });
 
+// Hub diagnostics can carry a whole stderr dump.
+const boundDiagnostics = (text: string) =>
+  text.length > 2_000 ? `${text.slice(0, 1_999)}…` : text;
+
+// The hub's `error` is a util.inspect of Node's exec error; the stack and the
+// inspected fields follow the first frame, so keep the lines before it.
+const errorHead = (error: string) => {
+  const lines = error.split(/\r?\n/);
+  const firstFrame = lines.findIndex((line) => /^\s+at /.test(line));
+  return (firstFrame === -1 ? lines : lines.slice(0, firstFrame))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+};
+
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
@@ -75,24 +96,29 @@ export const makeDeviceHubOperations = (options: {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
 
+  const fetchJson = Effect.fn("DeviceHubOperations.fetchJson")(function* <A, I>(
+    request: HttpClientRequest.HttpClientRequest,
+    schema: Schema.Codec<A, I>,
+  ) {
+    return yield* httpClient
+      .execute(request)
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
+        Effect.scoped,
+      );
+  });
+
   const hubJson = <A, I>(
     request: HttpClientRequest.HttpClientRequest,
     schema: Schema.Codec<A, I>,
     operation: string,
     timeout: Duration.Input = Duration.seconds(15),
   ) =>
-    httpClient.execute(request).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
-      Effect.scoped,
+    fetchJson(request, schema).pipe(
       Effect.timeout(timeout),
       Effect.mapError(
-        (cause) =>
-          new DeviceOperationError({
-            operation,
-            reason: "request_failed",
-            cause,
-          }),
+        (cause) => new DeviceOperationError({ operation, reason: "request_failed", cause }),
       ),
     );
 
@@ -112,11 +138,25 @@ export const makeDeviceHubOperations = (options: {
     );
 
   const list: DeviceOperations["list"] = Effect.gen(function* () {
-    const hubList = yield* hubJson(
+    const listed = yield* fetchJson(
       HttpClientRequest.get(`${origin}/api/devices`),
       HubDeviceList,
-      "list",
+    ).pipe(
+      Effect.mapError(
+        (cause) => new DeviceOperationError({ operation: "list", reason: "request_failed", cause }),
+      ),
+      Effect.timeoutOption(Duration.seconds(LIST_TIMEOUT_SECONDS)),
     );
+    if (Option.isNone(listed)) {
+      return {
+        devices: [],
+        detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
+        incompletePlatforms: yield* Effect.filter(["ios", "android"] as const, (platform) =>
+          options.platformAvailable(platform),
+        ),
+      };
+    }
+    const hubList = listed.value;
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
     const available = yield* options.availablePlatforms;
     const warnings = hubList.errors?.filter(
@@ -130,7 +170,11 @@ export const makeDeviceHubOperations = (options: {
           /(?:^Error:\s*ENOENT:|\bcode:\s*['"]ENOENT['"])/.test(error.error ?? "")
         ),
     );
-    const details = warnings?.map((error) => error.message) ?? [];
+    const details =
+      warnings?.map((error) => {
+        const head = errorHead(error.error ?? "");
+        return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
+      }) ?? [];
     if (available.probeFailed) {
       details.push(
         "Could not determine host platform availability. Device discovery may be incomplete.",
@@ -191,10 +235,14 @@ export const makeDeviceHubOperations = (options: {
         }
       }
     }
+    const simulatorsUnlisted =
+      hubList.simulators.length === 0 &&
+      (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message));
     return {
       devices,
       detail: details.join("\n") || undefined,
       androidDiscoveryIncomplete,
+      ...(simulatorsUnlisted ? { incompletePlatforms: ["ios"] as const } : {}),
     };
   }).pipe(Effect.withSpan("DeviceHubOperations.list"));
 
@@ -222,12 +270,7 @@ export const makeDeviceHubOperations = (options: {
           : /timed? out|timeout/i.test(diagnostics)
             ? "timeout"
             : "launch_failed",
-        ...(diagnostics
-          ? {
-              diagnostics:
-                diagnostics.length > 2_000 ? `${diagnostics.slice(0, 1_999)}…` : diagnostics,
-            }
-          : {}),
+        ...(diagnostics ? { diagnostics: boundDiagnostics(diagnostics) } : {}),
         cause: result,
       });
     }
@@ -294,7 +337,10 @@ export const makeDeviceHubOperations = (options: {
           (cause) =>
             new DeviceOperationError({
               operation: "screenshot",
-              reason: "request_failed",
+              reason:
+                HttpClientError.isHttpClientError(cause) && cause.reason._tag === "StatusCodeError"
+                  ? "hub_rejected"
+                  : "request_failed",
               cause,
             }),
         ),

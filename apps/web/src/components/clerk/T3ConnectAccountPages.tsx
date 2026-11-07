@@ -28,22 +28,24 @@ export const T3_CONNECT_ACCOUNT_PAGES = [
   },
 ] as const;
 
+export type T3ConnectAccountPageUrl = (typeof T3_CONNECT_ACCOUNT_PAGES)[number]["url"];
+
 type PortalTargets = Readonly<Record<string, HTMLDivElement | undefined>>;
 
 /** Keep portals rendered while the modal can open; Clerk owns the custom-page DOM nodes. */
 export function useT3ConnectAccountPage(): {
-  readonly open: (() => void) | null;
+  readonly open: ((page?: T3ConnectAccountPageUrl) => void) | null;
   readonly portals: ReactNode;
 } {
   const clerk = useClerk();
   const { isSignedIn } = useAuth();
   const [targets, setTargets] = useState<PortalTargets>({});
 
-  const open = () => {
+  const open = (page: T3ConnectAccountPageUrl = "t3-connect") => {
     const setTarget = (key: string, element: HTMLDivElement | undefined) =>
       setTargets((current) => ({ ...current, [key]: element }));
     clerk.openUserProfile({
-      __experimental_startPath: "/t3-connect",
+      __experimental_startPath: `/${page}`,
       customPages: T3_CONNECT_ACCOUNT_PAGES.map((page) => ({
         label: page.label,
         url: page.url,
