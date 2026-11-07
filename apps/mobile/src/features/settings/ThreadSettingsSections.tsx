@@ -84,7 +84,11 @@ export function AutoSettleSettingsRows(props: {
   const referenceSettings = reference?.settings ?? null;
 
   if (reference === null || referenceSettings === null) {
-    return null;
+    return (
+      <SettingsSection title="Auto-settle">
+        <ClosePullRequestsOnSettleRow />
+      </SettingsSection>
+    );
   }
 
   const writeToAll = (
@@ -163,6 +167,7 @@ export function AutoSettleSettingsRows(props: {
             />
           </View>
         ) : null}
+        <ClosePullRequestsOnSettleRow />
       </SettingsSection>
       {!props.pending && mismatches.length > 0 ? (
         <SettingsSection title="Across environments">
@@ -181,6 +186,23 @@ export function AutoSettleSettingsRows(props: {
         </SettingsSection>
       ) : null}
     </View>
+  );
+}
+
+function ClosePullRequestsOnSettleRow() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const closePullRequestsOnSettle =
+    AsyncResult.isSuccess(preferences) && preferences.value.closePullRequestsOnSettle === true;
+
+  return (
+    <SettingsSwitchRow
+      icon="link"
+      label="Close open pull requests when settling"
+      subtitle="When settling a thread, ask to close its open linked pull requests."
+      value={closePullRequestsOnSettle}
+      onValueChange={(value) => savePreferences({ closePullRequestsOnSettle: value })}
+    />
   );
 }
 

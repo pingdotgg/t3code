@@ -628,6 +628,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "close-pull-requests-on-settle",
+    title: "Close open pull requests when settling",
+    to: "/settings/threads",
+    searchTerms: ["close pull request settle linked open ask confirm"],
+  },
+  {
     id: "days-before-auto-settle",
     title: "Days of inactivity before auto-settle",
     to: "/settings/threads",

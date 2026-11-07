@@ -3,8 +3,13 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  openLinkedThreadPullRequests,
+  settleClosePullRequestsMessage,
+} from "@t3tools/shared/threadPullRequests";
 import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
 import { useRef } from "react";
 
@@ -14,6 +19,8 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { composerPullRequests } from "../../state/pull-requests";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
@@ -210,6 +217,9 @@ export function useThreadListActions(): {
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
+  const closePullRequestMutation = useAtomCommand(composerPullRequests.runAction, {
+    reportFailure: false,
+  });
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
@@ -276,19 +286,83 @@ export function useThreadListActions(): {
       },
     });
   const settleThread = async (thread: EnvironmentThreadShell) => {
-    const key = scopedThreadKey(thread.environmentId, thread.id);
-    const plan = ThreadUndo.planThreadUndo("settle", thread);
-    let claim: ReturnType<typeof ThreadUndo.begin> | undefined;
-    const succeeded = await executeAction("settle", thread, () => {
-      ThreadUndo.invalidate("pin", key);
-      ThreadUndo.invalidate("snooze", key);
-      claim = ThreadUndo.begin("settle", key);
+    const openPullRequests = openLinkedThreadPullRequests(thread.pullRequests);
+    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+    const closePullRequestsOnSettle =
+      AsyncResult.isSuccess(preferences) && preferences.value.closePullRequestsOnSettle === true;
+    const askToClose =
+      closePullRequestsOnSettle &&
+      openPullRequests.length > 0 &&
+      readEnvironmentScope(thread.environmentId, AuthSourceControlWriteScope);
+    const performSettle = async (shouldClosePullRequests: boolean) => {
+      const key = scopedThreadKey(thread.environmentId, thread.id);
+      const plan = ThreadUndo.planThreadUndo("settle", thread);
+      let claim: ReturnType<typeof ThreadUndo.begin> | undefined;
+      const succeeded = await executeAction("settle", thread, () => {
+        ThreadUndo.invalidate("pin", key);
+        ThreadUndo.invalidate("snooze", key);
+        claim = ThreadUndo.begin("settle", key);
+      });
+      if (claim) {
+        if (succeeded) offerUndo(thread, "Settled", claim, plan);
+        else claim.finish();
+      }
+      if (succeeded && shouldClosePullRequests) {
+        const failures: string[] = [];
+        let closed = 0;
+        for (const pullRequest of openPullRequests) {
+          const closeResult = await closePullRequestMutation({
+            environmentId: thread.environmentId,
+            input: {
+              projectId: thread.projectId,
+              host: pullRequest.host,
+              repository: pullRequest.repository,
+              number: pullRequest.number,
+              action: "close",
+            },
+          });
+          if (AsyncResult.isFailure(closeResult)) {
+            const error = Cause.squash(closeResult.cause);
+            failures.push(
+              `#${pullRequest.number}: ${error instanceof Error ? error.message : "Could not close this pull request."}`,
+            );
+            continue;
+          }
+          closed += 1;
+        }
+        if (failures.length > 0) {
+          Dialog.alert(
+            `Closed ${closed} of ${openPullRequests.length} pull requests`,
+            failures.slice(0, 3).join("\n"),
+          );
+        }
+      }
+      return succeeded;
+    };
+    if (!askToClose) return performSettle(false);
+    return await new Promise<boolean>((resolve) => {
+      let started = false;
+      const choose = (shouldClosePullRequests: boolean) => {
+        if (started) return;
+        started = true;
+        void performSettle(shouldClosePullRequests).then(resolve);
+      };
+      Dialog.confirm({
+        title: "Close open pull requests?",
+        message: settleClosePullRequestsMessage(openPullRequests.length),
+        confirmText: "Close & Settle",
+        cancelText: "Settle",
+        destructive: true,
+        onConfirm: () => {
+          choose(true);
+        },
+        // Cancel, dismiss, and Android replacement all land here so moveThread
+        // can clear threadDropBusyAtom even when another dialog takes over.
+        onCancel: () => {
+          choose(false);
+        },
+      });
     });
-    if (claim) {
-      if (succeeded) offerUndo(thread, "Settled", claim, plan);
-      else claim.finish();
-    }
-    return succeeded;
   };
   const snoozeThread = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
     if (!checkThreadOperationPermission(thread, "Could not snooze thread")) return false;

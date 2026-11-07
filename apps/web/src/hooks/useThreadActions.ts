@@ -17,6 +17,10 @@ import {
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
+import {
+  openLinkedThreadPullRequests,
+  settleClosePullRequestsMessage,
+} from "@t3tools/shared/threadPullRequests";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -30,6 +34,7 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { orchestrationEnvironment } from "../state/orchestration";
 import { projectEnvironment } from "../state/projects";
+import { pullRequestEnvironment } from "../state/pullRequests";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -286,6 +291,9 @@ export function useThreadActions() {
   const settleThreadMutation = useOrchestrationCommand(threadEnvironment.settle, {
     reportFailure: false,
   });
+  const closePullRequestMutation = useAtomCommand(pullRequestEnvironment.runAction, {
+    reportFailure: false,
+  });
   const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });
@@ -331,6 +339,9 @@ export function useThreadActions() {
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
+  const closePullRequestsOnSettle = useClientSettings(
+    (settings) => settings.closePullRequestsOnSettle,
+  );
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,
@@ -755,6 +766,25 @@ export function useThreadActions() {
       );
     }
     const resolved = resolveThreadTarget(target);
+    const openPullRequests = openLinkedThreadPullRequests(resolved?.thread.pullRequests);
+    let shouldClosePullRequests = false;
+    const localApi = readLocalApi();
+    if (
+      closePullRequestsOnSettle &&
+      openPullRequests.length > 0 &&
+      localApi &&
+      readEnvironmentScope(target.environmentId, AuthSourceControlWriteScope)
+    ) {
+      const confirmationResult = await settlePromise(() =>
+        localApi.dialogs.confirm(settleClosePullRequestsMessage(openPullRequests.length), {
+          variant: "destructive",
+        }),
+      );
+      if (confirmationResult._tag === "Failure") {
+        return confirmationResult;
+      }
+      shouldClosePullRequests = confirmationResult.value;
+    }
     // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     const nowIso = new Date().toISOString();
     const wokeAt = resolved ? threadWokeAt(resolved.thread, { now: nowIso }) : null;
@@ -781,6 +811,41 @@ export function useThreadActions() {
       undo: () => runUndoPlan(target, undoPlan),
       failureTitle: "Failed to undo settle",
     });
+    if (shouldClosePullRequests && resolved) {
+      const projectId = resolved.thread.projectId;
+      const failures: string[] = [];
+      const outcomes = await Promise.all(
+        openPullRequests.map(async (pullRequest) => {
+          const closeResult = await closePullRequestMutation({
+            environmentId: target.environmentId,
+            input: {
+              projectId,
+              host: pullRequest.host,
+              repository: pullRequest.repository,
+              number: pullRequest.number,
+              action: "close",
+            },
+          });
+          if (closeResult._tag === "Failure") {
+            const error = squashAtomCommandFailure(closeResult);
+            failures.push(
+              `#${pullRequest.number}: ${error instanceof Error ? error.message : "Could not close this pull request."}`,
+            );
+            return;
+          }
+          return true;
+        }),
+      );
+      const closed = outcomes.filter(Boolean).length;
+      toastManager.add({
+        type: failures.length > 0 ? "error" : "success",
+        title:
+          failures.length > 0
+            ? `Closed ${closed} of ${openPullRequests.length} pull requests`
+            : `Closed ${closed} pull request${closed === 1 ? "" : "s"}`,
+        ...(failures.length > 0 ? { description: failures.slice(0, 3).join("\n") } : {}),
+      });
+    }
     return result;
   };
 

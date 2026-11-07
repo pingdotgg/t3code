@@ -64,6 +64,7 @@ const SETTINGS_SEARCH_TERMS = {
     "browser access",
     "auto-settle",
     "settle",
+    "close open pull requests",
     "snooze",
     "usage limits",
     "auto-resume",

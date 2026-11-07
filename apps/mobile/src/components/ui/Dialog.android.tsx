@@ -48,8 +48,22 @@ function setPresented(next: PresentedDialog | null) {
   for (const listener of listeners) listener();
 }
 
+function cancelPresented(dialog: PresentedDialog) {
+  if (dialog.kind === "alert") dialog.request.options?.onDismiss?.();
+  else dialog.request.onCancel?.();
+}
+
 function submitRequest(dialog: DialogRequest) {
+  const previous = presented;
   setPresented({ ...dialog, id: ++nextPresentationId });
+  // A newer dialog replaces the current one without a button press; cancel the
+  // previous so awaiters (settle confirms, busy flags) do not hang.
+  if (previous !== null) {
+    queueMicrotask(() => {
+      if (presented?.id === previous.id) return;
+      cancelPresented(previous);
+    });
+  }
 }
 
 /** Closes the dialog only if it is still the one the action came from. */

@@ -172,6 +172,9 @@ when the thread settles** enabled in Settings > Projects > Actions. You can also
 `"stopOnSettle": true` on a `t3.json` action and import it there. Start the command through
 that action so T3 can stop its terminal and child processes. Commands started through an
 agent's own shell tools are managed by the provider.
+When **Close open pull requests when settling** is on in **Settings → Threads** and the
+thread has open linked pull requests you can write to, settling asks whether to close them
+too.
 
 To reclaim disk space from settled work, turn on **Run in the thread's worktree when the
 thread settles** for one of the project's actions, or set `"runOnSettle": true` on a

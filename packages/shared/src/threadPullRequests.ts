@@ -7,6 +7,19 @@ export function visibleThreadPullRequests(
   return links.filter((link) => link.source !== "stack-dismissed");
 }
 
+/** Linked pull requests known to be open; unknown snapshots are left alone. */
+export function openLinkedThreadPullRequests(
+  links: ReadonlyArray<ThreadPullRequestLink> | undefined,
+): ReadonlyArray<ThreadPullRequestLink> {
+  return visibleThreadPullRequests(links ?? []).filter((link) => link.snapshot?.state === "open");
+}
+
+/** Confirm-dialog copy when manually settling a thread that still has open pull requests. */
+export function settleClosePullRequestsMessage(count: number): string {
+  const noun = count === 1 ? "pull request" : "pull requests";
+  return [`This thread has ${count} open ${noun}.`, "", "Close them when settling?"].join("\n");
+}
+
 function latestUpdatedAt(link: ThreadPullRequestLink): number {
   const value = link.snapshot?.updatedAt ?? link.linkedAt;
   const ms = Date.parse(value);
