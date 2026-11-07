@@ -217,19 +217,17 @@ export function useLiveThreadLinkLabels(markdown: string, environmentId: Environ
   );
   // Shells leave out idle subagent children and older settled threads, so a cited thread the
   // shell lacks is read with its family until it lands; only a settled empty read proves it gone.
-  const missingKey = JSON.stringify(
-    refs.filter((ref) => !titles.has(threadKey(ref))).map(threadKey),
-  );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts family reads for cited threads the shell omits while this message shows them
+  const refsKey = JSON.stringify(refs.map(threadKey));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps cited families mounted until the links change; releasing on title arrival removes that title again
   useEffect(() => {
-    const releases = (JSON.parse(missingKey) as ReadonlyArray<string>).map((key) => {
+    const releases = (JSON.parse(refsKey) as ReadonlyArray<string>).map((key) => {
       const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
       return threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId);
     });
     return () => {
       for (const release of releases) release();
     };
-  }, [missingKey]);
+  }, [refsKey]);
   return relabelThreadLinks(markdown, environmentId, (ref) => titles.get(threadKey(ref)));
 }
 
