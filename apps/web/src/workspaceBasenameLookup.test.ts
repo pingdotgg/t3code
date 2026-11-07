@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   claimWorkspaceBasenameLookup,
   pickWorkspaceBasenameMatch,
+  pickWorkspaceSuffixMatch,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 
 describe("pickWorkspaceBasenameMatch", () => {
@@ -49,6 +50,51 @@ describe("pickWorkspaceBasenameMatch", () => {
         { path: "src/foo.ts", kind: "file" },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("pickWorkspaceSuffixMatch", () => {
+  const entries = [
+    { path: "packages/convex/builders/raw.ts", kind: "file" as const },
+    { path: "packages/convex/builders/user.ts", kind: "file" as const },
+    { path: "apps/web/lib/utils.ts", kind: "file" as const },
+    { path: "packages/convex/lib/utils.ts", kind: "file" as const },
+  ];
+
+  it("resolves a path written relative to a subfolder", () => {
+    expect(pickWorkspaceSuffixMatch("builders/raw.ts", "/repo", entries)).toBe(
+      "packages/convex/builders/raw.ts",
+    );
+  });
+
+  it("matches whole segments only", () => {
+    expect(pickWorkspaceSuffixMatch("ilders/raw.ts", "/repo", entries)).toBeNull();
+  });
+
+  it("returns null when the suffix is ambiguous", () => {
+    expect(pickWorkspaceSuffixMatch("lib/utils.ts", "/repo", entries)).toBeNull();
+  });
+
+  it("leaves bare filenames, dot segments and absolute paths to other lookups", () => {
+    expect(pickWorkspaceSuffixMatch("raw.ts", "/repo", entries)).toBeNull();
+    expect(pickWorkspaceSuffixMatch("./builders/raw.ts", "/repo", entries)).toBeNull();
+    expect(pickWorkspaceSuffixMatch("/repo/builders/raw.ts", "/repo", entries)).toBeNull();
+  });
+
+  it("ignores directories", () => {
+    expect(
+      pickWorkspaceSuffixMatch("src/components", "/repo", [
+        { path: "apps/web/src/components", kind: "directory" },
+      ]),
+    ).toBeNull();
+  });
+
+  it("folds case on Windows workspaces", () => {
+    expect(
+      pickWorkspaceSuffixMatch("Builders\\Raw.ts", "C:\\repo", [
+        { path: "packages\\convex\\builders\\raw.ts", kind: "file" },
+      ]),
+    ).toBe("packages\\convex\\builders\\raw.ts");
   });
 });
 

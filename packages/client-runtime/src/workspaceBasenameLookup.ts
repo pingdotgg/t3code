@@ -65,6 +65,30 @@ export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string):
   return null;
 }
 
+// Agents often write paths relative to the subfolder they work in (a package, a submodule).
+// Only a match that is unique across the searched files is safe to open.
+export function pickWorkspaceSuffixMatch(
+  relativePath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  if (isAbsolutePath(relativePath)) return null;
+  const segments = relativePath.split(/[\\/]+/);
+  if (segments.length < 2 || segments.some((segment) => !segment || /^\.{1,2}$/.test(segment))) {
+    return null;
+  }
+  const caseInsensitive = isWindowsAbsolutePath(cwd);
+  const key = (path: string) => {
+    const normalized = path.replaceAll("\\", "/");
+    return caseInsensitive ? normalized.toLowerCase() : normalized;
+  };
+  const suffix = `/${key(segments.join("/"))}`;
+  const matches = entries.filter(
+    (entry) => entry.kind === "file" && key(entry.path).endsWith(suffix),
+  );
+  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
+}
+
 export function pickStrippedWorkspaceMatch(
   strippedPath: string,
   cwd: string,
