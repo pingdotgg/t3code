@@ -7,7 +7,6 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import {
-  AUTH_PROBE_TIMEOUT_MS,
   buildSelectOptionDescriptor,
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -156,6 +155,8 @@ const runCopilotVersion = Effect.fn("GitHubCopilotProvider.runCopilotVersion")(f
 });
 
 const CLIENT_STOP_TIMEOUT_MS = 2_000;
+// A first start took 9.7s on a fresh Windows machine, against 0.9s once warm.
+const ACCOUNT_PROBE_TIMEOUT_MS = 30_000;
 
 /** Reads everything without opening a session, so a status check leaves no Copilot history. */
 export const readGitHubCopilotAccount = (client: CopilotSdkClient) => {
@@ -179,7 +180,7 @@ export const readGitHubCopilotAccount = (client: CopilotSdkClient) => {
     const [models, commands] = await Promise.all([client.listModels(), client.serverCommands()]);
     return { auth, models, commands };
   }).pipe(
-    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+    Effect.timeoutOption(ACCOUNT_PROBE_TIMEOUT_MS),
     Effect.onExit((exit) => (Exit.isSuccess(exit) && Option.isSome(exit.value) ? stop : forceStop)),
   );
 };

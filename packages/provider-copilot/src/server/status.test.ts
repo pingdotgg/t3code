@@ -80,7 +80,7 @@ it.effect("force stops a CLI that never finishes its handshake", () =>
       }),
     ).pipe(Effect.forkChild);
 
-    yield* TestClock.adjust("10 seconds");
+    yield* TestClock.adjust("30 seconds");
 
     assert.isTrue(Option.isNone(yield* Fiber.join(probe)));
     assert.isTrue(forced);
