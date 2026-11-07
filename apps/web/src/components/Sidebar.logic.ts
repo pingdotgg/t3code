@@ -1001,6 +1001,74 @@ export function groupSidebarSectionByProject<
   return ungrouped.length > 0 ? [...labeled, { group: null, threads: ungrouped }] : labeled;
 }
 
+// Stable, so memoized folder headers skip re-rendering while their folder is open.
+const NO_HIDDEN_THREADS: readonly never[] = [];
+
+export interface SidebarProjectFolder<TGroup, TThread> {
+  readonly group: TGroup;
+  readonly collapsed: boolean;
+  /** Rows drawn under the folder header. */
+  readonly threads: readonly TThread[];
+  /** What a closed folder's count and dot stand for. */
+  readonly hiddenThreads: readonly TThread[];
+  /** The open folder's Working row, while it holds working threads. */
+  readonly working: {
+    readonly expanded: boolean;
+    readonly count: number;
+    readonly threads: readonly TThread[];
+  } | null;
+}
+
+/**
+ * Boring sidebar folders. Working threads, when given, go under each open folder's
+ * Working row. A closed folder or Working row still shows the open thread.
+ */
+export function buildSidebarProjectFolders<
+  TGroup extends ProjectGroupMembers,
+  TThread extends ProjectThread,
+>(input: {
+  readonly groups: readonly TGroup[];
+  readonly activeThreads: readonly TThread[];
+  readonly workingThreads: readonly TThread[];
+  readonly keepEmpty: (group: TGroup) => boolean;
+  readonly isFolderOpen: (group: TGroup) => boolean;
+  readonly isWorkingOpen: (group: TGroup) => boolean;
+  readonly isRouteThread: (thread: TThread) => boolean;
+}): Array<SidebarProjectFolder<TGroup, TThread>> {
+  const working = new Set(input.workingThreads);
+  return groupSidebarThreadsByProject(
+    input.groups,
+    [...input.activeThreads, ...input.workingThreads],
+    input.keepEmpty,
+  ).map(({ group, threads }) => {
+    if (!input.isFolderOpen(group)) {
+      return {
+        group,
+        collapsed: true,
+        threads: threads.filter(input.isRouteThread),
+        hiddenThreads: threads.filter((thread) => !input.isRouteThread(thread)),
+        working: null,
+      };
+    }
+    const folderWorking = threads.filter((thread) => working.has(thread));
+    const expanded = input.isWorkingOpen(group);
+    return {
+      group,
+      collapsed: false,
+      threads: threads.filter((thread) => !working.has(thread)),
+      hiddenThreads: NO_HIDDEN_THREADS,
+      working:
+        folderWorking.length === 0
+          ? null
+          : {
+              expanded,
+              count: folderWorking.length,
+              threads: expanded ? folderWorking : folderWorking.filter(input.isRouteThread),
+            },
+    };
+  });
+}
+
 export type SidebarV2TopStatusKind =
   | "approval"
   | "done"

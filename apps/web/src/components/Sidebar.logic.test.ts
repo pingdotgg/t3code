@@ -31,6 +31,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  buildSidebarProjectFolders,
   groupSidebarSectionByProject,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
@@ -1632,6 +1633,93 @@ describe("groupSidebarSectionByProject", () => {
       { label: "api", threads: ["api-1", "api-2"] },
       { label: null, threads: ["orphan"] },
     ]);
+  });
+});
+
+describe("buildSidebarProjectFolders", () => {
+  const web = ProjectId.make("web");
+  const api = ProjectId.make("api");
+  const docs = ProjectId.make("docs");
+  const groups = [web, api, docs].map((projectId) => ({
+    projectKey: projectId as string,
+    memberProjectRefs: [{ environmentId: localEnvironmentId, projectId }],
+  }));
+  const thread = (id: string, projectId: ProjectId) => ({
+    id,
+    environmentId: localEnvironmentId,
+    projectId,
+  });
+  const ready = [thread("web-done", web), thread("api-done", api)];
+  const working = [thread("web-run", web), thread("docs-run", docs)];
+  const build = (
+    options: {
+      workingThreads?: typeof working;
+      closed?: string[];
+      workingOpen?: string[];
+      route?: string;
+    } = {},
+  ) =>
+    buildSidebarProjectFolders({
+      groups,
+      activeThreads: ready,
+      workingThreads: options.workingThreads ?? working,
+      keepEmpty: () => false,
+      isFolderOpen: (group) => !options.closed?.includes(group.projectKey),
+      isWorkingOpen: (group) => options.workingOpen?.includes(group.projectKey) ?? false,
+      isRouteThread: (row) => row.id === options.route,
+    }).map((folder) => ({
+      folder: folder.group.projectKey,
+      rows: folder.threads.map((row) => row.id),
+      hidden: folder.hiddenThreads.map((row) => row.id),
+      working:
+        folder.working === null
+          ? null
+          : {
+              count: folder.working.count,
+              expanded: folder.working.expanded,
+              rows: folder.working.threads.map((row) => row.id),
+            },
+    }));
+
+  it("folds working threads under each folder's Working row, closed until opened", () => {
+    expect(build()).toEqual([
+      {
+        folder: "web",
+        rows: ["web-done"],
+        hidden: [],
+        working: { count: 1, expanded: false, rows: [] },
+      },
+      { folder: "api", rows: ["api-done"], hidden: [], working: null },
+      { folder: "docs", rows: [], hidden: [], working: { count: 1, expanded: false, rows: [] } },
+    ]);
+    expect(build({ workingOpen: ["web"] })[0]!.working).toEqual({
+      count: 1,
+      expanded: true,
+      rows: ["web-run"],
+    });
+    // A closed folder has no Working row; its count covers its working threads too.
+    expect(build({ closed: ["web"] })[0]).toEqual({
+      folder: "web",
+      rows: [],
+      hidden: ["web-done", "web-run"],
+      working: null,
+    });
+    // Without separated working threads, folders have no Working row.
+    expect(build({ workingThreads: [] }).map((folder) => folder.working)).toEqual([null, null]);
+  });
+
+  it("still shows the open thread inside a closed folder or Working row", () => {
+    expect(build({ route: "web-run" })[0]!.working).toEqual({
+      count: 1,
+      expanded: false,
+      rows: ["web-run"],
+    });
+    expect(build({ closed: ["web"], route: "web-run" })[0]).toEqual({
+      folder: "web",
+      rows: ["web-run"],
+      hidden: ["web-done"],
+      working: null,
+    });
   });
 });
 

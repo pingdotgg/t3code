@@ -9,6 +9,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
+import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const FOLDER_DOT_CLASS_NAME = {
@@ -29,6 +30,35 @@ const FOLDER_DOT_LABEL = {
 export function sidebarFolderRowId(projectKey: string) {
   return `folder:${projectKey}`;
 }
+
+/** The folder's Working row in the tree; the working threads under it name it as their parent. */
+export function sidebarFolderWorkingRowId(projectKey: string) {
+  return `folder-working:${projectKey}`;
+}
+
+/** Folds a folder's working threads; its label sits on the folder rows' title column. */
+export const SidebarFolderWorkingRow = memo(function SidebarFolderWorkingRow(props: {
+  group: SidebarProjectSnapshot;
+  count: number;
+  expanded: boolean;
+  onToggle: (group: SidebarProjectSnapshot) => void;
+}) {
+  const { group } = props;
+  return (
+    <li data-testid="sidebar-folder-working" className="list-none ps-7">
+      <CollapsibleSectionHeader
+        data-sidebar-row={sidebarFolderWorkingRowId(group.projectKey)}
+        data-sidebar-parent={sidebarFolderRowId(group.projectKey)}
+        aria-label={`Working in ${group.displayName}, ${props.count}`}
+        expanded={props.expanded}
+        onClick={() => props.onToggle(group)}
+        accessory={<span className="font-normal tabular-nums">{props.count}</span>}
+      >
+        Working
+      </CollapsibleSectionHeader>
+    </li>
+  );
+});
 
 /**
  * Names the project of the section rows below it when sections list threads by

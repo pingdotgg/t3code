@@ -165,7 +165,9 @@ Turn on **Settings → Labs → Sections by project** on web and desktop to list
 threads under their project's name, in the same project order as the boring sidebar's folders.
 In the default sidebar this applies to the active list, Working, Snoozed, and Settled. With the
 Working section on, finished work returns to the top of its project and running work waits under
-its project in Working. In the boring sidebar, Snoozed and Settled list their threads this way.
+its project in Working. In the boring sidebar, Snoozed and Settled list their threads this way,
+and each folder keeps its running threads under its own **Working** row at the bottom, closed
+until you open it. Finished threads, and threads that need you, return to the top of their folder.
 Threads keep their section's order within each project. While this is on you can drag a thread
 onto the composer to mention it, but not within the sidebar. An order you arranged in the default
 sidebar returns when you turn this off. Each device keeps its own choice.
