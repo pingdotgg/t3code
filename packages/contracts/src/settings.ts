@@ -350,6 +350,9 @@ export type ToolCallVisibility = typeof ToolCallVisibility.Type;
 export const ScreenReaderAnnouncements = Schema.Literals(["status", "messages", "everything"]);
 export type ScreenReaderAnnouncements = typeof ScreenReaderAnnouncements.Type;
 
+export const SidebarThreadRowLines = Schema.Literals(["automatic", "one", "two", "three"]);
+export type SidebarThreadRowLines = typeof SidebarThreadRowLines.Type;
+
 export const ModelFavorite = Schema.Struct({
   provider: ProviderInstanceId,
   model: TrimmedNonEmptyString,
@@ -515,8 +518,12 @@ export const ClientSettingsSchema = Schema.Struct({
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   boringSidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Retired Labs toggle. Automatic's folder rows read it until a Thread rows pick clears it.
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  sidebarThreadRowLines: SidebarThreadRowLines.pipe(
+    Schema.withDecodingDefault(Effect.succeed("automatic" as const)),
   ),
   toolCallVisibility: ToolCallVisibility.pipe(
     Schema.withDecodingDefault(Effect.succeed("showAll" as const)),
@@ -2035,6 +2042,7 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   boringSidebarMultilineRows: Schema.optionalKey(Schema.Boolean),
+  sidebarThreadRowLines: Schema.optionalKey(SidebarThreadRowLines),
   toolCallVisibility: Schema.optionalKey(ToolCallVisibility),
   screenReaderAnnouncements: Schema.optionalKey(ScreenReaderAnnouncements),
   threadDetailsUsageEnabled: Schema.optionalKey(Schema.Boolean),

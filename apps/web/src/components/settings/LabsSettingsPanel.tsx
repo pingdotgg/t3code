@@ -1,10 +1,13 @@
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { managedCapabilityDenial } from "@t3tools/contracts";
+import { SidebarThreadRowLines } from "@t3tools/contracts/settings";
+import * as Schema from "effect/Schema";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -19,6 +22,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
+        <ThreadRowLinesRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -44,32 +48,47 @@ function BoringSidebarRow() {
           aria-label="Boring sidebar (group by project)"
         />
       }
-    >
-      {settings.boringSidebarEnabled ? (
-        <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
-          <BoringSidebarMultilineRow />
-        </div>
-      ) : null}
-    </SettingsRow>
+    />
   );
 }
 
-function BoringSidebarMultilineRow() {
+const THREAD_ROW_LINES_LABELS: Record<SidebarThreadRowLines, string> = {
+  automatic: "Automatic",
+  one: "1 line",
+  two: "2 lines",
+  three: "3 lines",
+};
+
+const isSidebarThreadRowLines = Schema.is(SidebarThreadRowLines);
+
+function ThreadRowLinesRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsRow
-      {...searchableSetting("boring-sidebar-multiline")}
-      className="px-0 py-2 sm:px-0"
-      description="Show folder threads on two lines: the title, then the branch, pull request, and agent."
+      {...searchableSetting("sidebar-thread-row-lines")}
+      description="Lines per sidebar thread: the title, then its branch, pull request, and agent, then its project. Automatic uses three, and one inside project folders. Snoozed and Settled always use one."
       control={
-        <Switch
-          checked={settings.boringSidebarMultilineRows}
-          onCheckedChange={(checked) =>
-            updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
-          }
-          aria-label="Two-line folder rows"
-        />
+        <div className="w-full sm:w-40">
+          <Select
+            value={settings.sidebarThreadRowLines}
+            onValueChange={(value) => {
+              if (!isSidebarThreadRowLines(value)) return;
+              // Any pick retires the old two-line switch, so Automatic can return to one line.
+              updateSettings({ sidebarThreadRowLines: value, boringSidebarMultilineRows: false });
+            }}
+          >
+            <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Thread rows">
+              <SelectValue>{THREAD_ROW_LINES_LABELS[settings.sidebarThreadRowLines]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value="automatic">Automatic</SelectItem>
+              <SelectItem value="one">1 line</SelectItem>
+              <SelectItem value="two">2 lines</SelectItem>
+              <SelectItem value="three">3 lines</SelectItem>
+            </SelectPopup>
+          </Select>
+        </div>
       }
     />
   );

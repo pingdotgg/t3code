@@ -191,6 +191,7 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
+  resolveSidebarRowLines,
   resolveSidebarThreadSection,
   resolveSidebarReorderableThreadKeys,
   searchSidebarThreads,
@@ -992,6 +993,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
+  const rowLinesSetting = useClientSettings((settings) => settings.sidebarThreadRowLines);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
@@ -3323,15 +3325,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
-                        const isCard =
-                          section === "active" || section === "pinned" || section === "working";
-                        const rowVariant = folderRow
-                          ? folderRowsMultiline
-                            ? "folder-multiline"
-                            : "folder"
-                          : isCard
-                            ? "card"
-                            : "slim";
+                        const nested = folderRow !== undefined;
+                        const rowLines = resolveSidebarRowLines({
+                          setting: rowLinesSetting,
+                          section,
+                          nested,
+                          folderRowsMultiline,
+                        });
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -3343,7 +3343,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               optimisticDrop !== null
                             }
                             thread={thread}
-                            variant={rowVariant}
+                            lines={rowLines}
+                            nested={nested}
                             navigationParent={
                               folderRow ??
                               (section === "working" ||

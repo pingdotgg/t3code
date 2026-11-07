@@ -159,6 +159,14 @@ Pinned threads stay above the folders, and Snoozed and Settled stay below them. 
 can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
 section is off. Each device keeps its own choice.
 
+### Thread rows (beta)
+
+On web and desktop, **Settings → Labs → Thread rows** sets how many lines each sidebar thread
+takes: **1 line** shows the title and status, **2 lines** adds the branch, pull request, and agent,
+and **3 lines** adds a line for the project and status above the title. Inside a project folder,
+that line shows only the status. **Automatic** uses three lines, and one inside project folders.
+Snoozed and Settled threads always take one line.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

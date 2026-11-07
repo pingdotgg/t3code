@@ -33,6 +33,7 @@ import {
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
+  resolveSidebarRowLines,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -1638,6 +1639,33 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+  });
+});
+
+describe("resolveSidebarRowLines", () => {
+  it.each([
+    // Automatic keeps cards outside folders and the retired switch inside them.
+    { setting: "automatic", section: "active", nested: false, multiline: true, lines: 3 },
+    { setting: "automatic", section: "pinned", nested: false, multiline: false, lines: 3 },
+    { setting: "automatic", section: "active", nested: true, multiline: false, lines: 1 },
+    { setting: "automatic", section: "active", nested: true, multiline: true, lines: 2 },
+    // An explicit pick overrides the retired switch, in and out of folders.
+    { setting: "one", section: "working", nested: false, multiline: true, lines: 1 },
+    { setting: "two", section: "pinned", nested: false, multiline: false, lines: 2 },
+    { setting: "one", section: "active", nested: true, multiline: true, lines: 1 },
+    { setting: "three", section: "active", nested: true, multiline: false, lines: 3 },
+    // Snoozed and Settled stay on one line whatever the setting.
+    { setting: "three", section: "snoozed", nested: false, multiline: false, lines: 1 },
+    { setting: "automatic", section: "settled", nested: false, multiline: true, lines: 1 },
+  ] as const)("$setting $section nested=$nested multiline=$multiline → $lines", (row) => {
+    expect(
+      resolveSidebarRowLines({
+        setting: row.setting,
+        section: row.section,
+        nested: row.nested,
+        folderRowsMultiline: row.multiline,
+      }),
+    ).toBe(row.lines);
   });
 });
 

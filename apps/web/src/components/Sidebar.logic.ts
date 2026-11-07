@@ -24,7 +24,11 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type {
+  SidebarProjectSortOrder,
+  SidebarThreadRowLines,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
   effectiveSnoozed,
@@ -192,6 +196,24 @@ export function resolveSidebarThreadSection(input: {
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";
+}
+
+export type SidebarRowLines = 1 | 2 | 3;
+
+const SIDEBAR_ROW_LINES = { one: 1, two: 2, three: 3 } as const;
+
+// Snoozed and Settled rows stay on one line. Automatic keeps the looks rows had
+// before the setting: cards outside folders, the retired switch inside them.
+export function resolveSidebarRowLines(input: {
+  readonly setting: SidebarThreadRowLines;
+  readonly section: SidebarSection;
+  readonly nested: boolean;
+  readonly folderRowsMultiline: boolean;
+}): SidebarRowLines {
+  if (input.section === "snoozed" || input.section === "settled") return 1;
+  if (input.setting !== "automatic") return SIDEBAR_ROW_LINES[input.setting];
+  if (!input.nested) return 3;
+  return input.folderRowsMultiline ? 2 : 1;
 }
 
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";

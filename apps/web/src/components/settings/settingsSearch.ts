@@ -468,12 +468,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta folders project tree classic sidebar"],
   },
   {
-    id: "boring-sidebar-multiline",
-    title: "Two-line folder rows",
+    id: "sidebar-thread-row-lines",
+    title: "Thread rows",
     to: "/settings/labs",
-    // Shown inside the boring sidebar row only while it is on, so search lands on the parent.
-    targetId: "boring-sidebar",
-    searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
+    searchTerms: [
+      "beta sidebar thread rows lines compact dense card one two three multiline branch pull request",
+    ],
   },
   {
     id: "tool-call-visibility",

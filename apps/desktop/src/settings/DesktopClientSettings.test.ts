@@ -63,6 +63,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadSortOrder: "created_at",
   boringSidebarEnabled: false,
   boringSidebarMultilineRows: false,
+  sidebarThreadRowLines: "two",
   threadDetailsUsageEnabled: false,
   threadDetailsItems: {},
   sidebarWorkingShelfEnabled: false,

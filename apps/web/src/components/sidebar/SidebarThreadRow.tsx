@@ -85,6 +85,7 @@ import {
   hasUnseenCompletion,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
+  type SidebarRowLines,
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
   shouldRecedeSidebarThread,
@@ -488,8 +489,15 @@ export function SortableThreadRow(
       : rowProps.thread.runtime !== null
         ? asLaunchingThread(liveThread)
         : liveThread;
-  // Keyed by variant so a card/slim switch remounts the row.
-  return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
+  // Keyed by shape so a card/slim switch remounts the row.
+  return (
+    <SidebarThreadRow
+      key={`${rowProps.lines}:${rowProps.nested}`}
+      {...rowProps}
+      thread={thread}
+      sortable={bag}
+    />
+  );
 }
 export type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
@@ -543,9 +551,10 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
-  // "folder" is a one-line row inside a boring sidebar project folder;
-  // "folder-multiline" adds the card's branch and PR line under it.
-  variant: "card" | "slim" | "folder" | "folder-multiline";
+  // 1 is the title, 2 adds the branch and PR line, 3 is the card with the project on top.
+  lines: SidebarRowLines;
+  // Inside a boring sidebar project folder, which already shows the project.
+  nested: boolean;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -659,9 +668,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     openPullRequestsInRightPanel,
     renamingTitle,
     thread,
-    variant,
+    lines,
+    nested,
     variantAction,
   } = props;
+  // Snoozed and Settled rows recede and show a time; live rows show their status.
+  const live = variantAction === "settle";
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
@@ -1036,7 +1048,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       className={cn(
         "min-w-0 flex-1 text-start text-sm transition-opacity motion-reduce:transition-none",
         shouldRecede ? "font-normal" : "font-medium",
-        variant !== "slim"
+        live
           ? cn(
               "truncate",
               shouldRecede
@@ -1208,9 +1220,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     </span>
   ) : null;
 
-  if (variant !== "card") {
-    const multiline = variant === "folder-multiline";
-    const inFolder = variant === "folder" || multiline;
+  if (lines !== 3) {
+    const multiline = lines === 2;
     return (
       <li
         data-thread-item={threadKey}
@@ -1233,7 +1244,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
-                data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
+                data-testid={nested ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(
                   rowSurfaceClassName,
@@ -1241,7 +1252,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     ? "flex flex-col justify-center px-2.5 py-1.5"
                     : "flex h-9 items-center gap-2.5 px-2.5",
                   // Lines titles up with the folder name, past its chevron and icon.
-                  inFolder && "ps-9",
+                  nested && "ps-9",
                 )}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
@@ -1253,11 +1264,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {/* `contents` keeps one-line rows a single flex row. */}
             <div className={multiline ? "flex h-6 min-w-0 items-center gap-2.5" : "contents"}>
               {accessibleTitle}
-              {inFolder ? null : (
+              {nested ? null : (
                 <span
                   className={cn(
                     "flex shrink-0 items-center transition-opacity",
-                    (!props.isActive || variantAction === "unsettle") &&
+                    !live &&
+                      (!props.isActive || variantAction === "unsettle") &&
                       "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
                   )}
                 >
@@ -1298,7 +1310,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <AlarmClockIcon aria-hidden className="size-3" />
                         {props.snoozeWakeLabelText}
                       </span>
-                    ) : (inFolder ? isWokeStatus : isWoke) ? (
+                    ) : (live ? isWokeStatus : isWoke) ? (
                       <Tooltip>
                         <TooltipTrigger
                           render={
@@ -1315,8 +1327,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         />
                         <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
                       </Tooltip>
-                    ) : inFolder && topStatus ? (
-                      // Folder rows have no status line, so the status takes the time slot.
+                    ) : live && topStatus ? (
+                      // These rows have no status line, so the status takes the time slot.
                       <span
                         className={cn(
                           "inline-flex items-center gap-1 text-xs font-medium",
@@ -1399,7 +1411,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
-            {multiline ? metaLine : null}
+            {multiline && metaLine !== null ? (
+              // Lines the details up with the title, past the project icon.
+              <div className={cn(!nested && "ps-6.5")}>{metaLine}</div>
+            ) : null}
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
@@ -1444,17 +1459,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
               metaLineEmpty && "h-auto",
+              nested && "ps-9",
             )}
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
+              {props.project && !nested ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
               {pinIndicator}
-              {props.projectDisplayName ? (
+              {props.projectDisplayName && !nested ? (
                 <span
                   className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
                 >
