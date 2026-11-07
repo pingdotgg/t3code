@@ -204,6 +204,8 @@ export function parseElicitationForm(
         ? {}
         : { allowCustomAnswer: false }),
       ...(parsed.field.kind === "multiChoice" ? { multiSelect: true } : {}),
+      // JSON Schema fields are optional unless listed in required.
+      ...(required.has(id) ? {} : { required: false }),
     });
   }
   return {

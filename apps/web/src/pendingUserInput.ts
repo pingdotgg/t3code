@@ -3,6 +3,7 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   buildPendingUserInputAnswers,
+  canSkipPendingUserInputQuestion,
   normalizeSelectedOptionValues,
   resolvePendingUserInputAnswer,
   type PendingUserInputAnswer,
@@ -105,6 +106,8 @@ export function derivePendingUserInputProgress(
     answeredQuestionCount,
     isLastQuestion,
     isComplete: buildPendingUserInputAnswers(questions, draftAnswers) !== null,
-    canAdvance: resolvedAnswer !== null,
+    canAdvance:
+      resolvedAnswer !== null ||
+      (activeQuestion !== null && canSkipPendingUserInputQuestion(activeQuestion, activeDraft)),
   };
 }

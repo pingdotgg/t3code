@@ -166,6 +166,37 @@ const compatQuestion = {
 } as const;
 
 describe("buildPendingUserInputAnswers", () => {
+  it("leaves unanswered optional questions out of the answers", () => {
+    const other = {
+      id: "scope__other",
+      header: "Other (type your own)",
+      question: "Which scope should this use?",
+      options: [],
+      multiSelect: false,
+      required: false,
+    };
+    const drafts = { scope: { selectedOptionValues: ["Orchestration-first"] } };
+
+    expect(buildPendingUserInputAnswers([singleSelectQuestion, other], drafts)).toEqual({
+      scope: "Orchestration-first",
+    });
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, other], {
+        ...drafts,
+        scope__other: { customAnswer: "Another scope" },
+      }),
+    ).toEqual({ scope: "Orchestration-first", scope__other: "Another scope" });
+    expect(buildPendingUserInputAnswers([singleSelectQuestion, other], {})).toBeNull();
+    expect(buildPendingUserInputAnswers([{ ...other, required: true }], {})).toBeNull();
+    expect(buildPendingUserInputAnswers([other], {})).toEqual({});
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, other], {
+        ...drafts,
+        scope__other: { attachmentCount: 1, attachmentsBlocked: true },
+      }),
+    ).toBeNull();
+  });
+
   it("returns a canonical answer map for complete prompts", () => {
     expect(
       buildPendingUserInputAnswers([singleSelectQuestion, compatQuestion], {
