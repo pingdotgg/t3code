@@ -35,6 +35,7 @@ import {
 } from "@t3tools/contracts";
 import {
   legacyThreadPullRequestKey,
+  resolveThreadCurrentPullRequestLink,
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
@@ -220,7 +221,9 @@ export function threadPullRequestPanelTargets(thread: {
   const links = visibleThreadPullRequests(thread.pullRequests ?? []);
   const legacy = thread.linkedPullRequest;
   if (links.length > 0) {
-    return links.map((link) =>
+    const current = resolveThreadCurrentPullRequestLink(links);
+    const orderedLinks = current ? [current, ...links.filter((link) => link !== current)] : links;
+    return orderedLinks.map((link) =>
       legacy != null && threadPullRequestKeysEqual(link, legacyThreadPullRequestKey(legacy))
         ? legacy
         : {

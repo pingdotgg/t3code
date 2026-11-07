@@ -1496,6 +1496,23 @@ describe("pull request panel context beside a thread", () => {
           url: "https://github.com/other/repo/pull/2",
         },
       ]);
+      const snapshot = {
+        state: "merged" as const,
+        title: "Older PR",
+        headBranch: "older",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: "2026-09-09T00:00:00Z",
+        syncedAt: "2026-09-09T00:00:00Z",
+      };
+      const targets = threadPullRequestPanelTargets({
+        projectId: "proj-a",
+        pullRequests: [
+          link(1, { snapshot }),
+          link(2, { snapshot: { ...snapshot, state: "open", headBranch: "current" } }),
+        ],
+      });
+      expect(targets.map((target) => target.number)).toEqual([2, 1]);
     });
 
     it("reuses the legacy reference only for the same pull request on the same host", () => {
