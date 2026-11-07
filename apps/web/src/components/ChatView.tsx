@@ -3782,7 +3782,14 @@ export default function ChatView(props: ChatViewProps) {
                             )}
                           </div>
                         </ComposerSurface.Host>
-                        <div className="min-h-0">
+                        <div className="relative min-h-0">
+                          {isDraftHeroState ? null : (
+                            // Starts under the card's rounded corners so the timeline never shows below it.
+                            <div
+                              aria-hidden
+                              className="absolute inset-x-0 -top-4 bottom-0 -z-10 bg-background"
+                            />
+                          )}
                           <div
                             data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
                             className="relative z-0"
@@ -3859,7 +3866,10 @@ export default function ChatView(props: ChatViewProps) {
                     </div>
                     <div
                       aria-hidden
-                      className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+                      className={cn(
+                        "h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]",
+                        !isDraftHeroState && "bg-background",
+                      )}
                     />
                   </div>
                 </div>
