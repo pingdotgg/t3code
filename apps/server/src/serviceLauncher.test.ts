@@ -319,7 +319,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect("keeps a pending update and its backup while owned, then resumes the trial", () =>
+  it.effect("keeps a pending update while owned, drops its backup, then resumes the trial", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -393,7 +393,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const idle = yield* Effect.promise(() => readServiceState(statePath));
       assert.strictEqual(idle.activeVersion, "1.0.0");
       assert.strictEqual(idle.update?.status, "pending");
-      assert.isTrue(yield* fs.exists(path.join(root, "runtime", "db-backup", "update-1")));
+      assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", "update-1")));
 
       // The other owner runs the target version and migrates before it releases the home.
       yield* fs.writeFileString(databasePath, "migrated by 1.1.0");

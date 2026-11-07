@@ -847,10 +847,16 @@ export class Launcher {
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
-  // Stay idle until the lock frees to avoid supervisor restart loops. A pending update keeps its
-  // backup and resumes its trial, since the other owner may have migrated the database past fromVersion.
+  // Stay idle until the lock frees to avoid supervisor restart loops. A pending update resumes its
+  // trial, since the other owner may have migrated the database past fromVersion. Its backup is
+  // dropped so a failed trial never restores it over the other owner's writes; exit 78 comes before
+  // the child opens the database, and the resumed trial backs up again.
   async #idleWhileStateDirOwned(): Promise<void> {
     this.#clearTimer();
+    const pending = this.#state.update;
+    if (pending?.status === "pending") {
+      await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+    }
     process.stderr.write(
       "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n",
     );
