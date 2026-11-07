@@ -27,6 +27,8 @@ const EXTRA_OWNERS = [
   [/^native\/browser-secret\//, ["@t3tools/desktop"]],
   [/^native\/kde-snap-shot\//, ["@t3tools/desktop"]],
   [/^native\/libghostty-vt\//, ["@t3tools/web"]],
+  // apps/server typechecks the root vite.config.ts, which imports this.
+  [/^infra\/task-cache\/src\/remoteCache\.ts$/, ["t3"]],
   // apps/server/src/cloud/ConnectReachability.test.ts checks the guide's headings.
   [/^docs\/user\/t3-connect-troubleshooting\.md$/, ["t3"]],
 ];
@@ -36,6 +38,8 @@ const RUST = /^native\/(resource-monitor|kde-snap-shot|hyprland-snap-shot)\//;
 const TEST_ONLY_DEPS = {
   // Evals import the server's source to test its real model-facing text.
   "@t3tools/evals": ["t3"],
+  // Orchestration tests apply events through the client projection.
+  t3: ["@t3tools/client-runtime"],
   "@t3tools/provider-pi": ["@t3tools/client-runtime"],
   "@t3tools/scripts": [
     "@t3tools/desktop",
@@ -151,11 +155,14 @@ function decide(files, packages, full) {
     (pkg) => pkg.hasTest && !OWN_TEST_JOB.has(pkg.name) && affected.has(pkg.name),
   );
   const has = (name) => affected.has(name);
+  const names = [...affected].sort();
 
   return {
-    affected: [...affected].sort(),
+    affected: names,
     outputs: {
       typecheck: affected.size > 0,
+      // Empty means every package.
+      typecheck_packages: everything ? "" : names.join(" "),
       build: has("@t3tools/desktop") || has("t3") || has("@t3tools/web"),
       test: tested.length > 0,
       // Empty means every package the Test job covers.

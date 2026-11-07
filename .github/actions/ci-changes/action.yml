@@ -3,6 +3,8 @@ description: Decide which CI jobs a change needs. See .github/scripts/ci-changes
 outputs:
   typecheck:
     value: ${{ steps.detect.outputs.typecheck }}
+  typecheck_packages:
+    value: ${{ steps.detect.outputs.typecheck_packages }}
   build:
     value: ${{ steps.detect.outputs.build }}
   test:
