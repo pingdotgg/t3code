@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import * as Electron from "electron";
 import { autoUpdater } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
@@ -48,9 +49,21 @@ export class ElectronUpdaterQuitAndInstallError extends Schema.TaggedError<Elect
   }
 }
 
+export class ElectronUpdaterPrepareInstallError extends Schema.TaggedError<ElectronUpdaterPrepareInstallError>()(
+  "ElectronUpdaterPrepareInstallError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Squirrel.Mac could not prepare the downloaded update.";
+  }
+}
+
 export const ElectronUpdaterError = Schema.Union([
   ElectronUpdaterCheckForUpdatesError,
   ElectronUpdaterDownloadUpdateError,
+  ElectronUpdaterPrepareInstallError,
   ElectronUpdaterQuitAndInstallError,
 ]);
 export type ElectronUpdaterError = typeof ElectronUpdaterError.Type;
@@ -69,6 +82,11 @@ export class ElectronUpdater extends Context.Service<
     readonly setDisableDifferentialDownload: (value: boolean) => Effect.Effect<void>;
     readonly checkForUpdates: Effect.Effect<void, ElectronUpdaterCheckForUpdatesError>;
     readonly downloadUpdate: Effect.Effect<void, ElectronUpdaterDownloadUpdateError>;
+    /**
+     * macOS only. Squirrel.Mac unpacks and verifies a downloaded update only when asked;
+     * asking early overlaps that with the backend stop.
+     */
+    readonly prepareInstall: Effect.Effect<void, ElectronUpdaterPrepareInstallError>;
     readonly quitAndInstall: (options: {
       readonly isSilent: boolean;
       readonly isForceRunAfter: boolean;
@@ -79,6 +97,87 @@ export class ElectronUpdater extends Context.Service<
     ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
+
+/** The part of Electron's native (Squirrel.Mac) updater that preparing an install uses. */
+export interface NativeUpdater {
+  on(event: "update-downloaded" | "update-not-available", listener: () => void): unknown;
+  on(event: "error", listener: (error: Error) => void): unknown;
+  once(event: "update-downloaded" | "update-not-available", listener: () => void): unknown;
+  once(event: "error", listener: (error: Error) => void): unknown;
+  removeListener(event: string, listener: (...args: Array<never>) => void): unknown;
+  checkForUpdates(): void;
+}
+
+// electron-updater marks the update ready on Squirrel's update-downloaded, so its
+// quitAndInstall then quits at once instead of asking Squirrel itself.
+export const makePrepareInstall = (native: () => NativeUpdater) => {
+  // Mirrors MacUpdater's own flag: Squirrel prepares a downloaded update once per launch. The
+  // watchers stay, so a check that outlives our timeout still counts and is not started twice.
+  let prepared = false;
+  let checking = false;
+  let watching = false;
+  return Effect.callback<void, ElectronUpdaterPrepareInstallError>((resume) => {
+    const updater = native();
+    if (!watching) {
+      watching = true;
+      updater.on("update-downloaded", () => {
+        prepared = true;
+        checking = false;
+      });
+      updater.on("update-not-available", () => {
+        checking = false;
+      });
+      updater.on("error", () => {
+        checking = false;
+      });
+    }
+    if (prepared) {
+      resume(Effect.void);
+      return;
+    }
+    const removeListeners = () => {
+      updater.removeListener("update-downloaded", onDownloaded);
+      updater.removeListener("update-not-available", onNotAvailable);
+      updater.removeListener("error", onError);
+    };
+    const fail = (cause: unknown) => {
+      removeListeners();
+      resume(Effect.fail(new ElectronUpdaterPrepareInstallError({ cause })));
+    };
+    const onDownloaded = () => {
+      removeListeners();
+      resume(Effect.void);
+    };
+    const onNotAvailable = () => fail(new Error("Squirrel.Mac found no update to prepare."));
+    const onError = (cause: Error) => fail(cause);
+    updater.once("update-downloaded", onDownloaded);
+    updater.once("update-not-available", onNotAvailable);
+    updater.once("error", onError);
+    if (!checking) {
+      checking = true;
+      try {
+        updater.checkForUpdates();
+      } catch (cause) {
+        checking = false;
+        fail(cause);
+      }
+    }
+    return Effect.sync(removeListeners);
+  }).pipe(
+    // Backends are already stopping; a silent Squirrel must end in recovery, not a stuck quit.
+    // Squirrel may still finish afterwards, and then installs on the next quit.
+    Effect.timeoutOrElse({
+      duration: "2 minutes",
+      orElse: () =>
+        Effect.fail(
+          new ElectronUpdaterPrepareInstallError({
+            cause: new Error("Squirrel.Mac did not finish preparing the update."),
+          }),
+        ),
+    }),
+    Effect.withSpan("ElectronUpdater.prepareInstall"),
+  );
+};
 
 /** @public */
 export const make = ElectronUpdater.of({
@@ -147,6 +246,7 @@ export const make = ElectronUpdater.of({
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
     }).pipe(Effect.asVoid);
   }),
+  prepareInstall: makePrepareInstall(() => Electron.autoUpdater),
   quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
     isSilent,
     isForceRunAfter,

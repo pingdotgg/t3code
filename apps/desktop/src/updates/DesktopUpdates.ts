@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -377,6 +378,8 @@ export const make = Effect.gen(function* () {
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
+  // Squirrel reports a failed prepare as an updater error too; recovery waits for the backend stops.
+  const preparingInstallRef = yield* Ref.make(false);
   const installRunningBackendsRef = yield* Ref.make<
     ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>
   >([]);
@@ -730,7 +733,7 @@ export const make = Effect.gen(function* () {
         ? ([true, Option.some<UpdateAction>("install-recovery")] as const)
         : ([false, activeAction] as const),
     );
-    if (!ownsRecovery) return;
+    if (!ownsRecovery) return false;
 
     yield* Ref.set(desktopState.quitting, false);
     yield* removeUpdateRestartMarker;
@@ -754,6 +757,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.ensuring(finishUpdateAction("install-recovery")),
     );
+    return true;
   });
 
   const installDownloadedUpdate = (expectedVersion?: string) =>
@@ -818,12 +822,32 @@ export const make = Effect.gen(function* () {
             instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
           );
           yield* Ref.set(installRunningBackendsRef, runningInstances);
-          yield* Effect.forEach(
-            instances,
-            (instance) =>
-              instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
+          const preparesNatively = environment.platform === "darwin";
+          yield* Ref.set(preparingInstallRef, preparesNatively);
+          const [prepared] = yield* Effect.all(
+            [
+              preparesNatively
+                ? electronUpdater.prepareInstall.pipe(Effect.result)
+                : Effect.succeed(Result.succeed(undefined)),
+              Effect.forEach(
+                instances,
+                (instance) =>
+                  instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
+                { concurrency: "unbounded", discard: true },
+              ),
+            ],
             { concurrency: "unbounded" },
-          );
+          ).pipe(Effect.ensuring(Ref.set(preparingInstallRef, false)));
+          if (Result.isFailure(prepared)) {
+            // A late updater error may have recovered and logged first.
+            if (yield* recoverFailedInstall(prepared.failure.message)) {
+              yield* logUpdaterError(prepared.failure.message, {
+                errorTag: prepared.failure._tag,
+                cause: describeUpdateErrorCause(prepared.failure.cause),
+              });
+            }
+            return { accepted: true, completed: false, failed: true };
+          }
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,
@@ -995,6 +1019,8 @@ export const make = Effect.gen(function* () {
       cause,
     });
     if (Option.isSome(activeAction) && activeAction.value === "install") {
+      // While preparing, the install flow logs and recovers once its backend stops finish.
+      if (yield* Ref.get(preparingInstallRef)) return;
       yield* recoverFailedInstall(error.message);
       yield* logUpdaterError(error.message, {
         errorTag: error._tag,

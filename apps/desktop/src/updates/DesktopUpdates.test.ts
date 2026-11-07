@@ -414,6 +414,96 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("prepares the native install while the backends stop", () => {
+    const steps: Array<string> = [];
+    const prepareStarted = Deferred.makeUnsafe<void>();
+    const stopStarted = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      // Each side waits for the other, so a sequential install never finishes.
+      prepareInstall: Deferred.succeed(prepareStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(stopStarted)),
+      ),
+      stopBackend: Deferred.succeed(stopStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(prepareStarted)),
+      ),
+      quitAndInstall: Effect.sync(() => steps.push("quitAndInstall")),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        assert.isTrue((yield* updates.install).accepted);
+        assert.deepEqual(steps, ["quitAndInstall"]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("installs without Squirrel.Mac off macOS", () => {
+    const harness = makeHarness({
+      platform: "win32",
+      prepareInstall: Effect.die("Squirrel.Mac is macOS only"),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        assert.isTrue((yield* updates.install).accepted);
+        assert.equal(harness.quitAndInstalls(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect(
+    "recovers once, after the backends stop, when the native install cannot prepare",
+    () => {
+      const stopFinished = Deferred.makeUnsafe<void>();
+      let startsBeforeStopFinished = 0;
+      const harness = makeHarness({
+        prepareInstall: Effect.sync(() => {
+          // Squirrel's error also reaches the updater's error listener while the stop runs.
+          harness.emit("error", new Error("ditto: No space left on device"));
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ElectronUpdater.ElectronUpdaterPrepareInstallError({
+                cause: new Error("ditto: No space left on device"),
+              }),
+            ),
+          ),
+        ),
+        stopBackend: flushCallbacks.pipe(Effect.andThen(Deferred.succeed(stopFinished, undefined))),
+        startBackend: Deferred.isDone(stopFinished).pipe(
+          Effect.map((done) => {
+            if (!done) startsBeforeStopFinished += 1;
+          }),
+        ),
+      });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          assert.equal((yield* updates.install).state.errorContext, "install");
+          yield* flushCallbacks;
+          assert.equal(harness.quitAndInstalls(), 0);
+          assert.deepEqual(harness.installSteps, ["startBackend"]);
+          assert.equal(startsBeforeStopFinished, 0);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
+
   it.effect("records the version an install hands to the installer", () => {
     let recordsAtStop: ReadonlyArray<string> = [];
     const harness = makeHarness({
