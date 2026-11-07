@@ -429,13 +429,44 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+const isImage = (node: MarkdownNode) => node.type === "image" || node.type === "imageReference";
+const isSpace = (node: MarkdownNode) =>
+  node.type === "break" || (node.type === "text" && node.value.trim() === "");
+
+// Native Markdown sizes an image as a block only when it is its paragraph's only child.
+function markdownWithImageParagraphs(markdown: string): string {
+  // Skips the extra parse unless a line ending sits between two images.
+  if (!/[\])][ \t]*\\?(?:\r\n?|\n)[ \t]*!\[/.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  for (const block of parser.parse(markdown).children) {
+    if (
+      block.type !== "paragraph" ||
+      !block.children.every((child) => isImage(child) || isSpace(child))
+    )
+      continue;
+    const images = block.children.filter(isImage);
+    for (const [index, image] of images.slice(1).entries()) {
+      const start = images[index]!.position?.end.offset;
+      const end = image.position?.start.offset;
+      if (start === undefined || end === undefined) continue;
+      const ending = /\r\n?|\n/.exec(markdown.slice(start, end));
+      if (ending) edits.push({ start, end, content: ending[0].repeat(2) });
+    }
+  }
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
-export function markdownForNativeParsing(markdown: string): string {
+function normalizedMarkdown(markdown: string): string {
   return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
 }
 
+export function markdownForNativeParsing(markdown: string): string {
+  return markdownWithImageParagraphs(normalizedMarkdown(markdown));
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(markdownForNativeParsing(markdown));
+  return parser.parse(normalizedMarkdown(markdown));
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
