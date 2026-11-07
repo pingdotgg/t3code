@@ -3,6 +3,7 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
 import { resolveSshTarget } from "@t3tools/ssh/command";
@@ -26,6 +27,10 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Option from "effect/Option";
+import serverPackageJson from "../../../server/package.json" with { type: "json" };
+
+import type * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
@@ -70,6 +75,24 @@ export class DesktopSshEnvironment extends Context.Service<
 export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
 }
+
+export const resolveDesktopSshCliRunner = (
+  environment: DesktopEnvironment.DesktopEnvironment["Service"],
+  env: NodeJS.ProcessEnv,
+): SshTunnel.RemoteT3RunnerOptions => {
+  const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
+  if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
+    return {
+      nodeScriptPath: devRemoteEntryPath,
+      nodeEngineRange: serverPackageJson.engines.node,
+    };
+  }
+  const releaseBaseUrl = env[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined;
+  return {
+    archiveVersion: environment.appVersion,
+    ...(releaseBaseUrl === undefined ? {} : { releaseBaseUrl }),
+  };
+};
 
 function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
   return discoverSshHosts(input ?? {});
