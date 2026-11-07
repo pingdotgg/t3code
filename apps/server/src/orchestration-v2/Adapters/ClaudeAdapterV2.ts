@@ -352,6 +352,8 @@ const CLAUDE_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 const CLAUDE_STDERR_TAIL_LENGTH = 2_048;
 // The process group is killed on exit, so its stderr closes promptly.
 const CLAUDE_STDERR_DRAIN_TIMEOUT = Duration.seconds(1);
+// Process exit can precede buffered SDK messages, but descendants can keep stdout open forever.
+const CLAUDE_QUERY_EXIT_DRAIN_TIMEOUT = Duration.seconds(1);
 // Claude Code's refusal of bypassPermissions as root, which it explains only on stderr.
 const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
@@ -607,6 +609,15 @@ export class ClaudeCodeRootRefusalError extends Schema.TaggedError<ClaudeCodeRoo
 ) {
   override get message(): string {
     return `Claude Code exited before it started: ${CLAUDE_ROOT_REFUSAL}`;
+  }
+}
+
+class ClaudeProcessExitError extends Schema.TaggedError<ClaudeProcessExitError>()(
+  "ClaudeProcessExitError",
+  {},
+) {
+  override get message(): string {
+    return "Claude Code exited before its message stream closed. Retry the turn.";
   }
 }
 
@@ -1252,7 +1263,7 @@ export const layerQueryRunner: Layer.Layer<
             });
           let spawnedProcess: ClaudeSpawnedProcess | undefined;
           let processExited = false;
-          let processExit: Promise<void> | undefined;
+          const processExit = Promise.withResolvers<void>();
           const spawnClaudeCodeProcess = (spawnOptions: ClaudeSpawnOptions) => {
             const child = spawnProcess(spawnOptions);
             spawnedProcess = child;
@@ -1260,15 +1271,20 @@ export const layerQueryRunner: Layer.Layer<
             const releaseAgent = portDiscovery.trackAgent();
             child.once("exit", releaseAgent);
             child.on("error", releaseAgent);
-            processExited = child.exitCode !== null || child.signalCode != null;
-            processExit = new Promise<void>((resolve) => {
-              if (processExited) resolve();
-              else
-                child.once("exit", () => {
-                  processExited = true;
-                  resolve();
-                });
+            child.once("error", () => {
+              // A failed spawn emits no exit event and never receives a pid.
+              if ("pid" in child && child.pid === undefined) {
+                processExited = true;
+                processExit.resolve();
+              }
             });
+            processExited = child.exitCode !== null || child.signalCode != null;
+            if (processExited) processExit.resolve();
+            else
+              child.once("exit", () => {
+                processExited = true;
+                processExit.resolve();
+              });
             return child;
           };
           const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
@@ -1335,10 +1351,10 @@ export const layerQueryRunner: Layer.Layer<
                       Effect.andThen(
                         Effect.tryPromise({
                           try: async () => {
-                            if (spawnedProcess !== undefined && !processExited) {
-                              spawnedProcess.kill("SIGKILL");
+                            if (spawnedProcess !== undefined) {
+                              if (!processExited) spawnedProcess.kill("SIGKILL");
+                              await processExit.promise;
                             }
-                            await processExit;
                           },
                           catch: (cause) => queryRunnerError(cause, "close"),
                         }).pipe(Effect.timeout("10 seconds")),
@@ -1362,6 +1378,14 @@ export const layerQueryRunner: Layer.Layer<
               claudeQueryMessages(queryRuntime),
               (cause) => cause,
             ).pipe(
+              Stream.interruptWhen(
+                Effect.promise(() => processExit.promise).pipe(
+                  Effect.andThen(Effect.sleep(CLAUDE_QUERY_EXIT_DRAIN_TIMEOUT)),
+                  Effect.andThen(
+                    Effect.fail(queryRunnerError(new ClaudeProcessExitError(), "processExit")),
+                  ),
+                ),
+              ),
               Stream.catch((cause) =>
                 Stream.fromEffect(
                   Effect.gen(function* () {

@@ -340,6 +340,7 @@ it.effect.each([true, false])("only retries after confirmed process exit: %s", (
       const child = {
         stdin,
         stdout,
+        pid: 1234,
         killed: false,
         exitCode: null,
         kill: vi.fn(() => {
@@ -349,7 +350,7 @@ it.effect.each([true, false])("only retries after confirmed process exit: %s", (
         on: events.on.bind(events),
         once: events.once.bind(events),
         off: events.off.bind(events),
-      } satisfies ClaudeSdk.SpawnedProcess;
+      } satisfies ClaudeSdk.SpawnedProcess & { readonly pid: number };
       const signal = yield* Effect.abortSignal;
       const disposed = vi.fn(async () => {});
       const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
@@ -385,6 +386,7 @@ it.effect.each([true, false])("only retries after confirmed process exit: %s", (
         })
         .pipe(Effect.exit, Effect.forkChild);
       yield* Effect.promise(() => registrationStarted.promise);
+      events.emit("error", new Error("running child error"));
       yield* TestClock.adjust("90 seconds");
 
       assert.equal(yield* Effect.promise(() => cleanupProgress.promise), "kill");
@@ -401,45 +403,72 @@ it.effect.each([true, false])("only retries after confirmed process exit: %s", (
   ),
 );
 
-it.effect("stops retrying MCP registration after two timeouts and reports the cause", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const firstRegistration = Promise.withResolvers<void>();
-      const secondRegistration = Promise.withResolvers<void>();
-      const disposed = vi.fn(async () => {});
-      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
-        const started = querySpy.mock.calls.length === 1 ? firstRegistration : secondRegistration;
-        return {
-          setMcpServers: () => {
-            started.resolve();
-            return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
-          },
-          [Symbol.asyncDispose]: disposed,
-        } as unknown as ClaudeSdk.Query;
-      });
-      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
-      const runner = yield* ClaudeAgentSdkQueryRunner;
-      const opening = yield* runner
-        .open(resumedMcpQueryInput)
-        .pipe(Effect.result, Effect.forkChild);
-      yield* Effect.promise(() => firstRegistration.promise);
-      yield* TestClock.adjust("90 seconds");
-      yield* Effect.promise(() => secondRegistration.promise);
-      yield* TestClock.adjust("90 seconds");
-      const result = yield* Fiber.join(opening);
+it.effect.each([false, true])(
+  "reports MCP registration timeouts even when spawning fails: %s",
+  (spawnFails) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstRegistration = Promise.withResolvers<void>();
+        const secondRegistration = Promise.withResolvers<void>();
+        const disposed = vi.fn(async () => {});
+        const signal = yield* Effect.abortSignal;
+        const kill = vi.fn(() => false);
+        let spawnedChild: ClaudeSdk.SpawnedProcess;
+        const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+          const child = Object.assign(new NodeEvents.EventEmitter(), {
+            stdin: new NodeStream.PassThrough(),
+            stdout: new NodeStream.PassThrough(),
+            pid: undefined,
+            killed: false,
+            exitCode: null,
+            kill,
+          });
+          spawnedChild = child;
+          if (spawnFails) {
+            options?.spawnClaudeCodeProcess?.({ command: "claude", args: [], env: {}, signal });
+          }
+          const started = querySpy.mock.calls.length === 1 ? firstRegistration : secondRegistration;
+          return {
+            setMcpServers: () => {
+              if (spawnFails) child.emit("error", new Error("spawn ENOENT"));
+              started.resolve();
+              return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
+            },
+            [Symbol.asyncDispose]: disposed,
+          } as unknown as ClaudeSdk.Query;
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+        const runner = yield* ClaudeAgentSdkQueryRunner;
+        const opening = yield* runner
+          .open({
+            ...resumedMcpQueryInput,
+            options: {
+              ...resumedMcpQueryInput.options,
+              spawnClaudeCodeProcess: () => spawnedChild,
+            },
+          })
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Effect.promise(() => firstRegistration.promise);
+        yield* TestClock.adjust("90 seconds");
+        yield* TestClock.adjust("10 seconds");
+        assert.equal(querySpy.mock.calls.length, 2);
+        yield* Effect.promise(() => secondRegistration.promise);
+        yield* TestClock.adjust("90 seconds");
+        const result = yield* Fiber.join(opening);
 
-      assert.equal(result._tag, "Failure");
-      if (result._tag !== "Failure") return;
-      assert.equal(querySpy.mock.calls.length, 2);
-      assert.equal(disposed.mock.calls.length, 2);
-      assert.equal(
-        makeProviderFailure({
-          cause: { _tag: "ProviderAdapterTurnStartError", cause: result.failure },
-        }).message,
-        "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.",
-      );
-    }).pipe(Effect.provide(realQueryRunner)),
-  ),
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") return;
+        assert.equal(querySpy.mock.calls.length, 2);
+        assert.equal(disposed.mock.calls.length, 2);
+        assert.equal(kill.mock.calls.length, 0);
+        assert.equal(
+          makeProviderFailure({
+            cause: { _tag: "ProviderAdapterTurnStartError", cause: result.failure },
+          }).message,
+          "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.",
+        );
+      }).pipe(Effect.provide(realQueryRunner)),
+    ),
 );
 
 it.effect("cancels a stalled registration without retrying or retaining its prompt queue", () =>

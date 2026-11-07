@@ -112,6 +112,7 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeSettingsLaunchArgError":
         case "ClaudeMcpRegistrationTimeoutError":
         case "ClaudeCodeRootRefusalError":
+        case "ClaudeProcessExitError":
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
         case "ProviderSetupError":

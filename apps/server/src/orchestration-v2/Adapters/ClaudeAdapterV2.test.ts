@@ -2634,6 +2634,10 @@ function makeFakeClaudeCli(answerSetServers = true) {
   const spawns: Array<SpawnOptions> = [];
   const controlRequests: Array<object> = [];
   const stdins: Array<NodeStream.PassThrough> = [];
+  const processes: Array<{
+    readonly stdout: NodeStream.PassThrough;
+    readonly exit: (code: number, endStdout: boolean) => void;
+  }> = [];
   const spawn = (options: SpawnOptions): SpawnedProcess => {
     spawns.push(options);
     const stdin = new NodeStream.PassThrough();
@@ -2648,6 +2652,14 @@ function makeFakeClaudeCli(answerSetServers = true) {
         stdout.end();
         child.emit("exit", null, "SIGTERM");
         return true;
+      },
+    });
+    processes.push({
+      stdout,
+      exit: (code, endStdout) => {
+        child.exitCode = code;
+        child.emit("exit", code, null);
+        if (endStdout) stdout.end();
       },
     });
     let pending = "";
@@ -2675,10 +2687,10 @@ function makeFakeClaudeCli(answerSetServers = true) {
     return child;
   };
   const closed = () => stdins.length > 0 && stdins.every((stdin) => stdin.writableEnded);
-  return { spawn, spawns, controlRequests, closed };
+  return { spawn, spawns, controlRequests, closed, processes };
 }
 
-describe("ClaudeAdapterV2 MCP credential channel", () => {
+describe("ClaudeAdapterV2 SDK query runner", () => {
   const t3McpServer = {
     type: "http" as const,
     url: "http://127.0.0.1:43123/mcp",
@@ -2715,6 +2727,55 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
       }),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
+
+  it.effect.each([0, 1])(
+    "fails the message stream when the child exits %s but stdout stays open",
+    (code) =>
+      Effect.gen(function* () {
+        const cli = makeFakeClaudeCli();
+        const session = yield* openWith(cli);
+        const completed =
+          yield* Deferred.make<Exit.Exit<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>>();
+        yield* session.messages.pipe(
+          Stream.runDrain,
+          Effect.exit,
+          Effect.flatMap((exit) => Deferred.succeed(completed, exit)),
+          Effect.forkChild,
+        );
+        cli.processes[0]!.exit(code, false);
+        yield* TestClock.adjust("2 seconds");
+
+        assert.isTrue(yield* Deferred.isDone(completed));
+        const exit = yield* Deferred.await(completed);
+        assert.isTrue(Exit.isFailure(exit));
+        if (Exit.isFailure(exit)) {
+          assert.equal(
+            makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message,
+            "Claude Code exited before its message stream closed. Retry the turn.",
+          );
+        }
+        yield* session.close;
+      }),
+  );
+
+  it.effect("drains buffered messages when the child exits before stream consumption", () =>
+    Effect.gen(function* () {
+      const cli = makeFakeClaudeCli();
+      const session = yield* openWith(cli);
+      const message: SDKMessage = {
+        type: "system",
+        subtype: "status",
+        status: null,
+        uuid: "00000000-0000-4000-8000-000000000001",
+        session_id: "native-thread-claude-mcp-channel",
+      };
+      cli.processes[0]!.stdout.write(`${JSON.stringify(message)}\n`);
+      cli.processes[0]!.exit(0, true);
+
+      assert.deepEqual(yield* session.messages.pipe(Stream.runCollect), [message]);
+      yield* session.close;
+    }),
+  );
 
   it.effect("commits queued delivery before interruptible protocol logging", () =>
     Effect.gen(function* () {
