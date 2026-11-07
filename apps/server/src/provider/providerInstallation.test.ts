@@ -7,6 +7,8 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -15,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeProviderInstallation } from "./providerInstallation.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
@@ -60,6 +63,9 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   } = {},
 ) {
   const calls: string[] = [];
+  const refreshed = yield* Deferred.make<void>();
+  const observed = yield* Deferred.make<void>();
+  const installationState = yield* SubscriptionRef.make(state);
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
   const router = yield* makeProviderInstallation().pipe(
@@ -76,7 +82,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
             Effect.sync(() => {
               calls.push("refresh");
               return [];
-            }),
+            }).pipe(Effect.tap(() => Deferred.succeed(refreshed, undefined))),
         }),
         Layer.mock(CodexInstallation.CodexInstallation)({
           managedDirectory: "/unused-managed-codex",
@@ -101,15 +107,19 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
           managedDirectory: "/unused-managed-runtime",
           start: Effect.sync(() => {
             calls.push("start");
-            return state;
-          }),
+            return { ...state, operationId: "install-1", phase: "downloading" as const };
+          }).pipe(Effect.tap((started) => SubscriptionRef.set(installationState, started))),
           cancel: () =>
             Effect.sync(() => {
               calls.push("cancel");
               return state;
             }),
           state: Effect.succeed(state),
-          changes: Stream.succeed(state),
+          changes: input.instance?.refreshModels
+            ? SubscriptionRef.changes(installationState).pipe(
+                Stream.ensuring(Deferred.succeed(observed, undefined)),
+              )
+            : Stream.succeed(state),
           remove: (paths) =>
             Effect.sync(() => {
               protectedPaths = paths ?? [];
@@ -119,10 +129,68 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
       ),
     ),
   );
-  return { router, calls, protectedPaths: () => protectedPaths };
+  return {
+    router,
+    calls,
+    refreshed,
+    observed,
+    installationState,
+    protectedPaths: () => protectedPaths,
+  };
 });
 
 describe("provider installation routing", () => {
+  it.effect.each([
+    { phase: "succeeded", enabled: true, checkFails: false, expectedChecks: 1 },
+    { phase: "succeeded", enabled: true, checkFails: true, expectedChecks: 1 },
+    { phase: "succeeded", enabled: false, checkFails: false, expectedChecks: 0 },
+    { phase: "cancelled", enabled: true, checkFails: false, expectedChecks: 0 },
+    { phase: "failed", enabled: true, checkFails: false, expectedChecks: 0 },
+  ] as const)(
+    "checks account access once after installation is $phase, enabled=$enabled, checkFails=$checkFails",
+    ({ phase, enabled, checkFails, expectedChecks }) =>
+      Effect.gen(function* () {
+        let checks = 0;
+        const harness = yield* makeHarness({
+          instance: Object.assign(instance(), {
+            enabled,
+            refreshModels: () =>
+              Effect.sync(() => {
+                checks++;
+              }).pipe(
+                Effect.andThen(
+                  checkFails
+                    ? Effect.fail(
+                        new ProviderDriverError({
+                          driver,
+                          instanceId,
+                          detail: "Sign in required.",
+                        }),
+                      )
+                    : Effect.void,
+                ),
+              ),
+          }),
+        });
+        yield* harness.router.start({ instanceId });
+        yield* harness.router.start({ instanceId });
+        assert.strictEqual(checks, 0);
+        yield* SubscriptionRef.set(harness.installationState, {
+          ...state,
+          operationId: "install-1",
+          phase,
+          installedVersion: phase === "succeeded" ? "1.5.1" : null,
+        });
+        yield* Deferred.await(harness.observed);
+        if (expectedChecks > 0) yield* Deferred.await(harness.refreshed);
+        assert.strictEqual(checks, expectedChecks);
+        assert.deepEqual(
+          harness.calls,
+          expectedChecks > 0 ? ["start", "start", "refresh"] : ["start", "start"],
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps external installs manual without hiding shared install status", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
