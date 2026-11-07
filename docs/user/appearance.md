@@ -54,6 +54,9 @@ On web and desktop, choose **Create theme** to adjust a palette, or import a T3 
 theme. The theme editor's color picker lets you select an area of the app to find the color to
 change. Export your theme as JSON to share it.
 
+A VS Code theme also brings its syntax colors. To use them for code in chat, files, and diffs,
+choose the theme under **Code theme** in **Settings → Appearance**.
+
 ## Environment themes
 
 Environment themes and defaults come from the server serving your web app or the desktop app's

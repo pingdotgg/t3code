@@ -130,10 +130,9 @@ import {
   usePreferredEditor,
 } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
-import { resolveDiffThemeName } from "../lib/diffRendering";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useRenderedAppearance } from "../hooks/useTheme";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useDiffThemeNames } from "../hooks/useSettings";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import {
   resolveInlineCodeFileLinkMeta,
@@ -499,6 +498,7 @@ function useChatMarkdownState({
   sourceControlMediaRepository,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
+  const diffThemeNames = useDiffThemeNames();
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
   const mediaScopeKey = [
@@ -649,7 +649,7 @@ function useChatMarkdownState({
       input: { cwd: filePath, editor: "file-manager", reveal: true },
     });
   };
-  const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const diffThemeName = diffThemeNames[resolvedTheme];
   const handleCopy = (event: ReactClipboardEvent<HTMLElement>) => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !event.clipboardData) return;
