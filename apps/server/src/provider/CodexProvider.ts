@@ -448,13 +448,51 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
   );
 });
 
-/** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
+const LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1"];
+
+const hasValue = (value: string | undefined): value is string => (value?.trim() ?? "") !== "";
+
+const withLoopback = (value: string) => {
+  const hosts = value
+    .split(",")
+    .map((host) => host.trim())
+    .filter((host) => host !== "");
+  return hosts.includes("*") ? value : [...new Set([...hosts, ...LOOPBACK_HOSTS])].join(",");
+};
+
+/**
+ * Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models.
+ * Exempts loopback from proxies so Codex's MCP client reaches T3's MCP endpoint directly.
+ */
 export const codexAppServerEnvironment = (
-  environment: NodeJS.ProcessEnv | undefined,
-): NodeJS.ProcessEnv => ({
-  CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_CLIENT_NAME,
-  ...environment,
-});
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): { readonly env: NodeJS.ProcessEnv; readonly configArgs: ReadonlyArray<string> } => {
+  const base = { CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_CLIENT_NAME, ...environment };
+  const proxyNames = Object.keys(environment).filter((name) =>
+    name.toUpperCase().endsWith("_PROXY"),
+  );
+  const noProxyNames = proxyNames.filter((name) => name.toUpperCase() === "NO_PROXY");
+  const usesEnvProxy = proxyNames.some((name) => hasValue(environment[name]));
+  const inject =
+    platform === "win32"
+      ? // Windows reads its registry bypass list only while NO_PROXY is empty.
+        noProxyNames.some((name) => hasValue(environment[name]))
+      : usesEnvProxy || platform === "darwin";
+  if (!inject) return { env: base, configArgs: [] };
+  // Codex reads NO_PROXY, even empty, before no_proxy, so each spelling keeps its own hosts.
+  const names = noProxyNames.length > 0 ? noProxyNames : ["NO_PROXY", "no_proxy"];
+  return {
+    env: {
+      ...base,
+      ...Object.fromEntries(names.map((name) => [name, withLoopback(environment[name] ?? "")])),
+    },
+    // Any non-empty *_proxy turns off Python's macOS system proxy, so agent shells get them blank.
+    configArgs: usesEnvProxy
+      ? []
+      : names.flatMap((name) => ["-c", `shell_environment_policy.set.${name}=""`]),
+  };
+};
 
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
@@ -478,7 +516,10 @@ const codexProcessEnvironment = Effect.fn("codexProcessEnvironment")(function* (
     ? expandHomePath(input.homePath, yield* HostProcess.HomeDirectory)
     : undefined;
   return {
-    ...codexAppServerEnvironment(input.environment),
+    ...codexAppServerEnvironment(
+      input.environment ?? (yield* HostProcess.Environment),
+      yield* HostProcess.Platform,
+    ).env,
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
   };
 });

@@ -1586,14 +1586,20 @@ export const layerAppServerClientFactory: Layer.Layer<
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
         const scope = yield* Scope.Scope;
+        const { env, configArgs } = codexAppServerEnvironment(
+          input.environment,
+          yield* HostProcess.Platform,
+        );
         const environment = {
-          ...codexAppServerEnvironment(input.environment),
+          ...env,
           ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
         };
         const command = yield* makeCodexAppServerSpawnCommand({
           command: input.settings.binaryPath || "codex",
+          // Spawn-level config reaches the shells of every thread and one-off command.
           args: codexAppServerArgs(
             resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+            configArgs,
           ),
           env: environment,
           threadId: input.threadId,
