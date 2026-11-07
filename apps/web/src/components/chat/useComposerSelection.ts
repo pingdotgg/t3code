@@ -1,3 +1,8 @@
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
 import type { Dispatch } from "react";
@@ -51,6 +56,14 @@ interface ComposerSelectionInput {
     SetStateAction<Record<string, boolean>>
   >;
   readonly scheduleComposerFocus: () => void;
+  readonly setThreadRuntimeMode?: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly input: {
+      readonly threadId: ThreadId;
+      readonly runtimeMode: RuntimeMode;
+      readonly createdAt?: string;
+    };
+  }) => Promise<AtomCommandResult<unknown, unknown>>;
 }
 
 /**
@@ -78,6 +91,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
+    setThreadRuntimeMode,
   } = input;
   const navigate = useNavigate();
   const setStickyComposerModelSelection = useComposerDraftStore(
@@ -95,6 +109,30 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setComposerDraftRuntimeMode(composerDraftTarget, mode);
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
+    } else if (activeThread && setThreadRuntimeMode) {
+      void setThreadRuntimeMode({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId: activeThread.id,
+          runtimeMode: mode,
+          createdAt: new Date().toISOString(),
+        },
+      }).then((result) => {
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const currentDraftRuntimeMode = useComposerDraftStore
+            .getState()
+            .getComposerDraft(composerDraftTarget)?.runtimeMode;
+          if (currentDraftRuntimeMode === mode) {
+            setComposerDraftRuntimeMode(composerDraftTarget, null);
+          }
+          const error = squashAtomCommandFailure(result);
+          toastManager.add({
+            type: "error",
+            title: "Failed to update permission mode",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+      });
     }
     scheduleComposerFocus();
   };
