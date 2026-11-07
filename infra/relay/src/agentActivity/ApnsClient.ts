@@ -33,6 +33,7 @@ const ApnsRequestKindSchema = Schema.Literals(["live-activity", "push-notificati
 
 interface ApnsLiveActivityRequest {
   readonly token: string;
+  readonly expiresAtEpochSeconds: number;
   readonly event: ApnsLiveActivityEvent;
   readonly priority: "5" | "10";
   readonly payload: unknown;
@@ -40,6 +41,7 @@ interface ApnsLiveActivityRequest {
 
 interface ApnsPushNotificationRequest {
   readonly token: string;
+  readonly expiresAtEpochSeconds: number;
   readonly priority: "10";
   readonly payload: unknown;
 }
@@ -87,6 +89,7 @@ function contentState(state: RelayAgentActivityAggregateState) {
 
 interface LiveActivityRequestBase {
   readonly token: string;
+  readonly expiresAtEpochSeconds: number;
   readonly nowEpochSeconds: number;
   readonly nowIso: string;
 }
@@ -172,6 +175,7 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
   if (input.event === "end") {
     return {
       token: input.token,
+      expiresAtEpochSeconds: input.expiresAtEpochSeconds,
       event: input.event,
       priority: "10",
       payload: {
@@ -190,6 +194,7 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
   const state = input.state;
   return {
     token: input.token,
+    expiresAtEpochSeconds: input.expiresAtEpochSeconds,
     event: input.event,
     priority: input.event === "update" && !input.alert ? "5" : "10",
     payload: {
@@ -212,10 +217,12 @@ function notificationThreadId(notification: ApnsNotificationPayload): string {
 
 function makePushNotificationRequest(input: {
   readonly token: string;
+  readonly expiresAtEpochSeconds: number;
   readonly notification: ApnsNotificationPayload;
 }): ApnsPushNotificationRequest {
   return {
     token: input.token,
+    expiresAtEpochSeconds: input.expiresAtEpochSeconds,
     priority: "10",
     payload: {
       aps: {
@@ -283,6 +290,7 @@ const make = Effect.gen(function* () {
     const response = yield* HttpClientRequest.post(`${host}/3/device/${input.request.token}`).pipe(
       HttpClientRequest.setHeaders({
         authorization: `bearer ${jwt}`,
+        "apns-expiration": String(input.request.expiresAtEpochSeconds),
         "apns-priority": input.request.priority,
         "apns-push-type": "liveactivity",
         "apns-topic": `${input.credentials.bundleId}.push-type.liveactivity`,
@@ -345,6 +353,7 @@ const make = Effect.gen(function* () {
       ).pipe(
         HttpClientRequest.setHeaders({
           authorization: `bearer ${jwt}`,
+          "apns-expiration": String(input.request.expiresAtEpochSeconds),
           "apns-priority": input.request.priority,
           "apns-push-type": "alert",
           "apns-topic": input.credentials.bundleId,
