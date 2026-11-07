@@ -571,6 +571,23 @@ describe("AgentAwarenessRelay", () => {
         );
         yield* relay.publishThread(CHILD_THREAD_ID);
         assert.equal(publications.length, 1);
+
+        // The parent's own request coming and going doesn't re-alert the child's.
+        const setParent = (next: OrchestrationV2ThreadShell) =>
+          Ref.update(shells, (current) => new Map(current).set(THREAD_ID, next));
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(CHILD_THREAD_ID, waitingChild()),
+        );
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        yield* setParent(shell());
+        yield* relay.publishThread(THREAD_ID);
+        yield* setParent(parentWaiting);
+        yield* relay.publishThread(THREAD_ID);
+        yield* setParent(shell());
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 4);
+        assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
+        assert.equal(publications[3]?.state?.updatedAt, publications[1]?.state?.updatedAt);
       }),
   );
 

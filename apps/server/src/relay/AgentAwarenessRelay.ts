@@ -422,13 +422,16 @@ export const make = Effect.gen(function* () {
     updatedAt: string,
     childRequestId?: RuntimeRequestId,
   ) => {
+    const previous = alertByThread.get(threadId);
     const next = DateTime.makeUnsafe(updatedAt);
-    const latestAt = DateTime.max(alertByThread.get(threadId)?.latestAt ?? next, next);
+    const latestAt = DateTime.max(previous?.latestAt ?? next, next);
+    const childRequest =
+      childRequestId === undefined
+        ? previous?.childRequest
+        : { requestId: childRequestId, updatedAt };
     alertByThread.set(
       threadId,
-      childRequestId === undefined
-        ? { latestAt }
-        : { latestAt, childRequest: { requestId: childRequestId, updatedAt } },
+      childRequest === undefined ? { latestAt } : { latestAt, childRequest },
     );
   };
   const subagentRequests = new Map<ThreadId, SubagentRequest>();
