@@ -177,7 +177,8 @@ function resolveCompletionShell(shell: string): CompletionShell | null {
 }
 
 // A block with its own closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
-// Interactive fish runs each submitted line alone and drops one that fails to parse, so it gets a single eval line.
+// Interactive fish runs each submitted line alone and drops one that fails to parse, so it gets a single eval line
+// instead (abbreviations, which only the line editor expands, do not apply inside it).
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
