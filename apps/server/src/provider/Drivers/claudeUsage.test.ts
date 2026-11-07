@@ -7,6 +7,7 @@ function claudeLine(overrides: {
   contentType: string;
   model?: string;
   outputTokens?: number;
+  thinkingTokens?: number;
   speed?: string;
 }): string {
   return JSON.stringify({
@@ -24,6 +25,9 @@ function claudeLine(overrides: {
         cache_creation_input_tokens: 66818,
         cache_read_input_tokens: 1000,
         output_tokens: overrides.outputTokens ?? 286,
+        ...(overrides.thinkingTokens === undefined
+          ? {}
+          : { output_tokens_details: { thinking_tokens: overrides.thinkingTokens } }),
         ...(overrides.speed === undefined ? {} : { speed: overrides.speed }),
       },
     },
@@ -46,6 +50,22 @@ describe("parseClaudeLine", () => {
     });
     expect(record?.dedupeKey).toBe("msg_1:");
     expect(record?.speed).toBe("standard");
+
+    const withThinking = claudeLine({
+      messageId: "msg_1",
+      contentType: "text",
+      thinkingTokens: 100,
+    });
+    const [thinking] = parseClaudeLine(withThinking);
+    expect(thinking?.totals).toEqual({ ...record?.totals, reasoningTokens: 100 });
+    expect(claudeUsageFormat.parseProjected(JSON.parse(withThinking), undefined)).toEqual([
+      thinking,
+    ]);
+    expect(
+      parseClaudeLine(
+        claudeLine({ messageId: "msg_1", contentType: "text", thinkingTokens: 1000 }),
+      )[0]?.totals.reasoningTokens,
+    ).toBe(286);
   });
 
   it("gives every content block of one message the same dedupe key", () => {

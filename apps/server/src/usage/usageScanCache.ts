@@ -9,16 +9,18 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 11 as const;
+const USAGE_SCAN_CACHE_VERSION = 12 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
- * An older server sharing that directory cannot read a newer cache and would
- * replace it, dropping saved usage for deleted transcripts. Separate files keep
- * both.
+ * Each cache version writes its own file in the state directory. An older
+ * server sharing that directory cannot read a newer cache and would replace
+ * it, dropping saved usage for deleted transcripts. Separate files keep both.
+ * Import older files too: a downgraded server may have retained additional history.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v11.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v12.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v11.json",
   "usage-scan-cache-v10.json",
   "usage-scan-cache-v9.json",
   "usage-scan-cache-v8.json",
@@ -293,9 +295,9 @@ export function decodeScanCache(
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
     // v9 and v11 repair skipped Codex requests; clean v8+ entries stay served while unchanged.
-    // v10 adds Claude advisor calls, which no older Claude entry holds.
+    // v10 adds Claude advisor calls and v12 fuller Claude snapshots with thinking.
     const legacy =
-      (entry.p === "claude" && version < 10) ||
+      (entry.p === "claude" && version < 12) ||
       (format.state !== undefined &&
         (version < 6 ||
           (entry.p === "codex" && (version < 8 || (version < 11 && malformedRecords > 0)))));
@@ -357,18 +359,54 @@ export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): num
   return removed;
 }
 
-/** Mutates seen; share it across incremental line/tail batches to deduplicate the whole file. */
-export function dedupeWithinFile(
-  records: readonly UsageRecord[],
-  seen: Set<string> = new Set(),
-): readonly UsageRecord[] {
+export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
   const kept: UsageRecord[] = [];
+  const indexes = new Map<string, number>();
   for (const record of records) {
     if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+      const index = indexes.get(record.dedupeKey);
+      if (index !== undefined) {
+        kept[index] = fullerClaudeSnapshot(kept[index]!, record);
+        continue;
+      }
+      indexes.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
   }
   return kept;
+}
+
+/**
+ * Claude Code repeats a message's usage on every content block, and later
+ * blocks can carry fuller output and thinking counts. Keep the first block's
+ * attribution with the fullest snapshot; never sum the repeats.
+ */
+function fullerClaudeSnapshot(kept: UsageRecord, next: UsageRecord): UsageRecord {
+  if (kept.provider !== "claude" || next.provider !== "claude") return kept;
+  const snapshot =
+    next.totals.outputTokens > kept.totals.outputTokens ||
+    (next.totals.outputTokens === kept.totals.outputTokens &&
+      next.totals.reasoningTokens > kept.totals.reasoningTokens)
+      ? next
+      : kept;
+  const reasoningTokens = Math.min(
+    snapshot.totals.outputTokens,
+    Math.max(kept.totals.reasoningTokens, next.totals.reasoningTokens),
+  );
+  if (snapshot === kept && reasoningTokens === kept.totals.reasoningTokens) return kept;
+  return {
+    ...kept,
+    totals: { ...snapshot.totals, reasoningTokens },
+    reportedCostUsd:
+      snapshot.totals.outputTokens > kept.totals.outputTokens
+        ? snapshot.reportedCostUsd
+        : (snapshot.reportedCostUsd ?? kept.reportedCostUsd),
+  };
+}
+
+/** Reconcile the displayed usage without promoting a replaceable tail into committed records. */
+export function cachedFileRecords(entry: CachedFile): readonly UsageRecord[] {
+  return entry.tailRecords.length === 0
+    ? entry.records
+    : dedupeWithinFile([...entry.records, ...entry.tailRecords]);
 }
