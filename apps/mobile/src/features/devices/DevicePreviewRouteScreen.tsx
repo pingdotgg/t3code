@@ -112,14 +112,20 @@ export function DevicePreviewScreen({
   const [shuttingDown, setShuttingDown] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [mirrorConfirmedKey, setMirrorConfirmedKey] = useState<string | null>(null);
+  const [thisPhoneKey, setThisPhoneKey] = useState<string | null>(null);
   const retryHost = useAtomCommand(deviceEnvironment.list);
   const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
   const previews = threadDevicePreviews(state.data, threadId, THIS_PHONE);
   const preview = selectedThreadDevicePreview(previews, selectedKey);
+  // Sessions outlive a listing that misses their device, so keep the match once it is made.
+  if (preview?.isThisPhone && thisPhoneKey !== preview.key) setThisPhoneKey(preview.key);
   // Streaming the phone into itself feeds video and input back into the app and freezes it.
-  const mirrorBlocked = preview?.isThisPhone === true && mirrorConfirmedKey !== preview.key;
+  const mirrorBlocked =
+    preview !== null &&
+    (preview.isThisPhone || preview.key === thisPhoneKey) &&
+    mirrorConfirmedKey !== preview.key;
   const onInputConnected = async (connected: boolean) => {
     setInputConnected(connected);
     if (!connected) setControlsVisible(true);

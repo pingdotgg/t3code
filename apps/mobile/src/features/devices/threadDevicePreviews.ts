@@ -1,6 +1,6 @@
 import type { DeviceServiceState, ThreadId } from "@t3tools/contracts";
 
-/** The name and version the device hub reports for this phone when it is a physical Android device. */
+/** Mirrors expo-device-hub's `physicalDeviceName` and `androidVersion`; recheck when bumping the hub. */
 export function thisAndroidPhone(phone: {
   readonly platform: string;
   readonly isDevice: boolean;

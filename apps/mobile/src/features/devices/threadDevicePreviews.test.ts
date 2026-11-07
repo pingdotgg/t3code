@@ -162,5 +162,9 @@ describe("thread device previews", () => {
     expect(thisAndroidPhone(pixel)).toEqual({ name: "Google Pixel 7", version: "Android 17.0" });
     expect(thisAndroidPhone({ ...pixel, platform: "ios" })).toBeNull();
     expect(thisAndroidPhone({ ...pixel, isDevice: false })).toBeNull();
+    expect(thisAndroidPhone({ ...pixel, manufacturer: "", osVersion: "8.1.0" })).toEqual({
+      name: "Pixel 7",
+      version: "Android 8.1.0",
+    });
   });
 });
