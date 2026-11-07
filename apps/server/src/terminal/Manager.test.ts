@@ -1110,10 +1110,41 @@ it.layer(
       const expected = "a".repeat(maxBytes - 16 * 1024) + "b".repeat(16 * 1024);
       const persisted = yield* fs.readFileString(yield* historyLogPath(logsDir));
       expect(Buffer.byteLength(persisted)).toBe(maxBytes + 16 * 1024);
-      const recovered = yield* createManager(5_000, { historyByteLimit: maxBytes });
-      yield* fs.makeDirectory(recovered.logsDir, { recursive: true });
-      yield* fs.writeFileString(yield* historyLogPath(recovered.logsDir), persisted);
-      expect((yield* recovered.manager.open(openInput())).history).toBe(expected);
+      for (const failure of [undefined, "write", "rename"] as const) {
+        let failed = false;
+        const fail = () => {
+          failed = true;
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "FileSystem",
+              method: failure === "write" ? "writeFileString" : "rename",
+              cause: { code: "ENOSPC" },
+            }),
+          );
+        };
+        const recovered = yield* createManager(5_000, { historyByteLimit: maxBytes }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (file, data, options) =>
+              failure === "write" && !failed && data === expected
+                ? fs.writeFileString(file, "partial", options).pipe(Effect.andThen(fail))
+                : fs.writeFileString(file, data, options),
+            rename: (from, to) => (failure === "rename" && !failed ? fail() : fs.rename(from, to)),
+          }),
+        );
+        const recoveredPath = yield* historyLogPath(recovered.logsDir);
+        yield* fs.makeDirectory(recovered.logsDir, { recursive: true });
+        yield* fs.writeFileString(recoveredPath, persisted);
+        const snapshot = yield* recovered.manager.open(openInput());
+        expect(snapshot.status).toBe("running");
+        expect(snapshot.history).toBe(expected);
+        expect(failed).toBe(failure !== undefined);
+        expect(yield* fs.readFileString(recoveredPath)).toBe(
+          failure === undefined ? expected : persisted,
+        );
+        expect(yield* fs.readDirectory(recovered.logsDir)).toHaveLength(1);
+      }
       yield* manager.close({ threadId: "thread-1" });
       expect((yield* manager.open(openInput())).history).toBe(expected);
       expect(yield* fs.readFileString(yield* historyLogPath(logsDir))).toBe(expected);
