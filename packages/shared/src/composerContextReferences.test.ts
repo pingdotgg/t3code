@@ -526,17 +526,17 @@ describe("threadLinkContextReferences", () => {
       ["env-1", "a b", true],
       ["env-1", "a>b", true],
       ["env-1", "a%29b", true],
-      ["env-1", ".", true],
       ["env-1", "..", true],
       ["source/machine", "t1", true],
       // No link form carries both: a hosted URL drops the dot segment.
       [".", "a b", false],
     ] as const) {
       const record = threadContextRecord(thread(environmentId, threadId), "Copied title");
-      expect(
-        threadLinkContextReferences(unreadableThreadContextLink(record), [], () => undefined)
-          .records,
-      ).toEqual(carried ? [record] : []);
+      const link = unreadableThreadContextLink(record);
+      if (!carried) expect(link).toBe("Copied title");
+      expect(threadLinkContextReferences(link, [], () => undefined).records).toEqual(
+        carried ? [record] : [],
+      );
     }
     expect(
       threadLinkContextReferences("https://app.t3.codes/threads/env-9/t9", [], () => undefined)

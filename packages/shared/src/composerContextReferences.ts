@@ -445,11 +445,15 @@ export function unreadableThreadContextLink(record: ThreadContextRecord): string
     });
     return links === 1 && exact;
   };
-  return (
-    [formatThreadLink(record, record.title), formatHostedThreadLink(record, record.title)].find(
-      namesRecord,
-    ) ?? record.title
-  );
+  const link = formatThreadLink(record, record.title);
+  if (namesRecord(link)) return link;
+  try {
+    const hosted = formatHostedThreadLink(record, record.title);
+    if (namesRecord(hosted)) return hosted;
+  } catch {
+    // A lone surrogate can't be URI-encoded.
+  }
+  return record.title;
 }
 
 export function remapComposerContextAttachments(

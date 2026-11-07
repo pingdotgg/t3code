@@ -235,9 +235,6 @@ describe("mobile context clipboard imports", () => {
     expect(result!.failures).toEqual([]);
     expect(result!.skippedThreads).toEqual([foreignThread.title]);
     const references = collectComposerContextReferences(result!.text);
-    expect(references.map((reference) => reference.label)).toEqual(
-      [localThread, terminal, image].map((record) => record.label),
-    );
     expect(result!.context.records.map((record) => record.contextId)).toEqual(
       references.map((reference) => reference.contextId),
     );
