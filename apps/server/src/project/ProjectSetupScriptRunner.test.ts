@@ -41,9 +41,12 @@ const makeHarness = Effect.fn(function* (options: {
   readonly command?: string;
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
+  readonly previousSession?: TerminalSessionSnapshot;
   readonly shell?: string | null;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
+  const openedSessions: TerminalSessionSnapshot[] = [];
+  let session = options.previousSession;
   const writes = yield* Queue.unbounded<string>();
   const outputLines = yield* Queue.unbounded<string>();
   const terminals = Layer.mock(TerminalManager.TerminalManager)({
@@ -51,7 +54,13 @@ const makeHarness = Effect.fn(function* (options: {
       (options.opening
         ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
         : Effect.void
-      ).pipe(Effect.as(openSnapshot(options.history ?? ""))),
+      ).pipe(
+        Effect.map(() => {
+          session ??= openSnapshot(options.history ?? "");
+          openedSessions.push(session);
+          return session;
+        }),
+      ),
     getShell: () =>
       options.shell === null
         ? Effect.fail(new TerminalNotRunningError({ threadId, terminalId }))
@@ -63,9 +72,15 @@ const makeHarness = Effect.fn(function* (options: {
       }),
     write: (input) => Queue.offer(writes, input.data).pipe(Effect.asVoid),
     close: () =>
-      Effect.forEach([...listeners], (listener) => listener({ ...event, type: "closed" }), {
-        discard: true,
-      }),
+      Effect.sync(() => {
+        session = undefined;
+      }).pipe(
+        Effect.andThen(
+          Effect.forEach([...listeners], (listener) => listener({ ...event, type: "closed" }), {
+            discard: true,
+          }),
+        ),
+      ),
     closeIdle: () => Effect.void,
     closeOnSettle: () => Effect.void,
   });
@@ -102,13 +117,14 @@ const makeHarness = Effect.fn(function* (options: {
   });
   const emit = (terminalEvent: TerminalEvent) =>
     Effect.forEach([...listeners], (listener) => listener(terminalEvent), { discard: true });
-  return { start, listeners, writes, outputLines, emit };
+  return { start, listeners, openedSessions, writes, outputLines, emit };
 });
 
 const setup = Effect.fn(function* (
   options: {
     readonly command?: string;
     readonly history?: string;
+    readonly previousSession?: TerminalSessionSnapshot;
     readonly shell?: string | null;
   } = {},
 ) {
@@ -155,10 +171,13 @@ describe("ProjectSetupScriptRunner", () => {
     }),
   );
 
-  it.effect("shows a startup prompt and types only once the line editor starts", () =>
+  it.effect("replaces a surviving setup shell and types only once the line editor starts", () =>
     Effect.gen(function* () {
-      const { result, completion, writes, outputLines, emit } = yield* setup();
+      const { result, completion, openedSessions, writes, outputLines, emit } = yield* setup({
+        previousSession: openSnapshot("previous setup in the deleted checkout"),
+      });
       expect(result).toMatchObject({ status: "started", terminalId });
+      expect(openedSessions).toEqual([openSnapshot("")]);
 
       yield* emit({ ...event, type: "output", data: "Missing Node.\r\nInstall it? [y/N]: " });
       yield* emit({ ...event, type: "activity", hasRunningSubprocess: true, label: "fnm" });
