@@ -1,4 +1,5 @@
 import type {
+  NodeId,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderTurn,
   OrchestrationV2RestartCancelledBackgroundWork,
@@ -183,6 +184,24 @@ export function cancelledBeforeStart(
   run: Pick<OrchestrationV2Run, "status" | "startedAt" | "restartContinuationOfRunId">,
 ): boolean {
   return run.status === "cancelled" && neverStarted(run);
+}
+
+/** A follow-up task's latest run, passing over queued work it no longer waits on, as the original task does. */
+export function delegatedTaskResultRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  taskId: NodeId,
+): OrchestrationV2Run | undefined {
+  const taskRuns = runs
+    .filter((run) => run.delegatedTaskId === taskId)
+    .toSorted((a, b) => b.ordinal - a.ordinal);
+  const awaited = taskRuns.filter(
+    (run) => !cancelledBeforeStart(run) && !(run.status === "queued" && run.queueHeld === true),
+  );
+  // Executing work reports the task's state; a reordered queue can finish a newer run before an older one.
+  const executing = awaited.find((run) =>
+    ["preparing", "starting", "running", "waiting"].includes(run.status),
+  );
+  return executing ?? awaited.find((run) => run.status === "queued") ?? awaited[0] ?? taskRuns[0];
 }
 
 /** The provider never accepted this continuation's prompt, so starting it again repeats nothing. */

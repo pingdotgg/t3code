@@ -99,7 +99,7 @@ import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
 } from "../orchestration-v2/ProjectionStore.ts";
-import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
+import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1521,9 +1521,7 @@ const make = Effect.gen(function* () {
     const progress = delegatedTaskProgress(childControls);
     const taskResultRun =
       childRun?.delegatedTaskId === task.id
-        ? childControls.runs
-            .filter((run) => run.delegatedTaskId === task.id)
-            .toSorted((a, b) => b.ordinal - a.ordinal)[0]
+        ? delegatedTaskResultRun(childControls.runs, task.id)
         : progress.resultRun;
     const taskWorkState =
       childRun?.delegatedTaskId === task.id
