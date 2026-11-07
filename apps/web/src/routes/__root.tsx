@@ -211,7 +211,7 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   const report = errorReport(error, pathname);
 
   return (
-    <StandalonePage tone="error">
+    <StandalonePage>
       <StandalonePageHeader title="Something went wrong." description={message} />
 
       <div className="mt-5 flex flex-wrap gap-2">

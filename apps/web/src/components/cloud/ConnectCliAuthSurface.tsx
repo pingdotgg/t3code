@@ -83,7 +83,7 @@ export function ConnectCliAuthorizeSurface() {
 
   if (!request) {
     return (
-      <StandalonePage tone="plain" size="card">
+      <StandalonePage size="card">
         <StandalonePageIcon tone="error">
           <SquareTerminalIcon />
         </StandalonePageIcon>
@@ -96,7 +96,7 @@ export function ConnectCliAuthorizeSurface() {
   }
 
   return (
-    <StandalonePage tone="plain" size="card">
+    <StandalonePage size="card">
       <StandalonePageIcon>
         <SquareTerminalIcon />
       </StandalonePageIcon>
