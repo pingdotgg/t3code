@@ -379,6 +379,20 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
         scrollY,
     );
   };
+  // guidesEnabled can remap the displayed tab (guide → overview) without selectSection.
+  // Keep the overlay and currentScrollOffset on that tab's stored offset so spacer onLayout
+  // callbacks do not restore the previous tab's position.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- overlay follows the displayed tab when guides remap without selectSection
+  useEffect(() => {
+    const offset = scrollOffsets.current[section] ?? -contentTopInset;
+    currentScrollOffset.current = { tab: section, offset };
+    sectionControlTop.set(
+      PR_LIST_CONTENT_TOP_PADDING +
+        sectionControlReadStatusHeight.current +
+        sectionControlYInHeader.current -
+        offset,
+    );
+  }, [section, contentTopInset, sectionControlTop]);
   // AnimatedLegendList re-attaches its handle and sets state whenever its ref changes,
   // so an inline ref in the tab map loops the screen into "Maximum update depth exceeded".
   const [listRefs] = useState(() => {
@@ -825,7 +839,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               </View>
             ))}
           {identity && sectionControlReady ? (
-            <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+            <View
+              pointerEvents="box-none"
+              style={[StyleSheet.absoluteFill, { overflow: "hidden" }]}
+            >
               <Animated.View
                 pointerEvents="box-none"
                 style={[
