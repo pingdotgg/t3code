@@ -31,6 +31,7 @@ vi.mock(import("~/state/previewStream"), async (original) => ({
 }));
 
 import { ServerBrowserSurface } from "./ServerBrowserSurface";
+import { toastManager } from "~/components/ui/toast";
 
 function setup() {
   mocks.sent.length = 0;
@@ -73,6 +74,26 @@ async function renderSurface(controller: PreviewStreamControl["controller"]) {
 const keys = () => mocks.sent.filter((input) => input.type === "key");
 
 describe("ServerBrowserSurface clipboard commands", () => {
+  it("offers pointer copies locally before writing, while keys still write directly", async () => {
+    setup();
+    const { screen } = await renderSurface("you");
+    await using _screen = screen;
+    using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    using toast = vi.spyOn(toastManager, "add").mockReturnValue("page-copy");
+    using close = vi.spyOn(toastManager, "close").mockImplementation(() => undefined);
+    const handlers = mocks.createClient.mock.calls.at(-1)![1];
+    await act(() => handlers.onClipboard?.("button", true));
+    expect(write).not.toHaveBeenCalled();
+    const offer = toast.mock.calls.at(-1)![0];
+    expect(offer.title).toBe("The page copied text");
+    await act(() => offer.actionProps!.onClick!(new MouseEvent("click") as never));
+    expect(write).toHaveBeenCalledExactlyOnceWith("button");
+    expect(close).toHaveBeenCalledWith("page-copy");
+    await act(() => handlers.onClipboard?.("keys", false));
+    expect(write).toHaveBeenLastCalledWith("keys");
+    expect(toast).toHaveBeenCalledTimes(1);
+  });
+
   it("sends a native Copy or Cut menu command to the page once", async () => {
     setup();
     const { screen, input, canvas } = await renderSurface("you");

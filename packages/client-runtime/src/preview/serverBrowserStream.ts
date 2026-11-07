@@ -188,7 +188,7 @@ export interface PreviewStreamEvents {
   readonly onProbe?: (probe: PreviewStreamProbe) => void;
   readonly onPointer?: (pointer: PreviewStreamPointer) => void;
   readonly onControl?: (control: PreviewStreamControl) => void;
-  readonly onClipboard?: (text: string) => void;
+  readonly onClipboard?: (text: string, requireGesture: boolean) => void;
   readonly onDownload?: (download: PreviewStreamDownload) => void;
   readonly onPopup?: (tabId: string) => void;
   readonly onFileChooser?: (chooser: PreviewStreamFileChooser | null) => void;
@@ -270,6 +270,7 @@ export function createPreviewStreamClient(
         generation,
         dialog,
         text,
+        requireGesture,
         id,
         fileName,
         sizeBytes,
@@ -307,7 +308,7 @@ export function createPreviewStreamClient(
       } else if (type === "popup" && typeof tabId === "string") {
         events.onPopup?.(tabId);
       } else if (type === "clipboard" && typeof text === "string") {
-        events.onClipboard?.(text);
+        events.onClipboard?.(text, requireGesture === true);
       } else if (
         type === "download" &&
         typeof id === "string" &&
