@@ -3570,7 +3570,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       `--dst-prefix=b/${prefix}`,
     ];
     let baseRef = options.baseRef;
-    const readStat = (selectedPaths = pathArgs, extraArgs: ReadonlyArray<string> = []) =>
+    const readStat = (
+      selectedPaths: ReadonlyArray<string> = pathArgs,
+      extraArgs: ReadonlyArray<string> = [],
+    ) =>
       executeGit(
         headRef
           ? "GitVcsDriver.getReviewDiffPreview.commitStat"
@@ -3617,6 +3620,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     >();
     let submodulesTruncated = false;
     let fallbackPaths: string[] = [];
+    let ownPathArgs: ReadonlyArray<string> = pathArgs;
+    let fallbackPathArgs: ReadonlyArray<string> = [];
     let ownStats = parseReviewNumstat(stat.stdout);
     const manifestExists = yield* fileSystem
       .exists(path.join(cwd, ".gitmodules"))
@@ -3715,11 +3720,47 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         else expanded.set(child[0], child[1]);
       }
       fallbackPaths = candidates.filter((value) => !expanded.has(value));
-      if (fallbackPaths.length > 0) {
-        const fallback = yield* readStat(
-          fallbackPaths.map((value) => `:(top,literal)${value}`),
-          ["--ignore-submodules=none"],
+      ownPathArgs = [
+        ...pathArgs,
+        ...Array.from(
+          [...expanded.keys(), ...fallbackPaths],
+          (value) => `:(top,exclude,literal)${value}`,
+        ),
+      ];
+      const isFallbackPath = (value: string) =>
+        fallbackPaths.some(
+          (modulePath) => value === modulePath || value.startsWith(`${modulePath}/`),
         );
+      fallbackPathArgs = file
+        ? paths.filter(isFallbackPath).flatMap((value) => [
+            `:(top,literal)${value}`,
+            // A literal trailing-slash exclusion also hides the gitlink; glob matches descendants only.
+            ...(fallbackPaths.includes(value)
+              ? [`:(top,exclude,glob)${value.replace(/[\\*?[\]]/g, "\\$&")}/**`]
+              : []),
+          ])
+        : fallbackPaths.map((value) => `:(top,literal)${value}`);
+      if (fallbackPaths.length > 0) {
+        if (
+          ownStats.some(
+            (entry) =>
+              (isFallbackPath(entry.path) && !fallbackPaths.includes(entry.path)) ||
+              (entry.previousPath !== null &&
+                (isFallbackPath(entry.path) || isFallbackPath(entry.previousPath))),
+          )
+        ) {
+          const own = yield* readStat(ownPathArgs);
+          if (own.exitCode !== 0)
+            return yield* new GitCommandError({
+              operation: "GitVcsDriver.review.partitionedStat",
+              command: "git diff --numstat",
+              cwd,
+              detail: "Could not read diff statistics outside submodule paths.",
+              exitCode: own.exitCode,
+            });
+          ownStats = parseReviewNumstat(own.stdout);
+        }
+        const fallback = yield* readStat(fallbackPathArgs, ["--ignore-submodules=none"]);
         if (fallback.exitCode !== 0)
           return yield* new GitCommandError({
             operation: "GitVcsDriver.review.submoduleStat",
@@ -3767,20 +3808,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ? []
         : yield* Effect.all(
             [
-              readPatch([
-                ...pathArgs,
-                ...Array.from(
-                  [...expanded.keys(), ...fallbackPaths],
-                  (value) => `:(top,exclude,literal)${value}`,
-                ),
-              ]),
+              readPatch(ownPathArgs),
               ...(fallbackPaths.length > 0
-                ? [
-                    readPatch(
-                      fallbackPaths.map((value) => `:(top,literal)${value}`),
-                      ["--ignore-submodules=none"],
-                    ),
-                  ]
+                ? [readPatch(fallbackPathArgs, ["--ignore-submodules=none"])]
                 : []),
             ],
             { concurrency: 2 },

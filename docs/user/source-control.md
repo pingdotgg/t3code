@@ -27,6 +27,8 @@ Paths include the submodule directory, so files with the same name in different 
 distinct. Comparisons use the submodule commit recorded by the parent repository at the selected
 base. Commit reviews compare the recorded submodule commits without including local edits.
 Review includes declared submodules even when Git's submodule ignore settings hide them from summaries.
+This override applies to direct submodules. If a nested submodule is hidden by its parent's own ignore
+settings, unset those settings in that parent submodule to review it.
 
 Initialize submodules and fetch their recorded commits to review their file contents. When those
 are unavailable, or a comparison adds or removes a submodule, it shows the submodule commit pointer.
