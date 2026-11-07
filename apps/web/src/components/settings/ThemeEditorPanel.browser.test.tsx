@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
+import {
+  getCustomThemes,
+  getThemeModes,
+  installCustomTheme,
+  invalidateCustomThemes,
+  parseThemeFile,
+  CUSTOM_THEMES_STORAGE_KEY,
+} from "../../themePalette";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
 
 function dragHeader(panel: HTMLElement, toX: number, toY: number) {
@@ -75,6 +83,106 @@ async function renderPanel() {
 }
 
 describe("ThemeEditorPanel", () => {
+  it.each(["create", "rename"] as const)(
+    "merges a %s draft into a legacy collection theme",
+    async (operation) => {
+      const previous = localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);
+      localStorage.removeItem(CUSTOM_THEMES_STORAGE_KEY);
+      invalidateCustomThemes();
+      using _storage = {
+        [Symbol.dispose]() {
+          if (previous === null) localStorage.removeItem(CUSTOM_THEMES_STORAGE_KEY);
+          else localStorage.setItem(CUSTOM_THEMES_STORAGE_KEY, previous);
+          invalidateCustomThemes();
+        },
+      };
+      const target = installCustomTheme({
+        ...parseThemeFile({
+          version: 1,
+          name: "Legacy",
+          appearance: "light",
+          colors: { canvas: "#fafafa", accent: "#123456", terminalBackground: "#abcdef" },
+        }),
+        collection: { id: "open-vsx:demo.theme", label: "Demo" },
+      });
+      const draft =
+        operation === "rename"
+          ? installCustomTheme(
+              parseThemeFile({
+                version: 1,
+                name: "Draft",
+                appearance: "dark",
+                colors: { canvas: "#101010" },
+              }),
+            )
+          : null;
+      await using screen = await render(
+        <ThemeEditorPanel
+          open
+          onOpenChange={() => {}}
+          onSaved={() => true}
+          editingTheme={draft}
+          initialAppearance="dark"
+          restoreTheme={() => {}}
+        />,
+      );
+      await userEvent.fill(screen.getByRole("textbox", { name: "Theme name" }), "Legacy");
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: operation === "create" ? "Add dark palette" : "Merge into “Legacy”",
+        }),
+      );
+      invalidateCustomThemes();
+      const saved = getCustomThemes().find((theme) => theme.id === target.id)!;
+      expect(getThemeModes(saved)).toEqual(["light", "dark"]);
+      expect(saved.colors).toEqual(target.colors);
+      expect(saved.sources?.light?.overrides).toEqual(target.colors);
+      expect(saved.collection).toEqual(target.collection);
+      expect(saved.sources?.dark).toBeDefined();
+      expect(getCustomThemes()).toHaveLength(1);
+    },
+  );
+
+  it("resets pinned siblings while preserving the imported family color", async () => {
+    const previous = localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);
+    using _storage = {
+      [Symbol.dispose]() {
+        if (previous === null) localStorage.removeItem(CUSTOM_THEMES_STORAGE_KEY);
+        else localStorage.setItem(CUSTOM_THEMES_STORAGE_KEY, previous);
+        invalidateCustomThemes();
+      },
+    };
+    const theme = parseThemeFile({
+      version: 1,
+      name: "Catppuccin",
+      appearance: "dark",
+      colors: { canvas: "#1e1e2e", chrome: "#181825", toolbar: "#11111b" },
+    });
+    const saved = vi.fn((_theme: import("../../themePalette").ThemeDefinition) => true);
+    await using screen = await render(
+      <ThemeEditorPanel
+        open
+        onOpenChange={() => {}}
+        onSaved={saved}
+        editingTheme={null}
+        seedTheme={theme}
+        seedName="Catppuccin"
+        initialAppearance="dark"
+        restoreTheme={() => {}}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "2 pinned, reset Background family overrides" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create theme", exact: true }));
+    const result = saved.mock.calls[0]?.[0];
+    expect(result?.colors.canvas).toBe(theme.colors.canvas);
+    expect(result?.colors.chrome).toBe(theme.colors.canvas);
+    expect(result?.colors.toolbar).toBe(theme.colors.canvas);
+    expect(result?.sources?.dark?.overrides?.canvas).toBe(theme.colors.canvas);
+    expect(result?.sources?.dark?.overrides?.chrome).toBeUndefined();
+  });
+
   it("keeps its left edge when resized after the window shrank", async () => {
     await using view = await renderPanel();
     dragHeader(view.panel, 700, 40);

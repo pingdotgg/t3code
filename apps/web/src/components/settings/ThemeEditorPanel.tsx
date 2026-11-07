@@ -1,6 +1,7 @@
 import {
   resolveThemeSource,
   themeSourceForEditing,
+  themeSourceFromColors,
   setThemeSourceRole,
 } from "@t3tools/shared/themeResolution";
 import type { ThemeSource } from "@t3tools/shared/themePalettes";
@@ -45,14 +46,14 @@ import {
   type ThemeElementInspection,
 } from "./themeInspector";
 
-export type ThemeEditorColorFamily = Readonly<{
+type ThemeEditorColorFamily = Readonly<{
   id: string;
   label: string;
   role: ThemeColorRole;
   roles: ReadonlyArray<ThemeColorRole>;
 }>;
 
-export const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
+const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
   id: string;
   title: string;
   families: ReadonlyArray<ThemeEditorColorFamily>;
@@ -699,7 +700,15 @@ export function ThemeEditorPanel({
     try {
       const colorsForSave = colorsByAppearance;
       const sourcesForSave = {
-        ...mergeTarget?.sources,
+        ...Object.fromEntries(
+          mergeTarget
+            ? getThemeModes(mergeTarget).map((mode) => [
+                mode,
+                mergeTarget.sources?.[mode] ??
+                  themeSourceFromColors(getThemeColorsForMode(mergeTarget, mode)!),
+              ])
+            : [],
+        ),
         ...Object.fromEntries(
           (editingTheme ? getThemeModes(editingTheme) : [activeAppearance]).map((mode) => [
             mode,
@@ -953,18 +962,19 @@ export function ThemeEditorPanel({
         const role =
           exactRole ??
           (selectedRole && family.roles.includes(selectedRole) ? selectedRole : family.role);
+        const pinnedRoles = family.roles.filter(
+          (sibling) => sibling !== family.role && roleIsExplicit(sibling),
+        );
         return (
           <ThemeColorField
             key={family.id}
             label={role === family.role ? family.label : getThemeRoleLabel(role)}
             explicit={roleIsExplicit(role)}
-            pinnedRoles={family.roles.filter(
-              (sibling) => sibling !== role && roleIsExplicit(sibling),
-            )}
+            pinnedRoles={pinnedRoles}
             onResetFamily={() =>
               setSourcesByAppearance((current) => ({
                 ...current,
-                [activeAppearance]: family.roles.reduce(
+                [activeAppearance]: pinnedRoles.reduce(
                   (source, sibling) => setThemeSourceRole(source, sibling, null),
                   current[activeAppearance],
                 ),
@@ -1029,7 +1039,7 @@ export function ThemeEditorPanel({
             label={role === "canvas" ? "Background" : "Accent"}
             explicit={roleIsExplicit(role)}
             onReset={() => resetRole(role)}
-            resetSource="guided colors"
+            resetSource={source.seed ? "guided colors" : "T3 Chat defaults"}
             selected={selectedRole === role}
             value={colorsByAppearance[activeAppearance][role]}
           />

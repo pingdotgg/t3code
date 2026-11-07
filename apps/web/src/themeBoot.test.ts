@@ -37,7 +37,7 @@ import {
   toCanonicalThemeColor,
 } from "./themePalette";
 
-const indexHtml = renderThemeBootHtml(indexTemplate);
+const indexHtml = await renderThemeBootHtml(indexTemplate);
 
 const THEME_STORAGE_KEY = "t3code:theme";
 const DEFAULT_DARK_CHROME = getDefaultThemeColors("dark").chrome;
@@ -173,6 +173,7 @@ describe("index.html boot script", () => {
     name: string;
     storage: Record<string, string>;
     prefersDark: boolean;
+    expectedAppearance?: "light" | "dark";
   }> = [
     ...(["light", "dark", "system"] as const).map((mode) => ({
       name: `new record only ${mode} with unresolved half`,
@@ -199,6 +200,28 @@ describe("index.html boot script", () => {
       },
       prefersDark: false,
     },
+    ...([false, true] as const).map((oppositeHalf) => ({
+      name: `source-only ${oppositeHalf ? "opposite half" : "single mode"}`,
+      storage: {
+        [THEME_STORAGE_KEY]: "source-only",
+        ...(oppositeHalf ? { [THEME_APPEARANCE_MODE_STORAGE_KEY]: "light" } : {}),
+        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([
+          {
+            id: "source-only",
+            label: "Source only",
+            appearance: "dark",
+            sources: {
+              dark: { version: 2, seed: { canvas: "#101010", accent: "#123456" } },
+              ...(oppositeHalf
+                ? { light: { version: 2, seed: { canvas: "#fafafa", accent: "#654321" } } }
+                : {}),
+            },
+          },
+        ]),
+      },
+      prefersDark: oppositeHalf,
+      expectedAppearance: oppositeHalf ? ("light" as const) : ("dark" as const),
+    })),
     {
       name: "malformed new record uses legacy",
       storage: { [THEME_SELECTION_STORAGE_KEY]: "{", [THEME_STORAGE_KEY]: "dark" },
@@ -302,10 +325,34 @@ describe("index.html boot script", () => {
     },
   ];
 
-  it.each(parityCases)("matches the runtime appearance: $name", ({ storage, prefersDark }) => {
-    const boot = runBootScript({ storage, prefersDark });
-    expect(boot.isDark).toBe(runtimeResolvedAppearance(storage, prefersDark) === "dark");
-  });
+  it.each(parityCases)(
+    "matches the runtime appearance: $name",
+    ({ storage, prefersDark, expectedAppearance }) => {
+      const boot = runBootScript({ storage, prefersDark });
+      const runtimeAppearance = runtimeResolvedAppearance(storage, prefersDark);
+      expect(boot.isDark).toBe(runtimeAppearance === "dark");
+      if (expectedAppearance) {
+        expect(runtimeAppearance).toBe(expectedAppearance);
+        vi.stubGlobal("window", {
+          localStorage: { getItem: (key: string) => storage[key] ?? null },
+        });
+        invalidateCustomThemes();
+        try {
+          const theme = getThemeDefinition("source-only")!;
+          const colors = getThemeColorsForMode(theme, expectedAppearance)!;
+          expect(boot.backgroundColor).toBe(toCanonicalThemeColor(colors.chrome));
+          expect(boot.bootVariables).toEqual({
+            "--boot-background": colors.canvas,
+            "--boot-foreground": colors.text,
+            "--boot-accent": colors.accent,
+          });
+        } finally {
+          vi.unstubAllGlobals();
+          invalidateCustomThemes();
+        }
+      }
+    },
+  );
 
   it("retains an unresolved half through boot until the environment catalog arrives", () => {
     const record = JSON.stringify({
@@ -356,11 +403,11 @@ describe("index.html boot script", () => {
       prefersDark: false,
     });
 
-    expect(boot.bootVariables["--boot-background"]).toBe(colors.canvas);
-    expect(boot.bootVariables["--boot-foreground"]).toBe(colors.text);
-    expect(boot.bootVariables["--boot-accent"]).toBe(colors.accent);
-    expect(boot.backgroundColor).toBe(colors.chrome);
-    expect(boot.metaContent).toBe(colors.chrome);
+    expect(boot.bootVariables["--boot-background"]).toBe(toCanonicalThemeColor(colors.canvas));
+    expect(boot.bootVariables["--boot-foreground"]).toBe(toCanonicalThemeColor(colors.text));
+    expect(boot.bootVariables["--boot-accent"]).toBe(toCanonicalThemeColor(colors.accent));
+    expect(boot.backgroundColor).toBe(toCanonicalThemeColor(colors.chrome));
+    expect(boot.metaContent).toBe(toCanonicalThemeColor(colors.chrome));
   });
 
   it("keeps every built-in boot splash in sync with the real palettes", () => {
@@ -445,7 +492,7 @@ describe("index.html boot script", () => {
 
     expect(boot.themeId).toBe("partial");
     expect(boot.bootVariables["--boot-background"]).toBe(getDefaultThemeColors("dark").canvas);
-    expect(boot.bootVariables["--boot-foreground"]).toBe("#fffaff");
+    expect(boot.bootVariables["--boot-foreground"]).toBe(toCanonicalThemeColor("#fffaff"));
     expect(boot.bootVariables["--boot-accent"]).toBe(getDefaultThemeColors("dark").accent);
     expect(boot.backgroundColor).toBe(DEFAULT_DARK_CHROME);
     expect(boot.metaContent).toBe(DEFAULT_DARK_CHROME);

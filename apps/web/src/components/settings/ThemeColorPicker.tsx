@@ -386,7 +386,7 @@ export const ThemeColorField = memo(function ThemeColorField({
               render={
                 <button
                   type="button"
-                  aria-label={`Reset ${label} family overrides`}
+                  aria-label={`${pinnedRoles.length} pinned, reset ${label} family overrides`}
                   onClick={onResetFamily}
                   className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
                 >

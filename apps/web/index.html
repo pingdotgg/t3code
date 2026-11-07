@@ -38,64 +38,22 @@
           }
         };
 
-        // The runtime decodes the same literal CSS formats into OKLCH. Keep
-        // contextual colors out: they cannot be resolved from stored data.
-        const SYSTEM_COLOR_KEYWORD =
-          /^(?:accentcolor(?:text)?|active(?:border|caption|text)|appworkspace|background|button(?:border|face|highlight|shadow|text)|canvas(?:text)?|captiontext|field(?:text)?|graytext|highlight(?:text)?|inactive(?:border|caption(?:text)?)|info(?:background|text)|linktext|mark(?:text)?|menu(?:text)?|scrollbar|selecteditem(?:text)?|threed(?:darkshadow|face|highlight|lightshadow|shadow)|visitedtext|window(?:frame|text)?)$/i;
-        const isThemeColor = (value) => {
-          if (typeof value !== "string" || typeof CSS === "undefined") return false;
-          const color = value.trim();
-          if (
-            /^(?:currentcolor|inherit|initial|revert|revert-layer|unset)$/i.test(color) ||
-            SYSTEM_COLOR_KEYWORD.test(color) ||
-            /\bfrom\b|(?:var|env|attr|calc|min|max|clamp)\(/i.test(color)
-          ) {
-            return false;
-          }
-          const isLiteralColor =
-            /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color) ||
-            /^[a-z]+$/i.test(color) ||
-            /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i.test(color);
-          return isLiteralColor && CSS.supports("color", color);
-        };
         const isRecord = (value) =>
           typeof value === "object" && value !== null && !Array.isArray(value);
-        const isThemeId = (value) =>
-          typeof value === "string" && /^[a-z0-9](?:[a-z0-9-]{0,47})$/.test(value);
-        const isThemeLabel = (value) =>
-          typeof value === "string" && value.trim().length > 0 && value.trim().length <= 48;
         const isThemePreferenceMode = (value) =>
           value === "light" || value === "dark" || value === "system";
-        const isThemeAppearance = (value) => value === "light" || value === "dark";
-        const isStoredCustomTheme = (value) => {
-          if (
-            !isRecord(value) ||
-            !isThemeId(value.id) ||
-            RESERVED_THEME_IDS.includes(value.id) ||
-            !isThemeLabel(value.label) ||
-            !isThemeAppearance(value.appearance) ||
-            !isRecord(value.colors)
-          ) {
-            return false;
-          }
-          if (value.variants === undefined) return true;
-          if (!isRecord(value.variants)) return false;
-          return Object.entries(value.variants).every(
-            ([appearance, colors]) =>
-              isThemeAppearance(appearance) &&
-              (appearance === value.appearance || isRecord(colors)),
-          );
-        };
         const findCustomTheme = (themeId) => {
-          if (RESERVED_THEME_IDS.includes(themeId)) return null;
           try {
             const parsed = JSON.parse(
               window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY) ?? "null",
             );
             if (!Array.isArray(parsed)) return null;
-            return (
-              parsed.find((value) => isStoredCustomTheme(value) && value.id === themeId) ?? null
-            );
+            for (const value of parsed) {
+              if (value?.id !== themeId) continue;
+              const theme = themeStorage.parseStoredTheme(value);
+              if (theme) return theme;
+            }
+            return null;
           } catch {
             return null;
           }
@@ -202,12 +160,6 @@
                 : (effectiveCustomTheme.variants?.[effectiveThemeMode] ??
                   effectiveCustomTheme.colors)
               : null;
-          const customDefaults =
-            effectiveCustomTheme && effectiveThemeMode
-              ? DEFAULT_THEME_PALETTES[effectiveThemeMode]
-              : null;
-          // The runtime tolerates individual malformed colors, so fall back
-          // per role rather than dropping the theme.
           const builtInSplash =
             effectiveIsThemed && !effectiveCustomTheme && effectiveThemeMode
               ? (BUILT_IN_THEME_PALETTES[effectiveThemeId]?.[effectiveThemeMode] ?? null)
@@ -215,15 +167,9 @@
           const fallbackSplash = isDark ? SPLASH_COLORS.dark : SPLASH_COLORS.light;
           const customSplash = customColors
             ? {
-                background: isThemeColor(customColors.canvas)
-                  ? customColors.canvas
-                  : (customDefaults?.background ?? fallbackSplash.background),
-                foreground: isThemeColor(customColors.text)
-                  ? customColors.text
-                  : (customDefaults?.foreground ?? fallbackSplash.foreground),
-                accent: isThemeColor(customColors.accent)
-                  ? customColors.accent
-                  : (customDefaults?.accent ?? fallbackSplash.accent),
+                background: customColors.canvas,
+                foreground: customColors.text,
+                accent: customColors.accent,
               }
             : null;
           if (effectiveIsThemed) {
@@ -243,9 +189,7 @@
           }
           document.documentElement.classList.toggle("dark", isDark);
           const chromeColor = customColors
-            ? isThemeColor(customColors.chrome)
-              ? customColors.chrome
-              : (customDefaults?.chrome ?? fallbackSplash.background)
+            ? customColors.chrome
             : builtInSplash
               ? builtInSplash.chrome
               : isDark

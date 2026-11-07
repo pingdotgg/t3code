@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - plain Node script CI runs against the built client.
-// Boots the built web client in headless Chromium and fails if it reaches showBootError.
+// Boots the built web client in headless Chromium and fails on startup errors.
 // Source-level browser tests never run the production chunk graph, where boot breaks hide.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -20,7 +20,11 @@ const browser = await chromium.launch();
 try {
   const page = await browser.newPage();
   const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => {
+    pageErrors.push(error.stack ?? error.message);
+    errors.push(error.stack ?? error.message);
+  });
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
@@ -45,7 +49,7 @@ try {
     timeout: timeoutMs,
   });
 
-  if (await settled.evaluate((node) => node.id === "boot-error-reload")) {
+  if (pageErrors.length || (await settled.evaluate((node) => node.id === "boot-error-reload"))) {
     console.error("The built web client failed to boot:");
     for (const error of errors) console.error(error);
     process.exitCode = 1;
