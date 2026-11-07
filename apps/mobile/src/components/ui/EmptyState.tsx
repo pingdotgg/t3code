@@ -2,19 +2,31 @@ import { View } from "react-native";
 import type { ReactNode } from "react";
 
 import { AppText as Text } from "./AppText";
+import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { Button } from "./Button";
 
 export function EmptyState(props: {
   readonly title: string;
   readonly detail: string;
+  readonly icon?: AppSymbolName;
   readonly actionLabel?: string;
   readonly onAction?: () => void;
   readonly action?: ReactNode;
   readonly variant?: "card" | "plain";
 }) {
+  const icon = props.icon ? (
+    <SymbolView
+      name={props.icon}
+      size={props.variant === "plain" ? 44 : 28}
+      tintColorClassName="accent-icon-subtle"
+      type="hierarchical"
+    />
+  ) : null;
+
   if (props.variant === "plain") {
     return (
       <View className="items-center px-8 py-8">
+        {icon ? <View className="mb-4">{icon}</View> : null}
         <Text textRole="title" className="text-center font-t3-bold text-foreground">
           {props.title}
         </Text>
@@ -37,6 +49,7 @@ export function EmptyState(props: {
 
   return (
     <View className="rounded-[22px] border border-border bg-card p-5">
+      {icon ? <View className="mb-3">{icon}</View> : null}
       <Text textRole="headline" className="font-t3-bold text-foreground">
         {props.title}
       </Text>

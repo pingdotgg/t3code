@@ -199,15 +199,15 @@ function deriveEmptyState(props: {
 
   if (props.projectCount === 0 && catalogState.hasLoadedShellSnapshot) {
     return {
-      title: "No projects found",
-      detail: "The connected environment did not report any projects.",
+      title: "No Projects",
+      detail: "This environment has not reported any projects yet.",
       loading: false,
     };
   }
 
   return {
-    title: "No threads yet",
-    detail: "Create a task to start a new coding runtime in one of your connected projects.",
+    title: "No Threads",
+    detail: "Start a new thread to begin working in one of your projects.",
     loading: false,
   };
 }
@@ -674,6 +674,8 @@ export function HomeScreen(props: HomeScreenProps) {
   });
 
   if (!hasAnyThreads) {
+    const needsEnvironment = !props.catalogState.hasReadyEnvironment;
+    const showStartAction = !emptyState.loading;
     return (
       <View className={containerClassName}>
         <ScreenContent surface={sidebarSurface ? "drawer" : "screen"}>
@@ -692,22 +694,31 @@ export function HomeScreen(props: HomeScreenProps) {
           >
             <View className="w-full max-w-[430px]">
               <EmptyState
+                icon={needsEnvironment ? "desktopcomputer" : "bubble.left.and.bubble.right"}
                 title={emptyState.title}
                 detail={emptyState.detail}
                 actionLabel={
-                  !props.catalogState.hasReadyEnvironment ? "Add environment" : undefined
+                  showStartAction
+                    ? needsEnvironment
+                      ? "Add environment"
+                      : "New thread"
+                    : undefined
                 }
                 onAction={
-                  !props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined
+                  showStartAction
+                    ? needsEnvironment
+                      ? props.onAddConnection
+                      : props.onStartNewTask
+                    : undefined
                 }
                 action={
-                  Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
+                  Platform.OS === "android" && showStartAction ? (
                     <FloatingActionButton
-                      label="Add environment"
-                      icon="plus"
+                      label={needsEnvironment ? "Add environment" : "New thread"}
+                      icon={needsEnvironment ? "plus" : "square.and.pencil"}
                       variant="extended"
                       tone="primary"
-                      onPress={props.onAddConnection}
+                      onPress={needsEnvironment ? props.onAddConnection : props.onStartNewTask}
                     />
                   ) : undefined
                 }
