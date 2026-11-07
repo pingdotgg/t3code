@@ -16,44 +16,49 @@ export const whatsNewGuides: readonly WhatsNewGuide[] = [
   {
     id: "new-lesson",
     version: "0.1.7",
-    title: "Start a lesson",
-    benefit: "Turn a question into a focused lesson that builds your understanding step by step.",
-    actionLabel: "Try a new lesson",
+    title: "New lesson",
+    benefit:
+      "Say what you want to learn, how deep to go and why, and the lesson starts at your level.",
+    actionLabel: "Try New lesson",
   },
   {
     id: "side-chats",
     version: "0.1.7",
-    title: "Ask in a side chat",
-    benefit: "Explore a tricky idea beside your lesson, then keep the useful note in context.",
+    title: "Side chats, sorted by section",
+    benefit:
+      "Highlight anything you don't follow to ask about it on the side, and the map files each side chat under the lesson section it came from.",
     actionLabel: "Try side chats",
   },
   {
     id: "what-you-know",
     version: "0.1.7",
-    title: "See what you know",
-    benefit: "Your practice notes become a map of the topics you have explained back.",
+    title: "What you know, and practice",
+    benefit:
+      'Explain a topic back and, once it holds, it joins your map, ready for "practice what I know".',
     actionLabel: "Try What you know",
   },
   {
     id: "quiz-cards",
     version: "0.1.7",
-    title: "Check yourself with quiz cards",
-    benefit: "Quick questions reveal what stuck and help your lesson adapt.",
-    actionLabel: "Try quiz cards",
+    title: "Quiz cards",
+    benefit:
+      "Lessons check you with quick questions, and your answer, how sure you were and your thinking all go back to the lesson.",
+    actionLabel: "Try a lesson",
   },
   {
     id: "courses",
     version: "0.1.7",
     title: "Follow a course",
-    benefit: "Keep a course plan, quizzes, and lesson progress together.",
-    actionLabel: "Try courses",
+    benefit:
+      "Paste an MIT OpenCourseWare or YouTube course link into New lesson, and the lesson posts the outline and gets the next units ready.",
+    actionLabel: "Try a course",
   },
   {
     id: "chat-sync",
     version: "0.1.7",
-    title: "Bring over your T3 Code chats",
-    benefit: "Continue learning from chats you already made in T3 Code.",
-    actionLabel: "Try chat sync",
+    title: "Sync from T3 Code",
+    benefit: "Bring over the T3 Code chats OminaX doesn't have yet, in one click.",
+    actionLabel: "Try Sync",
   },
 ];
 
