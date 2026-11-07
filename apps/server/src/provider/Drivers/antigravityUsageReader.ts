@@ -124,10 +124,20 @@ function modelName(name: string, id: number): string {
   return MODEL_IDS[id] ?? (id > 0 ? `antigravity-model-${id}` : "");
 }
 
+const counters = (usage: Fields) =>
+  ([2, 3, 4, 5, 9, 10] as const).map((key) => numberAt(usage, key)).join(":");
+const usageIds = (usage: Fields) =>
+  ([11, 12, 7] as const).flatMap((key) => {
+    const id = textAt(usage, key);
+    return id ? [`antigravity:${key}:${id}`] : [];
+  });
+
 interface Metadata {
   model: string;
   timestampMs: number | null;
   usages: Fields[];
+  /** Each usage's model id, which for the main usage can come from its duplicate retry copy. */
+  modelIds: number[];
 }
 
 function metadata(bytes: Uint8Array, step: boolean): Metadata {
@@ -139,21 +149,40 @@ function metadata(bytes: Uint8Array, step: boolean): Metadata {
   const model = step ? nested(data, 24) : data;
   const usage = bytesAt(data, step ? 9 : 4);
   // Copy the usage bytes: subarrays kept in usages would hold each row's whole blob alive.
-  const usages = usage === undefined ? [] : [fields(usage.slice())];
+  const main = usage === undefined ? undefined : fields(usage.slice());
+  const usages = main === undefined ? [] : [main];
+  const mainIds = main === undefined ? [] : usageIds(main);
+  let retryModelId = 0;
   for (const retry of data.get(step ? 28 : 17) ?? []) {
     if (!(retry instanceof Uint8Array)) throw new Error("Invalid retry metadata");
     const retryUsage = bytesAt(fields(retry), 2);
-    if (retryUsage !== undefined) usages.push(fields(retryUsage.slice()));
+    if (retryUsage === undefined) continue;
+    const parsed = fields(retryUsage.slice());
+    // Antigravity also lists the call that succeeded among its retries.
+    if (
+      main !== undefined &&
+      counters(parsed) === counters(main) &&
+      usageIds(parsed).every((id) => mainIds.includes(id))
+    ) {
+      // The retry copy can be the only one that names the model, and the generation copy of the
+      // same call names it too, so the main usage takes it for pairing and attribution.
+      if (numberAt(main, 1) === 0) retryModelId ||= numberAt(parsed, 1);
+      continue;
+    }
+    usages.push(parsed);
   }
   return {
     model: modelName(
       textAt(model, step ? 12 : 19) || textAt(model, step ? 8 : 21),
-      numberAt(model, step ? 1 : 3),
+      retryModelId || numberAt(model, step ? 1 : 3),
     ),
     timestampMs: step
       ? (timestamp(nested(data, 8)) ?? timestamp(nested(data, 1)))
       : timestamp(nested(nested(data, 9), 4)),
     usages,
+    modelIds: usages.map((usage) =>
+      usage === main ? numberAt(usage, 1) || retryModelId : numberAt(usage, 1),
+    ),
   };
 }
 
@@ -271,6 +300,10 @@ function usageCandidates(
   fallbackTimestamp: number,
 ): UsageCandidate[] {
   const records: UsageCandidate[] = [];
+  // Antigravity stores an id-less call on both its step and its generation. Steps and generations
+  // run in the same order, so the nth step usage with given counters and model id pairs with the nth
+  // generation usage with the same ones, and two real calls with equal counters both survive.
+  const unpairedSteps = new Map<string, { indices: number[]; next: number }>();
   const generationModels = new Map(generations.map(({ idx, entry }) => [idx, entry.model]));
   for (const [source, entries] of [
     ["step", steps],
@@ -278,6 +311,7 @@ function usageCandidates(
   ] as const) {
     for (const [index, { idx, entry }] of entries.entries()) {
       for (const [usageIndex, usage] of entry.usages.entries()) {
+        const modelId = entry.modelIds[usageIndex]!;
         const outputTokens = Math.max(numberAt(usage, 3), numberAt(usage, 9) + numberAt(usage, 10));
         const totals = {
           uncachedInputTokens: numberAt(usage, 2),
@@ -294,30 +328,48 @@ function usageCandidates(
           0
         )
           continue;
-        const keys = ([11, 12, 7] as const).flatMap((key) => {
-          const id = textAt(usage, key);
-          return id ? [`antigravity:${key}:${id}`] : [];
-        });
+        const keys = usageIds(usage);
+        const timestampQuality =
+          entry.timestampMs !== null ? 2 : trajectoryTimestamp !== null ? 1 : 0;
         const record: UsageRecord = {
           provider: "antigravity",
           sessionId,
           timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
           model:
-            MODEL_IDS[numberAt(usage, 1)] ||
+            MODEL_IDS[modelId] ||
             entry.model ||
             (source === "step" ? generationModels.get(idx) : "") ||
-            modelName("", numberAt(usage, 1)) ||
+            modelName("", modelId) ||
             "antigravity-unknown",
           totals,
           reportedCostUsd: null,
           speed: "standard",
           dedupeKey: keys[0] ?? `antigravity:${sessionId}:${source}:${index}:${usageIndex}`,
         };
-        records.push({
-          record,
-          keys,
-          timestampQuality: entry.timestampMs !== null ? 2 : trajectoryTimestamp !== null ? 1 : 0,
-        });
+        if (keys.length === 0) {
+          const key = `${counters(usage)}:${modelId}`;
+          const pending = unpairedSteps.get(key);
+          if (source === "step") {
+            if (pending === undefined)
+              unpairedSteps.set(key, { indices: [records.length], next: 0 });
+            else pending.indices.push(records.length);
+          } else if (pending !== undefined && pending.next < pending.indices.length) {
+            const paired = records[pending.indices[pending.next++]!]!;
+            if (
+              timestampQuality > paired.timestampQuality ||
+              (timestampQuality === paired.timestampQuality &&
+                record.timestampMs < paired.record.timestampMs)
+            ) {
+              paired.record = { ...paired.record, timestampMs: record.timestampMs };
+              paired.timestampQuality = timestampQuality;
+            }
+            if (paired.record.model === "antigravity-unknown") {
+              paired.record = { ...paired.record, model: record.model };
+            }
+            continue;
+          }
+        }
+        records.push({ record, keys, timestampQuality });
       }
     }
   }
