@@ -3,7 +3,8 @@
  * Add the English key first, then its zh-Hans entry — English is the source of truth.
  */
 export const enMessages = {
-  "voice.speech.transcriptionFailed": "Voice transcription on this environment failed.",
+  "voice.speech.transcriptionFailed":
+    "Voice transcription failed. Check the destination in Settings → Voice.",
   "voice.speech.microphoneFallback": "Microphone {index}",
   "voice.speech.cleanupFailedTitle": "Transcript cleanup failed",
   "voice.speech.cleanupFailedDescription": "The original transcript was added.",
@@ -45,7 +46,7 @@ export const enMessages = {
 } as const;
 
 export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = {
-  "voice.speech.transcriptionFailed": "此环境上的语音转写失败。",
+  "voice.speech.transcriptionFailed": "语音转写失败。请在“设置 → 语音”中检查目标。",
   "voice.speech.microphoneFallback": "麦克风 {index}",
   "voice.speech.cleanupFailedTitle": "转写整理失败",
   "voice.speech.cleanupFailedDescription": "已添加原始转写结果。",

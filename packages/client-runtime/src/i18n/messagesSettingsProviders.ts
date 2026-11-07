@@ -98,9 +98,6 @@ export const enMessages = {
   "settings.providers.cli.title": "t3 command",
   "settings.providers.usage.title": "Usage providers",
   "settings.providers.usage.addHub": "Add hub",
-  "settings.providers.usage.cursor.title": "Cursor account usage",
-  "settings.providers.usage.cursor.description":
-    "Read your existing Cursor CLI login from macOS Keychain to show account history and monthly limits. macOS may ask you to allow access.",
   "settings.providers.usage.noHubs": "No hubs configured.",
   "settings.providers.usage.disabled": "Disabled",
   "settings.providers.usage.remove": "Remove",
@@ -1134,9 +1131,6 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.providers.cli.title": "t3 命令",
   "settings.providers.usage.title": "用量提供商",
   "settings.providers.usage.addHub": "添加中心",
-  "settings.providers.usage.cursor.title": "Cursor 账号用量",
-  "settings.providers.usage.cursor.description":
-    "从 macOS 钥匙串读取你现有的 Cursor CLI 登录信息，以显示账号历史和每月限额。macOS 可能会请求你允许访问。",
   "settings.providers.usage.noHubs": "尚未配置中心。",
   "settings.providers.usage.disabled": "已停用",
   "settings.providers.usage.remove": "移除",

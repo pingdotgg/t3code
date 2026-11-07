@@ -65,7 +65,6 @@ export interface SettingsSearchItem {
   readonly cloudOnly?: boolean;
   readonly environmentOnly?: boolean;
   readonly providerSettingsOnly?: boolean;
-  readonly macProviderSettingsOnly?: boolean;
   readonly localBackendManagementOnly?: boolean;
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
@@ -80,7 +79,6 @@ export interface SettingsSearchAvailability {
   readonly hasCloudPublicConfig: boolean;
   readonly hasEnvironment: boolean;
   readonly hasProviderSettingsEnvironment: boolean;
-  readonly hasMacProviderSettingsEnvironment: boolean;
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
@@ -573,9 +571,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "voice-transcription-destination",
-    title: "Send microphone audio to",
+    title: "Transcribe with",
     to: "/settings/voice",
-    searchTerms: ["speech voice dictation stt transcription environment machine consent privacy"],
+    searchTerms: [
+      "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter",
+    ],
   },
   {
     id: "voice-microphone",
@@ -1056,15 +1056,6 @@ export const SETTINGS_SEARCH_ITEMS = [
       "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
     ],
     providerSettingsOnly: true,
-  },
-  {
-    id: "cursor-keychain-usage",
-    titleKey: "settings.search.items.cursor-keychain-usage",
-    title: "Cursor account usage",
-    to: "/settings/providers",
-    searchTerms: ["cursor macOS keychain usage tokens cost limits permission"],
-    providerSettingsOnly: true,
-    macProviderSettingsOnly: true,
   },
   {
     id: "provider-health-check-interval",
@@ -1618,7 +1609,6 @@ export function filterAvailableSettingsSearchItems(
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
-      (!item.macProviderSettingsOnly || availability.hasMacProviderSettingsEnvironment) &&
       (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
@@ -1796,7 +1786,6 @@ export const SETTINGS_SEARCH_TITLE_KEYS = {
   "snap-shot-animations": "settings.search.items.snap-shot-animations",
   providers: "settings.search.items.providers",
   "usage-providers": "settings.search.items.usage-providers",
-  "cursor-keychain-usage": "settings.search.items.cursor-keychain-usage",
   "provider-health-check-interval": "settings.search.items.provider-health-check-interval",
   "agent-browser-access": "settings.search.items.agent-browser-access",
   "device-sources": "settings.search.items.device-sources",

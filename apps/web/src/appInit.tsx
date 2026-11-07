@@ -33,6 +33,7 @@ import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
 import { getUiLocale } from "./hooks/useI18n";
 import { readLocalStorageValue, subscribeLocalStorageKey } from "./hooks/useLocalStorage";
+import { startHostEnvironmentLookup } from "./state/primaryEnvironment";
 import {
   getClientSettings,
   startModelPreferencesMigration,
@@ -191,6 +192,7 @@ export function startAppServices(): AppRouter {
   startClientAppearance();
   startDocumentLanguage();
   startDocumentTitle();
+  startHostEnvironmentLookup();
   startEnvironmentThemeRepaint();
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();

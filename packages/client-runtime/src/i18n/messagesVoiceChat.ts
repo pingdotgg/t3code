@@ -9,8 +9,8 @@ export const enMessages = {
   "voice.chat.setup.environmentFallback": "your transcription environment",
   "voice.chat.setup.stepModel": "Model",
   "voice.chat.setup.stepReady": "Ready to dictate",
-  "voice.chat.setup.modelFallback": "English transcription model",
-  "voice.chat.setup.recommended": "Recommended for English",
+  "voice.chat.setup.recommended": "Recommended for {language}",
+  "voice.chat.setup.loadingModels": "Loading transcription models…",
   "voice.chat.setup.downloadInfo":
     "Download the {size} MB model to {environment}. Microphone audio is sent there for transcription, as chosen in Voice settings.",
   "voice.chat.setup.sileroInfo":
@@ -30,9 +30,11 @@ export const enMessages = {
   "voice.chat.setup.dictationHint":
     "Speak and transcribe in multiple languages or translate into English, and get names and technical terms right with the dictionary in Voice settings.",
   "voice.chat.setup.chooseModel": "Choose another model or language",
+  "voice.chat.setup.chooseModelFirst": "Choose a model or language",
+  "voice.chat.setup.retryCatalog": "Retry loading models",
   "voice.chat.setup.cancelDownload": "Cancel download",
   "voice.chat.setup.downloading": "Downloading…",
-  "voice.chat.setup.retryDownload": "Retry download",
+  "voice.chat.setup.retryDownload": "Try again",
   "voice.chat.setup.downloadModel": "Download model",
   "voice.chat.setup.askAdmin": "Ask an environment admin to download",
   "voice.chat.setup.customize": "Customize in Voice settings",
@@ -86,8 +88,8 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "voice.chat.setup.environmentFallback": "当前转写环境",
   "voice.chat.setup.stepModel": "模型",
   "voice.chat.setup.stepReady": "可以开始听写",
-  "voice.chat.setup.modelFallback": "英语转写模型",
-  "voice.chat.setup.recommended": "推荐用于英语",
+  "voice.chat.setup.recommended": "推荐用于{language}",
+  "voice.chat.setup.loadingModels": "正在加载转写模型…",
   "voice.chat.setup.downloadInfo":
     "将 {size} MB 的模型下载到{environment}。麦克风音频会发送到那里进行转写，具体取决于语音设置中的选择。",
   "voice.chat.setup.sileroInfo":
@@ -105,9 +107,11 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "voice.chat.setup.dictationHint":
     "可以用多种语言说话并转写，或翻译成英语；借助语音设置中的词典，名字和专业术语也能写对。",
   "voice.chat.setup.chooseModel": "选择其他模型或语言",
+  "voice.chat.setup.chooseModelFirst": "选择模型或语言",
+  "voice.chat.setup.retryCatalog": "重新加载模型",
   "voice.chat.setup.cancelDownload": "取消下载",
   "voice.chat.setup.downloading": "正在下载…",
-  "voice.chat.setup.retryDownload": "重试下载",
+  "voice.chat.setup.retryDownload": "重试",
   "voice.chat.setup.downloadModel": "下载模型",
   "voice.chat.setup.askAdmin": "请环境管理员下载",
   "voice.chat.setup.customize": "在语音设置中自定义",

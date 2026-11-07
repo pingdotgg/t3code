@@ -1048,16 +1048,13 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale: () => string | null;
-  /**
-   * OS display languages in preference order, which the renderer cannot read
-   * for itself for the same reason as {@link getSystemLocale}. Unlike
-   * `getSystemLocale`, these are not tied to the regional format, so they are
-   * the source for the UI language.
-   */
+  /** The OS's preferred languages, most preferred first; `navigator.languages` is pinned like the locale. */
   getPreferredSystemLanguages: () => readonly string[];
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled: () => boolean;
   setLocalEnvironmentEnabled: (enabled: boolean) => Promise<void>;
+  /** The environment ID recorded in this app's T3 home, such as its own machine's background service. */
+  getHostEnvironmentId?: () => Promise<string | null>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;

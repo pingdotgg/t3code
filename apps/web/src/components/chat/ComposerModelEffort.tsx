@@ -134,7 +134,11 @@ export function describeComposerEffort(
         ? `${reasoning.label} ${reasoning.currentValue === true ? t("chat.effort.on") : t("chat.effort.off")}`
         : ultrathink
           ? "Ultrathink"
-          : getProviderOptionCurrentLabel(reasoning, modelSelection, traits.reportedModelSelection);
+          : (getProviderOptionCurrentLabel(
+              reasoning,
+              modelSelection,
+              traits.reportedModelSelection,
+            ) ?? (reasoning.id === "thinking" ? reasoning.label : null));
   const fast = display.speedLabel === "Fast" || display.speedLabel === "Ultrafast";
   // Agent options such as modes live in the picker; the trigger adds only the context window.
   const contextWindow =

@@ -108,10 +108,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return typeof result === "string" ? result : null;
   },
   getPreferredSystemLanguages: () => {
-    const result = ipcRenderer.sendSync(IpcChannels.GET_PREFERRED_SYSTEM_LANGUAGES_CHANNEL);
-    return Array.isArray(result)
-      ? result.filter((language): language is string => typeof language === "string")
-      : [];
+    const result: unknown = ipcRenderer.sendSync(
+      IpcChannels.GET_PREFERRED_SYSTEM_LANGUAGES_CHANNEL,
+    );
+    return Array.isArray(result) ? result.filter((tag) => typeof tag === "string") : [];
   },
   getLocalEnvironmentBootstraps: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL);
@@ -126,6 +126,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL) !== false,
   setLocalEnvironmentEnabled: (enabled) =>
     ipcRenderer.invoke(IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL, enabled),
+  getHostEnvironmentId: () => ipcRenderer.invoke(IpcChannels.GET_HOST_ENVIRONMENT_ID_CHANNEL),
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
