@@ -2,7 +2,7 @@ import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/cont
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { describe, expect, it } from "vite-plus/test";
 
-import { settingInheritanceLayers } from "./SettingInheritance";
+import { mixedSettingSummary, settingInheritanceLayers } from "./SettingInheritance";
 
 const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project");
@@ -98,5 +98,22 @@ describe("settingInheritanceLayers", () => {
       ["Inherits", false],
       ["Current checkout", false],
     ]);
+  });
+});
+
+describe("mixedSettingSummary", () => {
+  it("names the environments holding each value", () => {
+    const on = { ...DEFAULT_SERVER_SETTINGS, autoResumeLimitedThreads: true };
+    const off = { ...DEFAULT_SERVER_SETTINGS, autoResumeLimitedThreads: false };
+    expect(
+      mixedSettingSummary(
+        [
+          { label: "laptop", settings: on },
+          { label: "vps", settings: off },
+          { label: "desktop", settings: on },
+        ],
+        "autoResumeLimitedThreads",
+      ),
+    ).toBe("On for laptop, desktop · Off for vps");
   });
 });
