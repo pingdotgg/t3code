@@ -14,7 +14,12 @@ import { relayDeliveryAttempts } from "../persistence/schema.ts";
 export class DeliveryAttemptRecordPersistenceError extends Schema.TaggedError<DeliveryAttemptRecordPersistenceError>()(
   "DeliveryAttemptRecordPersistenceError",
   {
-    operation: Schema.Literals(["claim-source-job", "complete-source-job", "prune-expired"]),
+    operation: Schema.Literals([
+      "claim-source-job",
+      "release-source-job",
+      "complete-source-job",
+      "prune-expired",
+    ]),
     sourceJobId: Schema.NullOr(Schema.String),
     userId: Schema.NullOr(Schema.String),
     environmentId: Schema.NullOr(Schema.String),
@@ -59,6 +64,9 @@ export class DeliveryAttempts extends Context.Service<
     readonly claimSourceJob: (
       input: DeliveryAttemptInput & { readonly sourceJobId: string },
     ) => Effect.Effect<DeliverySourceJobClaimResult, DeliveryAttemptRecordPersistenceError>;
+    readonly releaseSourceJob: (input: {
+      readonly sourceJobId: string;
+    }) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
     readonly completeSourceJob: (
       input: DeliveryAttemptCompletionInput,
     ) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
@@ -192,6 +200,37 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
+    }),
+    // Drops an unfinished claim so a redelivered copy of the job can claim it
+    // again before the lease runs out. A completed row stays as the dedupe record.
+    releaseSourceJob: Effect.fn("relay.delivery_attempts.release_source_job")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.delivery.job_id": input.sourceJobId });
+      yield* db
+        .delete(relayDeliveryAttempts)
+        .where(
+          and(
+            eq(relayDeliveryAttempts.sourceJobId, input.sourceJobId),
+            isNull(relayDeliveryAttempts.apnsStatus),
+            isNull(relayDeliveryAttempts.apnsReason),
+            isNull(relayDeliveryAttempts.apnsId),
+            isNull(relayDeliveryAttempts.transportError),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DeliveryAttemptRecordPersistenceError({
+                operation: "release-source-job",
+                sourceJobId: input.sourceJobId,
+                userId: null,
+                environmentId: null,
+                threadId: null,
+                deviceId: null,
+                kind: null,
+                cause,
+              }),
+          ),
+        );
     }),
     completeSourceJob: Effect.fn("relay.delivery_attempts.complete_source_job")(function* (input) {
       yield* Effect.annotateCurrentSpan({ "relay.delivery.job_id": input.sourceJobId });

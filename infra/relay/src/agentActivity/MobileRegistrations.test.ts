@@ -128,6 +128,7 @@ function makeDeliveryAttempts(
 ): DeliveryAttempts.DeliveryAttempts["Service"] {
   return {
     claimSourceJob: () => Effect.succeed("claimed"),
+    releaseSourceJob: () => Effect.void,
     completeSourceJob: () => Effect.void,
     pruneExpired: Effect.succeed(0),
     ...overrides,

@@ -9,6 +9,31 @@ import * as RelayDb from "../db.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 
 describe("DeliveryAttempts", () => {
+  it.effect("reports claim-release persistence failures without completing the job", () => {
+    const cause = new Error("database unavailable");
+    const fakeDb = {
+      delete: () => ({ where: () => Effect.fail(cause) }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const attempts = yield* DeliveryAttempts.DeliveryAttempts;
+      const error = yield* attempts.releaseSourceJob({ sourceJobId: "job-1" }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeliveryAttemptRecordPersistenceError",
+        operation: "release-source-job",
+        sourceJobId: "job-1",
+        cause,
+      });
+    }).pipe(
+      Effect.provide(
+        DeliveryAttempts.layer.pipe(
+          Layer.provide(NodeCryptoLayer.layer),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
+        ),
+      ),
+    );
+  });
+
   it.effect("reports completed source jobs when the durable claim already exists", () => {
     const fakeDb = {
       insert: () => ({
