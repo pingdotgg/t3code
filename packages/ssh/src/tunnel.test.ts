@@ -559,8 +559,8 @@ describe("ssh tunnel scripts", () => {
         { concurrency: "unbounded" },
       ).pipe(Effect.provide(localRemoteShellLayer(home)));
 
-      const runtime = JSON.parse(
-        yield* fs.readFileString(path.join(home, ".t3", "userdata", "server-runtime.json")),
+      const ownerPid = Number(
+        yield* fs.readFileString(path.join(home, ".t3", "userdata", "server.lock")),
       );
       assert.include(
         launches.map((launch) => launch.remoteServerKind),
@@ -574,7 +574,7 @@ describe("ssh tunnel scripts", () => {
         );
         assert.equal(
           Number(recordedPid.trim()),
-          runtime.pid,
+          ownerPid,
           `${targets[index]!.alias} reported a managed server, but its recorded PID is not the server that owns the remote home`,
         );
       }

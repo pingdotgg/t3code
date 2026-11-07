@@ -553,12 +553,15 @@ LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
+LAUNCH_BREAK_LOCK="$LAUNCH_LOCK.break"
 mkdir -p "$STATE_DIR"
 cleanup_launch() {
   rm -f "$RUNNER_NEXT"
-  if [ "$(cat "$LAUNCH_LOCK" 2>/dev/null || true)" = "$$" ]; then
-    rm -f "$LAUNCH_LOCK"
-  fi
+  for OWNED_LOCK in "$LAUNCH_LOCK" "$LAUNCH_BREAK_LOCK"; do
+    if [ "$(cat "$OWNED_LOCK" 2>/dev/null || true)" = "$$" ]; then
+      rm -f "$OWNED_LOCK"
+    fi
+  done
 }
 trap cleanup_launch EXIT
 # A dropped SSH session signals the launch; exit so the lock is released.
@@ -577,14 +580,20 @@ elif ! ensure_remote_node_path; then
   printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
   exit 1
 fi
-# Only one waiter can move a given stale lock aside. If the moved file no
-# longer holds what this waiter judged stale, it belongs to a live owner.
+# Recovery runs under its own lock and re-reads the owner there, so a waiter
+# that judged an earlier lock stale cannot remove its successor's lock.
 discard_stale_launch_lock() {
-  mv "$LAUNCH_LOCK" "$LAUNCH_LOCK.$$" 2>/dev/null || return 0
-  if [ "$(cat "$LAUNCH_LOCK.$$" 2>/dev/null || true)" != "$1" ]; then
-    ln "$LAUNCH_LOCK.$$" "$LAUNCH_LOCK" 2>/dev/null || true
+  if ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_BREAK_LOCK") 2>/dev/null; then
+    LAUNCH_BREAK_OWNER="$(cat "$LAUNCH_BREAK_LOCK" 2>/dev/null || true)"
+    if [ -z "$LAUNCH_BREAK_OWNER" ] || ! kill -0 "$LAUNCH_BREAK_OWNER" 2>/dev/null; then
+      rm -f "$LAUNCH_BREAK_LOCK"
+    fi
+    return 0
   fi
-  rm -f "$LAUNCH_LOCK.$$"
+  if [ "$(cat "$LAUNCH_LOCK" 2>/dev/null || true)" = "$1" ]; then
+    rm -f "$LAUNCH_LOCK"
+  fi
+  rm -f "$LAUNCH_BREAK_LOCK"
 }
 # Concurrent launches share this home's owner lock and may share this record.
 # Hold the lock from comparing the runner until the server is recorded and
