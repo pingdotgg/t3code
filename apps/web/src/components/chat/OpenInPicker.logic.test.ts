@@ -17,8 +17,7 @@ it.each([
     expect(
       shouldShowOpenInPicker({
         ...input,
-        activeProjectName: "Project",
-        activeThreadEnvironmentId: environmentId,
+        environmentId,
       }),
     ).toBe(input.expected);
   },

@@ -53,6 +53,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { shouldShowOpenInPicker } from "~/components/chat/OpenInPicker.logic";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -1283,7 +1284,11 @@ export default function FilePreviewPanel({
             </div>
           </ScrollArea>
           {absolutePath &&
-          (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+          shouldShowOpenInPicker({
+            environmentId,
+            primaryEnvironmentId,
+            remoteOpenMode: remoteOpenState.mode,
+          }) ? (
             <OpenInPicker
               environmentId={environmentId}
               keybindings={keybindings}

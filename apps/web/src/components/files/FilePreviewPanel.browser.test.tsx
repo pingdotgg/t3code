@@ -1,4 +1,9 @@
-import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  type EditorId,
+  type ProjectReadFileResult,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../../test/render";
@@ -18,6 +23,10 @@ vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   readEnvironmentScope: () => true,
   useEnvironmentScope: () => true,
+}));
+vi.mock(import("~/state/environments"), async (original) => ({
+  ...(await original()),
+  usePrimaryEnvironmentId: () => null,
 }));
 vi.mock(import("~/state/filesystem"), async (original) => ({
   ...(await original()),
@@ -95,7 +104,7 @@ function setup() {
   };
 }
 
-function markdownPreview(truncated: boolean) {
+function markdownPreview(truncated: boolean, availableEditors: ReadonlyArray<EditorId> = []) {
   state.file = {
     relativePath: "tasks.md",
     contents: "- [ ] Keep the rest of this file\n",
@@ -111,7 +120,7 @@ function markdownPreview(truncated: boolean) {
       threadRef={threadRef}
       composerDraftTarget={threadRef}
       keybindings={[]}
-      availableEditors={[]}
+      availableEditors={availableEditors}
       openInShortcutEnabled={false}
       revealLine={null}
       revealRequestId={0}
@@ -124,6 +133,18 @@ function markdownPreview(truncated: boolean) {
     />
   );
 }
+
+it("opens a local service file in the editor without a desktop primary", async () => {
+  using _settings = setup();
+  await using screen = await render(markdownPreview(false, ["vscode"]));
+  const open = screen.getByRole("button", { name: "Open file in preferred editor" });
+  await expect.element(open).toBeEnabled();
+  await open.click();
+  expect(state.writeFile).toHaveBeenCalledExactlyOnceWith({
+    environmentId,
+    input: { cwd: "/workspace/tasks.md", editor: "vscode" },
+  });
+});
 
 describe("rendered Markdown task saves", () => {
   it("keeps a truncated read read-only without queuing a replacement", async () => {
