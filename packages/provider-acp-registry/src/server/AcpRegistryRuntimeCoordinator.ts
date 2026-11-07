@@ -58,9 +58,11 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     readonly publishAvailableCommands: (
       instanceId: ProviderInstanceId,
       commands: AcpRegistryAvailableCommands,
+      sessionId?: string,
     ) => Effect.Effect<void>;
     readonly getAvailableCommands: (
       instanceId: ProviderInstanceId,
+      sessionId?: string,
     ) => Effect.Effect<Option.Option<AcpRegistryAvailableCommands>>;
     readonly watchAvailableCommands: (
       instanceId: ProviderInstanceId,
@@ -101,6 +103,9 @@ const make = Effect.gen(function* () {
   const availableCommandsUpdates = yield* PubSub.unbounded<AvailableCommandsUpdate>();
   const availableCommandsByInstance = yield* Ref.make(
     new Map<ProviderInstanceId, AcpRegistryAvailableCommands>(),
+  );
+  const availableCommandsBySession = yield* Ref.make(
+    new Map<string, AcpRegistryAvailableCommands>(),
   );
   const liveConfigurationUpdates = yield* PubSub.unbounded<LiveConfigurationUpdate>();
   const liveConfigurationByInstance = yield* Ref.make(
@@ -160,19 +165,35 @@ const make = Effect.gen(function* () {
 
   const clearAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["clearAvailableCommands"] =
     (instanceId) =>
-      Ref.update(availableCommandsByInstance, (current) => {
-        const next = new Map(current);
-        next.delete(instanceId);
-        return next;
-      });
+      Effect.all([
+        Ref.update(availableCommandsByInstance, (current) => {
+          const next = new Map(current);
+          next.delete(instanceId);
+          return next;
+        }),
+        Ref.update(availableCommandsBySession, (current) => {
+          const next = new Map(current);
+          for (const key of next.keys()) {
+            if (key.startsWith(`${instanceId}:`)) next.delete(key);
+          }
+          return next;
+        }),
+      ]).pipe(Effect.asVoid);
 
   const publishAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["publishAvailableCommands"] =
-    (instanceId, commands) =>
-      Ref.update(availableCommandsByInstance, (current) => {
+    (instanceId, commands, sessionId) =>
+      Ref.update(availableCommandsBySession, (current) => {
         const next = new Map(current);
-        next.set(instanceId, commands);
+        if (sessionId !== undefined) next.set(`${instanceId}:${sessionId}`, commands);
         return next;
       }).pipe(
+        Effect.andThen(
+          Ref.update(availableCommandsByInstance, (current) => {
+            const next = new Map(current);
+            next.set(instanceId, commands);
+            return next;
+          }),
+        ),
         Effect.andThen(
           PubSub.publish(availableCommandsUpdates, {
             instanceId,
@@ -183,9 +204,15 @@ const make = Effect.gen(function* () {
       );
 
   const getAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["getAvailableCommands"] =
-    Effect.fn("AcpRegistryRuntimeCoordinator.getAvailableCommands")(function* (instanceId) {
-      return Option.fromNullishOr((yield* Ref.get(availableCommandsByInstance)).get(instanceId));
-    });
+    Effect.fn("AcpRegistryRuntimeCoordinator.getAvailableCommands")(
+      function* (instanceId, sessionId) {
+        const commands =
+          sessionId === undefined
+            ? (yield* Ref.get(availableCommandsByInstance)).get(instanceId)
+            : (yield* Ref.get(availableCommandsBySession)).get(`${instanceId}:${sessionId}`);
+        return Option.fromNullishOr(commands);
+      },
+    );
 
   const watchAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["watchAvailableCommands"] =
     (instanceId, onUpdate) =>

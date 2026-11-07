@@ -325,6 +325,7 @@ export interface AcpAdapterV2Flavor {
   readonly rewriteUserText?: (
     text: string,
     turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+    sessionId: string,
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
@@ -343,6 +344,7 @@ export interface AcpAdapterV2Flavor {
   readonly ignoreSessionUpdate?: (notification: EffectAcpSchema.SessionNotification) => boolean;
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+    sessionId: string,
   ) => Effect.Effect<void>;
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
@@ -6275,8 +6277,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
               if (notification.update.sessionUpdate === "available_commands_update") {
                 yield* (
-                  flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
-                    Effect.void
+                  flavor.onAvailableCommandsUpdate?.(
+                    notification.update.availableCommands,
+                    notification.sessionId,
+                  ) ?? Effect.void
                 );
               }
               if (
@@ -7890,7 +7894,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.rewriteUserText === undefined
               ? turnInput.message.text
               : yield* flavor
-                  .rewriteUserText(turnInput.message.text, turnInput)
+                  .rewriteUserText(turnInput.message.text, turnInput, sessionId)
                   .pipe(
                     Effect.provideService(
                       ChildProcessSpawner.ChildProcessSpawner,

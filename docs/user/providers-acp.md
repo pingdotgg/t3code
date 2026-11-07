@@ -90,6 +90,8 @@ is running update the picker without waiting for another provider probe.
 
 Slash commands the agent provides appear under **Provider** in the `/` menu while a session is
 running. Commands the agent names with a `$` prefix appear in T3 Code's `$` skill menu instead.
+Droid's unprefixed commands and Kimi's `skill:` commands also appear in the `$` menu and are
+invoked using the agent's native command form.
 
 ## Native sessions
 
