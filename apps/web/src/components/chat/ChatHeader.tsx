@@ -361,16 +361,9 @@ export const ChatHeader = memo(function ChatHeader({
               aria-label="Thread title"
               className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-medium text-foreground outline-none ring-1 ring-inset ring-ring/50 focus:ring-ring"
               defaultValue={renamingTitle}
-              onBlur={(event) => {
+              onBlur={() => {
                 if (renameCommittedRef.current) return;
-                if (
-                  event.relatedTarget instanceof HTMLElement &&
-                  event.relatedTarget.closest("button")
-                ) {
-                  setRenaming(null);
-                  return;
-                }
-                commitRename(event.currentTarget.value);
+                setRenaming(null);
               }}
               onFocus={(event) => event.currentTarget.select()}
               onKeyDown={handleRenameKeyDown}
