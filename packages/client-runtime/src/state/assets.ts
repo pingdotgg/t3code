@@ -250,7 +250,9 @@ export function makeRevisionedAssetUrlFamily(
 }
 
 /** The ticket usually expires first, and the URL has to say so for readers to re-mint it. */
-const withGatewayTicketLifetime = Effect.fnUntraced(function* (asset: AssetCreateUrlResult) {
+const withGatewayTicketLifetime = Effect.fn("assets.withGatewayTicketLifetime")(function* (
+  asset: AssetCreateUrlResult,
+) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const ticketed = yield* ticketedRelativeUrl(
     yield* SubscriptionRef.get(supervisor.prepared),
