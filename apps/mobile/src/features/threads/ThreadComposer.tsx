@@ -81,7 +81,12 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
-import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
+import {
+  ComposerActionButton,
+  ComposerInlineControl,
+  ComposerToolbarRow,
+} from "../../components/ComposerToolbar";
 import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
   composerStripAttachments,
@@ -539,6 +544,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     return report !== null;
   };
 
+  const onUpdateInteractionMode =
+    selectedProviderStatus?.showInteractionModeToggle === false
+      ? undefined
+      : props.onUpdateInteractionMode;
+  const { enabled: legacyPlanModeEnabled } = useLegacyPlanModeState();
+
   const mentionableEnvironments = useMentionableEnvironments();
   const composerMenu = useComposerCommandMenu({
     draftMessage: draftMessage,
@@ -558,10 +569,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     hasThread: !props.isDraft,
     hasCompactableConversation: props.hasCompactableConversation,
     onChangeDraftMessage: props.onChangeDraftMessage,
-    onUpdateInteractionMode:
-      selectedProviderStatus?.showInteractionModeToggle === false
-        ? undefined
-        : props.onUpdateInteractionMode,
+    onUpdateInteractionMode,
     offersUsageLimits: usageLimitsOffered,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
@@ -812,6 +820,27 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       />
     </View>
   );
+
+  const interactionMode = props.selectedThread.interactionMode;
+  const modeControl =
+    legacyPlanModeEnabled && onUpdateInteractionMode && queuedEdit === null ? (
+      <ComposerInlineControl
+        size={usesLargeControls ? "large" : "regular"}
+        accessibilityHint={`Switches to ${interactionMode === "plan" ? "Build" : "Plan"} mode`}
+        accessibilityLabel={`Interaction mode: ${interactionMode === "plan" ? "Plan" : "Build"}`}
+        disabled={props.interactionLocked === true}
+        emphasized
+        icon={
+          interactionMode === "plan"
+            ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
+            : { ios: "hammer", android: "construction" }
+        }
+        label={interactionMode === "plan" ? "Plan" : "Build"}
+        iconOnly={!compactEditor.isExpanded}
+        onPress={() => onUpdateInteractionMode(interactionMode === "plan" ? "default" : "plan")}
+        showChevron={false}
+      />
+    ) : null;
 
   return (
     <Animated.View
@@ -1093,6 +1122,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
+                {modeControl}
                 {modelControl}
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}
