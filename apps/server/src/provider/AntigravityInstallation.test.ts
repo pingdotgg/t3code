@@ -759,6 +759,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(
           yield* isolated.installation.resolve(executableName, { PATH: externalDirectory }),
         ).toMatchObject({ source: "override", executablePath: externalExecutable });
+
+        const incompleteDirectory = path.join(baseDir, "incomplete");
+        yield* fs.makeDirectory(incompleteDirectory);
+        yield* fs.writeFileString(path.join(incompleteDirectory, executableName), "no harness", {
+          mode: 0o755,
+        });
+        const shadowedPath = { PATH: `${incompleteDirectory}:${externalDirectory}` };
+        expect(yield* isolated.installation.resolve(undefined, shadowedPath)).toMatchObject({
+          source: "path",
+          executablePath: externalExecutable,
+        });
+        expect(yield* isolated.installation.resolve(executableName, shadowedPath)).toMatchObject({
+          source: "override",
+          executablePath: externalExecutable,
+        });
       }),
   );
 
