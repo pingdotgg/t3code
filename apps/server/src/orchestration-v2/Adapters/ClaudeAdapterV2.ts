@@ -4470,6 +4470,7 @@ interface ClaudeSubagentProjectionTarget {
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly nextOrdinal: () => number;
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
+  readonly stopped?: boolean;
 }
 
 /** Claude writes blocks separately with stop_reason null until the last.
@@ -6536,6 +6537,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               childRootNodeId,
               nextOrdinal: () => ++nextItemOrdinal,
               toolCalls,
+              stopped: status === "cancelled",
             };
             const endOpenToolCalls = Effect.fnUntraced(function* () {
               if (toolCalls.size === 0) return;
@@ -7549,12 +7551,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly toolResult: ClaudeToolResultContentBlock;
           readonly output: ClaudeNativeToolOutput;
           readonly completedAt: DateTime.Utc;
+          readonly stopped?: boolean;
         }) {
           const { toolCall } = input;
           const toolNonExecutionKind = claudeToolNonExecutionKind(
             input.message,
             input.toolResult.tool_use_id,
           );
+          // Stop makes Claude answer each running tool with an error result.
+          const stopped =
+            input.stopped === true ||
+            (input.context !== null &&
+              (yield* Ref.get(interruptedTurns)).has(input.context.providerTurnId));
           yield* stopTaskOutputTail(toolCall.nativeItemId);
           yield* emitToolCallArtifacts(
             buildToolCallArtifacts({
@@ -7573,7 +7581,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolNonExecutionKind === "cancelled"
                   ? "cancelled"
                   : isClaudeToolResultError(input.toolResult)
-                    ? "failed"
+                    ? stopped
+                      ? "interrupted"
+                      : "failed"
                     : "completed",
               ...(toolNonExecutionKind === undefined ? {} : { toolNonExecutionKind }),
               startedAt: toolCall.startedAt,
@@ -7668,6 +7678,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               toolResult,
               output,
               completedAt: at,
+              // A genuine failure read late carries no denial kind.
+              stopped: target.stopped === true && field(line, "toolDenialKind") !== undefined,
             });
           }
           if (line.type !== "assistant") return false;
