@@ -1,0 +1,42 @@
+diff --git a/ios/legacy/RNSSearchBar.h b/ios/legacy/RNSSearchBar.h
+index b97e390399bf9acbe096e9845803c237fde875a8..1995480d8507ffb3e3f22f8be2c9339f33b25fc0 100644
+--- a/ios/legacy/RNSSearchBar.h
++++ b/ios/legacy/RNSSearchBar.h
+@@ -22,9 +22,9 @@
+ 
+ @interface RNSSearchBar :
+ #if defined(__cplusplus)
+-    RCTViewComponentView <UISearchBarDelegate, RCTRNSSearchBarViewProtocol>
++    RCTViewComponentView <UISearchBarDelegate, UISearchControllerDelegate, RCTRNSSearchBarViewProtocol>
+ #else
+-    UIView <UISearchBarDelegate>
++    UIView <UISearchBarDelegate, UISearchControllerDelegate>
+ #endif
+ 
+ @property (nonatomic, weak, nullable) id<RNSSearchBarNavigationItemDelegate> navigationItemDelegate;
+diff --git a/ios/legacy/RNSSearchBar.mm b/ios/legacy/RNSSearchBar.mm
+index ea42020c4d4b42936540882030191fcb77b28798..81ebe354cd5f319b93ec7e19cd624485d2116277 100644
+--- a/ios/legacy/RNSSearchBar.mm
++++ b/ios/legacy/RNSSearchBar.mm
+@@ -155,6 +155,9 @@ - (void)initCommonProps
+ #endif
+ 
+   _controller.searchBar.delegate = self;
++#if !TARGET_OS_TV
++  _controller.delegate = self;
++#endif
+ 
+   _isObscureBackgroundSet = NO;
+   _isHideNavigationBarSet = NO;
+@@ -410,6 +413,11 @@ - (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar
+   [self emitOnCancelButtonPressEvent];
+   [self emitOnChangeTextEventWithText:_controller.searchBar.text];
+ }
++
++- (void)didDismissSearchController:(UISearchController *)searchController
++{
++  [self searchBarCancelButtonClicked:_controller.searchBar];
++}
+ #endif // !TARGET_OS_TV
+ 
+ - (void)blur
