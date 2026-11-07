@@ -68,7 +68,7 @@ import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
-import type { QuizCard } from "@t3tools/shared/quizCard";
+import type { LessonCard } from "@t3tools/shared/quizCard";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -641,7 +641,7 @@ type MessagesTimelineRowContent =
       kind: "quiz-card";
       id: string;
       createdAt: string;
-      quizCard: QuizCard;
+      quizCard: LessonCard;
       answered: boolean;
     }
   | {
@@ -1510,6 +1510,9 @@ function deriveTimelineTurnFolds(
   });
 }
 
+const hasChangedFiles = (summary: TurnDiffSummary | undefined) =>
+  summary !== undefined && (summary.files.length > 0 || (summary.filesTotal?.count ?? 0) > 0);
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
@@ -2198,6 +2201,18 @@ export function deriveMessagesTimelineRows(input: {
           active: pending,
         });
       }
+      continue;
+    }
+
+    // A card ends the turn by design; Codex still closes it with an empty assistant message.
+    // Keep it when it carries the turn's changed files.
+    if (
+      timelineEntry.message.role === "assistant" &&
+      !timelineEntry.message.streaming &&
+      timelineEntry.message.text.trim() === "" &&
+      nextRows.at(-1)?.kind === "quiz-card" &&
+      !hasChangedFiles(turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id))
+    ) {
       continue;
     }
 

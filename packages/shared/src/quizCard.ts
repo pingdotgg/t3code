@@ -1,4 +1,9 @@
 export const QUIZ_CARD_TOOL_NAME = "quiz_card" as const;
+export const QUESTION_CARD_TOOL_NAME = "question_card" as const;
+
+export interface QuestionCard {
+  readonly question: string;
+}
 
 export type QuizLevel = "remember" | "understand" | "apply" | "analyse";
 
@@ -9,6 +14,8 @@ export interface QuizCard {
   readonly question: string;
   readonly wrongOptions: ReadonlyArray<{ readonly option: string; readonly wrongIdea: string }>;
 }
+
+export type LessonCard = QuizCard | QuestionCard;
 
 const MAX_ANSWER = 300;
 const MAX_QUESTION = 2000;
@@ -24,6 +31,12 @@ const boundedString = (value: unknown, max: number) =>
   typeof value === "string" && value.trim().length > 0 && value.length <= max
     ? value.trim()
     : undefined;
+
+export function readQuestionCard(value: unknown): QuestionCard | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const question = boundedString((value as Record<string, unknown>).question, MAX_QUESTION);
+  return question === undefined ? undefined : { question };
+}
 
 export function readQuizCard(value: unknown): QuizCard | undefined {
   if (typeof value !== "object" || value === null) return undefined;

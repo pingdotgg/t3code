@@ -857,6 +857,7 @@ const WsLearnFeatureUsedRpc = Rpc.make(WS_METHODS.learnFeatureUsed, {
         "side-chats",
         "what-you-know",
         "quiz-cards",
+        "question-cards",
         "courses",
         "chat-sync",
       ]),

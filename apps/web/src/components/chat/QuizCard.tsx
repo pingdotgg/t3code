@@ -1,32 +1,254 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   quizAnswerMessage,
   shuffledQuizOptions,
+  type LessonCard,
   type QuizCard as QuizCardData,
 } from "@t3tools/shared/quizCard";
+import {
+  SpeechTextField,
+  TextFieldSpeechControls,
+  type TextFieldSpeech,
+} from "~/speech/useTextFieldSpeech";
+import { chooseAudioDestination, useAudioGrant } from "~/speech/voiceConsent";
+import { useEnvironment } from "~/state/environments";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { Button } from "../ui/button";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 import { Textarea } from "../ui/textarea";
 
-export function QuizCardTimelineCard(props: {
-  readonly quizCard: QuizCardData;
+const focusedCardSeeds = new Set<string>();
+// The virtualized timeline unmounts a card scrolled out of view; keep the learner's draft.
+const thinkingDrafts = new Map<string, string>();
+
+function useThinkingDraft(seed: string) {
+  const [thinking, setThinking] = useState(() => thinkingDrafts.get(seed) ?? "");
+  const update = (value: string) => {
+    thinkingDrafts.set(seed, value);
+    setThinking(value);
+  };
+  return [thinking, update] as const;
+}
+
+/** Sends once any dictation in progress has committed to the draft. */
+function submitThinking(
+  speech: TextFieldSpeech | undefined,
+  thinking: string,
+  send: (text: string) => void,
+) {
+  if (speech) speech.submitAfterDictation(send);
+  else send(thinking);
+}
+
+/** Voice is off per device until chosen; choosing here sends audio to the lesson's environment, as Settings → Voice would. */
+function VoiceOptIn(props: { readonly environmentId: EnvironmentId; readonly disabled: boolean }) {
+  const grant = useAudioGrant();
+  const environment = useEnvironment(props.environmentId);
+  const supported = environment?.serverConfig?.environment.capabilities.voiceTranscription === true;
+  if (grant !== null || !supported) return null;
+  return (
+    <div className="mt-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={props.disabled}
+        onClick={() =>
+          chooseAudioDestination({ kind: "environment", environmentId: props.environmentId })
+        }
+      >
+        Answer by voice
+      </Button>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Turns on voice input on this device; audio goes to{" "}
+        {environment?.label ?? "this environment"} to be transcribed. Turn it off in Settings →
+        Voice.
+      </p>
+    </div>
+  );
+}
+
+function ThinkingField(props: {
+  readonly seed: string;
+  readonly environmentId: EnvironmentId | undefined;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly disabled: boolean;
+  readonly focusTarget: "textarea" | "radio";
+  readonly children: (speech: TextFieldSpeech | undefined) => ReactNode;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { seed, focusTarget } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the newly mounted card control in the virtualized timeline
+  useEffect(() => {
+    if (focusedCardSeeds.has(seed)) return;
+    // A card that arrives while the learner types elsewhere never grabs focus later.
+    focusedCardSeeds.add(seed);
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      (active instanceof HTMLElement && active.isContentEditable)
+    ) {
+      const value =
+        active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
+          ? active.value
+          : active.textContent;
+      if (value?.trim()) return;
+    }
+    const selector = `[data-quiz-card-seed="${CSS.escape(seed)}"]`;
+    const target =
+      focusTarget === "radio"
+        ? document.querySelector<HTMLElement>(
+            `${selector} [role="radio"], ${selector} input[type="radio"]`,
+          )
+        : textareaRef.current;
+    target?.focus({ preventScroll: false });
+  }, [focusTarget, seed]);
+  const render = (speech?: TextFieldSpeech) => (
+    <>
+      <label className="mt-3 block text-sm font-medium" htmlFor={`${seed}-thinking`}>
+        Explain your thinking
+      </label>
+      <Textarea
+        ref={textareaRef}
+        id={`${seed}-thinking`}
+        aria-label="Explain your thinking"
+        rows={5}
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        disabled={props.disabled}
+        readOnly={speech?.freezesEditor}
+      />
+      {props.environmentId ? (
+        <VoiceOptIn environmentId={props.environmentId} disabled={props.disabled} />
+      ) : null}
+      {speech ? <TextFieldSpeechControls speech={speech} disabled={props.disabled} /> : null}
+      {props.children(speech)}
+    </>
+  );
+  return props.environmentId ? (
+    <SpeechTextField
+      environmentId={props.environmentId}
+      projectId={null}
+      ownerKey={`quiz-card:${seed}`}
+      text={props.value}
+      textareaRef={textareaRef}
+      onTextChange={props.onChange}
+      disabled={props.disabled}
+    >
+      {render}
+    </SpeechTextField>
+  ) : (
+    render()
+  );
+}
+
+function OpenQuestionCard(props: {
+  readonly card: { readonly question: string };
   readonly seed: string;
   readonly answered: boolean;
+  readonly environmentId: EnvironmentId | undefined;
   readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
 }) {
-  const options = shuffledQuizOptions(props.quizCard, props.seed);
+  const [thinking, setThinking] = useThinkingDraft(props.seed);
+  const [submitted, setSubmitted] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const revealed = props.answered || submitted;
+  const send = async (text: string) => {
+    if (sending || revealed || props.onSendMessage === undefined || text.length === 0) return;
+    setSending(true);
+    setError(null);
+    try {
+      await props.onSendMessage(text);
+      setSubmitted(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not send your answer.");
+    }
+    setSending(false);
+  };
+  return (
+    <div
+      data-quiz-card-seed={props.seed}
+      className="min-w-0 rounded-lg border border-border bg-card p-4 text-card-foreground"
+    >
+      <p className="font-medium">{props.card.question}</p>
+      {props.onSendMessage === undefined && !revealed ? (
+        <p className="mt-3 text-sm text-muted-foreground">Answer in the chat</p>
+      ) : null}
+      {props.onSendMessage !== undefined && !revealed ? (
+        <>
+          <ThinkingField
+            seed={props.seed}
+            environmentId={props.environmentId}
+            value={thinking}
+            onChange={setThinking}
+            disabled={sending}
+            focusTarget="textarea"
+          >
+            {(speech) => (
+              <div className="mt-3 flex gap-2">
+                <Button
+                  type="button"
+                  onClick={() => submitThinking(speech, thinking, (text) => void send(text.trim()))}
+                  disabled={
+                    sending ||
+                    speech?.preparing ||
+                    (!speech?.blocksSubmission && thinking.trim().length === 0)
+                  }
+                >
+                  Send
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void send("I don't know.")}
+                  disabled={sending}
+                >
+                  I don't know
+                </Button>
+              </div>
+            )}
+          </ThinkingField>
+          {error ? (
+            <p role="alert" className="mt-2 text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {revealed ? <p className="mt-4 text-sm">Answered.</p> : null}
+    </div>
+  );
+}
+
+function MultipleChoiceCard(props: {
+  readonly card: QuizCardData;
+  readonly seed: string;
+  readonly answered: boolean;
+  readonly environmentId: EnvironmentId | undefined;
+  readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
+}) {
+  const options = shuffledQuizOptions(props.card, props.seed);
   const [selected, setSelected] = useState<string | null>(null);
   const [confidence, setConfidence] = useState(50);
-  const [thinking, setThinking] = useState("");
+  const [thinking, setThinking] = useThinkingDraft(props.seed);
   const [submitted, setSubmitted] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const revealed = props.answered || submitted;
   const picked = options.find((option) => option.option === selected);
-  // A pick that was never sent is not graded.
   const sentPick = submitted ? picked : undefined;
-  const submit = async () => {
-    if (sending || revealed || props.onSendMessage === undefined || selected === null) return;
+  const submit = async (text: string) => {
+    if (
+      sending ||
+      revealed ||
+      props.onSendMessage === undefined ||
+      selected === null ||
+      (selected !== "__unknown__" && text.trim().length === 0)
+    )
+      return;
     setSending(true);
     setError(null);
     try {
@@ -35,7 +257,7 @@ export function QuizCardTimelineCard(props: {
           answer: selected === "__unknown__" ? null : selected,
           correct: picked?.correct === true,
           confidence,
-          thinking,
+          thinking: text,
         }),
       );
       setSubmitted(true);
@@ -44,9 +266,16 @@ export function QuizCardTimelineCard(props: {
     }
     setSending(false);
   };
+  const needsThinking = selected !== "__unknown__";
+  const wrongOptions = options.filter(
+    (option): option is Extract<(typeof options)[number], { wrongIdea: string }> => !option.correct,
+  );
   return (
-    <div className="min-w-0 rounded-lg border border-border bg-card p-4 text-card-foreground">
-      <p className="font-medium">{props.quizCard.question}</p>
+    <div
+      data-quiz-card-seed={props.seed}
+      className="min-w-0 rounded-lg border border-border bg-card p-4 text-card-foreground"
+    >
+      <p className="font-medium">{props.card.question}</p>
       <RadioGroup
         value={selected ?? ""}
         onValueChange={setSelected}
@@ -93,20 +322,31 @@ export function QuizCardTimelineCard(props: {
               />
             </>
           )}
-          <label className="mt-3 block text-sm font-medium" htmlFor={`${props.seed}-thinking`}>
-            Your thinking (optional)
-          </label>
-          <Textarea
-            id={`${props.seed}-thinking`}
+          <ThinkingField
+            seed={props.seed}
+            environmentId={props.environmentId}
             value={thinking}
-            onChange={(event) => setThinking(event.target.value)}
+            onChange={setThinking}
             disabled={sending}
-          />
-          <div className="mt-3">
-            <Button type="button" onClick={submit} disabled={sending || selected === null}>
-              Submit
-            </Button>
-          </div>
+            focusTarget="radio"
+          >
+            {(speech) => (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  onClick={() => submitThinking(speech, thinking, (text) => void submit(text))}
+                  disabled={
+                    sending ||
+                    selected === null ||
+                    speech?.preparing ||
+                    (needsThinking && !speech?.blocksSubmission && thinking.trim().length === 0)
+                  }
+                >
+                  Submit
+                </Button>
+              </div>
+            )}
+          </ThinkingField>
           {error ? (
             <p role="alert" className="mt-2 text-sm text-destructive">
               {error}
@@ -133,19 +373,28 @@ export function QuizCardTimelineCard(props: {
                 ? "Right."
                 : "Wrong."}
           </p>
-          <p>{props.quizCard.explanation}</p>
-          {options
-            .filter(
-              (option): option is Extract<(typeof options)[number], { wrongIdea: string }> =>
-                !option.correct,
-            )
-            .map((option) => (
-              <p key={option.option}>
-                <strong>{option.option}:</strong> {option.wrongIdea}
-              </p>
-            ))}
+          <p>{props.card.explanation}</p>
+          {wrongOptions.map((option) => (
+            <p key={option.option}>
+              <strong>{option.option}:</strong> {option.wrongIdea}
+            </p>
+          ))}
         </div>
       ) : null}
     </div>
+  );
+}
+
+export function QuizCardTimelineCard(props: {
+  readonly quizCard: LessonCard;
+  readonly seed: string;
+  readonly answered: boolean;
+  readonly environmentId?: EnvironmentId | undefined;
+  readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
+}) {
+  return "answer" in props.quizCard ? (
+    <MultipleChoiceCard {...props} card={props.quizCard} environmentId={props.environmentId} />
+  ) : (
+    <OpenQuestionCard {...props} card={props.quizCard} environmentId={props.environmentId} />
   );
 }

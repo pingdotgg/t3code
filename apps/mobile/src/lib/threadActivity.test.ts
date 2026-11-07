@@ -78,20 +78,30 @@ it("keeps a completed quiz card as its own feed entry", () => {
     },
   };
 
+  const question: OrchestrationV2TurnItem = {
+    ...base("question-item", "2026-08-29T00:00:00.000Z", 1),
+    type: "dynamic_tool",
+    toolName: "mcp__t3-code__question_card",
+    status: "completed",
+    input: {},
+    output: { questionCard: { question: "Why?" } },
+  };
+
   const feed = buildThreadFeed([
     projected(userMessage(), 0),
     projected(item, 1),
     projected(assistantMessage(), 2),
+    projected(question, 3),
   ]);
-  expect(feed.find((entry) => entry.type === "quiz-card")).toMatchObject({
-    type: "quiz-card",
-    id: item.id,
-    quizCard: { answer: "A" },
-  });
+  expect(feed.filter((entry) => entry.type === "quiz-card")).toMatchObject([
+    { type: "quiz-card", id: item.id, quizCard: { answer: "A" } },
+    { type: "quiz-card", id: question.id, quizCard: { question: "Why?" } },
+  ]);
   expect(deriveThreadFeedPresentation(feed, null, new Set()).map((entry) => entry.type)).toEqual([
     "message",
     "quiz-card",
     "message",
+    "quiz-card",
   ]);
 });
 
