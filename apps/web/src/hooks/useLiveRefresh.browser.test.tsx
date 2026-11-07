@@ -139,29 +139,48 @@ describe("useLiveRefresh", () => {
     },
   );
 
-  it("rechecks an overdue server deadline immediately after a wider read", async () => {
-    let complete!: () => void;
-    const refresh = vi.fn().mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        complete = resolve;
-      }),
-    );
-    // This probe only observes the scheduler.
-    await using _screen = await render(
-      <Probe
-        refresh={refresh}
-        viewKey="overdue-server"
-        refreshOnShow
-        refreshWhileIdle
-        refreshDeadline={() => (refresh.mock.calls.length === 1 ? 300_000 : 610_000)}
-      />,
-      { router: false },
-    );
-    using _timers = fakeTimers({ now: 310_000 });
-    await act(() => complete());
-    await act(() => vi.advanceTimersByTime(0));
-    expect(refresh).toHaveBeenCalledTimes(2);
-  });
+  it.each(["advances", "remains overdue", "remounted overdue"] as const)(
+    "rechecks an overdue server deadline after a wider read, then paces retries (%s)",
+    async (lifecycle) => {
+      let complete!: () => void;
+      const refresh = vi.fn().mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          complete = resolve;
+        }),
+      );
+      const probe = () => (
+        <Probe
+          refresh={refresh}
+          viewKey={`overdue-server:${lifecycle}`}
+          refreshOnShow
+          refreshWhileIdle
+          refreshDeadline={() =>
+            refresh.mock.calls.length === 1 || lifecycle !== "advances" ? 300_000 : 610_000
+          }
+        />
+      );
+      // This probe only observes the scheduler.
+      await using screen = await render(probe(), { router: false });
+      using _timers = fakeTimers({ now: 310_000 });
+      await act(() => complete());
+      await act(() => vi.advanceTimersByTime(0));
+      expect(refresh).toHaveBeenCalledTimes(2);
+      if (lifecycle === "remounted overdue") {
+        await screen.rerender(<></>);
+        await screen.rerender(probe());
+      }
+      await act(() => {
+        window.dispatchEvent(new Event("focus"));
+        window.dispatchEvent(new Event("focus"));
+        vi.advanceTimersByTime(LIVE_REFRESH_MIN_INTERVAL_MS - 1);
+      });
+      expect(refresh).toHaveBeenCalledTimes(2);
+      await act(() => vi.advanceTimersByTime(1));
+      expect(refresh).toHaveBeenCalledTimes(lifecycle === "advances" ? 2 : 3);
+      await act(() => vi.advanceTimersByTime(LIVE_REFRESH_MIN_INTERVAL_MS));
+      expect(refresh).toHaveBeenCalledTimes(lifecycle === "advances" ? 2 : 4);
+    },
+  );
 
   it("rechecks the shared deadline between simultaneous usage consumers", async () => {
     const reads: Array<{ promise: Promise<void>; resolve: () => void }> = [];

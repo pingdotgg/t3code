@@ -43,6 +43,7 @@ function shouldRefreshOnInterval(input: {
 // Survive remounts so returning to a view does not make fresh reads look overdue.
 const lastRefreshedAtByView = new Map<string, number>();
 const pendingRefreshesByView = new Map<string, Promise<unknown>>();
+const overdueRefreshesByView = new Set<string>();
 
 let lastInteractedAt = 0;
 const interactionWatchers = new Set<() => void>();
@@ -147,6 +148,12 @@ export function useLiveRefresh(
           .finally(() => {
             pendingRefreshesByView.delete(requestKey);
             const completedAt = Date.now();
+            const overdue = deadline !== undefined && deadline <= completedAt;
+            if (overdue && overdueRefreshesByView.has(requestKey)) {
+              deadline = completedAt + LIVE_REFRESH_MIN_INTERVAL_MS;
+            }
+            if (overdue) overdueRefreshesByView.add(requestKey);
+            else overdueRefreshesByView.delete(requestKey);
             const observedAt =
               deadline !== undefined
                 ? Math.min(completedAt, deadline - refreshFloorMs)
