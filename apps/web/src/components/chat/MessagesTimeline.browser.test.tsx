@@ -231,7 +231,22 @@ describe("MessagesTimeline work rows", () => {
           ...Array.from({ length: 12 }, (_, index) =>
             message(`Earlier context ${index}`, {}, `context-${index}`),
           ),
-          message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
+          ...Array.from({ length: 24 }, (_, index) => ({
+            ...work(`work-${index}`, {
+              runId,
+              label: `Read file ${index}`,
+              tone: "tool",
+              itemType: "file_read",
+            }),
+            attempt: {
+              id: RunAttemptId.make(`attempt-${index}`),
+              runId,
+              attemptOrdinal: index + 1,
+              rootNodeId: NodeId.make(`root-${index}`),
+              status: "completed" as const,
+              completedAt: DateTime.makeUnsafe(CREATED_AT),
+            },
+          })),
           message("Done", { role: "assistant", runId }, "final"),
         ]}
       />,
@@ -250,9 +265,7 @@ describe("MessagesTimeline work rows", () => {
     expect(viewport.scrollTop).toBeGreaterThan(0);
     const top = heading.element().getBoundingClientRect().top;
     const height = viewport.scrollHeight;
-    using _timers = fakeTimers();
     await heading.click();
-    await act(() => vi.advanceTimersByTime(1000));
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
       expect(heading.element().getBoundingClientRect().top).toBeCloseTo(top, 0);

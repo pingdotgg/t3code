@@ -803,7 +803,7 @@ describe("buildThreadFeed", () => {
     },
   );
 
-  it("names the fold that hides a progress message, with or without a run", () => {
+  it("folds tool work around a mid-turn answer while keeping the answer visible", () => {
     const middle = {
       ...assistantMessage("2026-06-20T00:00:02.500Z"),
       id: TurnItemId.make("item-middle"),
@@ -817,19 +817,27 @@ describe("buildThreadFeed", () => {
           projected(runless ? { ...item, runId: null } : item, position),
         ),
       );
-      const foldRunId = messageFoldRunId(feed, "message-middle");
-      expect(foldRunId, String(runless)).toBe(runless ? "runless:message-user" : runId);
-      const ids = (expanded: ReadonlySet<RunId>) =>
-        deriveThreadFeedPresentation(feed, null, expanded).map((entry) => entry.id);
-      expect(ids(new Set())).not.toContain("message-middle");
-      expect(ids(new Set([foldRunId!]))).toContain("message-middle");
+      const collapsed = deriveThreadFeedPresentation(feed, null, new Set());
+      const fold = collapsed.find((entry) => entry.type === "run-fold");
+      expect(fold?.type === "run-fold" ? fold.runId : null, String(runless)).toBe(
+        runless ? "runless:message-user" : runId,
+      );
+      expect(collapsed.map((entry) => entry.id)).toContain("message-middle");
+      expect(collapsed.some((entry) => entry.type === "activity-group")).toBe(false);
+      const expanded = deriveThreadFeedPresentation(
+        feed,
+        null,
+        new Set([fold?.type === "run-fold" ? fold.runId : runId]),
+      );
+      expect(expanded.some((entry) => entry.type === "activity-group")).toBe(true);
+      expect(expanded.map((entry) => entry.id)).toContain("message-middle");
     }
     expect(messageFoldRunId(buildThreadFeed([projected(userMessage(), 0)]), "message-user")).toBe(
       null,
     );
   });
 
-  it("folds progress messages while keeping the final assistant answer visible", () => {
+  it("keeps earlier assistant prose visible while folding tool work under Worked for", () => {
     const opening = {
       ...assistantMessage("2026-06-20T00:00:01.500Z"),
       id: TurnItemId.make("item-opening"),
@@ -859,20 +867,22 @@ describe("buildThreadFeed", () => {
     const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
     expect(collapsed.map((entry) => entry.id)).toEqual([
       "message-user",
+      "message-opening",
       "run-fold:run-1",
+      "message-middle",
       "message-assistant",
     ]);
-    expect(collapsed[1]).toMatchObject({
+    expect(collapsed[2]).toMatchObject({
       type: "run-fold",
-      createdAt: "2026-06-20T00:00:01.500Z",
+      createdAt: "2026-06-20T00:00:02.000Z",
       label: "Worked for 2s",
     });
 
     const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
     expect(expanded.map((entry) => entry.type)).toEqual([
       "message",
-      "run-fold",
       "message",
+      "run-fold",
       "activity-group",
       "message",
       "message",
@@ -907,8 +917,8 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
-  // regression: #21393 show plans and fold settled progress notes
-  it("folds progress even when a response has no tool calls", () => {
+  // Assistant prose stays visible; with no tool work there is nothing to fold.
+  it("keeps every assistant message visible when a response has no tool calls", () => {
     const feed = buildThreadFeed([
       projected(userMessage(), 0),
       projected(
@@ -926,7 +936,7 @@ describe("buildThreadFeed", () => {
     const presented = deriveThreadFeedPresentation(feed, null, new Set());
     expect(presented.map((entry) => entry.id)).toEqual([
       "message-user",
-      "run-fold:run-1",
+      "message-opening",
       "message-assistant",
     ]);
   });
@@ -1202,7 +1212,7 @@ describe("buildThreadFeed", () => {
         id: TurnItemId.make("new-prompt"),
         messageId: MessageId.make("new-prompt"),
       }),
-    ).toEqual(["user", "run-fold", "assistant"]);
+    ).toEqual(["user", "assistant", "run-fold"]);
     expect(
       presented({
         ...base("wake", "2026-06-20T00:01:00.000Z", 4),
@@ -1211,7 +1221,7 @@ describe("buildThreadFeed", () => {
         outcome: "completed",
         summary: "Background task finished",
       }),
-    ).toEqual(["user", "run-fold", "assistant"]);
+    ).toEqual(["user", "assistant", "run-fold"]);
   });
 
   it("keeps a provider-native subagent's runless tool call live while it works", () => {
@@ -1590,6 +1600,7 @@ describe("subagent continued by a later turn", () => {
       "answer-1",
       "prompt-2",
       `run-fold:${run2}`,
+      "answer-2",
       "closing-2",
     ]);
   });

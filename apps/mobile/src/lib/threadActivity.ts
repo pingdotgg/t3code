@@ -1155,7 +1155,8 @@ function deriveThreadFeedRunFolds(
       group.entries
         .filter(
           (entry) =>
-            entry.id !== terminalAssistantId &&
+            // Every reply stays visible: a turn can answer, run tools, then close briefly.
+            entry.type !== "message" &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
