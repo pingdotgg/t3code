@@ -173,11 +173,13 @@ export function useComposerSelection(input: ComposerSelectionInput) {
         return;
       }
     }
+    // The picker lists an unavailable model only as the active selection, so re-picking keeps it.
     const resolvedModel = resolveAppModelSelectionForInstance(
       instanceId,
       settings,
       providerStatuses,
       model,
+      { preserveUnavailableSelection: true },
     );
     if (!resolvedModel) {
       if (options?.focusComposer !== false) scheduleComposerFocus();
