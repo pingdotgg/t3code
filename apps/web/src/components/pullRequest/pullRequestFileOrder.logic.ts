@@ -90,7 +90,8 @@ function importedPaths(
     IMPORT_SPECIFIER.lastIndex = 0;
     let match = IMPORT_SPECIFIER.exec(line);
     while (match !== null) {
-      const specifier = match[1] ?? "";
+      // Bundler queries such as `?worker` or `?url` name the same file.
+      const specifier = (match[1] ?? "").replace(/[?#].*$/, "");
       const resolved = stripModuleExtension(
         specifier.startsWith(".") ? resolveRelative(path, specifier) : specifier,
       );
