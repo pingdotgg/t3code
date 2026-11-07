@@ -778,3 +778,74 @@ describe("OpenShellGatewayDriver.drain", () => {
     expect(row?.state).toBe("failed");
   });
 });
+
+describe("OpenShellGatewayDriver.bundle import", () => {
+  it("imports the bundle once the drain acked, before the sandbox is deleted", async () => {
+    const { client } = fakeClient();
+    const { executor } = fakeExecutor();
+    const index = memoryFleetWorkerIndex();
+    const imports: Array<{ environmentId: EnvironmentId; drainId: string }> = [];
+    const driver = makeDriver({
+      client,
+      settings: DEFAULT_SETTINGS,
+      drainExecutor: executor,
+      index,
+      bundleImporter: {
+        import: async (input) => {
+          imports.push(input);
+          return { imported: 2, skipped: 0, warnings: [] };
+        },
+      },
+    });
+    const spawned = await spawnEphemeral(driver);
+    const result = await driver.remove(spawned.environmentId, { idempotencyKey: "rm-imp-1" });
+    expect(result.outcome).toBe("completed");
+    expect(imports).toEqual([
+      { environmentId: spawned.environmentId, drainId: result.drain?.drainId },
+    ]);
+  });
+
+  it("an import failure only warns on the fleet row; the drain stays acked", async () => {
+    const { client } = fakeClient();
+    const { executor } = fakeExecutor();
+    const index = memoryFleetWorkerIndex();
+    const driver = makeDriver({
+      client,
+      settings: DEFAULT_SETTINGS,
+      drainExecutor: executor,
+      index,
+      bundleImporter: {
+        import: async () => {
+          throw new Error("the import store is broken");
+        },
+      },
+    });
+    const spawned = await spawnEphemeral(driver);
+    const result = await driver.drain(spawned.environmentId);
+    expect(result.state).toBe("deleting");
+    const row = await index.get(spawned.environmentId);
+    expect(row?.state).toBe("deleting");
+    expect(row?.lastError).toContain("Importing drained threads failed");
+    expect(row?.lastError).toContain("the import store is broken");
+  });
+
+  it("a drain without warnings clears the row error", async () => {
+    const { client } = fakeClient();
+    const { executor } = fakeExecutor();
+    const index = memoryFleetWorkerIndex();
+    const driver = makeDriver({
+      client,
+      settings: DEFAULT_SETTINGS,
+      drainExecutor: executor,
+      index,
+      bundleImporter: {
+        import: async () => ({ imported: 2, skipped: 0, warnings: [] }),
+      },
+    });
+    const spawned = await spawnEphemeral(driver);
+    await driver.drain(spawned.environmentId);
+    const row = await index.get(spawned.environmentId);
+    expect(row?.state).toBe("deleting");
+    expect(row?.lastError).toBeNull();
+  });
+});

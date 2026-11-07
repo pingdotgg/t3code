@@ -85,6 +85,7 @@ import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
 import Migration0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
 import Migration0081 from "./Migrations/081_FleetPeerEnvironments.ts";
 import Migration0082 from "./Migrations/082_OpenShellFleetState.ts";
+import Migration0083 from "./Migrations/083_FleetDrainImports.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -170,6 +171,7 @@ const migrationEntries = [
   [80, "ScheduledTaskThreadMode", Migration0080],
   [81, "FleetPeerEnvironments", Migration0081],
   [82, "OpenShellFleetState", Migration0082],
+  [83, "FleetDrainImports", Migration0083],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

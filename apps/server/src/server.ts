@@ -831,6 +831,10 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(OpenShellFleetStore.layer),
       Layer.provide(PeerLinks.layer),
       Layer.provide(NodeServices.layer),
+      // Post-drain bundle imports write through the orchestration event sink;
+      // the shared layer references keep one instance across the app.
+      Layer.provideMerge(RuntimeLayer.layerEventSink),
+      Layer.provideMerge(SqlitePersistence.layerConfig),
     ),
   ),
   Layer.provide(
