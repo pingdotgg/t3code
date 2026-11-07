@@ -189,6 +189,13 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
       ? built
       : withGatewayTicket(built, Option.some(ticket));
   };
+  // Errors may surface in logs/UI; keep hop tickets out of those strings.
+  const errorRequestUrl = (url: string) => {
+    const next = new URL(url);
+    if (!next.searchParams.has("gatewayTicket")) return url;
+    next.searchParams.delete("gatewayTicket");
+    return next.toString();
+  };
   return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
     for (;;) {
@@ -243,7 +250,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         input.signer,
       );
       const result = yield* executeEnvironmentHttpRequest(
-        requestUrl,
+        errorRequestUrl(requestUrl),
         input.timeoutMs,
         withEnvironmentRequestInit(
           authorization,
@@ -286,7 +293,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
       orElse: () =>
         Effect.fail(
           new RemoteEnvironmentAuthTimeoutError({
-            requestUrl: requestUrlFor(httpBaseUrl),
+            requestUrl: errorRequestUrl(requestUrlFor(httpBaseUrl)),
             timeoutMs: input.timeoutMs,
           }),
         ),

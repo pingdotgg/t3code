@@ -527,6 +527,59 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
+  it.effect("signs the DPoP proof for the gateway URL that includes the hop ticket", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json(SESSION));
+      const input = {
+        ...harness.input,
+        prepared: {
+          ...PREPARED,
+          httpBaseUrl: "https://gateway.example.test/__t3_gateway/environment-1/",
+          target: new BearerConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            connectionId: "gateway:route",
+          }),
+          gatewayTicket: Effect.succeedSome("hop-dpop"),
+        } satisfies PreparedConnection,
+      };
+      yield* fetchEnvironmentSessionState(input).pipe(Effect.provide(harness.httpLayer));
+
+      const sent =
+        "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session?gatewayTicket=hop-dpop";
+      expect(harness.calls.map((call) => call.url)).toEqual([sent]);
+      expect(harness.proofs).toEqual([{ method: "GET", url: sent, accessToken: "current-token" }]);
+    }),
+  );
+
+  it.effect("keeps hop tickets out of gateway request error URLs", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json({ error: "bad_gateway" }, { status: 502 }));
+      const error = yield* fetchEnvironmentSessionState({
+        ...harness.input,
+        prepared: {
+          ...PREPARED,
+          httpBaseUrl: "https://gateway.example.test/__t3_gateway/environment-1/",
+          target: new BearerConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            connectionId: "gateway:route",
+          }),
+          gatewayTicket: Effect.succeedSome("hop-secret"),
+        } satisfies PreparedConnection,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "RemoteEnvironmentAuthUndeclaredStatusError",
+        status: 502,
+        requestUrl: "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session",
+      });
+      expect(error.message).not.toContain("gatewayTicket");
+      expect(error.message).not.toContain("hop-secret");
+      expect(harness.calls[0]?.url).toContain("gatewayTicket=hop-secret");
+    }),
+  );
+
   it.effect("recovers a session's unauthenticated 200 response before checking permissions", () =>
     Effect.gen(function* () {
       const harness = makeHarness((requestNumber) =>
