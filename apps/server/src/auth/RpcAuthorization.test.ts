@@ -35,7 +35,7 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
-  it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
+  it("keeps delivered secrets and webhook delivery logs, which hold request bodies, behind operate scope", () => {
     for (const method of [
       WS_METHODS.secretsReadDelivery,
       WS_METHODS.secretsDeleteDelivery,
