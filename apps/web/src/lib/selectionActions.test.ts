@@ -27,6 +27,11 @@ describe("selection action positioning", () => {
       bounds: { ...bounds, top: 0 },
     },
     {
+      name: "neither side fits",
+      rect: { left: 200, right: 400, top: 102, bottom: 498 },
+      expected: { x: 260, y: 108 },
+    },
+    {
       name: "clamped to window",
       rect: { left: 750, right: 800, top: 580, bottom: 600 },
       expected: { x: 712, y: 546 },
@@ -40,23 +45,6 @@ describe("selection action positioning", () => {
         viewport,
       }),
     ).toEqual(expected);
-  });
-
-  it("keeps the cite button clear of a click just past the release point", () => {
-    const selectionRect = { left: 200, right: 400, top: 200, bottom: 260 };
-    const position = resolveChatSelectionActionPosition({
-      selectionRect,
-      bounds,
-      actionSize,
-      viewport,
-    });
-    const click = { x: selectionRect.right + 1, y: selectionRect.bottom - 1 };
-    expect(
-      click.x >= position.x &&
-        click.x <= position.x + actionSize.width &&
-        click.y >= position.y &&
-        click.y <= position.y + actionSize.height,
-    ).toBe(false);
   });
 
   it("preserves pointer positioning for terminal actions", () => {

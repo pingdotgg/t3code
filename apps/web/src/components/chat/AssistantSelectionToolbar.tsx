@@ -31,6 +31,7 @@ export function AssistantSelectionToolbar({
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     rect: { left: number; top: number; right: number; bottom: number };
+    bounds: { left: number; top: number; right: number; bottom: number };
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
@@ -44,7 +45,7 @@ export function AssistantSelectionToolbar({
     const rect = toolbar.getBoundingClientRect();
     const position = resolveChatSelectionActionPosition({
       selectionRect: selection.rect,
-      bounds: viewport.getBoundingClientRect(),
+      bounds: selection.bounds,
       actionSize: rect,
       viewport: { width: window.innerWidth, height: window.innerHeight },
     });
@@ -74,7 +75,14 @@ export function AssistantSelectionToolbar({
       const common = captured.range.commonAncestorContainer;
       const walker = document.createTreeWalker(common, NodeFilter.SHOW_TEXT);
       let node = common.nodeType === Node.TEXT_NODE ? common : walker.nextNode();
-      const visibleLines: { left: number; top: number; right: number; bottom: number }[] = [];
+      const visibleLines: {
+        left: number;
+        top: number;
+        right: number;
+        bottom: number;
+        clipTop: number;
+        clipBottom: number;
+      }[] = [];
       for (; node; node = walker.nextNode()) {
         if (!captured.range.intersectsNode(node)) continue;
         if (node.parentElement && getComputedStyle(node.parentElement).userSelect === "none")
@@ -113,6 +121,8 @@ export function AssistantSelectionToolbar({
         for (const line of lines) {
           if (!isSelectionRectVisible(line, clips)) continue;
           const visibleLine = {
+            clipTop: Math.max(0, ...clips.map((clip) => clip.top)),
+            clipBottom: Math.min(window.innerHeight, ...clips.map((clip) => clip.bottom)),
             left: Math.max(line.left, 0, ...clips.map((clip) => clip.left)),
             right: Math.min(line.right, window.innerWidth, ...clips.map((clip) => clip.right)),
             top: Math.max(line.top, 0, ...clips.map((clip) => clip.top)),
@@ -126,7 +136,17 @@ export function AssistantSelectionToolbar({
         clear();
         return;
       }
+      const firstLine = visibleLines.reduce((first, line) => (line.top < first.top ? line : first));
+      const lastLine = visibleLines.reduce((last, line) =>
+        line.bottom > last.bottom ? line : last,
+      );
       setSelection({
+        bounds: {
+          left: viewportRect.left,
+          right: viewportRect.right,
+          top: firstLine.clipTop,
+          bottom: lastLine.clipBottom,
+        },
         sourceAnchor: { source: captured.source, range: captured.range, viewport },
         citation: {
           version: 1,

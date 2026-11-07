@@ -40,6 +40,10 @@ export function resolveChatSelectionActionPosition({
   viewport: { width: number; height: number };
 }): SelectionActionPoint {
   const above = selectionRect.top - actionSize.height - 6;
+  const below = selectionRect.bottom + 6;
+  const top = Math.max(8, bounds.top);
+  const bottom = Math.min(viewport.height - 8, bounds.bottom);
+  const y = above >= top ? above : below + actionSize.height <= bottom ? below : top + 8;
   return {
     x: Math.max(
       8,
@@ -48,13 +52,7 @@ export function resolveChatSelectionActionPosition({
         viewport.width - actionSize.width - 8,
       ),
     ),
-    y: Math.max(
-      8,
-      Math.min(
-        above >= Math.max(8, bounds.top) ? above : selectionRect.bottom + 6,
-        viewport.height - actionSize.height - 8,
-      ),
-    ),
+    y: Math.max(8, Math.min(y, viewport.height - actionSize.height - 8)),
   };
 }
 
