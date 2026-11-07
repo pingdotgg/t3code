@@ -255,6 +255,7 @@ export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
 }
 
 export interface EditQueuedRunInput extends ThreadCommandInput {
+  readonly creationSource?: "web" | "mobile";
   readonly runId: RunId;
   readonly text: string;
   /**
@@ -1081,6 +1082,7 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
       : yield* persistAttachments(input.threadId, input.edit.messageId, input.edit.attachments);
   return yield* dispatch({
     type: "queued-run.edit",
+    editor: { createdBy: "user", creationSource: input.creationSource ?? "web" },
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     runId: input.runId,
