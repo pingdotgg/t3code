@@ -1,5 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { normalizeHostname } from "@t3tools/shared/hostClassification";
+import * as NodeNet from "node:net";
+import { isTailnetHost, normalizeHostname } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -144,14 +145,17 @@ const TailscaleStatusSelf = Schema.Struct({
 });
 
 const TailscaleStatusJson = Schema.Struct({
+  BackendState: Schema.optional(Schema.Unknown),
   Self: Schema.optional(TailscaleStatusSelf),
 });
 
 export type TailscaleStatusJson = typeof TailscaleStatusJson.Type;
 
 export interface TailscaleStatus {
+  readonly running: boolean;
   readonly magicDnsName: string | null;
   readonly tailnetIpv4Addresses: readonly string[];
+  readonly tailnetIpv6Addresses: readonly string[];
   /**
    * `tailscale serve --https` needs the `https` capability, which the control
    * plane grants once the tailnet enables HTTPS certificates. `null` when the
@@ -209,18 +213,27 @@ export const parseTailscaleStatus = (
     Effect.map((parsed) => {
       const rawIps = parsed.Self?.TailscaleIPs;
       const tailnetIpv4Addresses: Array<string> = [];
+      const tailnetIpv6Addresses: Array<string> = [];
       if (Array.isArray(rawIps)) {
         for (const address of rawIps) {
           if (typeof address === "string" && isTailscaleIpv4Address(address)) {
             tailnetIpv4Addresses.push(address);
+          } else if (
+            typeof address === "string" &&
+            NodeNet.isIPv6(address) &&
+            isTailnetHost(address)
+          ) {
+            tailnetIpv6Addresses.push(address);
           }
         }
       }
 
       const capMap = parsed.Self?.CapMap;
       return {
+        running: parsed.BackendState === "Running",
         magicDnsName: normalizeMagicDnsName(parsed),
         tailnetIpv4Addresses,
+        tailnetIpv6Addresses,
         httpsServeEnabled:
           typeof capMap === "object" && capMap !== null && !Array.isArray(capMap)
             ? Object.hasOwn(capMap, "https")
@@ -369,6 +382,50 @@ export const parseTailscaleSshEnabled = (
 export const readTailscaleSshEnabled = readTailscaleOutput("debug", ["debug", "prefs"]).pipe(
   Effect.flatMap(parseTailscaleSshEnabled),
 );
+
+const normalizeIpAddress = (input: string): string | null => {
+  const address = normalizeHostname(input);
+  if (NodeNet.isIPv4(address)) return address;
+  if (!NodeNet.isIPv6(address)) return null;
+  if (!URL.canParse(`http://[${address}]`)) return null;
+  const normalized = new URL(`http://[${address}]`).hostname.slice(1, -1);
+  const mapped = /^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/u.exec(normalized);
+  if (mapped === null) return normalized;
+  const high = Number.parseInt(mapped[1]!, 16);
+  const low = Number.parseInt(mapped[2]!, 16);
+  return [high >>> 8, high & 0xff, low >>> 8, low & 0xff].join(".");
+};
+
+export function buildTailscaleDirectBaseUrl(input: {
+  readonly status: TailscaleStatus | null;
+  readonly host: string | undefined;
+  readonly localAddresses: readonly string[];
+  readonly port: number;
+}): string | null {
+  const status = input.status;
+  if (!status?.running || !status.magicDnsName) return null;
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.ts\.net$/iu.test(
+      status.magicDnsName,
+    )
+  )
+    return null;
+  const host = normalizeIpAddress(input.host ?? "127.0.0.1");
+  if (host === null) return null;
+  const selfAddresses = new Set(
+    [...status.tailnetIpv4Addresses, ...status.tailnetIpv6Addresses].map(normalizeIpAddress),
+  );
+  const boundSelf = input.localAddresses.some((local) => {
+    const address = normalizeIpAddress(local);
+    return (
+      address !== null &&
+      selfAddresses.has(address) &&
+      (host === "::" || (host === "0.0.0.0" && !address.includes(":")) || host === address)
+    );
+  });
+  if (!boundSelf) return null;
+  return `http://${status.magicDnsName}:${input.port}/`;
+}
 
 export function buildTailscaleHttpsBaseUrl(input: {
   readonly magicDnsName: string;

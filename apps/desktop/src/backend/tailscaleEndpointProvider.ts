@@ -2,6 +2,7 @@ import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 import type { AdvertisedEndpoint, AdvertisedEndpointProvider } from "@t3tools/contracts";
 import {
   buildTailscaleHttpsBaseUrl,
+  buildTailscaleDirectBaseUrl,
   isTailscaleIpv4Address,
   parseTailscaleStatus,
   probeTailscaleHttpsEndpoint,
@@ -114,6 +115,7 @@ const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
 export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAdvertisedEndpoints")(
   function* (input: {
     readonly port: number;
+    readonly bindHost?: string;
     readonly serveEnabled?: boolean;
     readonly servePort?: number;
     readonly networkInterfaces: NetworkInterfaces;
@@ -145,9 +147,32 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
       ...(input.probe === undefined ? {} : { probe: input.probe }),
     });
 
+    const directUrl = buildTailscaleDirectBaseUrl({
+      status,
+      host: input.bindHost ?? "127.0.0.1",
+      localAddresses: Object.values(input.networkInterfaces).flatMap((entries) =>
+        (entries ?? []).filter((entry) => !entry.internal).map((entry) => entry.address),
+      ),
+      port: input.port,
+    });
+    const directEndpoints =
+      directUrl === null
+        ? []
+        : [
+            createAdvertisedEndpoint({
+              provider: TAILSCALE_ENDPOINT_PROVIDER,
+              source: "desktop-addon",
+              id: `tailscale-magicdns-direct:${directUrl}`,
+              label: "Tailscale MagicDNS",
+              httpBaseUrl: directUrl,
+              reachability: "private-network",
+              status: "available",
+              description: "Reachable from devices on the same Tailnet.",
+            }),
+          ];
     return Option.match(magicDnsEndpoint, {
-      onNone: () => ipEndpoints,
-      onSome: (endpoint) => [...ipEndpoints, endpoint],
+      onNone: () => [...ipEndpoints, ...directEndpoints],
+      onSome: (endpoint) => [...ipEndpoints, endpoint, ...directEndpoints],
     });
   },
 );

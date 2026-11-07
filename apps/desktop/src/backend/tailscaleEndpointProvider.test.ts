@@ -69,6 +69,7 @@ describe("tailscale endpoint provider", () => {
             utun4: [
               { address: "100.74.126.34", family: "IPv4", internal: false },
               { address: "fd7a:115c:a1e0::1234", family: "IPv6", internal: false },
+              { address: "fd7a:115c:a1e0::9999", family: "IPv6", internal: false },
             ],
           },
           statusJson: null,
@@ -80,3 +81,26 @@ describe("tailscale endpoint provider", () => {
       }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
   );
 });
+
+it.effect("advertises a bound IPv6 MagicDNS listener after the preferred HTTPS route", () =>
+  Effect.gen(function* () {
+    for (const serveEnabled of [false, true]) {
+      const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
+        port: 3773,
+        bindHost: "fd7a:115c:a1e0::1234",
+        serveEnabled,
+        probe: () => Effect.succeed(true),
+        networkInterfaces: {
+          tailscale0: [{ address: "fd7a:115c:a1e0::1234", family: "IPv6", internal: false }],
+        },
+        statusJson: JSON.stringify({
+          BackendState: "Running",
+          Self: { DNSName: "desktop.tail.ts.net.", TailscaleIPs: ["fd7a:115c:a1e0::1234"] },
+        }),
+      });
+      const urls = endpoints.map((endpoint) => endpoint.httpBaseUrl);
+      assert.deepEqual(urls, ["https://desktop.tail.ts.net/", "http://desktop.tail.ts.net:3773/"]);
+      assert.strictEqual(endpoints[0]?.status, serveEnabled ? "available" : "unavailable");
+    }
+  }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
+);

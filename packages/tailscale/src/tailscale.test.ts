@@ -8,6 +8,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
+  buildTailscaleDirectBaseUrl,
   ensureTailscaleServe,
   parseTailscaleExitNode,
   parseTailscaleServeRoutesTo,
@@ -194,12 +195,84 @@ describe("tailscale", () => {
     Effect.gen(function* () {
       const status = yield* parseTailscaleStatus(tailscaleStatusJson);
       assert.deepEqual(status, {
+        running: false,
         magicDnsName: "desktop.tail.ts.net",
         tailnetIpv4Addresses: ["100.100.100.100"],
+        tailnetIpv6Addresses: ["fd7a:115c:a1e0::1"],
         httpsServeEnabled: null,
       });
+      for (const [backendState, running] of [
+        ["Running", true],
+        ["Stopped", false],
+        ["Unknown", false],
+      ] as const) {
+        const parsed = yield* parseTailscaleStatus(JSON.stringify({ BackendState: backendState }));
+        assert.strictEqual(parsed.running, running);
+      }
     }),
   );
+
+  it("builds direct MagicDNS only for a running Self on the bound local interface", () => {
+    const localAddresses = ["100.74.126.34", "fd7a:115c:a1e0::1234", "fd7a:115c:a1e0::9999"];
+    for (const [host, running, selfIp, expected] of [
+      ["0.0.0.0", true, "100.74.126.34", true],
+      ["100.74.126.34", true, "100.74.126.34", true],
+      ["::ffff:100.74.126.34", true, "100.74.126.34", true],
+      ["::ffff:644a:7e22", true, "100.74.126.34", true],
+      ["0:0:0:0:0:ffff:100.74.126.34", true, "100.74.126.34", true],
+      ["fd7a:115c:a1e0::1234", true, "fd7a:115c:a1e0::1234", true],
+      ["fd7a:115c:a1e0:0:0:0:0:1234", true, "fd7a:115c:a1e0::1234", true],
+      ["fd7a:115c:a1e0::1234", true, "fd7a:115c:a1e0:0:0:0:0:1234", true],
+      ["::", true, "fd7a:115c:a1e0::1234", true],
+      ["::ffff:127.0.0.1", true, "100.74.126.34", false],
+      ["fd7a:115c:a1e0::9999", true, "fd7a:115c:a1e0::1234", false],
+      ["2001:db8::1", true, "fd7a:115c:a1e0::1234", false],
+      ["0.0.0.0", true, "fd7a:115c:a1e0::1234", false],
+      ["127.0.0.1", true, "100.74.126.34", false],
+      ["192.168.1.2", true, "100.74.126.34", false],
+      ["0.0.0.0", false, "100.74.126.34", false],
+      ["::1", true, "100.74.126.34", false],
+      ["0.0.0.0", true, "100.85.0.1", false],
+    ] as const) {
+      const url = buildTailscaleDirectBaseUrl({
+        host,
+        port: 3773,
+        localAddresses,
+        status: {
+          running,
+          magicDnsName: "desktop.tail.ts.net",
+          tailnetIpv4Addresses: selfIp.includes(":") ? [] : [selfIp],
+          tailnetIpv6Addresses: selfIp.includes(":") ? [selfIp] : [],
+          httpsServeEnabled: null,
+        },
+      });
+      assert.strictEqual(url, expected ? "http://desktop.tail.ts.net:3773/" : null);
+    }
+    const status = {
+      running: true,
+      magicDnsName: "desktop.tail.ts.net",
+      tailnetIpv4Addresses: ["100.74.126.34"],
+      tailnetIpv6Addresses: [],
+      httpsServeEnabled: null,
+    };
+    for (const unavailable of [
+      null,
+      { ...status, magicDnsName: null },
+      { ...status, magicDnsName: "evil.example/path" },
+    ]) {
+      assert.isNull(
+        buildTailscaleDirectBaseUrl({
+          status: unavailable,
+          host: "0.0.0.0",
+          localAddresses,
+          port: 3773,
+        }),
+      );
+    }
+    assert.isNull(
+      buildTailscaleDirectBaseUrl({ status, host: "0.0.0.0", localAddresses: [], port: 3773 }),
+    );
+  });
 
   it.effect("names the exit node in use", () =>
     Effect.gen(function* () {

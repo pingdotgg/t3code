@@ -53,7 +53,7 @@ describe("linkRequestAnswerInput", () => {
   const vps = {
     environmentId: EnvironmentId.make("environment-vps"),
     label: "VPS",
-    urls: ["https://vps.ts.net", "http://10.0.0.2:3773"],
+    urls: ["https://vps.ts.net", "http://vps.ts.net:3773/", "http://10.0.0.2:3773"],
   };
 
   it("answers with the machine picked and every address known for it", () => {
@@ -189,7 +189,7 @@ describe("linkableMachines", () => {
     const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
     const vps = presentation("environment-vps", "VPS", {
       saved: ["https://vps.example.com", "https://vps.ts.net"],
-      reported: ["https://vps.ts.net"],
+      reported: ["https://vps.ts.net", "http://vps.ts.net:3773/"],
     });
     const mini = presentation("environment-mini", "Mini", { connected: false });
     expect(
@@ -207,7 +207,7 @@ describe("linkableMachines", () => {
         connected: true,
         connectOnly: false,
         linked: false,
-        urls: ["https://vps.ts.net", "https://vps.example.com"],
+        urls: ["https://vps.ts.net", "http://vps.ts.net:3773/", "https://vps.example.com"],
       },
       {
         environmentId: mini.environmentId,

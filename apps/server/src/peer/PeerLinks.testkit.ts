@@ -64,6 +64,7 @@ export const descriptorOf = (
 export const servePeer = <E, R>(
   initial: ExecutionEnvironmentDescriptor,
   tools: Layer.Layer<never, E, R>,
+  origin?: string,
 ) =>
   Effect.gen(function* () {
     const descriptor = yield* Ref.make(initial);
@@ -95,7 +96,13 @@ export const servePeer = <E, R>(
           if (authorization !== undefined) {
             yield* Ref.update(bearers, (seen) => [...seen, authorization]);
           }
-          return yield* httpEffect;
+          return yield* origin === undefined
+            ? httpEffect
+            : Effect.provideService(
+                httpEffect,
+                HttpServerRequest.HttpServerRequest,
+                request.modify({ headers: { ...request.headers, host: new URL(origin).host } }),
+              );
         }),
       { global: true },
     );
