@@ -148,6 +148,11 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
               },
             },
           }),
+          // Startup reads OTLP endpoints before the policy, and environment variables outrank them.
+          JSON.stringify({
+            ...base,
+            settings: { "observability.otlpTracesUrl": { value: "", locked: true } },
+          }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -155,7 +160,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 13);
+      assert.lengthOf(reasons, 14);
       assert.include(reasons[3], "storageCleanup.logsAfterDayz");
       assert.include(reasons[6], "adds entries users could not remove");
       assert.include(reasons[7], "adds entries users could not remove");
@@ -164,6 +169,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.include(reasons[10], 'lock "worktreeCleanup" too');
       assert.include(reasons[11], 'lock "providerInstances.codex" as a whole');
       assert.include(reasons[12], "holds a credential");
+      assert.include(reasons[13], "a policy cannot override");
     }),
   );
 

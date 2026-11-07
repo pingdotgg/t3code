@@ -24,6 +24,7 @@ import {
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
   resolveSourceControlWriterModelSelection,
+  resolveSpeechPostProcessingModelSelection,
 } from "./serverSettings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
@@ -990,5 +991,44 @@ describe("synchronized model preferences", () => {
         setModelFavorites: [{ provider, model: "sol", favorite: false }],
       }).favorites,
     ).toEqual([{ provider: otherProvider, model: "sol" }]);
+  });
+});
+
+describe("resolveSpeechPostProcessingModelSelection", () => {
+  it("follows the text generation model until a usable cleanup model is set", () => {
+    const textGeneration = createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna");
+    const cleanup = createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-haiku", [
+      { id: "effort", value: "low" },
+    ]);
+    const base = { ...DEFAULT_SERVER_SETTINGS, textGenerationModelSelection: textGeneration };
+    expect(resolveSpeechPostProcessingModelSelection(base)).toBe(textGeneration);
+    const pinned = applyServerSettingsPatch(base, { speechPostProcessingModelSelection: cleanup });
+    expect(resolveSpeechPostProcessingModelSelection(pinned)).toEqual(cleanup);
+    expect(
+      resolveSpeechPostProcessingModelSelection({
+        ...pinned,
+        providerInstances: {
+          [ProviderInstanceId.make("claudeAgent")]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: false,
+            config: {},
+          },
+        },
+      }),
+    ).toBe(textGeneration);
+    expect(
+      resolveSpeechPostProcessingModelSelection(pinned, [
+        {
+          instanceId: "claudeAgent",
+          enabled: true,
+          installed: true,
+          supportsTextGeneration: false,
+        },
+      ] as never),
+    ).toBe(textGeneration);
+    expect(
+      applyServerSettingsPatch(pinned, { speechPostProcessingModelSelection: null })
+        .speechPostProcessingModelSelection,
+    ).toBeNull();
   });
 });

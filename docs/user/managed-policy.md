@@ -147,6 +147,8 @@ A few settings need care:
 - `worktreeCleanup`, which projects can also set, overrides the `worktree` rules in
   `storageCleanup`. Lock it along with those rules; T3 Code refuses a policy that locks only the
   rules.
+- `observability` cannot be managed. Its OTLP endpoints come from each user's environment
+  variables, settings file and desktop startup input, which a policy cannot override.
 - Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude instance's own idle
   compaction choice still wins over `idleCompaction`.
 - A provider instance's fields override each other, so lock `providerInstances.<id>` as a whole,
