@@ -7,6 +7,7 @@ import {
   GITHUB_REPOSITORY_URL,
   IOS_APP_STORE_URL,
   MARKETING_STATS,
+  WEB_APP_URL,
 } from "../lib/site";
 import { tweets } from "../lib/tweets";
 import { softwareJsonLd } from "../lib/seo";
@@ -80,11 +81,14 @@ const mobileEndorsementRows = [
           <span>Steal our code (legally)</span>
           <svg class="hero-source-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M8 7h9v9"/></svg>
         </a>
-        <p class="hero-mobile-line">
+        <p class="hero-platform-line">
           Also on your phone:
           <a href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">iOS</a>
           <span aria-hidden="true">·</span>
           <a href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">Android</a>
+        </p>
+        <p class="hero-platform-line">
+          And on the <a href={WEB_APP_URL} target="_blank" rel="noopener noreferrer">web</a>
         </p>
       </div>
 
@@ -617,7 +621,7 @@ const mobileEndorsementRows = [
     opacity: 1;
   }
 
-  .hero-mobile-line {
+  .hero-platform-line {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -626,7 +630,7 @@ const mobileEndorsementRows = [
     letter-spacing: -0.005em;
   }
 
-  .hero-mobile-line a {
+  .hero-platform-line a {
     color: var(--fg-muted);
     text-decoration: underline;
     text-decoration-color: rgba(163, 163, 163, 0.4);
@@ -634,7 +638,7 @@ const mobileEndorsementRows = [
     transition: color 0.18s ease, text-decoration-color 0.18s ease;
   }
 
-  .hero-mobile-line a:hover {
+  .hero-platform-line a:hover {
     color: var(--fg);
     text-decoration-color: var(--fg);
   }
