@@ -1,10 +1,20 @@
-import { EnvironmentId, ProjectId, type PullRequestRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  type PullRequestRef,
+  type PullRequestReviewGuide,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 vi.mock(import("./guide/useReviewGuideWriter"), () => ({ useReviewGuideWriter: vi.fn() }));
+vi.mock(import("./guide/useGuideDiffFiles"), () => ({
+  useGuideDiffFiles: () => ({ files: new Map(), loading: false, error: null, retry: () => {} }),
+}));
 
 import { render } from "../../../test/render";
+import type { ChatComposerHandle } from "../chat/ChatComposer";
+import { useChatShortcuts } from "../chat/useChatShortcuts";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 import { PullRequestGuideTab } from "./PullRequestGuideTab";
 
@@ -73,4 +83,89 @@ it("keeps Try again inside a short panel when a failed guide has long diagnostic
 
   await userEvent.click(retry);
   expect(write).toHaveBeenCalledOnce();
+});
+
+const threeStopGuide: PullRequestReviewGuide = {
+  headSha: "head",
+  generatedAt: "2026-11-07T00:00:00.000Z",
+  modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" } as never,
+  stops: ["First", "Second", "Third"].map((title) => ({
+    title,
+    summary: `Prose for the ${title.toLowerCase()} stop.`,
+    attention: null,
+    excerpts: [],
+    files: [],
+    notes: [],
+    questions: [],
+  })),
+};
+
+function ChatBeside({ composerKeys }: { composerKeys: string[] }) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: [],
+    scriptKeybindings: [],
+    getShortcutContext: () => ({
+      terminalFocus: false,
+      terminalOpen: false,
+      previewFocus: false,
+      previewOpen: false,
+      isWeb: true,
+      isDesktop: false,
+      modelPickerOpen: false,
+    }),
+    threadFindActive: false,
+    composerRef: {
+      current: {
+        insertTextAtEnd: (key: string) => {
+          composerKeys.push(key);
+          return true;
+        },
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: {},
+    fallback: () => undefined,
+  });
+  return null;
+}
+
+it("steps with J and K after a click on guide prose beside a chat", async () => {
+  vi.mocked(useReviewGuideWriter).mockReturnValue({
+    query: { isPending: false, error: null } as never,
+    data: { guide: threeStopGuide, run: null, currentHeadSha: "head" },
+    running: false,
+    canWrite: false,
+    write: async () => {},
+  });
+  const composerKeys: string[] = [];
+
+  await using screen = await render(
+    <>
+      <ChatBeside composerKeys={composerKeys} />
+      <PullRequestGuideTab
+        environmentId={EnvironmentId.make("environment")}
+        reference={reference}
+        title="Test pull request"
+        workspaceRoot="/workspace"
+        active
+        canComment={false}
+        rangeComments={false}
+        completionScope={null}
+        onAskAboutLines={null}
+        onAskAboutStop={null}
+        onFinishReview={null}
+        onOpenFile={() => {}}
+      />
+    </>,
+  );
+
+  await userEvent.click(screen.getByText("Prose for the first stop."));
+  await userEvent.keyboard("jj");
+  await expect.element(screen.getByText("Prose for the third stop.")).toBeVisible();
+  await userEvent.keyboard("k");
+  await expect.element(screen.getByText("Prose for the second stop.")).toBeVisible();
+  await userEvent.keyboard("a");
+  expect(composerKeys).toEqual(["a"]);
 });

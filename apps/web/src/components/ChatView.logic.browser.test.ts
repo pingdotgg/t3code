@@ -26,3 +26,16 @@ it("keeps keyboard focus on a sidebar row on window return, but not a clicked ro
   expect(document.activeElement).toBe(tabbed);
   expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
 });
+
+it("keeps focus in a region with its own keys on window return", async () => {
+  const region = document.createElement("div");
+  region.tabIndex = -1;
+  region.setAttribute("aria-keyshortcuts", "J K");
+  region.textContent = "Guide prose";
+  document.body.append(region);
+  using _region = { [Symbol.dispose]: () => region.remove() };
+
+  await userEvent.click(region);
+  expect(document.activeElement).toBe(region);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
+});
