@@ -702,6 +702,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
   },
   {
+    id: "spellcheck-languages",
+    title: "Spellcheck languages",
+    to: "/settings/chat",
+    searchTerms: ["spelling dictionary dictionaries language red underline typo composer"],
+    desktopOnly: true,
+  },
+  {
     id: "follow-up-behavior",
     title: "Follow-up behavior",
     to: "/settings/chat",

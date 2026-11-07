@@ -42,6 +42,10 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import {
+  SpellcheckLanguagesPicker,
+  useAvailableSpellcheckLanguages,
+} from "./SpellcheckLanguagesPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import {
@@ -525,6 +529,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Rich text composer"]
       : []),
     ...(settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? ["Send shortcut"] : []),
+    ...(settings.spellcheckLanguages.length > 0 ? ["Spellcheck languages"] : []),
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
       : []),
@@ -644,6 +649,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
+      spellcheckLanguages: DEFAULT_UNIFIED_SETTINGS.spellcheckLanguages,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -1085,6 +1091,7 @@ export function ChatSettingsPanel() {
   ] as const;
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const spellcheckLanguages = useAvailableSpellcheckLanguages();
 
   return (
     <SettingsPageContainer>
@@ -1161,6 +1168,31 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
+        {spellcheckLanguages.length > 0 ? (
+          <SettingsRow
+            {...searchableSetting("spellcheck-languages")}
+            description="Check spelling in these languages. System default follows your operating system language."
+            resetAction={
+              settings.spellcheckLanguages.length > 0 ? (
+                <SettingResetButton
+                  label="spellcheck languages"
+                  onClick={() =>
+                    updateSettings({
+                      spellcheckLanguages: DEFAULT_UNIFIED_SETTINGS.spellcheckLanguages,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <SpellcheckLanguagesPicker
+                available={spellcheckLanguages}
+                selected={settings.spellcheckLanguages}
+                onChange={(languages) => updateSettings({ spellcheckLanguages: languages })}
+              />
+            }
+          />
+        ) : null}
         <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
           <SettingsRow
             {...searchableSetting("skills-in-slash-menu")}
