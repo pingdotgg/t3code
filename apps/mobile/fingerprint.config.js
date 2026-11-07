@@ -14,5 +14,9 @@ if (!majorVersion) {
 
 module.exports = {
   nativeModuleSourceType: "files",
-  extraSources: [{ type: "contents", id: "appMajorVersion", contents: majorVersion }],
+  extraSources: [
+    { type: "contents", id: "appMajorVersion", contents: majorVersion },
+    // Expo embeds this layout in the extension, outside its native module sources.
+    { type: "file", filePath: "src/widgets/AgentActivityWidget.tsx" },
+  ],
 };
