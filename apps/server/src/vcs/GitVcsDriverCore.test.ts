@@ -697,6 +697,16 @@ it.effect.each(["on a branch", "detached", "unborn"] as const)(
           ["new.txt"],
         );
 
+        const trackedOnly = yield* driver.getReviewDiffPreview({
+          cwd,
+          trackedOnly: true,
+          file: { path: "new.txt", previousPath: null, sourceKind: "working-tree" },
+        });
+        assert.isFalse(spawnedArgs.some((args) => args.includes("ls-files")));
+        assert.equal(discoveries(), 1);
+        assert.isEmpty(trackedOnly.sources[0]!.diff);
+        assert.isTrue(trackedOnly.incomplete);
+
         if (state !== "unborn") {
           const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
           spawnedArgs.length = 0;
@@ -2508,7 +2518,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             Effect.provideService(
               ChildProcessSpawner.ChildProcessSpawner,
               ChildProcessSpawner.make((command) => {
-                if (ChildProcess.isStandardCommand(command)) commands.push(command.args);
+                if (ChildProcess.isStandardCommand(command))
+                  commands.push(command.args.map(String));
                 return delegate.spawn(command);
               }),
             ),
@@ -2537,10 +2548,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             { concurrency: "unbounded" },
           );
           const batches = Math.ceil(fileCount / 4);
-          assert.equal(
-            commands.filter((args) => args.includes("--show-toplevel")).length,
-            batches,
-          );
+          assert.equal(commands.filter((args) => args.includes("--show-toplevel")).length, batches);
           assert.equal(commands.filter((args) => args.includes("ls-files")).length, batches);
           assert.equal(commands.filter((args) => args.includes("--intent-to-add")).length, batches);
           for (const [index, preview] of previews.entries()) {
