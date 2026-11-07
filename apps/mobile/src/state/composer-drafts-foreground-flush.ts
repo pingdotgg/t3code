@@ -7,7 +7,7 @@ export function installComposerDraftsForegroundFlush(): () => void {
   // "inactive" is the iOS app switcher, where users kill the app before it ever backgrounds.
   const subscription = AppState.addEventListener("change", (state) => {
     if (state === "active") return;
-    // A send clears its draft before the outbox write lands; the draft must not be the first to disk.
+    // A send clears its draft before the outbox write lands, so this flush must not save the clear first.
     flushThreadOutbox()
       .then(flushComposerDrafts)
       .catch((error: unknown) => {
