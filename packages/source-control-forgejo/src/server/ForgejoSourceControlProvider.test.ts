@@ -256,13 +256,18 @@ it.effect(
         1,
       );
       for (const [index, row] of cases.entries()) {
-        if (row[0] === "unavailable" || row[1] === "unavailable") continue;
         const summary = yield* provider.getChangeRequestSummary!({
           ...requiredChecksInput,
           number: index + 1,
         });
+        assert.strictEqual(summary.number, index + 1);
         assert.strictEqual(summary.checksState, row[2]);
       }
+      const error = yield* provider.getChangeRequestSummary!({
+        ...requiredChecksInput,
+        number: 0,
+      }).pipe(Effect.flip);
+      assert.strictEqual(error.reason, "not-found");
     }).pipe(
       Effect.provide(
         Layer.mock(ForgejoCli.ForgejoCli)({
@@ -270,6 +275,16 @@ it.effect(
             const [path, query] = input.path.split("?");
             reads.set(input.path, (reads.get(input.path) ?? 0) + 1);
             let response: unknown;
+            if (path === "repos/acme/web/pulls/0")
+              return Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "fj",
+                  cwd: "/repo",
+                  detail: "Pull request not found",
+                  reason: "not-found",
+                  httpStatus: 404,
+                }),
+              );
             if (path?.endsWith("/forbidden"))
               return Effect.fail(
                 new ForgejoCli.ForgejoCliError({
