@@ -33,6 +33,7 @@ import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepA
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
+import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
@@ -195,6 +196,7 @@ function RootRouteBranch() {
       {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
       {appShell}
       <WelcomeWizardCoordinator />
+      <ChatGptWelcomeCoordinator />
       {/* Keep the theme editor above the router so drafts survive navigation. */}
       <ThemeEditorHost />
     </ClientSettingsRecoveryGate>
