@@ -12106,6 +12106,85 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("lets a released continuation offer a later wake without dropping its output", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const SECOND_WAKE_TEXT = "SECOND_WAKE_DONE";
+        const nextWake = (index: number, text: string) => [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: `00000000-0000-4000-8000-00000000012${index}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeAssistantTextFrame({ uuid: `00000000-0000-4000-8000-00000000013${index}`, text }),
+          makeResultFrame({ uuid: `00000000-0000-4000-8000-00000000014${index}`, result: text }),
+        ];
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-release-1"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* Queue.offer(harness.sdkMessages, wakeAssistant);
+        yield* harness.offerAndWait(wakeResult);
+        assert.lengthOf(harness.continuationRequests, 1);
+        const cancelled = harness.continuationRequests[0]?.clearIfCurrent;
+        assert.isDefined(cancelled, "Claude must let a continuation that never starts release it");
+
+        // The first continuation run ended without starting, e.g. cancelled while queued.
+        yield* cancelled!();
+        for (const frame of nextWake(1, SECOND_WAKE_TEXT)) yield* harness.offerAndWait(frame);
+        assert.lengthOf(harness.continuationRequests, 2);
+
+        // A late release for the old offer must not reopen the latch the newer offer holds.
+        yield* cancelled!();
+        for (const frame of nextWake(2, "THIRD_WAKE_DONE")) yield* harness.offerAndWait(frame);
+        assert.lengthOf(harness.continuationRequests, 2);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-release-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* harness.awaitTerminal(2);
+        const texts = harness.events.flatMap((event) =>
+          event.type === "message.updated" ? [event.message.text] : [],
+        );
+        assert.include(texts, WAKE_ASSISTANT_TEXT);
+        assert.include(texts, SECOND_WAKE_TEXT);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("starts the wake run when Claude opens the wake turn, before its output", () =>
     Effect.scoped(
       Effect.gen(function* () {

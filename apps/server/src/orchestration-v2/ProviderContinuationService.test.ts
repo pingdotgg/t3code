@@ -7,6 +7,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -411,6 +413,96 @@ describe("ProviderContinuationService", () => {
             yield* Ref.get(wakeHeld),
             "a disabled instance must clear the offer via the explicit callback " +
               "when the adapter itself does not clear on dispatch failure",
+          );
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      });
+    },
+  );
+
+  it.effect(
+    "releases an accepted continuation once its exact run ends, replaying a cancel committed before the watch",
+    () => {
+      return Effect.gen(function* () {
+        const continuationRunId = RunId.make("run-provider-continuation-queued");
+        const otherRunId = RunId.make("run-provider-continuation-other");
+        const runEvent = (sequence: number, id: RunId, status: string) =>
+          ({
+            sequence,
+            commandId: null,
+            event: { type: "run.updated", threadId, runId: id, payload: { id, status } },
+          }) as unknown as OrchestrationV2StoredEvent;
+        const log = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+        const continuationEnded = yield* Ref.make(false);
+        const watchedFrom = yield* Deferred.make<number | undefined>();
+        const released = yield* Deferred.make<boolean>();
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          dispatch: (command) =>
+            Effect.gen(function* () {
+              const { messageId } = command as { readonly messageId: MessageId };
+              // The run ends before the service can subscribe, so only replay from the dispatch sequence finds it.
+              yield* Queue.offerAll(log, [
+                runEvent(11, otherRunId, "cancelled"),
+                runEvent(12, continuationRunId, "running"),
+                runEvent(13, continuationRunId, "cancelled"),
+              ]);
+              return {
+                sequence: 10,
+                storedEvents: [
+                  {
+                    sequence: 10,
+                    commandId: null,
+                    event: {
+                      type: "run.created",
+                      threadId,
+                      runId: continuationRunId,
+                      payload: {
+                        id: continuationRunId,
+                        userMessageId: messageId,
+                        status: "queued",
+                      },
+                    },
+                  },
+                ],
+              } as never;
+            }),
+          streamStoredEventsFrom: (input) =>
+            Stream.unwrap(
+              Deferred.succeed(watchedFrom, input?.afterSequence).pipe(
+                Effect.as(
+                  Stream.fromEffectRepeat(
+                    Queue.take(log).pipe(
+                      Effect.tap((stored) =>
+                        stored.sequence === 13 ? Ref.set(continuationEnded, true) : Effect.void,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        });
+        const layerWorker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(),
+            clearIfCurrent: () =>
+              Ref.get(continuationEnded).pipe(
+                Effect.flatMap((ended) => Deferred.succeed(released, ended)),
+              ),
+          });
+          assert.equal(yield* Deferred.await(watchedFrom), 10);
+          assert.isTrue(
+            yield* Deferred.await(released),
+            "only the continuation run's own terminal event may release the adapter offer",
           );
         }).pipe(
           Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
