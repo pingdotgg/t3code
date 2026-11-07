@@ -6,14 +6,7 @@ import {
   useClientSettingsHydrationStatus,
 } from "../hooks/useSettings";
 import { Button } from "./ui/button";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "./ui/empty";
+import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
 import { RefreshIcon } from "./ui/refresh-icon";
 import { StandalonePage } from "./ui/standalone-page";
 
@@ -30,7 +23,6 @@ export function ClientSettingsRecoveryGate({ children }: { readonly children: Re
         </EmptyMedia>
         <EmptyHeader>
           <EmptyTitle>Couldn't load your settings</EmptyTitle>
-          <EmptyDescription>Your saved settings are unchanged.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button
