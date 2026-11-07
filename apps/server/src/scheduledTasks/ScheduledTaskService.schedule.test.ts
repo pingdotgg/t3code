@@ -284,10 +284,95 @@ it.effect("shows a slot missed while the server was off as failed, without count
       expect(updated).toMatchObject({
         value: {
           lastRunStatus: "failed",
-          lastRunError: "Skipped the 08:00 run because T3 Code wasn't running at that time.",
+          lastRunError: "Skipped the 08:00 run because it couldn't start on time.",
           lastRunAt: null,
           runCount: 0,
         },
+      });
+    }).pipe(Effect.provide(serviceLayer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("keeps a manual run's result when it finishes after the missed slot was listed", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-07-01T09:00:00.000Z"));
+    const dispatching = yield* Deferred.make<void>();
+    const releaseDispatch = yield* Deferred.make<void>();
+    const passedMissedTask = yield* Deferred.make<void>();
+    const launched = { threadId: "thread-manual-run", resumed: false } as never;
+    const serviceLayer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeCrypto.layer,
+          Scheduler.layer,
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: (input) => {
+              if (input.title === "Slow dispatch") {
+                return Deferred.succeed(dispatching, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseDispatch)),
+                  Effect.as(launched),
+                );
+              }
+              if (input.title === "After the missed slot") {
+                return Deferred.succeed(passedMissedTask, undefined).pipe(Effect.as(launched));
+              }
+              return Effect.succeed(launched);
+            },
+          }),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+        ),
+      ),
+    );
+    const missed = yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const save = (title: string, schedule: unknown) =>
+        Effect.flatMap(
+          decodeUpsertInput({
+            title,
+            prompt: "Update the model notes.",
+            enabled: true,
+            schedule,
+            projectId: "project-missed-slot-race",
+            workspaceStrategy: { type: "root" },
+            modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          }),
+          service.upsert,
+        );
+      yield* save("Slow dispatch", { type: "interval", everyMs: 60_000 });
+      const { task } = yield* save("Daily notes", { type: "fixed_time", timeOfDay: "08:00" });
+      // Due tasks dispatch oldest first, one at a time, so this one marks the end of the missed slot.
+      yield* save("After the missed slot", {
+        type: "interval",
+        everyMs: Date.parse(task.nextRunAt ?? "") - Date.parse("2026-07-01T09:00:00.000Z") + 60_000,
+      });
+      return task;
+    }).pipe(Effect.provide(serviceLayer));
+
+    yield* TestClock.setTime(Date.parse(missed.nextRunAt ?? "") + 60 * 60_000);
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* TestClock.adjust("6 seconds");
+      yield* Deferred.await(dispatching);
+
+      const manual = yield* service.runNow({ id: missed.id });
+      expect(manual.task).toMatchObject({ lastRunStatus: "succeeded", lastRunError: null });
+
+      yield* Deferred.succeed(releaseDispatch, undefined);
+      yield* Deferred.await(passedMissedTask);
+      const { tasks } = yield* service.list();
+      expect(tasks.find((task) => task.id === missed.id)).toMatchObject({
+        lastRunStatus: "succeeded",
+        lastRunError: null,
+        nextRunAt: manual.task.nextRunAt,
+        runCount: 1,
       });
     }).pipe(Effect.provide(serviceLayer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),

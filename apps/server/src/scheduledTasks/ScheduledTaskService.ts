@@ -1068,15 +1068,17 @@ export const layer = Layer.effect(
         rescheduledTo: next,
       });
       const slot = task.schedule.type === "fixed_time" ? `${task.schedule.timeOfDay} ` : "";
-      // A run started since this task was listed keeps its own status.
+      // A run started or finished since this task was listed keeps its own result.
       yield* sql`
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
             updated_at = ${iso(now)},
-            last_run_error = CASE WHEN last_run_status = 'running' THEN last_run_error
-              ELSE ${`Skipped the ${slot}run because T3 Code wasn't running at that time.`} END,
-            last_run_status = CASE WHEN last_run_status = 'running' THEN 'running' ELSE 'failed' END
+            last_run_error = ${`Skipped the ${slot}run because it couldn't start on time.`},
+            last_run_status = 'failed'
         WHERE task_id = ${task.id}
+          AND next_run_at = ${task.nextRunAt}
+          AND last_run_status = ${task.lastRunStatus}
+          AND last_run_at IS ${task.lastRunAt}
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not reschedule missed schedule task run.", { taskId: task.id, cause }),
