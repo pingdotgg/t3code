@@ -104,6 +104,12 @@ const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 /** A dialog blocks page script, so a desktop size read gives up after this. */
 const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
+/**
+ * A screencast that never acknowledges a pause or resume holds the capture lock no
+ * longer than this. Twice this plus the 10 second snapshot deadline fits the broker's
+ * 15 second budget.
+ */
+const SCREENCAST_SETTLE_TIMEOUT = "2 seconds";
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
@@ -286,6 +292,7 @@ interface Recording {
   readonly session: CDPSession;
   readonly startedAt: string;
   readonly framesInFlight: Set<Promise<void>>;
+  screencastParams: Promise<void>;
 }
 
 interface ServerTab {
@@ -1765,6 +1772,7 @@ const make = Effect.gen(function* () {
           session: opened,
           startedAt: new Date().toISOString(),
           framesInFlight,
+          screencastParams: Promise.resolve(),
         };
         tab.recording = recording;
         return recording;
@@ -1780,23 +1788,46 @@ const make = Effect.gen(function* () {
     return started;
   };
 
+  // Like viewers, recordings queue a restart behind any unanswered stop even
+  // after the snapshot stops waiting for that session.
+  const setRecordingScreencast = (tab: ServerTab, recording: Recording, paused: boolean) => {
+    recording.screencastParams = recording.screencastParams.then(async () => {
+      if (tab.recording !== recording || (!paused && tab.capturing > 0)) return;
+      await recording.session
+        .send(
+          paused ? "Page.stopScreencast" : "Page.startScreencast",
+          paused ? undefined : RECORDING_SCREENCAST,
+        )
+        .catch(constVoid);
+    });
+    return recording.screencastParams;
+  };
+
+  // A stalled viewer or recording keeps its own late answer; the capture goes on without it.
+  const settleScreencasts = (pending: ReadonlyArray<Promise<unknown> | undefined>) =>
+    runPromise(
+      Effect.promise(() => Promise.all(pending)).pipe(
+        Effect.timeoutOption(SCREENCAST_SETTLE_TIMEOUT),
+      ),
+    );
+
   const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
     withCaptureLock(tab, async () => {
       tab.capturing += 1;
       const recording = tab.recording;
       try {
-        await Promise.all([
+        await settleScreencasts([
           ...[...tab.viewers].map((viewer) => viewer.pause()),
-          recording?.session.send("Page.stopScreencast").catch(constVoid),
+          recording ? setRecordingScreencast(tab, recording, true) : undefined,
         ]);
         return await capture();
       } finally {
         tab.capturing -= 1;
 
-        await Promise.all([
+        await settleScreencasts([
           ...[...tab.viewers].map((viewer) => viewer.resume()),
           recording && tab.recording === recording
-            ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
+            ? setRecordingScreencast(tab, recording, false)
             : undefined,
         ]);
       }
@@ -1814,9 +1845,15 @@ const make = Effect.gen(function* () {
       let mimeType: string | null;
       const chunks: Array<Buffer> = [];
       try {
-        await recording.session.send("Page.stopScreencast").catch(constVoid);
+        if (
+          Option.isNone(await settleScreencasts([setRecordingScreencast(tab, recording, true)]))
+        ) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message: "The recording's screencast stop timed out; the recording was discarded.",
+          });
+        }
         await Promise.all(recording.framesInFlight);
-        await recording.session.detach().catch(constVoid);
         const stopped = await recording.encoder.evaluate(() =>
           (globalThis as unknown as EncoderWindow).__t3Recorder.stop(),
         );
@@ -1836,8 +1873,13 @@ const make = Effect.gen(function* () {
           chunks.push(Buffer.from(chunk, "base64"));
         }
       } finally {
-        await recording.encoder.close().catch(constVoid);
+        // Retire before cleanup so a late queued restart cannot revive this
+        // recording. Cleanup acknowledgements must not keep the capture lock.
         tab.recording = null;
+        await settleScreencasts([
+          recording.session.detach().catch(constVoid),
+          recording.encoder.close().catch(constVoid),
+        ]);
       }
       const data = Buffer.concat(chunks);
       if (!mimeType || data.byteLength === 0) {
