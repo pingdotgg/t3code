@@ -58,3 +58,13 @@ export function resourceHistoryCpuScaleMax(
 ): number {
   return Math.max(1, ...buckets.map((bucket) => bucket.avgCpuPercent));
 }
+
+export function formatSamplingStatus(intervalMs: number): string {
+  // The server reports 0 while the native monitor is idle and samples only on request.
+  if (intervalMs <= 0) return "Sampling on demand";
+  if (intervalMs < 1_000) return `Sampling every ${Math.round(intervalMs)} ms`;
+  const seconds = intervalMs / 1_000;
+  return `Sampling every ${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${
+    seconds === 1 ? "second" : "seconds"
+  }`;
+}

@@ -53,6 +53,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  formatSamplingStatus,
   processIdentityKey,
   resourceHistoryBarHeight,
   resourceHistoryCpuScaleMax,
@@ -84,14 +85,6 @@ function formatDurationMicros(value: number): string {
   if (value < 1_000) return `${Math.round(value)} µs`;
   if (value < 1_000_000) return `${(value / 1_000).toFixed(2).replace(/\.0+$/, "")} ms`;
   return `${(value / 1_000_000).toFixed(2).replace(/\.0+$/, "")} s`;
-}
-
-function formatSampleInterval(valueMs: number): string {
-  if (valueMs < 1_000) return `${Math.max(0, Math.round(valueMs))} ms`;
-  const seconds = valueMs / 1_000;
-  return `${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${
-    seconds === 1 ? "second" : "seconds"
-  }`;
 }
 
 function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "name">): string {
@@ -1004,8 +997,15 @@ function ResourceTelemetryDiagnosticsBody({
               </p>
             </div>
             <div className="flex items-center gap-2 text-3xs text-muted-foreground/65">
-              <span className="size-1.5 rounded-full bg-success" />
-              Sampling every {snapshot ? formatSampleInterval(snapshot.sampleIntervalMs) : "..."}
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  snapshot && snapshot.sampleIntervalMs > 0
+                    ? "bg-success"
+                    : "bg-muted-foreground/40",
+                )}
+              />
+              {snapshot ? formatSamplingStatus(snapshot.sampleIntervalMs) : "Sampling every ..."}
             </div>
           </div>
           <div className="grid grid-cols-2 divide-x divide-y divide-border/55 md:grid-cols-3">
