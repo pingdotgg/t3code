@@ -172,6 +172,7 @@ interface FakePi {
   readonly vetoNextNewSession: () => void;
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly promptThinkingLevels: ReadonlyArray<string>;
+  readonly promptModels: ReadonlyArray<string>;
   readonly queueStats: (data: unknown) => void;
   /** Pi before 0.84.4 answers clear_queue as an unknown command. */
   readonly setClearQueue: (
@@ -228,6 +229,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let stdinBuffer = "";
   let thinkingLevel = "high";
   const promptThinkingLevels: Array<string> = [];
+  const promptModels: Array<string> = [];
+  let currentModel = "default";
 
   const emit = (record: PiRpcRecord, chunkBytes?: number) =>
     Effect.gen(function* () {
@@ -267,6 +270,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       case "set_model":
         // Pi reapplies the target model's configured thinking default.
         thinkingLevel = "low";
+        currentModel = `${String(record["provider"])}/${String(record["modelId"])}`;
         return base;
       case "set_thinking_level":
         if (failThinking) {
@@ -328,7 +332,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         stdinBuffer = stdinBuffer.slice(newline + 1);
         if (line.length === 0) continue;
         const record = decodeJsonLine(line) as PiRpcRecord;
-        if (record["type"] === "prompt") promptThinkingLevels.push(thinkingLevel);
+        if (record["type"] === "prompt") {
+          promptThinkingLevels.push(thinkingLevel);
+          promptModels.push(currentModel);
+        }
         allRequests.push(record);
         yield* Queue.offer(requests, record);
         if (record["type"] === "get_state" && deferState) {
@@ -387,6 +394,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       failThinking = true;
     },
     promptThinkingLevels,
+    promptModels,
     emit,
     takeRequest,
     queueEntries: (data) => entriesQueue.push(data),
@@ -2285,7 +2293,7 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect.each([false, true])(
+  it.effect.each([false, true, "previous"] as const)(
     "resets applied thinking when returning to Pi default (failed first restore: %s)",
     (failFirstRestore) =>
       Effect.gen(function* () {
@@ -2305,12 +2313,12 @@ describe("PiAdapterV2", () => {
 
         yield* startTurn(runtime, providerThread, "default", [], "Hello pi", {
           instanceId: PI_INSTANCE_ID,
-          model: "xai/grok-4.6",
+          model: "anthropic/model-a",
           options: [{ id: "thinking", value: "high" }],
         });
         const modelRequest = yield* fake.takeRequest("set_model");
-        assert.equal(modelRequest["provider"], "xai");
-        assert.equal(modelRequest["modelId"], "grok-4.6");
+        assert.equal(modelRequest["provider"], "anthropic");
+        assert.equal(modelRequest["modelId"], "model-a");
         const levelRequest = yield* fake.takeRequest("set_thinking_level");
         assert.equal(levelRequest["level"], "high");
         yield* fake.takeRequest("prompt");
@@ -2346,17 +2354,37 @@ describe("PiAdapterV2", () => {
           "Hello pi",
           {
             instanceId: PI_INSTANCE_ID,
-            model: "default",
+            model: failFirstRestore === "previous" ? "anthropic/model-a" : "default",
+            ...(failFirstRestore === "previous"
+              ? { options: [{ id: "thinking", value: "high" }] }
+              : {}),
           },
           2,
         );
-        const replayModel = yield* fake.takeRequest("set_model");
-        assert.equal(replayModel["provider"], "xai");
-        assert.equal(replayModel["modelId"], "grok-4.6");
-        const resetLevel = yield* fake.takeRequest("set_thinking_level");
-        assert.equal(resetLevel["level"], "medium");
         yield* fake.takeRequest("prompt");
-        assert.deepEqual(fake.promptThinkingLevels, ["high", "medium"]);
+        assert.deepEqual(fake.promptThinkingLevels, [
+          "high",
+          failFirstRestore === "previous" ? "high" : "medium",
+        ]);
+        assert.deepEqual(fake.promptModels, [
+          "anthropic/model-a",
+          failFirstRestore === "previous" ? "anthropic/model-a" : "xai/grok-4.6",
+        ]);
+        const replayModel = fake
+          .allRequests()
+          .findLast((request) => request["type"] === "set_model")!;
+        assert.equal(
+          replayModel["provider"],
+          failFirstRestore === "previous" ? "anthropic" : "xai",
+        );
+        assert.equal(
+          replayModel["modelId"],
+          failFirstRestore === "previous" ? "model-a" : "grok-4.6",
+        );
+        const resetLevel = fake
+          .allRequests()
+          .findLast((request) => request["type"] === "set_thinking_level")!;
+        assert.equal(resetLevel["level"], failFirstRestore === "previous" ? "high" : "medium");
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
