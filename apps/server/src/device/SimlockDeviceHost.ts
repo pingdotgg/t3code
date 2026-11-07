@@ -621,10 +621,13 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     "SimlockDeviceHost.ensureReady",
   )(function* (onPhase) {
     if (ready) return ready;
+    const startedIn = stops;
     // A missing token or unreachable gateway does not stop readiness: listing
     // and opening devices say what is wrong instead.
     yield* onPhase("installing");
     cli = yield* agentDeviceCli;
+    if (stops !== startedIn)
+      return yield* unavailable("Device host was stopped while it was starting.");
     const { nodePath } = cli;
     ready = {
       nodePath,
@@ -645,6 +648,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
 
   const stopAll = Effect.gen(function* () {
     stops++;
+    ready = null;
     yield* FiberMap.clear(keepAlive);
     yield* Effect.forEach([...leases.values()], release, { discard: true, concurrency: 4 });
   }).pipe(Effect.ignore);

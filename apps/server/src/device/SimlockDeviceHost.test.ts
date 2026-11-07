@@ -256,7 +256,15 @@ describe("Simlock device host", () => {
       yield* ready.devices.shutdown({ id: leaseId, platform: "android" });
       expect(pool.ran("close")).toHaveLength(1);
       expect((yield* ready.devices.list).devices.some((device) => device.booted)).toBe(false);
+      yield* host.stop;
+      expect(yield* host.current).toBeNull();
+      const stoppedStart = yield* host.ensureReady(() => host.stop).pipe(Effect.result);
+      expect(stoppedStart._tag).toBe("Failure");
+      expect(yield* host.current).toBeNull();
+      yield* host.ensureReady(() => Effect.void);
+      expect(yield* host.current).not.toBeNull();
       yield* Scope.close(scope, Exit.void);
+      expect(yield* host.current).toBeNull();
       expect(pool.ran("close")).toHaveLength(1);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );

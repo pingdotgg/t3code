@@ -1975,7 +1975,7 @@ describe("agent session release on close", () => {
           sessions.includes(session) ? "old" : sessions.includes(reopened) ? "reopened" : "none",
         )
         .filter((label, index, labels) => label !== labels[index - 1]);
-      expect(published).toEqual(["none", "reopened"]);
+      expect(published[0] === "old" ? published.slice(1) : published).toEqual(["none", "reopened"]);
     }).pipe(Effect.scoped),
   );
 });

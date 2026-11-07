@@ -193,12 +193,19 @@ export class DeviceHost extends Context.Service<
     ) => Effect.Effect<DevicePlatformAvailability>;
     readonly ensureReady: (
       onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
-    ) => Effect.Effect<DeviceHostReady, DeviceHostError | NodeRuntimeUnavailableError>;
+    ) => Effect.Effect<
+      DeviceHostReady,
+      DeviceHostError | DeviceHostUnavailableError | NodeRuntimeUnavailableError
+    >;
     readonly ensureAgentReady: (
       onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
     ) => Effect.Effect<
       DeviceHostAgentReady,
-      DeviceHostError | DeviceHostTimeoutError | AgentDeviceStartError | NodeRuntimeUnavailableError
+      | DeviceHostError
+      | DeviceHostUnavailableError
+      | DeviceHostTimeoutError
+      | AgentDeviceStartError
+      | NodeRuntimeUnavailableError
     >;
     readonly current: Effect.Effect<DeviceHostReady | null>;
     readonly stopAgent: Effect.Effect<void>;
