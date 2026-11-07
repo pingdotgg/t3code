@@ -65,6 +65,18 @@ describe("add project shared logic", () => {
     expect(normalizePastedCloneUrl("/srv/git/repo.git")).toBe("/srv/git/repo.git");
   });
 
+  it("clones the repository when given a page URL copied from the browser", () => {
+    for (const [pageUrl, pageRoute, repository] of [
+      ["https://github.com/pingdotgg/t3code/tree/main", "/tree/", "t3code"],
+      ["https://github.com/pingdotgg/t3code/blob/main/README.md", "/blob/", "t3code"],
+      ["https://gitlab.com/gitlab-org/gitlab-runner/-/tree/main", "/-/", "gitlab-runner"],
+    ] as const) {
+      const cloneUrl = normalizePastedCloneUrl(pageUrl);
+      expect(cloneUrl).not.toContain(pageRoute);
+      expect(getCloneDirectoryName(cloneUrl)).toBe(repository);
+    }
+  });
+
   it("uses HTTPS for repositories selected through a provider", () => {
     expect(
       getDefaultCloneUrl({
