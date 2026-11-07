@@ -818,6 +818,7 @@ describe("CursorAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-steer-" });
       const sentMessages: Array<string> = [];
+      const runEnds: Array<Deferred.Deferred<"finished" | "cancelled">> = [];
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-steer-thread");
       const modelSelection = { instanceId, model: "composer-2.5" };
@@ -843,21 +844,22 @@ describe("CursorAdapterV2", () => {
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
                   const runId = `native-cursor-run-${sentMessages.length}`;
-                  const cancelled = yield* Deferred.make<void>();
+                  const ended = yield* Deferred.make<"finished" | "cancelled">();
+                  runEnds.push(ended);
                   return {
                     agentId: "native-cursor-steer",
                     runId,
                     // Cursor drops a cancelled run's prompt from the agent's conversation.
-                    wait: Deferred.await(cancelled).pipe(
-                      Effect.as({
+                    wait: Deferred.await(ended).pipe(
+                      Effect.map((status) => ({
                         id: runId,
                         requestId: `native-request-${sentMessages.length}`,
-                        status: "cancelled" as const,
+                        status,
                         model: { id: "composer-2.5" },
                         durationMs: 1,
-                      }),
+                      })),
                     ),
-                    cancel: Deferred.succeed(cancelled, undefined),
+                    cancel: Deferred.succeed(ended, "cancelled"),
                   };
                 }),
             }),
@@ -940,6 +942,14 @@ describe("CursorAdapterV2", () => {
         firstPrompt,
         "the interrupted prompt is missing from the run that replaces it",
       );
+
+      yield* Deferred.succeed(runEnds[1]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn(turnInput(3, "Now a cow."));
+      assert.notInclude(sentMessages[2]!, firstPrompt, "a finished turn carries nothing forward");
     }).pipe(
       Effect.scoped,
       Effect.provide(
