@@ -656,6 +656,57 @@ const make = Effect.gen(function* () {
     return file === undefined ? null : `has ignored files (${file})`;
   });
 
+  const publishedSubmoduleHistory = Effect.fn("StorageCleanup.publishedSubmoduleHistory")(
+    function* (cwd: string, directory: string, historyArgs: string[]) {
+      const read = (args: string[]) =>
+        git.execute({
+          operation: "StorageCleanup.submodules",
+          cwd,
+          args: ["--git-dir", directory, "--work-tree", cwd, ...args],
+          maxOutputBytes: 1024 * 1024,
+          timeoutMs: 5_000,
+          forceKillAfterMs: 1_000,
+          env: {
+            GCM_INTERACTIVE: "never",
+            GIT_ASKPASS: "",
+            GIT_TERMINAL_PROMPT: "0",
+            SSH_ASKPASS: "",
+            SSH_ASKPASS_REQUIRE: "never",
+          },
+        });
+      const tags = yield* read([
+        "for-each-ref",
+        "--format=%(objectname)%09%(refname)",
+        "refs/tags/",
+      ]);
+      if (tags.stdoutTruncated || tags.stderrTruncated || tags.stdout.includes("\ufffd"))
+        return null;
+      const records = tags.stdout.split("\n").filter(Boolean);
+      if (records.length === 0) return null;
+      const unmatched = new Set(records);
+      const remotes = yield* read(["remote"]);
+      if (remotes.stdoutTruncated || remotes.stderrTruncated) return null;
+      for (const remote of remotes.stdout.split("\n").filter(Boolean)) {
+        // --refs compares annotated tag objects, not just their peeled commits.
+        const published = yield* read(["ls-remote", "--tags", "--refs", "--", remote]);
+        if (published.stdoutTruncated || published.stderrTruncated) return null;
+        for (const record of published.stdout.split("\n")) unmatched.delete(record);
+        if (unmatched.size === 0)
+          return yield* git.execute({
+            operation: "StorageCleanup.submodules",
+            cwd,
+            args: [...historyArgs, "--stdin"],
+            stdin: records.map((record) => `^${record.split("\t")[0]}\n`).join(""),
+            forceKillAfterMs: 1_000,
+            maxOutputBytes: 64 * 1024,
+          });
+      }
+      return null;
+    },
+    // Bound verification and retry together, including Git process permit waits.
+    Effect.timeout("5 seconds"),
+  );
+
   const submoduleRemoval = Effect.fn("StorageCleanup.submoduleRemoval")(
     function* (cwd: string, rules: WorktreeCleanupRules) {
       const inspect = (args: string[], maxOutputBytes = 64 * 1024) =>
@@ -701,7 +752,7 @@ const make = Effect.gen(function* () {
         if ((yield* fs.stat(directory)).type !== "Directory")
           return { force: false, reason: "submodule repository could not be inspected" };
         if (yield* fs.exists(path.join(directory, "HEAD"))) {
-          const unpushed = yield* inspect([
+          const historyArgs = [
             "--git-dir",
             directory,
             "--work-tree",
@@ -713,7 +764,15 @@ const make = Effect.gen(function* () {
             "--reflog",
             "--not",
             "--remotes",
-          ]);
+          ];
+          let unpushed = yield* inspect(historyArgs);
+          if (
+            !unpushed.stdoutTruncated &&
+            !unpushed.stderrTruncated &&
+            unpushed.stdout.trim() !== ""
+          ) {
+            unpushed = (yield* publishedSubmoduleHistory(cwd, directory, historyArgs)) ?? unpushed;
+          }
           if (unpushed.stdoutTruncated || unpushed.stderrTruncated)
             return { force: false, reason: "submodule inspection exceeded the limit" };
           if (unpushed.stdout.trim() !== "")

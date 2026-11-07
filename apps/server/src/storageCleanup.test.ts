@@ -628,8 +628,14 @@ const submoduleCleanupFixture = () =>
 it.live("removes clean submodules recursively, including deinitialized repositories", () =>
   runCleanupTest(
     Effect.gen(function* () {
-      const { service, fs, repo, worktree, submodule, command, recordSubmodules } =
+      const { service, fs, repo, worktree, submodule, child, command, recordSubmodules } =
         yield* submoduleCleanupFixture();
+      yield* command(repo, ["checkout", "--detach"]);
+      yield* command(repo, ["commit", "--allow-empty", "-m", "tagged release off main"]);
+      yield* command(repo, ["tag", "release-lightweight"]);
+      yield* command(repo, ["tag", "-a", "release-annotated", "-m", "published release"]);
+      yield* command(repo, ["checkout", "main"]);
+      yield* command(child, ["fetch", "--tags", "origin"]);
       yield* command(submodule, [
         "-c",
         "protocol.file.allow=always",
@@ -701,6 +707,11 @@ it.live("keeps unpushed submodule history after checkout and deinitialization", 
     Effect.gen(function* () {
       const { service, fs, worktree, submodule, child, command, recordSubmodules } =
         yield* submoduleCleanupFixture();
+      yield* command(child, ["checkout", "--detach"]);
+      yield* command(child, ["commit", "--allow-empty", "-m", "published tag off main"]);
+      yield* command(child, ["tag", "published"]);
+      yield* command(child, ["push", "origin", "refs/tags/published"]);
+      yield* command(child, ["checkout", "main"]);
       yield* command(child, ["checkout", "-b", "local-only"]);
       yield* fs.writeFileString(`${child}/tracked.txt`, "unpublished work\n");
       yield* command(child, ["commit", "-am", "local work"]);
@@ -740,6 +751,94 @@ it.live("keeps unpushed submodule history after checkout and deinitialization", 
       expect(
         (yield* command(worktree, ["--git-dir", childGit, "show", `${local}:tracked.txt`])).stdout,
       ).toBe("unpublished work\n");
+    }),
+  ),
+);
+
+it.live.each([
+  "local-only",
+  "moved",
+  "different annotation",
+  "missing remote",
+  "unreadable remote",
+] as const)("keeps submodule tags with %s publication", (publication) =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, submodule, child, command } =
+        yield* submoduleCleanupFixture();
+      yield* command(child, ["checkout", "--detach"]);
+      yield* command(child, ["commit", "--allow-empty", "-m", "tagged release off main"]);
+      yield* command(child, ["tag", "-a", "release", "-m", "published annotation"]);
+      yield* command(child, ["push", "origin", "refs/tags/release"]);
+      yield* command(child, ["checkout", "main"]);
+      if (publication === "local-only") {
+        yield* command(child, ["tag", "release\u00a0", "release"]);
+      } else if (publication === "moved") {
+        yield* command(repo, ["tag", "-f", "release", "main"]);
+      } else if (publication === "different annotation") {
+        yield* command(child, [
+          "tag",
+          "-f",
+          "-a",
+          "release",
+          "release^{}",
+          "-m",
+          "local annotation",
+        ]);
+      } else if (publication === "missing remote") {
+        yield* command(child, ["remote", "remove", "origin"]);
+      } else {
+        yield* command(child, ["remote", "set-url", "origin", `${repo}/missing.git`]);
+      }
+      const tag = (yield* command(child, ["rev-parse", "refs/tags/release"])).stdout;
+      const childGit = (yield* command(child, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+      yield* command(submodule, ["submodule", "deinit", "child"]);
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept" });
+      expect(yield* fs.exists(worktree)).toBe(true);
+      expect(
+        (yield* command(worktree, ["--git-dir", childGit, "rev-parse", "refs/tags/release"]))
+          .stdout,
+      ).toBe(tag);
+    }),
+  ),
+);
+
+it.effect("bounds the submodule tag fallback including its history retry", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const retryStarted = yield* Deferred.make<void>();
+      const retryStopped = yield* Deferred.make<void>();
+      const { service, fs, worktree, child, command } = yield* submoduleCleanupFixture().pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, {
+          ...git,
+          execute: (input) =>
+            input.args.includes("rev-list") && input.args.includes("--stdin")
+              ? Deferred.succeed(retryStarted, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.ensuring(Deferred.succeed(retryStopped, undefined)),
+                )
+              : git.execute(input),
+        }),
+      );
+      yield* command(child, ["checkout", "--detach"]);
+      yield* command(child, ["commit", "--allow-empty", "-m", "published tag off main"]);
+      yield* command(child, ["tag", "published"]);
+      yield* command(child, ["push", "origin", "refs/tags/published"]);
+      yield* command(child, ["checkout", "main"]);
+      const sweep = yield* service.runNow.pipe(Effect.forkChild);
+      yield* Deferred.await(retryStarted);
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* Deferred.isDone(retryStopped)).toBe(true);
+      expect(
+        (yield* Fiber.join(sweep)).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({
+        outcome: "kept",
+      });
+      expect(yield* fs.exists(worktree)).toBe(true);
     }),
   ),
 );
