@@ -195,7 +195,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
               Effect.map(({ email, usageLimits, supportsUsageLimits, usageRefreshKey }) => ({
                 ...snapshot,
                 auth: { ...snapshot.auth, ...(email ? { email } : {}), usageRefreshKey },
-                ...(includeUsage ? { usageLimits } : {}),
+                ...(includeUsage || usageLimits.unavailable?.reason === "unsupported"
+                  ? { usageLimits }
+                  : {}),
                 supportsUsageLimits,
               })),
             ),

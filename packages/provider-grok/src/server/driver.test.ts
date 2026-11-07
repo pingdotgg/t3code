@@ -19,6 +19,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { GrokDriver } from "./driver.ts";
 import * as GrokStatus from "./status.ts";
+import * as GrokUsage from "./usageLimits.ts";
 import { resolveLatestProviderVersion } from "@t3tools/provider-core/server/maintenanceResolver";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -182,6 +183,21 @@ it.layer(layerTest)("GrokDriver", (it) => {
       Effect.scoped(
         Effect.gen(function* () {
           const config = GrokDriver.defaultConfig();
+          let customAuth = false;
+          const readAccount = GrokUsage.readGrokAccount;
+          using _account = vi
+            .spyOn(GrokUsage, "readGrokAccount")
+            .mockImplementation((environment, includeUsage) =>
+              Effect.suspend(() =>
+                readAccount(
+                  {
+                    ...environment,
+                    ...(customAuth ? { GROK_OIDC_ISSUER: "https://custom.test" } : {}),
+                  },
+                  includeUsage,
+                ),
+              ),
+            );
           const initial = yield* GrokStatus.buildInitialGrokProviderSnapshot(config);
           using _status = vi.spyOn(GrokStatus, "checkGrokProviderStatus").mockReturnValue(
             Effect.succeed({
@@ -257,8 +273,9 @@ it.layer(layerTest)("GrokDriver", (it) => {
               : "account@example.com",
           );
           expect(health.supportsUsageLimits).toBe(supported);
-          expect(hasProviderUsageLimits(health.driver, [health], [])).toBe(supported);
-          expect(health.usageLimits).toBeUndefined();
+          expect(hasProviderUsageLimits(health.driver, [health], [])).toBe(true);
+          if (supported) expect(health.usageLimits).toBeUndefined();
+          else expect(health.usageLimits?.unavailable?.reason).toBe("unsupported");
           expect(requests).toBe(0);
           yield* instance.snapshot.refreshUsage!;
           const usage = yield* instance.snapshot.getSnapshot;
@@ -283,6 +300,13 @@ it.layer(layerTest)("GrokDriver", (it) => {
             expect((yield* instance.snapshot.getSnapshot).auth.usageRefreshKey).not.toBe(
               fresh.auth.usageRefreshKey,
             );
+            customAuth = true;
+            const unsupported = yield* instance.snapshot.refresh;
+            expect(unsupported.auth.type).toBe("cached_token");
+            expect(unsupported.supportsUsageLimits).toBe(false);
+            expect(unsupported.usageLimits?.windows).toEqual([]);
+            expect(unsupported.usageLimits?.unavailable?.reason).toBe("unsupported");
+            expect(requests).toBe(3);
           }
         }),
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
