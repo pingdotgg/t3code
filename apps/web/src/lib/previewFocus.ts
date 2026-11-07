@@ -3,5 +3,9 @@ export function isPreviewFocused(): boolean {
   if (!(activeElement instanceof HTMLElement)) return false;
   if (!activeElement.isConnected) return false;
   if (activeElement.tagName.toLowerCase() === "webview") return true;
-  return activeElement.closest("[data-preview-panel-mode]") !== null;
+  // A side chat shares the preview's right panel but is a chat, not the preview.
+  return (
+    activeElement.closest("[data-preview-panel-mode]") !== null &&
+    activeElement.closest("[data-side-chat-pane]") === null
+  );
 }
