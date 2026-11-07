@@ -134,8 +134,9 @@ Select the quote in a draft or sent message to return to its source. If the sour
 is unavailable or has changed, the saved quote remains readable.
 
 The chip shows your comment when it has one, or a short quote preview otherwise. Use the pencil
-button to add or change the comment. To remove the citation, place the caret beside its chip and
-delete it like other inline context. Copying, reloading, and restoring a
+button to add or change the comment. Use the Delete button in the comment popup to remove the
+citation, or place the caret beside its chip and delete it like other inline context. Cancel
+discards unsaved comment changes and keeps the citation. Copying, reloading, and restoring a
 [stashed prompt](#prompt-stash) keep each comment
 with its quote, and sending tells the agent which words were quoted and which comment you wrote.
 The quoted text and comment count toward the message limit.

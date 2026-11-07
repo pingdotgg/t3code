@@ -97,3 +97,46 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   );
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
 });
+
+it.each(["Cancel", "Delete citation"])("%s on a fresh citation", async (action) => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+  if (!sourceAnchor) throw new Error("Citation source did not resolve");
+  await act(async () =>
+    editorRef.current?.requestCitationComment({
+      sourceAnchor,
+      previousValue: "See ",
+      value: promptBefore,
+      citationStart: "See ".length,
+      insertedSpaces: { before: false, after: true },
+    }),
+  );
+  const comment = page.getByLabelText("Comment on selected text");
+  await expect.element(comment).toBeVisible();
+  await comment.fill("unsaved");
+  await page.getByRole("button", { name: action, exact: true }).click();
+  await expect.element(comment).not.toBeInTheDocument();
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe(
+    action === "Cancel" ? promptBefore : "See ",
+  );
+  if (action === "Cancel") {
+    await page.getByRole("button", { name: "Add comment to citation" }).click();
+    await expect.element(comment).toHaveValue("");
+    await comment.fill("saved comment");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page.getByRole("button", { name: "Edit citation comment", exact: true }).click();
+    await comment.fill("discard this edit");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.getByRole("button", { name: "Edit citation comment", exact: true }).click();
+    await expect.element(comment).toHaveValue("saved comment");
+  }
+});
+
+it("deletes an existing citation without removing surrounding spaces", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+  await page.getByRole("button", { name: "Add comment to citation" }).click();
+  await page.getByRole("button", { name: "Delete citation" }).click();
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe("See  ");
+});

@@ -1,4 +1,5 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
+import { Trash2Icon } from "lucide-react";
 import { use, useEffect, useRef, useState, type RefObject } from "react";
 
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
@@ -13,6 +14,7 @@ export function AssistantCitationCommentEditor({
   onSubmit,
   onSubmitAndSend,
   onCancel,
+  onRemove,
   onDraftChange,
   onVoiceSetupOpenChange,
 }: {
@@ -21,6 +23,7 @@ export function AssistantCitationCommentEditor({
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
+  onRemove?: (() => void) | undefined;
   onDraftChange?: (comment: string) => void;
   onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
@@ -113,6 +116,19 @@ export function AssistantCitationCommentEditor({
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+        {onRemove ? (
+          <div className="mr-auto">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Delete citation"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={onRemove}
+            >
+              <Trash2Icon aria-hidden="true" />
+            </Button>
+          </div>
+        ) : null}
         <div
           className={
             speech.state.phase === "idle"
