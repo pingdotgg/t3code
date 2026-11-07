@@ -10,6 +10,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import * as ServerBrowser from "./ServerBrowser.ts";
 
 const PAGE = `<!doctype html>
+<script>const cachedWriteText = navigator.clipboard?.writeText.bind(navigator.clipboard);</script>
+<button id="cached" onclick="cachedWriteText('cached').then(() => document.body.dataset.cached = 'yes')">cached</button>
 <button id="write" onclick="navigator.clipboard.writeText('written').then(() => document.body.dataset.written = 'yes')">write</button>
 <button id="later" onclick="setTimeout(() => navigator.clipboard.writeText('later').then(() => document.body.dataset.later = 'yes'), 50)">later</button>
 <button id="exec" onclick="const t = document.createElement('textarea'); t.value = 'executed'; document.body.append(t); t.select(); document.execCommand('copy'); t.remove()">exec</button>
@@ -31,7 +33,7 @@ describe("server browser page copies", () => {
   });
   beforeEach(async () => {
     context = await browser.newContext();
-    await context.grantPermissions(["clipboard-write"]);
+    await ServerBrowser.prepareContext(context);
     page = await context.newPage();
     cdp = await context.newCDPSession(page);
     await ServerBrowser.recordCopies(cdp);
@@ -54,6 +56,9 @@ describe("server browser page copies", () => {
     await page.locator("#write").click();
     expect(await takeCopy(true)).toBe("written");
     await page.locator("body[data-written=yes]").waitFor();
+    await page.locator("#cached").click();
+    await page.locator("body[data-cached=yes]").waitFor();
+    expect(await takeCopy(true)).toBe("cached");
     await page.locator("#later").click();
     await page.locator("body[data-later=yes]").waitFor();
     expect(await takeCopy(true)).toBe("later");
@@ -72,6 +77,45 @@ describe("server browser page copies", () => {
     });
     expect(await takeCopy(true)).toBe("");
     expect(await takeCopy(false)).toBe("selected");
+  });
+
+  it.each([
+    { argument: "123456", text: "123456", outcome: "resolved" },
+    { argument: 'new String("boxed")', text: "boxed", outcome: "resolved" },
+    {
+      argument: 'new URL("https://copy.example/token")',
+      text: "https://copy.example/token",
+      outcome: "resolved",
+    },
+    {
+      argument: '{ toString() { document.body.dataset.conversions++; return "converted"; } }',
+      text: "converted",
+      outcome: "resolved",
+    },
+    { argument: "", text: "", outcome: "TypeError" },
+    { argument: 'Symbol("invalid")', text: "", outcome: "TypeError" },
+    {
+      argument: '{ toString() { throw new TypeError("invalid"); } }',
+      text: "",
+      outcome: "TypeError",
+    },
+  ])("reports native writeText conversion for $argument", async ({ argument, text, outcome }) => {
+    await inPage(`
+      document.body.dataset.conversions = "0";
+      document.getElementById("write").onclick = () => {
+        const writing = navigator.clipboard.writeText(${argument});
+        writing.then(
+          () => document.body.dataset.outcome = "resolved",
+          (error) => document.body.dataset.outcome = error.name,
+        );
+      };
+    `);
+    await page.locator("#write").click();
+    await page.locator("body[data-outcome]").waitFor();
+    expect(await inPage("document.body.dataset.outcome")).toBe(outcome);
+    expect(await takeCopy(true)).toBe(text);
+    expect(await takeCopy(false)).toBe("");
+    expect(await inPage("document.body.dataset.conversions")).toBe(text === "converted" ? "1" : "0");
   });
 
   it.each([
@@ -248,6 +292,7 @@ describe("server browser page copies", () => {
     );
     await inPage(`
       const frame = document.createElement("iframe");
+      frame.setAttribute("allow", "clipboard-write");
       if ("${kind}" === "cross-origin") frame.src = "https://other.example/";
       else if ("${kind}" !== "blank") {
         if ("${kind}" === "opaque") frame.setAttribute("sandbox", "allow-scripts");
@@ -268,6 +313,35 @@ describe("server browser page copies", () => {
     await frame.locator("#exec").click();
     const copies = await ServerBrowser.takeSessionCopies(session, true);
     expect(copies.find((copy) => copy && copy.text.length > 0)).toEqual({ text: "executed", host });
+    if (kind !== "opaque") {
+      await frame.locator("#cached").click();
+      await frame.locator("body[data-cached=yes]").waitFor();
+      const cached = await ServerBrowser.takeSessionCopies(session, true);
+      expect(cached.find((copy) => copy && copy.text.length > 0)).toEqual({ text: "cached", host });
+    }
+    expect(await takeCopy(false)).toBe("");
+  });
+
+  it("keeps a popup's clipboard function cached before adoption", async () => {
+    await context.route("https://other.example/", (route) =>
+      route.fulfill({ contentType: "text/html", body: PAGE }),
+    );
+    await inPage(
+      `document.getElementById("plain").onclick = () => window.open("https://other.example/")`,
+    );
+    const opened = page.waitForEvent("popup");
+    await page.locator("#plain").click();
+    const popup = await opened;
+    await popup.locator("#cached").waitFor();
+    const session = await context.newCDPSession(popup);
+    await ServerBrowser.recordCopies(session);
+    await popup.locator("#cached").click();
+    await popup.locator("body[data-cached=yes]").waitFor();
+    const copies = await ServerBrowser.takeSessionCopies(session, true);
+    expect(copies.find((copy) => copy && copy.text.length > 0)).toEqual({
+      text: "cached",
+      host: "other.example",
+    });
     expect(await takeCopy(false)).toBe("");
   });
 

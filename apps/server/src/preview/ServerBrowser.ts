@@ -271,7 +271,7 @@ interface ViewerState {
   scrolledAt: number;
   /** Counts presses; a newer one stops an older click's copy offer. */
   clicks: number;
-  leftPress: number | null;
+  leftPress: { click: number; generation: number } | null;
 
   requestedSize: { width: number; height: number; order: number } | null;
 }
@@ -518,7 +518,16 @@ const CLIPBOARD_WRITE_SCRIPT = `(() => {
   if (typeof writeText === "function") {
     clipboard.writeText = new Proxy(writeText, {
       apply(target, self, args) {
-        if (typeof args[0] === "string") report("${CLIPBOARD_WRITE_EVENT}", args[0]);
+        if (args.length > 0) {
+          let text;
+          try {
+            text = \`\${args[0]}\`;
+          } catch {
+            return Reflect.apply(target, self, args);
+          }
+          report("${CLIPBOARD_WRITE_EVENT}", text);
+          args[0] = text;
+        }
         return Reflect.apply(target, self, args);
       },
     });
@@ -565,16 +574,23 @@ const CLIPBOARD_WRITE_SCRIPT = `(() => {
   }
 })();`;
 
+const preparedContexts = new WeakMap<BrowserContext, Promise<void>>();
+export const prepareContext = (context: BrowserContext) => {
+  const prepared = preparedContexts.get(context);
+  if (prepared) return prepared;
+  const preparing = context
+    .grantPermissions(["clipboard-write"])
+    .then(() => context.addInitScript(CLIPBOARD_WRITE_SCRIPT));
+  preparedContexts.set(context, preparing);
+  return preparing;
+};
+
 export const recordCopies = async (cdp: CDPSession) => {
   // Scripts for new documents run only while this session's Page domain is on.
   await cdp.send("Page.enable");
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
     source: CLIPBOARD_SCRIPT,
     worldName: CLIPBOARD_WORLD,
-    runImmediately: true,
-  });
-  await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
-    source: CLIPBOARD_WRITE_SCRIPT,
     runImmediately: true,
   });
 };
@@ -1407,13 +1423,6 @@ const make = Effect.gen(function* () {
         : Option.some({ path: download.path, fileName: download.fileName });
     });
 
-  const preparedContexts = new WeakSet<BrowserContext>();
-  const prepareContext = async (context: BrowserContext) => {
-    if (preparedContexts.has(context)) return;
-    preparedContexts.add(context);
-    await context.grantPermissions(["clipboard-write"]);
-  };
-
   /** Out-of-process frames need their own copy-recording session until target closure. */
   const recordFrameCopies = async (tab: ServerTab, frame: Frame) => {
     if (frame === tab.page.mainFrame() || tab.frameSessions.has(frame)) return;
@@ -1445,12 +1454,14 @@ const make = Effect.gen(function* () {
   };
 
   /** Offers this viewer what the page copies after its click, until another click or a control change. */
-  const offerClickCopy = async (tab: ServerTab, viewer: ViewerState) => {
-    const click = viewer.clicks;
-    const generation = tab.control.generation;
+  const offerClickCopy = async (
+    tab: ServerTab,
+    viewer: ViewerState,
+    press: NonNullable<ViewerState["leftPress"]>,
+  ) => {
     const current = () =>
-      viewer.clicks === click &&
-      tab.control.generation === generation &&
+      viewer.clicks === press.click &&
+      tab.control.generation === press.generation &&
       tab.control.controller === viewer.id &&
       tab.viewers.has(viewer) &&
       !tab.closing;
@@ -2537,7 +2548,10 @@ const make = Effect.gen(function* () {
         const offers = !tab.desktop && button === "left";
         if (!tab.desktop && button !== "none" && action === "down") {
           viewer.clicks++;
-          viewer.leftPress = offers && viewer.pressedButtons.size === 0 ? viewer.clicks : null;
+          viewer.leftPress =
+            offers && viewer.pressedButtons.size === 0
+              ? { click: viewer.clicks, generation: tab.control.generation }
+              : null;
           if (offers) await takeCopy(tab, true);
         }
         await session.send("Input.dispatchMouseEvent", {
@@ -2555,9 +2569,10 @@ const make = Effect.gen(function* () {
           else if (action === "up") viewer.pressedButtons.delete(button);
         }
         if (offers && action === "up") {
-          const matching = viewer.leftPress === viewer.clicks;
+          const press = viewer.leftPress;
           viewer.leftPress = null;
-          if (matching) void offerClickCopy(tab, viewer).catch(constVoid);
+          if (press?.click === viewer.clicks && press.generation === tab.control.generation)
+            void offerClickCopy(tab, viewer, press).catch(constVoid);
         }
         return;
       }

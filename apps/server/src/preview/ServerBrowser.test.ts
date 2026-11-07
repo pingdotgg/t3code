@@ -250,6 +250,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     cssViewport,
     newPage: async () => page as unknown as Page,
     grantPermissions: vi.fn(async () => {}),
+    addInitScript: vi.fn(async () => {}),
     newCDPSession: async (target: unknown) => {
       const session = makeSession(
         target === page ? undefined : (target as ReturnType<typeof makeFrame>),
@@ -1400,6 +1401,32 @@ it.live("text the page copies after the controlling viewer's click is only offer
       yield* viewer.input({ type: "releaseControl" });
       yield* viewer.input({ type: "takeControl" });
       yield* mouse("left", "up", 0);
+      yield* advance(5_000);
+      expect(yield* copies()).toEqual([]);
+      clickCopy = "before the handoff";
+      yield* mouse("left", "down", 1);
+      const session = contexts[0]!.sessions.at(-1)!;
+      const send = session.send.getMockImplementation()!;
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => finish.resolve()));
+      session.send.mockImplementationOnce(async (method, input) => {
+        started.resolve();
+        await finish.promise;
+        return send(method, input);
+      });
+      const releasingMouse = yield* mouse("left", "up", 0).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* Effect.promise(() => started.promise);
+      const releasingControl = yield* viewer.input({ type: "releaseControl" }).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const retakingControl = yield* viewer.input({ type: "takeControl" }).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      finish.resolve();
+      yield* Effect.forEach([releasingMouse, releasingControl, retakingControl], Fiber.join);
       yield* advance(5_000);
       expect(yield* copies()).toEqual([]);
       clickCopy = "secret";
