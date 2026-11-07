@@ -108,6 +108,12 @@ describe("evaluatePullRequestWatch", () => {
         .changes,
       [{ kind: "checks-awaiting-approval", checks: [later] }],
     );
+    const unnamed = { ...check("Docs", "action-required"), url: null };
+    const withUnnamed = detail({ checks: [bot, approval, unnamed] });
+    const omitted = evaluatePullRequestWatch(missing.next, withUnnamed, noRemarks);
+    assert.deepEqual(omitted.changes, []);
+    const dropped = evaluatePullRequestWatch(omitted.next, gated, noRemarks);
+    assert.deepEqual(evaluatePullRequestWatch(dropped.next, withUnnamed, noRemarks).changes, []);
     const pushed = detail({ headSha: "bbbbbbbbbb", checks: [bot] });
     assert.deepEqual(evaluatePullRequestWatch(missing.next, pushed, noRemarks).changes, [
       { kind: "checks-passed", count: 1, required: false },

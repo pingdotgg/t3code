@@ -66,8 +66,11 @@ export function evaluatePullRequestWatch(
   if (checks.length > 0) {
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
+    // A check known only by name is let go when a read omits it, so it is news only alone.
     const newlyAwaiting = awaiting.filter(
-      (check) => !awaitingApproval.includes(approvalKey(check)),
+      (check) =>
+        !awaitingApproval.includes(approvalKey(check)) &&
+        (awaitingApproval.length === 0 || workflowRunOf(check.url) !== null),
     );
     if (newlyAwaiting.length > 0) {
       changes.push({ kind: "checks-awaiting-approval", checks: newlyAwaiting });
