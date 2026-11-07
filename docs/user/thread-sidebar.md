@@ -313,7 +313,8 @@ your next message there. Bring back is available while the thread is idle.
 
 Closing a side chat you never sent a message in deletes it. To delete one you used,
 choose **Delete** at the top of the side chat. Deleting a thread also deletes its
-side chats.
+side chats. Archiving a thread also archives its side chats and stops their work, and
+unarchiving the thread brings them back.
 
 On mobile, a thread lists its side chats above the composer. Tap one to open it and
 answer its questions.

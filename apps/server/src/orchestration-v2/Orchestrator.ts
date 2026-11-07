@@ -1352,7 +1352,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
     );
 
-  /** Side chats live inside their parent, so deleting the parent deletes them too. */
+  /** Side chats live inside their parent, so deleting or archiving the parent takes them too. */
   const liveSideChatIds = Effect.fn("Orchestrator.liveSideChatIds")(
     function* (threadId: ThreadId) {
       const { contextTransfers } = yield* projectionStore
@@ -13475,7 +13475,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
       }
       case "thread.archive":
-      case "thread.unarchive":
+      case "thread.unarchive": {
+        const parentArchivedAt = (yield* findThread(command.threadId))?.archivedAt ?? null;
+        yield* dispatchThreadMutation(command, events, effects);
+        // Unarchive restores the side chats this parent's archive took, not ones archived before it.
+        for (const threadId of sideChatIds) {
+          const sideChatArchivedAt = (yield* findThread(threadId))?.archivedAt ?? null;
+          const follows =
+            command.type === "thread.archive"
+              ? sideChatArchivedAt === null
+              : sideChatArchivedAt !== null &&
+                parentArchivedAt !== null &&
+                DateTime.toEpochMillis(sideChatArchivedAt) >=
+                  DateTime.toEpochMillis(parentArchivedAt);
+          if (!follows) continue;
+          yield* dispatchThreadMutation(
+            {
+              ...command,
+              commandId: CommandId.make(`${command.commandId}:side-chat:${threadId}`),
+              threadId,
+            },
+            events,
+            effects,
+          );
+        }
+        break;
+      }
       case "thread.settle":
       case "thread.unsettle":
       case "thread.snooze":
@@ -13812,7 +13837,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
-  /** `sideChatIds` are the live side chats a `thread.delete` cascades to, read under their locks. */
+  /** `sideChatIds` are the live side chats a delete, archive, or unarchive cascades to, read under their locks. */
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
     sideChatIds: ReadonlyArray<ThreadId> = [],
@@ -14047,7 +14072,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
-    // A parent's lock comes before its side chats' locks, so a delete cascade and a side chat
+    // A parent's lock comes before its side chats' locks, so a cascade and a side chat
     // fork or command never interleave. A fork from a side chat or onto an existing thread would
     // invert that order; dispatch rejects both, so they skip the source lock.
     if (
@@ -14061,7 +14086,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? dispatch
         : threadDispatch.withLock(command.sourceThreadId, dispatch);
     }
-    if (command.type === "thread.delete")
+    if (
+      command.type === "thread.delete" ||
+      command.type === "thread.archive" ||
+      command.type === "thread.unarchive"
+    )
       return yield* threadDispatch.withLock(
         command.threadId,
         liveSideChatIds(command.threadId).pipe(
