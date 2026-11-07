@@ -52,8 +52,9 @@ export function markdownMathRanges(source: string, tree?: Root) {
 
 /** Messages without these characters skip math parsing entirely. */
 function mayContainMath(text: string): boolean {
+  // Single-dollar math cannot close after a space or line ending; tabs must reach the parser.
   return (
-    text.includes("$") ||
+    (text.indexOf("$") !== text.lastIndexOf("$") && /\$\$|[^ \r\n]\$/.test(text)) ||
     text.includes("\\(") ||
     text.includes("\\[") ||
     /(?:`{3,}|~{3,})[ \t]*math\b/.test(text)
