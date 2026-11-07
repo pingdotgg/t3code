@@ -4,6 +4,7 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  type NodeId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ProviderSession,
@@ -16,6 +17,7 @@ import {
   ProviderTurnId,
   type RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -441,6 +443,139 @@ it.live("retries a failed selection restart session open before completing", () 
         projection.providerThreads[0]?.providerSessionId,
         projection.providerSessions.find((session) => session.model === replacementSelection.model)
           ?.id,
+      );
+    }),
+  ),
+);
+
+it.live("a restart steer leaves delegation cards asked before it answerable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("selection-restart-delegation-card");
+      const threadId = ThreadId.make("thread:selection-restart-delegation-card");
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: false,
+      });
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const running = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:restart-delegation-card:create"),
+          threadId,
+          projectId: ProjectId.make("project:restart-delegation-card"),
+          title: "Delegation card across a restart",
+          modelSelection: initialSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:restart-delegation-card:first"),
+          threadId,
+          messageId: MessageId.make("message:restart-delegation-card:first"),
+          text: "first",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        const before = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const askedFrom = before.rootNodeId!;
+        // What `delegate_task` records, and what the user's answer or its cancel records later.
+        const record = (
+          key: string,
+          turnItemId: TurnItemId,
+          nodeId: NodeId,
+          approvalStatus: "pending" | "approved" | "declined" | "cancelled",
+        ) =>
+          orchestrator.dispatch({
+            type: "delegation_approval.record",
+            commandId: CommandId.make(`command:restart-delegation-card:${key}`),
+            threadId,
+            runId: before.id,
+            nodeId,
+            turnItemId,
+            title: "Delegate a task",
+            task: "Review the change.",
+            current: initialSelection,
+            proposed: replacementSelection,
+            approvalStatus,
+          });
+        const answered = TurnItemId.make("turn-item:restart-delegation-card:answered");
+        const abandoned = TurnItemId.make("turn-item:restart-delegation-card:abandoned");
+        yield* record("ask-answered", answered, askedFrom, "pending");
+        yield* record("ask-abandoned", abandoned, askedFrom, "pending");
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:restart-delegation-card:steer"),
+          threadId,
+          messageId: MessageId.make("message:restart-delegation-card:steer"),
+          text: "Change of plan.",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "restart_active", targetRunId: before.id },
+        });
+        yield* worker.drain();
+        const restarted = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        assert.equal(restarted.id, before.id);
+        assert.notEqual(restarted.rootNodeId, askedFrom);
+        assert.equal(restarted.status, "running");
+
+        yield* record("approve", answered, askedFrom, "approved");
+        yield* record("cancel", abandoned, askedFrom, "cancelled");
+        // The first answer stands.
+        yield* record("late-decline", answered, askedFrom, "declined");
+        // A retry from the new root finds the card it asked for, which keeps its node.
+        yield* record("retry", answered, restarted.rootNodeId!, "pending");
+        // A new card still needs the run's current root.
+        const stale = yield* record(
+          "stale-ask",
+          TurnItemId.make("turn-item:restart-delegation-card:stale"),
+          askedFrom,
+          "pending",
+        ).pipe(Effect.flip);
+        assert.include(String(stale.cause), "is not the root");
+
+        const cards = (yield* orchestrator.getThreadProjection(threadId)).turnItems.flatMap(
+          (item) =>
+            item.type === "delegation_approval"
+              ? [{ id: item.id, nodeId: item.nodeId, approvalStatus: item.approvalStatus }]
+              : [],
+        );
+        assert.deepEqual(cards, [
+          { id: answered, nodeId: askedFrom, approvalStatus: "approved" },
+          { id: abandoned, nodeId: askedFrom, approvalStatus: "cancelled" },
+        ]);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "selection-restart-delegation-card" },
+            ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state)),
+          ),
+        ),
       );
     }),
   ),

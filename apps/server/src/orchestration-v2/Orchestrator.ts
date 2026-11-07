@@ -620,6 +620,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.parentThreadId;
     case "secret_request.record":
     case "link_request.record":
+    case "delegation_approval.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -9067,6 +9068,138 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /** The first answer stands: once a card leaves pending, no later record changes it. */
+  const dispatchDelegationApprovalRecord = Effect.fn(
+    "orchestrationV2.dispatch.delegationApprovalRecord",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "delegation_approval.record" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(
+        command.threadId,
+        ["runs", "nodes", "turnItems", "attempts", "providerTurns"],
+        { turnItemTypes: ["delegation_approval"], messageRoles: [] },
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    const run = projection.runs.find((candidate) => candidate.id === command.runId);
+    if (run === undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} was not found.`,
+      });
+    }
+    const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
+    if (existing !== undefined && existing.type !== "delegation_approval") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Turn item ${command.turnItemId} is not a delegation approval.`,
+      });
+    }
+    if (existing !== undefined && existing.runId !== command.runId) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Delegation approval ${command.turnItemId} belongs to another run.`,
+      });
+    }
+    // A new card goes on the run's current root. A steer that restarts the run
+    // replaces that root, so an update may name the card's own node or the new root.
+    if (
+      existing === undefined
+        ? run.rootNodeId !== command.nodeId
+        : existing.nodeId !== command.nodeId && run.rootNodeId !== command.nodeId
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
+      });
+    }
+    if (
+      (existing === undefined ||
+        (existing.approvalStatus === "pending" && command.approvalStatus === "approved")) &&
+      (!isActiveRun(run) || (yield* stopReachedRun(command, command.threadId, run.id)))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} is not active.`,
+      });
+    }
+    const nodeId = existing?.nodeId ?? command.nodeId;
+    const now = yield* DateTime.now;
+    const unchanged =
+      existing !== undefined &&
+      (existing.approvalStatus !== "pending" || command.approvalStatus === "pending");
+    const pending = command.approvalStatus === "pending";
+    const turnItem: OrchestrationV2TurnItem = unchanged
+      ? existing
+      : {
+          id: command.turnItemId,
+          threadId: command.threadId,
+          runId: command.runId,
+          nodeId,
+          providerThreadId: run.providerThreadId,
+          providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
+          status: pending
+            ? "waiting"
+            : command.approvalStatus === "approved"
+              ? "completed"
+              : "cancelled",
+          title: command.title,
+          startedAt: existing?.startedAt ?? now,
+          completedAt: pending ? null : now,
+          updatedAt: now,
+          type: "delegation_approval",
+          task: command.task,
+          current: command.current,
+          proposed: command.proposed,
+          ...(command.environmentId === undefined ? {} : { environmentId: command.environmentId }),
+          approvalStatus: command.approvalStatus,
+        };
+    if (
+      !unchanged &&
+      command.approvalStatus === "approved" &&
+      projection.thread.snoozedUntil != null
+    ) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.unsnoozed",
+        threadId: command.threadId,
+        providerInstanceId: projection.thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...projection.thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+      });
+    }
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      runId: command.runId,
+      nodeId,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+      payload: turnItem,
+    });
+  });
+
   /**
    * Records or updates the card for a link an agent asked the user to make.
    * The pairing code goes straight to the link and never through orchestration.
@@ -12194,7 +12327,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const stopDelegatedTasks =
       command.stopDelegatedTasks === false ||
       !projection.subagents.some(
-        (task) => task.origin === "app_owned" && task.childThreadId !== null,
+        (task) =>
+          task.origin === "app_owned" &&
+          (task.childThreadId !== null || task.remoteChild !== undefined),
       )
         ? Effect.void
         : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
@@ -13750,6 +13885,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);
+        break;
+      case "delegation_approval.record":
+        yield* dispatchDelegationApprovalRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

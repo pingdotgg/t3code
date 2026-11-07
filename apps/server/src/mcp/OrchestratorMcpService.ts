@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type EnvironmentId,
   type RunId,
   isProviderAvailable,
   MessageId,
@@ -75,10 +76,12 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -384,6 +387,33 @@ function knownOptions(
   if (options === undefined || descriptors === undefined) return options;
   return options.filter((option) => descriptors.some((descriptor) => descriptor.id === option.id));
 }
+
+/** Options compare as a set: their order carries no meaning. */
+function optionsKey(options: ReadonlyArray<ProviderOptionSelection> | undefined): string {
+  return JSON.stringify(
+    (options ?? [])
+      .map((option) => [option.id, option.value] as const)
+      .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+  );
+}
+
+function sameSelection(left: ModelSelection, right: ModelSelection): boolean {
+  return (
+    left.instanceId === right.instanceId &&
+    left.model === right.model &&
+    optionsKey(left.options) === optionsKey(right.options)
+  );
+}
+
+function describeSelection(selection: ModelSelection): string {
+  const options = (selection.options ?? [])
+    .map((option) => `${option.id}=${String(option.value)}`)
+    .join(", ");
+  return `${selection.instanceId} ${selection.model}${options === "" ? "" : ` (${options})`}`;
+}
+
+/** How much of a task's prompt its approval card shows. */
+const DELEGATION_APPROVAL_TASK_CHARS = 500;
 
 /** Skip checks without descriptors; reject duplicate IDs because consumers disagree on precedence. */
 function invalidOptionSelections(
@@ -956,6 +986,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return item.linkStatus === "linked"
         ? `Linked ${item.linkedLabel ?? item.label ?? item.url ?? "an environment"} (${item.linkedAccess}).`
         : `Asked the user to link ${item.label ?? item.url ?? "an environment"}: ${item.linkStatus}.`;
+    case "delegation_approval":
+      return `Asked the user to delegate to ${describeSelection(item.proposed)}: ${item.approvalStatus}.`;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -1013,8 +1045,23 @@ function timelineItem(input: {
   };
 }
 
+function activeParentRun(
+  parent: Pick<OrchestrationV2ThreadProjection, "runs">,
+  scope: McpThreadInvocationScope,
+): (OrchestrationV2Run & { readonly rootNodeId: NodeId }) | undefined {
+  const run = parent.runs
+    .filter(ThreadManagementService.isActiveRun)
+    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+  return run === undefined ||
+    run.rootNodeId === null ||
+    run.providerInstanceId !== scope.thread.providerInstanceId
+    ? undefined
+    : { ...run, rootNodeId: run.rootNodeId };
+}
+
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -1475,6 +1522,166 @@ const make = Effect.gen(function* () {
 
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined ? random.uuidV4() : Effect.succeed(clientRequestId);
+
+  /**
+   * A task on another provider, model or options than this run started on waits
+   * for the user to approve that exact target on a card in this run, keyed by
+   * run, request key, destination and target. The thread's selection can change
+   * mid-run, so it is no baseline.
+   */
+  const awaitDelegationApproval = Effect.fn("OrchestratorMcpService.awaitDelegationApproval")(
+    function* (input: {
+      readonly scope: McpThreadInvocationScope;
+      readonly parentRun: { readonly id: RunId; readonly rootNodeId: NodeId };
+      readonly requestKey: string;
+      readonly current: ModelSelection;
+      readonly proposed: ModelSelection;
+      readonly environmentId?: EnvironmentId | undefined;
+      readonly title: string | undefined;
+      readonly task: string;
+      /** Whether a task with no target would run on what this run started on. */
+      readonly inheritsRun: boolean;
+    }) {
+      if (sameSelection(input.current, input.proposed)) return;
+      const { scope, parentRun, proposed } = input;
+      const threadId = scope.thread.threadId;
+      const cardKey = yield* digest
+        .digest(
+          Digest.sha256,
+          new TextEncoder().encode(
+            [
+              scope.requestNamespace,
+              parentRun.id,
+              input.requestKey,
+              input.environmentId ?? "",
+              proposed.instanceId,
+              proposed.model,
+              optionsKey(proposed.options),
+            ].join("\u0000"),
+          ),
+        )
+        .pipe(
+          Effect.map((bytes) => Hex.encode(bytes).slice(0, 32)),
+          Effect.orDie,
+        );
+      const turnItemId = TurnItemId.make(
+        `turn-item:delegation-approval:${stablePart(threadId)}:${cardKey}`,
+      );
+      const record = (approvalStatus: "pending" | "cancelled") =>
+        threadManagement
+          .dispatch({
+            type: "delegation_approval.record",
+            commandId: stableCommandId({
+              scope,
+              requestKey: cardKey,
+              operation: `delegation-approval-${approvalStatus}`,
+            }),
+            threadId,
+            runId: parentRun.id,
+            nodeId: parentRun.rootNodeId,
+            turnItemId,
+            title: input.title?.trim() || "Delegate a task",
+            task: input.task.slice(0, DELEGATION_APPROVAL_TASK_CHARS),
+            current: input.current,
+            proposed,
+            ...(input.environmentId === undefined ? {} : { environmentId: input.environmentId }),
+            approvalStatus,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Could not record the delegation request: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+      const readFailure = (error: unknown) =>
+        failure(
+          "orchestration_error",
+          `Unable to read the delegation request: ${errorMessage(error)}`,
+        );
+      // An approval counts only while the run that asked is still open, so
+      // a stopped parent never starts the child it asked for.
+      const readAnswer = () =>
+        threadManagement
+          .getThreadRecords(threadId, ["runs", "turnItems"], {
+            turnItemTypes: ["delegation_approval"],
+            messageRoles: [],
+          })
+          .pipe(
+            Effect.mapError(readFailure),
+            Effect.map((records) => {
+              const item = records.turnItems.find((candidate) => candidate.id === turnItemId);
+              const run = records.runs.find((candidate) => candidate.id === parentRun.id);
+              const open = run !== undefined && ThreadManagementService.isActiveRun(run);
+              if (item?.type === "delegation_approval" && item.approvalStatus !== "pending") {
+                return item.approvalStatus === "approved" &&
+                  !(open && sameSelection(item.proposed, proposed))
+                  ? ("cancelled" as const)
+                  : item.approvalStatus;
+              }
+              return open ? ("pending" as const) : ("cancelled" as const);
+            }),
+          );
+      yield* record("pending");
+      const closeCard = record("cancelled").pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not close a delegation approval card", {
+            error: error.message,
+          }),
+        ),
+      );
+      const answer = yield* Effect.gen(function* () {
+        // One cursor before the first read catches an answer that lands between them.
+        const afterSequence = yield* threadManagement
+          .getThreadEventSequence(threadId)
+          .pipe(Effect.mapError(readFailure));
+        const initial = yield* readAnswer();
+        if (initial !== "pending") return Option.some(initial);
+        return yield* Stream.merge(
+          threadManagement
+            .streamStoredEventsFrom({ threadId, afterSequence, eventType: "turn-item.updated" })
+            .pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "turn-item.updated" && event.payload.id === turnItemId,
+              ),
+            ),
+          threadManagement
+            .streamStoredEventsFrom({ threadId, afterSequence, eventType: "run.updated" })
+            .pipe(Stream.filter(({ event }) => event.runId === parentRun.id)),
+        ).pipe(
+          Stream.mapError(readFailure),
+          Stream.mapEffect(readAnswer),
+          Stream.filter((status) => status !== "pending"),
+          Stream.runHead,
+        );
+      }).pipe(
+        Effect.timeoutOption(Duration.millis(DEFAULT_WAIT_TIMEOUT_MS)),
+        Effect.map(Option.flatten),
+        Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
+      );
+      const status = Option.getOrElse(answer, () => "cancelled" as const);
+      yield* Effect.annotateCurrentSpan({ "delegation_approval.status": status });
+      if (status === "approved") return;
+      // A card nobody answered closes now; a declined one keeps its answer.
+      if (status === "cancelled") yield* closeCard;
+      return yield* failure(
+        "delegation_not_approved",
+        `The user ${status === "declined" ? "declined" : "did not approve"} running this task on ${describeSelection(proposed)}, so it did not start. ${
+          input.inheritsRun
+            ? "Delegate it without a target to use your own provider and model, or "
+            : ""
+        }${
+          status === "declined"
+            ? input.inheritsRun
+              ? "do it yourself."
+              : "Do it yourself, or ask the user which provider and model to use."
+            : `${input.inheritsRun ? "ask" : "Ask"} the user and delegate again with a new clientRequestId.`
+        }`,
+      );
+    },
+  );
 
   const readTask = Effect.fn("OrchestratorMcpService.readTask")(function* (
     scope: McpThreadInvocationScope,
@@ -2399,9 +2606,52 @@ const make = Effect.gen(function* () {
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
+        const parent = yield* threadManagement
+          .getThreadRecords(scope.thread.threadId, ["runs"])
+          .pipe(Effect.mapError(threadManagementFailure));
+        const parentRun = activeParentRun(parent, scope);
+        if (parentRun === undefined) {
+          return yield* failure(
+            "parent_not_active",
+            "Delegated tasks require an active run owned by this MCP provider session.",
+          );
+        }
+        const key = yield* requestKey(input.clientRequestId);
+        const proposed = RemoteDelegation.remoteModelSelection(
+          parent.thread.modelSelection,
+          input.target,
+        );
+        if (proposed === undefined) {
+          return yield* failure(
+            "target_required",
+            "Pass target.model from orchestrator_capabilities with this environmentId.",
+          );
+        }
+        const recorded = RemoteDelegation.recordCommandId(
+          scope,
+          yield* RemoteDelegation.remoteRequestKey(key, environmentId, proposed).pipe(
+            Effect.provideService(Digest.Digest, digest),
+          ),
+        );
+        if (!(yield* threadManagement.hasReceipt(recorded))) {
+          yield* awaitDelegationApproval({
+            scope,
+            parentRun,
+            requestKey: key,
+            current: parentRun.modelSelection,
+            inheritsRun: sameSelection(parentRun.modelSelection, parent.thread.modelSelection),
+            proposed,
+            environmentId,
+            title: input.title,
+            task: taskPrompt(input),
+          });
+        }
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,
+          clientRequestId: key,
+          parentRunId: parentRun.id,
+          modelSelection: proposed,
           target: { ...input.target, environmentId },
         });
         return yield* input.mode === "wait"
@@ -2418,14 +2668,8 @@ const make = Effect.gen(function* () {
           "A local task runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
         );
       }
-      const parentRun = parent.runs
-        .filter(ThreadManagementService.isActiveRun)
-        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-      if (
-        parentRun === undefined ||
-        parentRun.rootNodeId === null ||
-        parentRun.providerInstanceId !== scope.thread.providerInstanceId
-      ) {
+      const parentRun = activeParentRun(parent, scope);
+      if (parentRun === undefined) {
         return yield* failure(
           "parent_not_active",
           "Delegated tasks require an active run owned by this MCP provider session.",
@@ -2445,15 +2689,38 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
-      const runtimeMode = yield* resolveRuntimeMode(
-        parent.thread.runtimeMode,
-        input.runtimeMode,
-        target,
-      );
-      const interactionMode = yield* resolveInteractionMode(
-        parent.thread.interactionMode,
-        input.interactionMode,
-      );
+      const resolveModes = (thread: OrchestrationV2ThreadProjection["thread"]) =>
+        Effect.all({
+          runtimeMode: resolveRuntimeMode(thread.runtimeMode, input.runtimeMode, target),
+          interactionMode: resolveInteractionMode(thread.interactionMode, input.interactionMode),
+        });
+      let { runtimeMode, interactionMode } = yield* resolveModes(parent.thread);
+      // A replayed receipt starts nothing new, so it needs no second answer.
+      if (!isRetryOfAcceptedDelegation) {
+        const authorized = yield* resolveTarget({
+          parent: { thread: { ...parent.thread, modelSelection: parentRun.modelSelection } },
+          target: undefined,
+          providers,
+        }).pipe(
+          Effect.map((resolved) => resolved.modelSelection),
+          Effect.orElseSucceed(() => parentRun.modelSelection),
+        );
+        yield* awaitDelegationApproval({
+          scope,
+          parentRun,
+          requestKey: key,
+          current: authorized,
+          inheritsRun: sameSelection(parentRun.modelSelection, parent.thread.modelSelection),
+          proposed: target.modelSelection,
+          title: input.title,
+          task: taskPrompt(input),
+        });
+        // The user may have narrowed this thread's modes while the card waited.
+        const current = yield* threadManagement
+          .getThreadRecords(scope.thread.threadId, [])
+          .pipe(Effect.mapError(threadManagementFailure));
+        ({ runtimeMode, interactionMode } = yield* resolveModes(current.thread));
+      }
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
@@ -3334,6 +3601,7 @@ export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
   | SecureRandom.SecureRandom
+  | Digest.Digest
   | ThreadManagementService.ThreadManagementService
   | ThreadLaunchService.ThreadLaunchService
   | GitVcsDriver.GitVcsDriver

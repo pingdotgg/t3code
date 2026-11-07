@@ -1227,11 +1227,14 @@ it.effect("does not wake a snoozed or settled thread, but continues once a snooz
   }),
 );
 
-it.effect("does not continue a run waiting on a secret the restart closed", () =>
+it.effect.each([
+  ["secret_request", "secretStatus"],
+  ["delegation_approval", "approvalStatus"],
+] as const)("does not continue a run waiting on a %s card the restart closed", ([type, field]) =>
   Effect.gen(function* () {
     const completedAt = DateTime.makeUnsafe("2026-10-03T10:05:00.000Z");
-    const secret = (secretStatus: string, at: DateTime.Utc | null) =>
-      ({ type: "secret_request", runId, secretStatus, completedAt: at }) as never;
+    const secret = (status: string, at: DateTime.Utc | null) =>
+      ({ type, runId, [field]: status, completedAt: at }) as never;
     assert.isUndefined(
       restartContinuationRun({ ...makeProjection(), turnItems: [secret("pending", null)] }, now),
     );

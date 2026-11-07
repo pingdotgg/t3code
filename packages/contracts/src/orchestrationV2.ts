@@ -1603,6 +1603,32 @@ const OrchestrationV2LinkRequestFields = {
   failure: Schema.optional(Schema.String),
 } as const;
 
+export const OrchestrationV2DelegationApprovalStatus = Schema.Literals([
+  "pending",
+  "approved",
+  "declined",
+  "cancelled",
+]);
+export type OrchestrationV2DelegationApprovalStatus =
+  typeof OrchestrationV2DelegationApprovalStatus.Type;
+
+/**
+ * An agent asked to delegate a task to a provider, model or options other
+ * than its own. Only the user's answer through `delegationApprovals.answer`
+ * approves it; no agent tool can, and it covers only `proposed` at
+ * `environmentId`.
+ */
+const OrchestrationV2DelegationApprovalFields = {
+  type: Schema.Literal("delegation_approval"),
+  /** The start of the task's prompt, so the user knows which task asks. */
+  task: Schema.String,
+  current: ModelSelection,
+  proposed: ModelSelection,
+  /** A linked environment the task would run in; absent for this one. */
+  environmentId: Schema.optional(EnvironmentId),
+  approvalStatus: OrchestrationV2DelegationApprovalStatus,
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1800,6 +1826,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2DelegationApprovalFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2630,6 +2660,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2DelegationApprovalFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3550,6 +3584,24 @@ const OrchestrationV2InternalCommand = Schema.Union([
     placeholder: Schema.optional(Schema.String),
     delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
     secretStatus: OrchestrationV2SecretRequestStatus,
+  }),
+  /**
+   * Internal so no client or agent can mark a delegation approved except
+   * through the user's answer.
+   */
+  Schema.Struct({
+    type: Schema.Literal("delegation_approval.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    title: TrimmedNonEmptyString,
+    task: Schema.String,
+    current: ModelSelection,
+    proposed: ModelSelection,
+    environmentId: Schema.optional(EnvironmentId),
+    approvalStatus: OrchestrationV2DelegationApprovalStatus,
   }),
   /**
    * Records or updates a link an agent asked the user to make. Internal so no
