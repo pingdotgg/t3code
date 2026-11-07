@@ -421,6 +421,8 @@ describe("OpenCode 2 through the orchestrator", () => {
           reply("session.update", null),
           out("session.switchAgent", { sessionID: SESSION, agent: "build" }),
           reply("session.switchAgent", null),
+          // Leaving plan mode drops the proposed plan instructions.
+          ...instructionsWritten,
           ...answeredPrompt("BUILT"),
         ],
         commands: [
