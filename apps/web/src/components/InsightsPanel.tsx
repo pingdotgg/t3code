@@ -97,10 +97,10 @@ function priceItemsForRows(
   rows: readonly ThreadTurnTokenUsageRow[],
 ): readonly UsagePriceItemInput[] {
   return rows.flatMap((row) => {
-    if (row.model === null) return [];
+    if (row.priceModel === null) return [];
     const totals = threadTurnTokenUsageTotals(row.usage);
     if (totals === null) return [];
-    return [{ id: row.runId, model: row.model, totals }];
+    return [{ id: row.runId, model: row.priceModel, totals }];
   });
 }
 
@@ -255,12 +255,22 @@ function FlameChartPanel({
     startMs: 0,
     durationMs: Math.max(MIN_VIEW_MS, axis.displayTotalMs),
   };
-  const traceKey = `${trace.originMs}:${trace.totalMs}:${trace.turns.length}:${axis.displayTotalMs}`;
+  // Keep zoom/pan across live totalMs updates; only reset when the turn set changes.
+  const traceKey = `${trace.originMs}:${trace.turns.map((turn) => turn.runId).join("\0")}`;
   const [viewByKey, setViewByKey] = useState<{ key: string; view: ViewWindow }>(() => ({
     key: traceKey,
     view: fitView,
   }));
-  const view = viewByKey.key === traceKey ? viewByKey.view : fitView;
+  const view =
+    viewByKey.key === traceKey
+      ? clampTimingViewWindow(
+          viewByKey.view.startMs,
+          viewByKey.view.durationMs,
+          0,
+          Math.max(1, axis.displayTotalMs),
+          MIN_VIEW_MS,
+        )
+      : fitView;
 
   const [selection, setSelection] = useState<Selection | null>(null);
   const selectedTurn =
@@ -430,6 +440,8 @@ function Summary({
     tokenUsage.usageStatus !== "unavailable" &&
     ((tokenUsage.totalTokens ?? 0) > 0 ||
       (tokenUsage.uncachedInputTokens ?? 0) > 0 ||
+      (tokenUsage.cachedInputTokens ?? 0) > 0 ||
+      (tokenUsage.cacheCreationTokens ?? 0) > 0 ||
       (tokenUsage.outputTokens ?? 0) > 0);
   return (
     <div className={cn("grid shrink-0 gap-4", showTokens ? "lg:grid-cols-2" : "grid-cols-1")}>
@@ -565,7 +577,12 @@ function TokenUsageSummary({
           Some turns are still running or missing counts; totals may grow.
         </p>
       ) : null}
-      {cost === null && ((usage.totalTokens ?? 0) > 0 || (usage.outputTokens ?? 0) > 0) ? (
+      {cost === null &&
+      ((usage.totalTokens ?? 0) > 0 ||
+        (usage.uncachedInputTokens ?? 0) > 0 ||
+        (usage.cachedInputTokens ?? 0) > 0 ||
+        (usage.cacheCreationTokens ?? 0) > 0 ||
+        (usage.outputTokens ?? 0) > 0) ? (
         <p className="text-2xs text-muted-foreground">
           Estimated API cost appears when Usage has rates for the models in this thread.
         </p>
@@ -599,7 +616,7 @@ function TurnTokenBreakdown({
         <h3 className="text-sm font-medium text-foreground">By turn</h3>
         <span className="text-2xs text-muted-foreground">Estimated API cost</span>
       </div>
-      <ul className="divide-y divide-border/40 overflow-hidden rounded-md border border-border/50">
+      <ul className="max-h-40 divide-y divide-border/40 overflow-x-hidden overflow-y-auto rounded-md border border-border/50">
         {visible.map((row) => {
           const cost = formatCostEstimate(costs.get(row.runId) ?? null);
           const tokens =
@@ -854,6 +871,7 @@ function FlameViewport({
                 zIndex: selected ? 30 : 10 + node.depth,
               }}
               onPointerDown={(event) => {
+                suppressClickRef.current = false;
                 event.stopPropagation();
               }}
               onClick={(event) => {
