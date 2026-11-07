@@ -48,7 +48,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   } = props;
   const syncTimelineLayout = useSyncLayout();
   const hiddenFileCount = totals.count - files.length;
-  const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
+  const hasDirectories = files.some((file) => file.path.includes("/"));
 
   return (
     <div
