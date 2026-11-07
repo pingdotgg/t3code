@@ -41,6 +41,17 @@ exporting a table preserves the TeX.
 The composer keeps TeX source editable, including when rich text is enabled. The Render math
 preference is saved separately on each device.
 
+## Sidebar hover reveal
+
+On web and desktop, enable **Settings → Appearance → Reveal sidebar on hover** to peek at a
+hidden sidebar with the mouse at the left window edge. It overlays the chat without resizing it
+and hides when you move away. Click the sidebar toggle or use its shortcut to keep it open.
+Touch input and narrow windows keep their usual drawer behavior.
+
+**Hover animation speed** follows **Panel animations** by default. Choose **Separate speed** to
+give hover reveal its own duration, including when regular panel animations are set to 0 ms.
+The hover animation also respects your system's reduced-motion preference.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the

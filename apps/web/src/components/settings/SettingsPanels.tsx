@@ -483,6 +483,13 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarRevealOnHover !== DEFAULT_UNIFIED_SETTINGS.sidebarRevealOnHover
+      ? ["Reveal sidebar on hover"]
+      : []),
+    ...(settings.sidebarHoverAnimationDurationMs !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarHoverAnimationDurationMs
+      ? ["Hover animation speed"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -652,6 +659,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarRevealOnHover: DEFAULT_UNIFIED_SETTINGS.sidebarRevealOnHover,
+      sidebarHoverAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.sidebarHoverAnimationDurationMs,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,

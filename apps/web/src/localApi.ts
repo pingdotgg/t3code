@@ -6,6 +6,17 @@ import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientP
 
 let cachedApi: LocalApi | undefined;
 
+const contextMenuListeners = new Set<(position: { x: number; y: number } | null) => void>();
+
+export function subscribeContextMenu(
+  listener: (position: { x: number; y: number } | null) => void,
+) {
+  contextMenuListeners.add(listener);
+  return () => {
+    contextMenuListeners.delete(listener);
+  };
+}
+
 export function createLocalApi(): LocalApi {
   return {
     dialogs: {
@@ -44,10 +55,15 @@ export function createLocalApi(): LocalApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+        for (const listener of contextMenuListeners) listener(position ?? null);
+        try {
+          if (window.desktopBridge) {
+            return (await window.desktopBridge.showContextMenu(items, position)) as T | null;
+          }
+          return await showContextMenuFallback(items, position);
+        } finally {
+          for (const listener of contextMenuListeners) listener(null);
         }
-        return showContextMenuFallback(items, position);
       },
       // Unlike native menus, the DOM fallback needs dismissal when underlying state disappears.
       close: async () => {

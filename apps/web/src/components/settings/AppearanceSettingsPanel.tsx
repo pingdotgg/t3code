@@ -84,6 +84,57 @@ const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   bars: "Bars",
 };
 
+function PanelDurationSlider({
+  durationMs,
+  id,
+  label,
+  onChange,
+}: {
+  durationMs: number;
+  id: string;
+  label: string;
+  onChange: (durationMs: number) => void;
+}) {
+  const ratio =
+    (durationMs - MIN_PANEL_ANIMATION_DURATION_MS) /
+    (MAX_PANEL_ANIMATION_DURATION_MS - MIN_PANEL_ANIMATION_DURATION_MS);
+  return (
+    <div className="flex w-full items-center gap-3">
+      <output
+        className="min-w-16 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+        htmlFor={id}
+      >
+        {durationMs} ms
+      </output>
+      <input
+        aria-label={label}
+        className="settings-slider min-w-0 flex-1"
+        id={id}
+        max={MAX_PANEL_ANIMATION_DURATION_MS}
+        min={MIN_PANEL_ANIMATION_DURATION_MS}
+        onChange={(event) => {
+          const value = Number(event.currentTarget.value);
+          if (
+            Number.isInteger(value) &&
+            value >= MIN_PANEL_ANIMATION_DURATION_MS &&
+            value <= MAX_PANEL_ANIMATION_DURATION_MS
+          )
+            onChange(value);
+        }}
+        step={25}
+        style={
+          {
+            "--settings-slider-progress": `${ratio * 100}%`,
+            "--settings-slider-fill-offset": `${0.5 - ratio}rem`,
+          } as CSSProperties
+        }
+        type="range"
+        value={durationMs}
+      />
+    </div>
+  );
+}
+
 export function AppearanceSettingsPanel() {
   const {
     appearanceMode,
@@ -133,13 +184,6 @@ export function AppearanceSettingsPanel() {
   const appearanceContrastSliderStyle = {
     "--settings-slider-progress": `${appearanceContrastRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - appearanceContrastRatio}rem`,
-  } as CSSProperties;
-  const panelAnimationDurationRatio =
-    (settings.panelAnimationDurationMs - MIN_PANEL_ANIMATION_DURATION_MS) /
-    (MAX_PANEL_ANIMATION_DURATION_MS - MIN_PANEL_ANIMATION_DURATION_MS);
-  const panelAnimationDurationSliderStyle = {
-    "--settings-slider-progress": `${panelAnimationDurationRatio * 100}%`,
-    "--settings-slider-fill-offset": `${0.5 - panelAnimationDurationRatio}rem`,
   } as CSSProperties;
 
   return (
@@ -348,6 +392,86 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("sidebar-reveal-on-hover")}
+          description="Temporarily reveal the hidden sidebar by resting the mouse at the left edge. The chat keeps its width."
+          resetAction={
+            settings.sidebarRevealOnHover !== DEFAULT_UNIFIED_SETTINGS.sidebarRevealOnHover ? (
+              <SettingResetButton
+                label="reveal sidebar on hover"
+                onClick={() =>
+                  updateSettings({
+                    sidebarRevealOnHover: DEFAULT_UNIFIED_SETTINGS.sidebarRevealOnHover,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarRevealOnHover}
+              onCheckedChange={(checked) => updateSettings({ sidebarRevealOnHover: checked })}
+              aria-label="Reveal sidebar on hover"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-hover-animation-speed")}
+          description="Use the regular panel speed or set a separate duration for the sidebar's hover reveal."
+          resetAction={
+            settings.sidebarHoverAnimationDurationMs !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarHoverAnimationDurationMs ? (
+              <SettingResetButton
+                label="hover animation speed"
+                onClick={() =>
+                  updateSettings({
+                    sidebarHoverAnimationDurationMs:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarHoverAnimationDurationMs,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="grid w-full gap-3 sm:w-64">
+              <Select
+                value={settings.sidebarHoverAnimationDurationMs === null ? "inherit" : "custom"}
+                onValueChange={(value) => {
+                  if (value === "inherit")
+                    updateSettings({ sidebarHoverAnimationDurationMs: null });
+                  else if (value === "custom")
+                    updateSettings({ sidebarHoverAnimationDurationMs: 200 });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Hover animation speed">
+                  <SelectValue>
+                    {settings.sidebarHoverAnimationDurationMs === null
+                      ? "Use panel speed"
+                      : "Separate speed"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="inherit">
+                    Use panel speed
+                  </SelectItem>
+                  <SelectItem hideIndicator value="custom">
+                    Separate speed
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+              {settings.sidebarHoverAnimationDurationMs !== null && (
+                <PanelDurationSlider
+                  durationMs={settings.sidebarHoverAnimationDurationMs}
+                  id="sidebar-hover-animation-duration"
+                  label="Sidebar hover animation duration"
+                  onChange={(sidebarHoverAnimationDurationMs) =>
+                    updateSettings({ sidebarHoverAnimationDurationMs })
+                  }
+                />
+              )}
+            </div>
+          }
+        />
         <AdvancedSettings
           targetIds={[
             searchableSetting("panel-animations").id,
@@ -363,35 +487,14 @@ export function AppearanceSettingsPanel() {
             control={
               <div className="grid w-full grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 sm:w-auto sm:grid-cols-[7rem_13rem] sm:gap-4">
                 <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
-                <div className="flex w-full items-center gap-3">
-                  <output
-                    className="min-w-16 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
-                    htmlFor="panel-animation-duration"
-                  >
-                    {settings.panelAnimationDurationMs} ms
-                  </output>
-                  <input
-                    aria-label="Panel animation duration"
-                    className="settings-slider min-w-0 flex-1"
-                    id="panel-animation-duration"
-                    max={MAX_PANEL_ANIMATION_DURATION_MS}
-                    min={MIN_PANEL_ANIMATION_DURATION_MS}
-                    onChange={(event) => {
-                      const panelAnimationDurationMs = Number(event.currentTarget.value);
-                      if (
-                        Number.isInteger(panelAnimationDurationMs) &&
-                        panelAnimationDurationMs >= MIN_PANEL_ANIMATION_DURATION_MS &&
-                        panelAnimationDurationMs <= MAX_PANEL_ANIMATION_DURATION_MS
-                      ) {
-                        updateSettings({ panelAnimationDurationMs });
-                      }
-                    }}
-                    step={25}
-                    style={panelAnimationDurationSliderStyle}
-                    type="range"
-                    value={settings.panelAnimationDurationMs}
-                  />
-                </div>
+                <PanelDurationSlider
+                  durationMs={settings.panelAnimationDurationMs}
+                  id="panel-animation-duration"
+                  label="Panel animation duration"
+                  onChange={(panelAnimationDurationMs) =>
+                    updateSettings({ panelAnimationDurationMs })
+                  }
+                />
               </div>
             }
             resetAction={
