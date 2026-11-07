@@ -1277,6 +1277,17 @@ export const layer: Layer.Layer<
           const childSubagents = yield* Ref.get(activeChildSubagents);
           return childSubagents.size === 0;
         });
+        // Claude background Bash has no turn-item projection. Use only the
+        // thread-scoped probe: session-wide pending work (siblings, wake
+        // buffers, session subagents) must not pin this root subscription.
+        const threadHasPendingBackgroundWork = Effect.gen(function* () {
+          if (input.session.hasPendingBackgroundWorkForThread === undefined) {
+            return false;
+          }
+          return yield* input.session
+            .hasPendingBackgroundWorkForThread(yield* Ref.get(latestProviderThread))
+            .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        });
         const shouldStopProviderEventIngestion = Effect.gen(function* () {
           if (!(yield* agentTurnsSettled)) {
             return false;
@@ -1287,7 +1298,12 @@ export const layer: Layer.Layer<
             terminal.status !== "completed" &&
             !childTurnsContinue(terminal)
           ) {
-            return true;
+            // A failed turn can leave background work running in a live provider process.
+            return (
+              terminal.status !== "failed" ||
+              (yield* Ref.get(providerThreadOwnerLost)) ||
+              !(yield* threadHasPendingBackgroundWork)
+            );
           }
           // Newly owned items depend on adapters emitting a non-terminal event before the root
           // terminal. Owner loss (a newer run claimed lastRunOrdinal) must not close this stream
@@ -1300,19 +1316,7 @@ export const layer: Layer.Layer<
           if (yield* Ref.get(providerThreadOwnerLost)) {
             return true;
           }
-          // Claude background Bash has no turn-item projection. Use only the
-          // thread-scoped probe: session-wide pending work (siblings, wake
-          // buffers, session subagents) must not pin this root subscription.
-          const latestProviderThreadSnapshot = yield* Ref.get(latestProviderThread);
-          if (input.session.hasPendingBackgroundWorkForThread !== undefined) {
-            const hasPendingWork = yield* input.session
-              .hasPendingBackgroundWorkForThread(latestProviderThreadSnapshot)
-              .pipe(Effect.catchCause(() => Effect.succeed(false)));
-            if (hasPendingWork) {
-              return false;
-            }
-          }
-          return true;
+          return !(yield* threadHasPendingBackgroundWork);
         });
         const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
         // Held text writes nothing, so its item would take a position only

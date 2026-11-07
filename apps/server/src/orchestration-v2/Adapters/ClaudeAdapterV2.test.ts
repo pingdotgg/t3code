@@ -10098,6 +10098,138 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // An API error fails the turn, but the CLI process and its background tasks keep running.
+  const liveProcessFailedResult = makeResultFrame({
+    uuid: "00000000-0000-4000-8000-000000000311",
+    result: "API Error: 502 Bad Gateway",
+    isError: true,
+    apiErrorStatus: 502,
+    terminalReason: "api_error",
+  });
+
+  it.effect("keeps background tasks waitable after a turn fails on a live process", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+        if (awaitBackgroundTasks === undefined) {
+          throw new Error("Claude adapter runtime must expose awaitBackgroundTasks.");
+        }
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-failed-live-roster"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, liveProcessFailedResult);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+
+        assert.deepStrictEqual(
+          providerThreadRosterEvents(harness.events)
+            .at(-1)
+            ?.providerThread.pendingBackgroundTasks?.map((task) => task.taskId),
+          [WAKE_TASK_ID],
+        );
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        const marked = yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: [WAKE_TASK_ID],
+          awaited: true,
+        });
+        assert.deepStrictEqual(marked.matched, [WAKE_TASK_ID]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("clears background tasks when the Claude process exits mid-turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-probe-exit"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* Queue.shutdown(harness.sdkMessages);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+        assert.deepStrictEqual(
+          providerThreadRosterEvents(harness.events)
+            .at(-1)
+            ?.providerThread.pendingBackgroundTasks?.map((task) => task.taskId) ?? [],
+          [],
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("wakes the idle thread when a task outlives a turn that failed on a live process", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-failed-live-wake"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, liveProcessFailedResult);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeAssistant);
+        assert.deepStrictEqual(
+          harness.continuationRequests.map((request) => request.detail),
+          [WAKE_SUMMARY],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -11003,10 +11135,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const rosterBAfterFail = providerThreadRosterEvents(events).findLast(
             (event) => event.providerThread.id === providerThreadB.id,
           )?.providerThread.pendingBackgroundTasks;
-          assert.deepEqual(rosterBAfterFail ?? [], []);
+          assert.deepEqual(rosterBAfterFail ?? [], [
+            { taskId: taskB, description: "work on B", kind: "command" },
+          ]);
           assert.isFalse(yield* hasPendingBackgroundWorkForThread(providerThreadA));
-          assert.isFalse(yield* hasPendingBackgroundWorkForThread(providerThreadB));
-          assert.isFalse(yield* hasPendingBackgroundWork);
+          assert.isTrue(yield* hasPendingBackgroundWorkForThread(providerThreadB));
+          assert.isTrue(yield* hasPendingBackgroundWork);
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
