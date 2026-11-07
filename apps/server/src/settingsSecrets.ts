@@ -19,6 +19,7 @@ import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
+import { vibeClient } from "@t3tools/provider-vibe/client";
 import {
   readSecretFieldValues,
   SOURCE_CONTROL_HOST_SECRET_FIELDS,
@@ -39,6 +40,7 @@ const providerSecretFields = new Map([
     museClient,
     openCodeClient,
     piClient,
+    vibeClient,
     acpRegistryClient,
   ].map(
     (definition) =>
