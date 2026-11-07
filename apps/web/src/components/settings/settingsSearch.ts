@@ -331,6 +331,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["red green blue orange additions deletions changes counts palette colorblind"],
   },
   {
+    id: "typing-with-selection",
+    title: "Typing with text selected",
+    to: "/settings/appearance",
+    searchTerms: ["cite citation paste dictation composer"],
+  },
+  {
     id: "chat-width",
     title: "Chat width",
     to: "/settings/appearance",

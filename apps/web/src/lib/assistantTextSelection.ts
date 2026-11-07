@@ -14,6 +14,7 @@ export type AssistantCitationSourceAnchor = {
   source: HTMLElement;
   range: Range;
   viewport: HTMLElement;
+  initialComment?: string;
 };
 
 export function findAssistantCitationSourceAnchor(

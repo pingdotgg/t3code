@@ -1,3 +1,5 @@
+import { getClientSettings } from "~/hooks/useSettings";
+
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 
 export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
@@ -69,11 +71,24 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   return true;
 }
 
+function citeSelectionInput(event: Event, text: string): boolean {
+  if (getClientSettings().typingWithSelection !== "cite") return false;
+  const toolbar = document.querySelector<HTMLButtonElement>("[data-type-to-cite]:not(:disabled)");
+  if (!toolbar) return false;
+  const request = new CustomEvent("cite-selection-input", { detail: text, cancelable: true });
+  toolbar.dispatchEvent(request);
+  if (!request.defaultPrevented) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
+}
+
 export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.isComposing) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
+  if (citeSelectionInput(event, event.key)) return false;
   if (isSurfaceLauncherKey(event)) return false;
 
   return true;
@@ -83,5 +98,6 @@ export function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
   if (!event.clipboardData || event.clipboardData.files.length > 0) return null;
   if (!shouldRedirectInputToComposer(event)) return null;
   const text = event.clipboardData.getData("text/plain");
+  if (text.length > 0 && citeSelectionInput(event, text)) return null;
   return text.length > 0 ? text : null;
 }

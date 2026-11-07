@@ -408,3 +408,5 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+In Settings ? Appearance, **Typing with text selected** defaults to **Goes to the composer**. Choose **Cites the selection** to start a citation comment by typing or pasting plain text while Cite is available. Further typing continues at the end of the comment.

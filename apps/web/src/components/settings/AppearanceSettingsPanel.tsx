@@ -258,6 +258,32 @@ export function AppearanceSettingsPanel() {
         />
 
         <SettingsRow
+          {...searchableSetting("typing-with-selection")}
+          description="Choose what typing or pasting does while Cite is available."
+          control={
+            <Select
+              value={settings.typingWithSelection}
+              onValueChange={(value) => {
+                if (value === "composer" || value === "cite")
+                  updateSettings({ typingWithSelection: value });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Typing with text selected">
+                <SelectValue>
+                  {settings.typingWithSelection === "cite"
+                    ? "Cites the selection"
+                    : "Goes to the composer"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="composer">Goes to the composer</SelectItem>
+                <SelectItem value="cite">Cites the selection</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
           {...searchableSetting("chat-width")}
           description="Set how wide messages and the composer can grow on large screens."
           resetAction={

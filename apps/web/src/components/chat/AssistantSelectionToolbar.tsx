@@ -182,15 +182,36 @@ export function AssistantSelectionToolbar({
     actionsRef.current?.cancel();
     setSelection(null);
   };
-  const cite = () => {
-    if (tooLong || !onCite(selection.citation, selection.sourceAnchor)) return false;
+  const cite = (comment?: string) => {
+    if (
+      tooLong ||
+      !onCite(selection.citation, {
+        ...selection.sourceAnchor,
+        ...(comment === undefined ? {} : { initialComment: comment }),
+      })
+    )
+      return false;
     window.getSelection()?.removeAllRanges();
     dismiss();
     return true;
   };
   return createPortal(
     <Button
-      ref={toolbarRef}
+      data-type-to-cite={backgroundThread ? undefined : "true"}
+      ref={(element) => {
+        toolbarRef.current = element;
+        if (!element) return;
+        const handler = (event: Event) => {
+          const text: unknown = (event as CustomEvent<unknown>).detail;
+          if (typeof text !== "string") return;
+          if (cite(text)) event.preventDefault();
+        };
+        element.addEventListener("cite-selection-input", handler);
+        return () => {
+          element.removeEventListener("cite-selection-input", handler);
+          toolbarRef.current = null;
+        };
+      }}
       type="button"
       size="xs"
       variant="glass"
@@ -199,7 +220,7 @@ export function AssistantSelectionToolbar({
       className="fixed z-50 max-w-[calc(100vw-1rem)]"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
+      onClick={() => cite()}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {

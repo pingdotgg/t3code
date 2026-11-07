@@ -9,6 +9,7 @@ import { Button } from "../ui/button";
 
 export function AssistantCitationCommentEditor({
   citation,
+  initialComment,
   inputRef,
   onSubmit,
   onSubmitAndSend,
@@ -17,6 +18,7 @@ export function AssistantCitationCommentEditor({
   onVoiceSetupOpenChange,
 }: {
   citation: AssistantCitation;
+  initialComment?: string;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
@@ -24,7 +26,7 @@ export function AssistantCitationCommentEditor({
   onDraftChange?: (comment: string) => void;
   onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
-  const [comment, setComment] = useState(citation.comment ?? "");
+  const [comment, setComment] = useState(initialComment ?? citation.comment ?? "");
   const localInputRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = inputRef ?? localInputRef;
   const { environmentId, projectId } = use(ComposerContextActionsContext);

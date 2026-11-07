@@ -92,12 +92,26 @@ async function clickButton(label: string) {
 }
 
 describe("citation comment source disappearance", () => {
+  it("focuses an initial comment at the end so typing appends", async () => {
+    using source = setup();
+    source.sourceAnchor.initialComment = "a";
+    await using _screen = await mount(
+      source.sourceAnchor,
+      vi.fn(() => true),
+    );
+    await vi.waitFor(() => expect(document.activeElement).toBe(textarea()));
+    expect(textarea()?.value).toBe("a");
+    expect(textarea()?.selectionStart).toBe(1);
+    await userEvent.keyboard("bc");
+    expect(textarea()?.value).toBe("abc");
+  });
+
   it("preserves an over-length draft at the composer until it can be shortened and saved", async () => {
     using source = setup();
     const onSave = vi.fn(() => true);
-    await using _screen = await mount(source.sourceAnchor, onSave);
     const draft = "x".repeat(ASSISTANT_CITATION_MAX_COMMENT_LENGTH + 1);
-    await typeComment(draft);
+    source.sourceAnchor.initialComment = draft;
+    await using _screen = await mount(source.sourceAnchor, onSave);
     await removeSource();
 
     expect(textarea()?.value).toBe(draft);

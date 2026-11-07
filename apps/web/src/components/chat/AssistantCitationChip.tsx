@@ -68,7 +68,7 @@ export function AssistantCitationChip({
   const settleDraftOnClose = (reason: string): boolean => {
     const dismissal = resolveAssistantCitationCommentDismissal({
       reason,
-      draft: draftCommentRef.current,
+      draft: draftCommentRef.current ?? sourceAnchor?.initialComment ?? null,
       savedComment: citation.comment,
     });
     if (dismissal.kind === "commit") return commentEditor?.onSave(dismissal.comment) ?? true;
@@ -193,7 +193,9 @@ export function AssistantCitationChip({
               align="end"
               anchor={popupAnchor}
               initialFocus={() => {
-                commentInputRef.current?.focus({ preventScroll: true });
+                const input = commentInputRef.current;
+                input?.focus({ preventScroll: true });
+                input?.setSelectionRange(input.value.length, input.value.length);
                 return false;
               }}
               finalFocus={
@@ -219,6 +221,9 @@ export function AssistantCitationChip({
               <AssistantCitationCommentEditor
                 key={serializeAssistantCitation(citation)}
                 citation={citation}
+                {...(sourceAnchor?.initialComment === undefined
+                  ? {}
+                  : { initialComment: sourceAnchor.initialComment })}
                 inputRef={commentInputRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onDraftChange={(comment) => {
