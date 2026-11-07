@@ -1698,16 +1698,32 @@ describe("MuseAdapterV2", () => {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHeldWakeHarness(fake);
       const rejection = pendingPromise<Record<string, unknown>>();
+      const acceptance = pendingPromise<Record<string, unknown>>();
       fake.queueResponse("session/compact", rejection.promise);
+      fake.queueResponse("session/compact", acceptance.promise);
       const compacting = yield* harness.runtime.compactThread!(
         yield* turnInput(harness.providerThread),
       ).pipe(Effect.forkScoped);
       yield* fake.takeCall("session/compact");
+      // Before the ack, the wake's own automatic compaction must not end this one.
+      yield* fake.emit("item/completed", compactionItem("auto-compaction"));
+      yield* fake.emit("session/contextUsage", { usedTokens: 1 });
+      yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) => event.providerThread.contextUsage?.usedTokens === 1,
+      );
       yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
       rejection.reject(runActive());
-      yield* Fiber.join(compacting);
       yield* fake.takeCall("session/compact");
+      // Muse can finish the compaction before its ack arrives.
       yield* fake.emit("item/completed", compactionItem("compaction-1"));
+      yield* fake.emit("session/contextUsage", { usedTokens: 2 });
+      yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) => event.providerThread.contextUsage?.usedTokens === 2,
+      );
+      acceptance.resolve({ status: "accepted" });
+      yield* Fiber.join(compacting);
       assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
@@ -1814,6 +1830,18 @@ describe("MuseAdapterV2", () => {
         (event) => event.runtimeRequest.status === "resolved",
       );
       assert.strictEqual(resolved.runtimeRequest.id, shown.runtimeRequest.id);
+      // wake-2 started while compaction waited, so its later requests stay visible too.
+      yield* fake.emit("approval/requested", {
+        ...approval("wake-2"),
+        approvalId: "approval-2",
+        currentRequirementId: { approvalId: "approval-2", sourceIndex: 0 },
+      });
+      yield* harness.takeEvent(
+        "runtime_request.updated",
+        (event) =>
+          event.runtimeRequest.id !== shown.runtimeRequest.id &&
+          event.runtimeRequest.status === "pending",
+      );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

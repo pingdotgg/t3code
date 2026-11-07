@@ -363,6 +363,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let compactWait:
         | { readonly turn: ActiveTurn; readonly ready: Deferred.Deferred<void> }
         | undefined;
+      // Before Muse answers session/compact, a compaction item may be ours or a wake's.
+      const compactCandidates: Array<[string, unknown]> = [];
       const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
         Queue.offer(events, event).pipe(Effect.asVoid);
       const decode = <A, I>(schema: Schema.Codec<A, I>, data: unknown) =>
@@ -1116,6 +1118,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       const owns = (turn: ActiveTurn, turnId: string) =>
         turnId === turn.nativeId || turn.joined.has(turnId);
+      // A live run no turn owns, such as one started while compaction waited, still asks.
+      const unownedRun = (turnId: unknown) =>
+        typeof turnId === "string" &&
+        hostRuns.has(turnId) &&
+        turnId !== wake?.nativeId &&
+        !(active && owns(active, turnId));
       const decideApproval = Effect.fnUntraced(function* (
         entry: PendingRequest,
         decision: ProviderApprovalDecision | undefined,
@@ -1160,7 +1168,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         );
         // Compaction never asks, so requests during it come from runs it waits on.
         const runless =
-          child || active?.compact === true || previous?.request.providerTurnId === null;
+          child ||
+          active?.compact === true ||
+          previous?.request.providerTurnId === null ||
+          unownedRun(native.value.turnId);
         const turn = runless ? undefined : active;
         if (
           !thread ||
@@ -1404,6 +1415,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         if (
           REQUEST_NOTIFICATIONS.has(method) &&
           (active?.compact ||
+            unownedRun(params.turnId) ||
             [...pending.values()].some(
               (entry) =>
                 entry.request.providerTurnId === null &&
@@ -1439,13 +1451,23 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               });
           }
         }
+        if (
+          active?.compact &&
+          active.compactPhase === "sending" &&
+          itemEvent?.kind === "compaction"
+        ) {
+          const entry: [string, unknown] = [method, data];
+          compactCandidates.push(entry);
+          if (wake && itemEvent.turnId === wake.nativeId) wake.events.push(entry);
+          return;
+        }
         if (wake && active?.nativeId !== wake.nativeId) {
           const turnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
           if (
             turnId === wake.nativeId &&
             !(
               active?.compact &&
-              active.compactPhase !== "waiting" &&
+              active.compactPhase === "admitted" &&
               itemEvent?.kind === "compaction"
             )
           ) {
@@ -1465,7 +1487,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             if (
               item.turnId &&
               !owns(turn, item.turnId) &&
-              !(turn.compact && turn.compactPhase !== "waiting" && item.kind === "compaction")
+              !(turn.compact && turn.compactPhase === "admitted" && item.kind === "compaction")
             )
               return;
             const previous = turn.items.get(item.itemId);
@@ -2076,11 +2098,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         while (true) {
           const ended = hostRunsEnded;
           turn.compactPhase = "sending";
+          compactCandidates.length = 0;
           const admission = yield* request("session/compact", {}, true, commandId).pipe(
             Effect.flatMap((value) => decode(MuseCompactResult, value)),
             Effect.catchIf(isRunActive, (busy) =>
               Effect.sync(() => {
                 turn.compactPhase = "waiting";
+                compactCandidates.length = 0;
                 return { busy };
               }),
             ),
@@ -2096,7 +2120,18 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               return yield* protocolError(
                 `Muse returned an unsupported compaction status: ${admission.status}`,
               );
-            turn.compactPhase = "admitted";
+            yield* eventPermit.withPermits(1)(
+              Effect.gen(function* () {
+                turn.compactPhase = "admitted";
+                const candidates = compactCandidates.splice(0);
+                if (active !== turn) return;
+                for (const entry of candidates) {
+                  const index = wake ? wake.events.indexOf(entry) : -1;
+                  if (index >= 0) wake?.events.splice(index, 1);
+                  yield* handleNotification(...entry).pipe(Effect.catch(failHost));
+                }
+              }),
+            );
             return;
           }
           const next = yield* eventPermit.withPermits(1)(
