@@ -2595,6 +2595,9 @@ export default function ChatView(props: ChatViewProps) {
     const fallbackWindow = fallback
       ? `${fallback.provider.instanceId}:${fallback.resetsAt ?? ""}`
       : null;
+    const fallbackProvider = providerStatuses.find(
+      (provider) => provider.instanceId === fallbackSelection?.instanceId,
+    );
     const fallbackItems: ComposerBannerStackItem[] =
       fallback &&
       fallbackSelection &&
@@ -2603,10 +2606,12 @@ export default function ChatView(props: ChatViewProps) {
         ? [
             modelFallbackBannerItem({
               fallbackModelName:
-                providerStatuses
-                  .find((provider) => provider.instanceId === fallbackSelection.instanceId)
-                  ?.models.find((model) => model.slug === fallbackSelection.model)?.name ??
-                fallbackSelection.model,
+                fallbackProvider?.models.find((model) => model.slug === fallbackSelection.model)
+                  ?.name ?? fallbackSelection.model,
+              fallbackProviderName:
+                fallbackProvider?.displayName ??
+                fallbackProvider?.driver ??
+                fallbackSelection.instanceId,
               defaultProviderName: fallback.provider.displayName ?? fallback.provider.driver,
               defaultModelName:
                 fallback.provider.models.find((model) => model.slug === defaultSelection.model)
