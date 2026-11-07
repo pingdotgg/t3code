@@ -943,6 +943,7 @@ describe("subagent worktree ownership", () => {
   it.effect.each([
     "idle",
     "grandchild",
+    "branchless",
     "null-branch",
     "stale-branch",
     "isolated-owner",
@@ -974,7 +975,7 @@ describe("subagent worktree ownership", () => {
         },
       });
       const root = shell({
-        branch: "feature",
+        branch: scenario === "branchless" ? null : "feature",
         worktreePath: fixture.worktree,
         settledAt: scenario === "child-settled-only" ? null : at(-20 * DAY_MS),
         ...(scenario === "isolated-owner" || scenario === "fork-owner"
@@ -1077,7 +1078,9 @@ describe("subagent worktree ownership", () => {
                     ? "Inactive for 2 of 8 days"
                     : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
                       ? "Settled moments ago"
-                      : "Not settled",
+                      : scenario === "branchless"
+                        ? "Thread has no branch"
+                        : "Not settled",
       });
     }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
