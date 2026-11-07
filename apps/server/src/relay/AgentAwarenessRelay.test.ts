@@ -617,7 +617,7 @@ describe("AgentAwarenessRelay", () => {
         id: sideChatId,
         status: "waiting",
         activityRunStatus: "waiting",
-        creationSource: "user",
+        creationSource: "web",
         lineage: {
           rootThreadId: THREAD_ID,
           parentThreadId: THREAD_ID,
@@ -631,7 +631,7 @@ describe("AgentAwarenessRelay", () => {
         },
       });
       const byId = yield* Ref.make(
-        new Map<ThreadId, typeof parentWithAttention | typeof sideChat>([
+        new Map<ThreadId, ReturnType<typeof shell> | typeof parentWithAttention>([
           [THREAD_ID, parentWithAttention],
           [sideChatId, sideChat],
         ]),
