@@ -5413,6 +5413,109 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("rewinds the thread's own session, starting afresh if it cannot load", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-rewind-target");
+      const rewound: Array<string> = [];
+      let activeSession = "";
+      let loadFails = false;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          rollbackSession: (_runtime, sessionId) =>
+            Effect.sync(() => {
+              rewound.push(sessionId);
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (nativeRuntime) => ({
+              ...nativeRuntime,
+              loadSession: (_sessionId, activation) =>
+                loadFails
+                  ? Effect.fail(
+                      new EffectAcpErrors.AcpTransportError({ cause: new Error("no session") }),
+                    )
+                  : nativeRuntime.loadSession(activeSession, activation),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-rewind-target");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-rewind-target"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      activeSession = providerThread.nativeThreadRef!.nativeId!;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      while ((yield* Queue.take(events)).type !== "turn.terminal");
+      const [providerTurn] = (yield* runtime.readThreadSnapshot({ providerThread })).providerTurns;
+      const rollback = {
+        providerThread: {
+          ...providerThread,
+          nativeThreadRef: { ...providerThread.nativeThreadRef!, nativeId: "other-session" },
+        },
+        providerThreadTurns: [],
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-acp-rewind-target"),
+          appRunOrdinal: 1,
+          providerTurn: {
+            ...providerTurn!,
+            nativeTurnRef: {
+              driver: ACP_TEST_DRIVER,
+              strength: "strong",
+              nativeId: "native-turn-1",
+            },
+          },
+        },
+      } as const;
+
+      yield* runtime.rollbackThread(rollback);
+      assert.deepEqual(rewound, ["other-session"]);
+
+      loadFails = true;
+      const replaced = yield* runtime.rollbackThread(rollback);
+      assert.deepEqual(rewound, ["other-session"]);
+      assert.notStrictEqual(replaced.providerThread.nativeThreadRef?.nativeId, "other-session");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("quarantines callbacks from a failed rollback replacement before retrying", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

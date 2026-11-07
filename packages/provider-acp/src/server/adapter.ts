@@ -8881,7 +8881,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       (cause) =>
                         new ProviderAdapter.ProviderAdapterProtocolError({
                           driver,
-                          detail: `Could not stop task ${stopInput.nativeTaskId}: ${cause.message}`,
+                          detail: `Could not stop task ${stopInput.nativeTaskId}`,
+                          cause,
                         }),
                     ),
                   ),
@@ -9439,24 +9440,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     rollbackInput.target.type === "provider_turn"
                       ? rollbackInput.target.providerTurn.nativeTurnRef
                       : null;
-                  const activeNativeSession = yield* Ref.get(activeSessionId);
+                  const rollbackSession = flavor.rollbackSession;
+                  const targetSession = rollbackInput.providerThread.nativeThreadRef?.nativeId;
                   if (
-                    flavor.rollbackSession !== undefined &&
+                    rollbackSession !== undefined &&
                     rewoundTurn?.strength === "strong" &&
                     rewoundTurn.nativeId !== null &&
-                    activeNativeSession !== null
+                    targetSession !== null &&
+                    targetSession !== undefined
                   ) {
-                    const rewound = yield* flavor
-                      .rollbackSession(runtime, activeNativeSession, rewoundTurn.nativeId)
-                      .pipe(
-                        Effect.as(true),
-                        Effect.catch((error) =>
-                          Effect.logWarning("ACP session rewind failed; starting afresh", {
-                            driver,
-                            detail: error.message,
-                          }).pipe(Effect.as(false)),
-                        ),
-                      );
+                    const turnId = rewoundTurn.nativeId;
+                    const rewound = yield* Effect.gen(function* () {
+                      // A fork or a failed load can leave a different session active.
+                      if ((yield* Ref.get(activeSessionId)) !== targetSession) {
+                        const activated = yield* activateSession(
+                          targetSession,
+                          rollbackInput.providerThread.appThreadId,
+                        );
+                        yield* Ref.set(activeSessionId, activated.sessionId);
+                        yield* setActiveSessionSetup(activated);
+                        yield* Ref.set(activeSelection, null);
+                        yield* Ref.set(activeInteractionMode, null);
+                      }
+                      yield* rollbackSession(runtime, targetSession, turnId);
+                    }).pipe(
+                      Effect.as(true),
+                      Effect.catch((error) =>
+                        Effect.logWarning("ACP session rewind failed; starting afresh", {
+                          driver,
+                          reason: error._tag,
+                        }).pipe(Effect.as(false)),
+                      ),
+                    );
                     if (rewound) {
                       yield* resetConversationCaches;
                       yield* Ref.set(snapshotReloadRequired, true);

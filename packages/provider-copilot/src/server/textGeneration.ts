@@ -56,18 +56,27 @@ export function makeGitHubCopilotTextGeneration(input: {
           cause,
         }),
     }).pipe(
+      // The SDK cannot cancel a pending call, so an abandoned one has to end the CLI itself.
+      Effect.onInterrupt(() =>
+        Effect.tryPromise({
+          try: () => client.forceStop(),
+          catch: (cause) =>
+            new TextGenerationError({
+              operation: request.operation,
+              detail: `${PROVIDER} could not be stopped.`,
+              cause,
+            }),
+        }).pipe(Effect.ignore),
+      ),
       Effect.timeoutOrElse({
         duration: TIMEOUT_MS + STARTUP_TIMEOUT_MS,
-        orElse: () => {
-          const timedOut = new TextGenerationError({
-            operation: request.operation,
-            detail: `${PROVIDER} did not respond in time.`,
-          });
-          return Effect.tryPromise({ try: () => client.forceStop(), catch: () => timedOut }).pipe(
-            Effect.ignore,
-            Effect.andThen(Effect.fail(timedOut)),
-          );
-        },
+        orElse: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: request.operation,
+              detail: `${PROVIDER} did not respond in time.`,
+            }),
+          ),
       }),
     );
     return yield* decodeJsonReply(request, PROVIDER, reply);

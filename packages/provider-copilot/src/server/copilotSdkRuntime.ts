@@ -1357,10 +1357,15 @@ export const makeCopilotSdkRuntime = Effect.fn("makeCopilotSdkRuntime")(function
     const turnEventId = stringField(record(payload), "turnEventId");
     if (turnEventId === undefined) return yield* unsupported(COPILOT_SDK_ROLLBACK_METHOD);
     const active = yield* requireSession;
-    const boundary = copilotSdkForkBoundary(
-      yield* sdk(COPILOT_SDK_ROLLBACK_METHOD, () => active.history()),
-      turnEventId,
-    );
+    const history = yield* sdk(COPILOT_SDK_ROLLBACK_METHOD, () => active.history());
+    if (!history.some((event) => event.id === turnEventId)) {
+      return yield* new AcpErrors.AcpRequestError({
+        code: -32603,
+        errorMessage: `Copilot session ${active.sessionId} has no turn ${turnEventId}.`,
+        method: COPILOT_SDK_ROLLBACK_METHOD,
+      });
+    }
+    const boundary = copilotSdkForkBoundary(history, turnEventId);
     // No later user message means the session already ends at this turn.
     if (boundary !== undefined) {
       yield* sdk(COPILOT_SDK_ROLLBACK_METHOD, () => active.truncate(boundary));
