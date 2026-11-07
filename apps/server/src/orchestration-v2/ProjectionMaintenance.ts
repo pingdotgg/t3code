@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import type * as SqlError from "effect/sql/SqlError";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
@@ -46,6 +47,8 @@ export class ProjectionMaintenanceV2 extends Context.Service<
 const RETAINED_EVENT_HISTORY = Duration.days(1);
 // Small pages bound work on the reader worker and synchronous fallback.
 const PAGE_SIZE = 50;
+// Bounds the rows one purge statement deletes, FTS trigger work included.
+const ROW_BATCH_SIZE = 500;
 const REFERENCE_SCAN_WINDOW = 1000;
 
 // Thread-scoped projection tables, children first. The thread row stays as the tombstone.
@@ -277,59 +280,90 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
     });
 
     // A deleted thread keeps only its tombstone row once the event history it could be replayed
-    // from has been pruned. Idempotent: threads without content match nothing.
+    // from has been pruned. A thread that a surviving run-fork inherits history from is kept
+    // whole. Idempotent: threads without content match nothing.
     const purgeDeletedThreadContent = Effect.fnUntraced(function* (
       now: DateTime.Utc,
       betweenPages: Effect.Effect<void>,
     ) {
       const cutoff = DateTime.formatIso(DateTime.subtractDuration(now, RETAINED_EVENT_HISTORY));
       let purged = 0;
+      // Each batch is one statement that commits on its own, so no transaction spans a yield.
+      const deleteBatches = Effect.fnUntraced(function* (
+        batch: (limit: number) => Effect.Effect<unknown, SqlError.SqlError>,
+      ) {
+        for (;;) {
+          yield* batch(ROW_BATCH_SIZE);
+          const changes = yield* sql<{ readonly count: number }>`SELECT changes() AS count`;
+          const count = changes[0]?.count ?? 0;
+          purged += count;
+          yield* Effect.yieldNow;
+          yield* betweenPages;
+          if (count < ROW_BATCH_SIZE) return;
+        }
+      });
       for (let cursor = ""; ;) {
         const threads = yield* sql<{ readonly thread_id: string }>`
+          WITH RECURSIVE inherited(thread_id) AS (
+            SELECT json_extract(fork.payload_json, '$.forkedFrom.threadId')
+            FROM orchestration_v2_projection_threads AS fork
+            WHERE json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
+              AND json_extract(fork.payload_json, '$.lineage.sideChat') IS NOT 1
+              AND (fork.deleted_at IS NULL OR fork.deleted_at > ${cutoff})
+            UNION
+            SELECT json_extract(fork.payload_json, '$.forkedFrom.threadId')
+            FROM inherited
+            JOIN orchestration_v2_projection_threads AS fork ON fork.thread_id = inherited.thread_id
+            WHERE json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
+              AND json_extract(fork.payload_json, '$.lineage.sideChat') IS NOT 1
+          )
           SELECT thread_id FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NOT NULL AND deleted_at <= ${cutoff} AND thread_id > ${cursor}
+            AND thread_id NOT IN (SELECT thread_id FROM inherited WHERE thread_id IS NOT NULL)
           ORDER BY thread_id ASC
           LIMIT ${PAGE_SIZE}
         `.pipe(NodeSqliteClient.readOnly);
         const threadIds = threads.map((row) => row.thread_id);
-        // Never hold a transaction or the reader lock across a yield or a rest.
         yield* Effect.yieldNow;
         if (threadIds.length > 0) {
-          purged += yield* sql.withTransaction(
-            Effect.gen(function* () {
-              let rows = 0;
-              const countChanges = Effect.gen(function* () {
-                const changes = yield* sql<{ readonly count: number }>`SELECT changes() AS count`;
-                rows += changes[0]?.count ?? 0;
-              });
-              for (const table of THREAD_CONTENT_TABLES) {
-                yield* sql`
-                  DELETE FROM ${sql(table)}
+          for (const table of THREAD_CONTENT_TABLES) {
+            yield* deleteBatches(
+              (limit) => sql`
+                DELETE FROM ${sql(table)}
+                WHERE rowid IN (
+                  SELECT rowid FROM ${sql(table)}
                   WHERE thread_id IN ${sql.in(threadIds)}
-                `;
-                yield* countChanges;
-              }
-              yield* sql`
-                DELETE FROM orchestration_v2_projection_provider_sessions AS session
-                WHERE session.thread_id IN ${sql.in(threadIds)}
-                AND NOT EXISTS (
-                  SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS binding
-                  WHERE binding.provider_session_id = session.provider_session_id
-                    AND binding.thread_id NOT IN ${sql.in(threadIds)}
+                  LIMIT ${limit}
                 )
-              `;
-              yield* countChanges;
-              yield* sql`
-                DELETE FROM orchestration_v2_projection_provider_session_bindings
-                WHERE thread_id IN ${sql.in(threadIds)}
-              `;
-              yield* countChanges;
-              return rows;
-            }),
+              `,
+            );
+          }
+          yield* deleteBatches(
+            (limit) => sql`
+              DELETE FROM orchestration_v2_projection_provider_sessions
+              WHERE rowid IN (
+                SELECT session.rowid FROM orchestration_v2_projection_provider_sessions AS session
+                WHERE session.thread_id IN ${sql.in(threadIds)}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS binding
+                    WHERE binding.provider_session_id = session.provider_session_id
+                      AND binding.thread_id NOT IN ${sql.in(threadIds)}
+                  )
+                LIMIT ${limit}
+              )
+            `,
           );
-          yield* Effect.yieldNow;
+          yield* deleteBatches(
+            (limit) => sql`
+              DELETE FROM orchestration_v2_projection_provider_session_bindings
+              WHERE rowid IN (
+                SELECT rowid FROM orchestration_v2_projection_provider_session_bindings
+                WHERE thread_id IN ${sql.in(threadIds)}
+                LIMIT ${limit}
+              )
+            `,
+          );
         }
-        yield* betweenPages;
         if (threadIds.length < PAGE_SIZE) break;
         cursor = threadIds.at(-1) ?? cursor;
       }

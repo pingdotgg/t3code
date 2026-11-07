@@ -8,6 +8,7 @@ import {
   type OrchestrationV2TurnItem,
   MessageId,
   ProjectId,
+  RunId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
@@ -404,69 +405,76 @@ const countContent = (threadId: ThreadId) =>
     `,
   ).pipe(Effect.map((rows) => rows[0]));
 
+const purgeFixture = Effect.gen(function* () {
+  const sink = yield* EventSink.EventSinkV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+  const now = yield* DateTime.now;
+  const seed = Effect.fnUntraced(function* (
+    name: string,
+    forkedFrom: OrchestrationV2AppThread["forkedFrom"] = null,
+  ) {
+    const threadId = ThreadId.make(`thread:purge-${name}`);
+    const thread = { ...makeThread(threadId, now), forkedFrom };
+    yield* sink.write({
+      events: [{ ...threadCreated(thread, now), id: EventId.make(`event:purge:${name}:thread`) }],
+    });
+    yield* sink.write({
+      events: [
+        itemEvent(
+          threadId,
+          now,
+          itemSpecs[0],
+          0,
+          `event:purge:${name}:item`,
+          TurnItemId.make(`turn-item:purge:${name}`),
+        ),
+      ],
+    });
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`event:purge:${name}:message`),
+          type: "message.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: MessageId.make(`message:purge:${name}`),
+            threadId,
+            runId: null,
+            nodeId: null,
+            createdBy: "agent",
+            creationSource: "provider",
+            role: "assistant",
+            text: `purgeable${threadId.replace(/\W/g, "")}`,
+            streaming: false,
+            attachments: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      ],
+    });
+    return thread;
+  });
+  const remove = (thread: OrchestrationV2AppThread, at: DateTime.Utc) =>
+    sink.write({
+      events: [
+        {
+          id: EventId.make(`event:purge:${thread.id}:deleted`),
+          type: "thread.deleted",
+          threadId: thread.id,
+          occurredAt: at,
+          payload: { ...thread, deletedAt: at, updatedAt: at },
+        },
+      ],
+    });
+  return { projections, maintenance, now, seed, remove };
+});
+
 it.effect("purges content of threads deleted beyond the retained history", () =>
   Effect.gen(function* () {
-    const sink = yield* EventSink.EventSinkV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-    const now = yield* DateTime.now;
-    const seed = Effect.fnUntraced(function* (name: string) {
-      const threadId = ThreadId.make(`thread:purge-${name}`);
-      const thread = makeThread(threadId, now);
-      yield* sink.write({
-        events: [{ ...threadCreated(thread, now), id: EventId.make(`event:purge:${name}:thread`) }],
-      });
-      yield* sink.write({
-        events: [
-          itemEvent(
-            threadId,
-            now,
-            itemSpecs[0],
-            0,
-            `event:purge:${name}:item`,
-            TurnItemId.make(`turn-item:purge:${name}`),
-          ),
-        ],
-      });
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make(`event:purge:${name}:message`),
-            type: "message.updated",
-            threadId,
-            occurredAt: now,
-            payload: {
-              id: MessageId.make(`message:purge:${name}`),
-              threadId,
-              runId: null,
-              nodeId: null,
-              createdBy: "agent",
-              creationSource: "provider",
-              role: "assistant",
-              text: `purgeable${threadId.replace(/\W/g, "")}`,
-              streaming: false,
-              attachments: [],
-              createdAt: now,
-              updatedAt: now,
-            },
-          },
-        ],
-      });
-      return thread;
-    });
-    const remove = (thread: OrchestrationV2AppThread, at: DateTime.Utc) =>
-      sink.write({
-        events: [
-          {
-            id: EventId.make(`event:purge:${thread.id}:deleted`),
-            type: "thread.deleted",
-            threadId: thread.id,
-            occurredAt: at,
-            payload: { ...thread, deletedAt: at, updatedAt: at },
-          },
-        ],
-      });
-
+    const { projections, maintenance, now, seed, remove } = yield* purgeFixture;
     const old = yield* seed("old");
     const live = yield* seed("live");
     yield* remove(old, now);
@@ -517,5 +525,58 @@ it.effect("lists every thread-scoped projection table or names why it is kept", 
         .toSorted(),
       [...ProjectionMaintenance.THREAD_CONTENT_TABLES].toSorted(),
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps a deleted thread that a live run-fork still inherits history from", () =>
+  Effect.gen(function* () {
+    const { maintenance, seed, remove } = yield* purgeFixture;
+    const root = yield* seed("root");
+    const middle = yield* seed("middle", {
+      type: "run",
+      threadId: root.id,
+      runId: RunId.make("run:purge:root"),
+    });
+    const fork = yield* seed("fork", {
+      type: "run",
+      threadId: middle.id,
+      runId: RunId.make("run:purge:middle"),
+    });
+    const unrelated = yield* seed("unrelated");
+    yield* remove(root, yield* DateTime.now);
+    yield* remove(middle, yield* DateTime.now);
+    yield* remove(unrelated, yield* DateTime.now);
+    yield* TestClock.adjust("2 days");
+
+    yield* maintenance.pruneEventStore();
+    assert.equal((yield* countContent(root.id))?.items, 1);
+    assert.equal((yield* countContent(middle.id))?.items, 1);
+    assert.equal((yield* countContent(fork.id))?.items, 1);
+    assert.equal((yield* countContent(unrelated.id))?.items, 0);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("purges a very large thread in bounded batches", () =>
+  Effect.gen(function* () {
+    const { maintenance, seed, remove } = yield* purgeFixture;
+    const sql = yield* SqlClient.SqlClient;
+    const big = yield* seed("big");
+    yield* sql`
+      INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
+      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200)
+      SELECT ${big.id}, 'turn-item:purge:filler:' || i, i + 100 FROM n
+    `;
+    yield* remove(big, yield* DateTime.now);
+    yield* TestClock.adjust("2 days");
+
+    let batches = 0;
+    const result = yield* maintenance.pruneEventStore(
+      Effect.sync(() => {
+        batches += 1;
+      }),
+    );
+    assert.isAtLeast(result.purgedProjectionRowCount, 1200);
+    assert.isAtLeast(batches, 3);
+    assert.equal((yield* countContent(big.id))?.positions, 0);
   }).pipe(Effect.provide(layerTest)),
 );
