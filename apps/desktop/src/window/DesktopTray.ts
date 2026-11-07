@@ -47,8 +47,9 @@ export const make = Effect.gen(function* () {
   };
 
   const destroyTray = Effect.sync(() => {
-    tray?.destroy();
+    const previous = tray;
     tray = null;
+    previous?.destroy();
   });
 
   yield* Effect.addFinalizer(() =>
@@ -95,7 +96,20 @@ export const make = Effect.gen(function* () {
     );
     tray.on("click", activate);
     yield* Ref.set(state.closeToTray, true);
-  });
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Ref.set(state.closeToTray, false).pipe(
+        Effect.andThen(
+          destroyTray.pipe(
+            Effect.catchCause((cleanupCause) =>
+              logWarning("failed to destroy the unfinished tray", { cause: cleanupCause }),
+            ),
+          ),
+        ),
+        Effect.andThen(logWarning("failed to configure the system tray", { cause })),
+      ),
+    ),
+  );
 
   const applyDisabled = Effect.gen(function* () {
     if (tray === null) return;
