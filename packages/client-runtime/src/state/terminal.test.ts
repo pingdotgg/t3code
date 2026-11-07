@@ -1,4 +1,5 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it } from "vite-plus/test";
 
@@ -9,6 +10,7 @@ import {
   type TerminalLifecycleEvent,
   type TerminalSessionMode,
 } from "./terminal.ts";
+import type { AtomCommandResult } from "./runtime.ts";
 import { EMPTY_TERMINAL_BUFFER_STATE, type TerminalBufferState } from "./terminalSession.ts";
 
 function run(events: ReadonlyArray<TerminalLifecycleEvent>) {
@@ -79,13 +81,22 @@ function setup(options: { readonly initialInput?: string } = {}) {
   );
   const access = { canOperate: true };
   const calls: Array<{ readonly command: string; readonly input: unknown }> = [];
+  // Resize requests stay in flight until the test settles them.
+  const resizeResults: Array<(result: AtomCommandResult<void, string>) => void> = [];
   const command = (name: string) => ({
     label: name,
-    run: async (_registry: AtomRegistry.AtomRegistry, value: { readonly input: unknown }) => {
+    run: (_registry: AtomRegistry.AtomRegistry, value: { readonly input: unknown }) => {
       calls.push({ command: name, input: value.input });
-      return AsyncResult.success(undefined);
+      if (name !== "resize") return Promise.resolve(AsyncResult.success(undefined));
+      return new Promise<AtomCommandResult<void, string>>((resolve) => resizeResults.push(resolve));
     },
   });
+  // The session sees a settled result within a fixed number of microtasks.
+  const failResize = async (index: number) => {
+    resizeResults[index]!(AsyncResult.failure(Cause.fail("offline")));
+    // No promise marks the retry decision, so flush the command's continuation chain.
+    for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+  };
   const exits: Array<true> = [];
   const live: Array<boolean> = [];
   const session = createTerminalSession(
@@ -126,7 +137,21 @@ function setup(options: { readonly initialInput?: string } = {}) {
     registry.set(observation, snapshot(state));
   const mount = (mode: TerminalSessionMode) => registry.mount(session.driver(mode));
   const of = (name: string) => calls.filter((call) => call.command === name).map((c) => c.input);
-  return { session, attached, access, flush, detach, emit, observe, mount, calls, of, exits, live };
+  return {
+    session,
+    attached,
+    access,
+    failResize,
+    flush,
+    detach,
+    emit,
+    observe,
+    mount,
+    calls,
+    of,
+    exits,
+    live,
+  };
 }
 
 it("replays the measured grid on every new attachment generation", () => {
@@ -149,6 +174,30 @@ it("replays the measured grid on every new attachment generation", () => {
   expect(of("resize")).toEqual([
     { threadId, terminalId: "term-1", cols: 120, rows: 40 },
     { threadId, terminalId: "term-1", cols: 100, rows: 30 },
+    { threadId, terminalId: "term-1", cols: 100, rows: 30 },
+    { threadId, terminalId: "term-1", cols: 100, rows: 30 },
+  ]);
+});
+
+it("sends each failed resize again once, in every attachment generation", async () => {
+  const { session, attached, failResize, emit, detach, mount, of } = setup();
+  mount(attached);
+  emit({ status: "running", version: 1 });
+  detach();
+  await failResize(0);
+  expect(of("resize")).toHaveLength(1);
+
+  emit({ status: "running", version: 1, generation: 2 });
+  await failResize(1);
+  expect(of("resize")).toHaveLength(3);
+  await failResize(2);
+  session.reportGridSize({ cols: 100, rows: 30 });
+  await failResize(3);
+  await failResize(4);
+  expect(of("resize")).toEqual([
+    { threadId, terminalId: "term-1", cols: 120, rows: 40 },
+    { threadId, terminalId: "term-1", cols: 120, rows: 40 },
+    { threadId, terminalId: "term-1", cols: 120, rows: 40 },
     { threadId, terminalId: "term-1", cols: 100, rows: 30 },
     { threadId, terminalId: "term-1", cols: 100, rows: 30 },
   ]);
