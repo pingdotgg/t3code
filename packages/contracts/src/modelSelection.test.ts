@@ -70,3 +70,27 @@ it.effect(
       assert.deepStrictEqual(encoded.options, decoded.options);
     }),
 );
+
+// MCP tools such as t3_thread_launch publish this schema as their input. Gemini on Vertex AI
+// rejects the whole request when any tool parameter has no `type`.
+it("ModelSelection's JSON Schema gives every field a type", () => {
+  const untypedPaths: Array<string> = [];
+  const visit = (node: unknown, path: string): void => {
+    if (typeof node !== "object" || node === null) return;
+    const schema = node as Record<string, unknown>;
+    const branches = [
+      ...(Array.isArray(schema.anyOf) ? schema.anyOf : []),
+      ...(Array.isArray(schema.oneOf) ? schema.oneOf : []),
+    ];
+    if (schema.type === undefined && schema.$ref === undefined && branches.length === 0) {
+      untypedPaths.push(path);
+    }
+    branches.forEach((branch, index) => visit(branch, `${path}|${index}`));
+    if (typeof schema.properties === "object" && schema.properties !== null) {
+      for (const [key, value] of Object.entries(schema.properties)) visit(value, `${path}.${key}`);
+    }
+    visit(schema.items, `${path}[]`);
+  };
+  visit(Schema.toJsonSchemaDocument(ModelSelection).schema, "$");
+  assert.deepStrictEqual(untypedPaths, []);
+});
