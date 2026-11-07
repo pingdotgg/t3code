@@ -43,4 +43,16 @@ describe("PreviewPanelShell focus", () => {
 
     await expect.element(screen.getByRole("textbox", { name: "Message New thread" })).toHaveFocus();
   });
+
+  it("returns focus to the toggle when a panel opened from it collapses", async () => {
+    await using screen = await render(<Workspace open={false} />);
+    await userEvent.click(screen.getByRole("textbox", { name: "Message New thread" }));
+    await userEvent.click(screen.getByRole("button", { name: "Toggle right panel" }));
+    await screen.rerender(<Workspace open />);
+    await act(() => screen.getByRole("region", { name: "Open a surface" }).element().focus());
+
+    await screen.rerender(<Workspace open={false} />);
+
+    await expect.element(screen.getByRole("button", { name: "Toggle right panel" })).toHaveFocus();
+  });
 });
