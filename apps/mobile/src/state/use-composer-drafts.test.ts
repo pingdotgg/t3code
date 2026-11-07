@@ -186,6 +186,7 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
+import { installComposerDraftsForegroundFlush } from "./composer-drafts-foreground-flush";
 import { threadOutboxManager } from "./thread-outbox";
 import {
   appendComposerDraftAttachments,
@@ -2097,6 +2098,7 @@ describe("mobile composer drafts", () => {
     "persists a cleared send before the app goes %s",
     async (state) => {
       vi.useFakeTimers();
+      onTestFinished(installComposerDraftsForegroundFlush());
       const draftKey = "environment-1:thread-1";
       setComposerDraftText(draftKey, "Ship the release notes");
       await flushComposerDrafts();
