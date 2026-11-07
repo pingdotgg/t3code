@@ -292,6 +292,8 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  /** Diff paths are named from it; omitted, they are taken as workspace-relative. */
+  repositoryRoot?: string | undefined;
   skills?: ReadonlyArray<ServerProviderSkill>;
   runs: ReadonlyArray<HandoffTimelineRun>;
   anchorMessageId: MessageId | null;
@@ -391,6 +393,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  repositoryRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   runs: runsProp,
   anchorMessageId,
@@ -1031,6 +1034,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     markdownCwd,
     resolvedTheme,
     workspaceRoot,
+    repositoryRoot,
     skills,
     runs,
     activeThreadEnvironmentId,

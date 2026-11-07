@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   ProjectId,
   ThreadId,
+  TurnItemId,
   type ClientSettings,
   type ReviewBranchCommitsResult,
   type ReviewDiffPreviewResult,
@@ -31,6 +32,8 @@ const state = vi.hoisted(() => ({
   patch: null as unknown as ResultAtom<ReviewDiffPreviewSource>,
   diffFilesCollapsed: false,
   config: null as unknown as Atom.Atom<null>,
+  project: { workspaceRoot: "/project", repositoryIdentity: null as { rootPath: string } | null },
+  toolCallItem: null as unknown,
   status: null as unknown as ResultAtom<VcsStatusResult>,
   localRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   remoteRefs: null as unknown as ResultAtom<VcsListRefsResult>,
@@ -58,7 +61,7 @@ vi.mock("~/state/vcs", () => ({
 }));
 vi.mock("~/state/entities", () => ({
   useQuietThreadShell: () => state.thread,
-  useProject: () => ({ workspaceRoot: "/project", repositoryIdentity: null }),
+  useProject: () => state.project,
   useThreadCheckpointSummaries: () => [],
   useQuietThreadVisibleTurnItems: () => [],
 }));
@@ -78,7 +81,11 @@ vi.mock("~/hooks/useTheme", () => ({
 }));
 vi.mock("~/state/queries", () => ({
   useCheckpointDiff: () => ({ data: null, error: null, isPending: false }),
-  useTurnItemDetail: () => ({ data: null, error: null, isPending: false }),
+  useTurnItemDetail: () => ({
+    data: state.toolCallItem ? { item: state.toolCallItem } : null,
+    error: null,
+    isPending: false,
+  }),
   useDebouncedValue: <A,>(value: A) => value,
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {} }));
@@ -91,6 +98,7 @@ vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null 
 
 import DiffPanel from "./DiffPanel";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 const cwd = "/project-worktree";
 const errorMessage = "Could not find a common commit between 'origin/orphan' and HEAD.";
@@ -124,9 +132,12 @@ function setup(failedBaseRef: string | null) {
       keepSelectionOnOpenThreadKey: null,
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useRightPanelStore.setState({ byThreadKey: {} });
   };
   reset();
   state.diffFilesCollapsed = false;
+  state.project = { workspaceRoot: "/project", repositoryIdentity: null };
+  state.toolCallItem = null;
   const patch = Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>(
     AsyncResult.initial(),
   );
@@ -268,3 +279,82 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+
+// A local thread in a project that is the repository's apps/web folder.
+function inRepositoryFolder(context: ReturnType<typeof setup>, repositoryIdentity: boolean) {
+  state.thread = { ...state.thread!, worktreePath: null };
+  state.project = {
+    workspaceRoot: "/repo/apps/web",
+    repositoryIdentity: repositoryIdentity ? { rootPath: "/repo" } : null,
+  };
+  const status = AsyncResult.getOrThrow(context.registry.get(state.status));
+  state.status = Atom.make(
+    AsyncResult.success({ ...status, workingTree: { ...status.workingTree, rootPath: "/repo" } }),
+  );
+}
+
+function openedFiles(threadRef: ScopedThreadRef) {
+  return (
+    useRightPanelStore
+      .getState()
+      .byThreadKey[scopedThreadKey(threadRef)]?.surfaces.map((surface) => surface.id) ?? []
+  );
+}
+
+it("opens a file from a diff in a project inside its repository", async () => {
+  using context = setup("origin/orphan");
+  // Without a remote the project has no repository identity.
+  inRepositoryFolder(context, false);
+  const path = "apps/web/src/a.ts";
+  const metadata = preview();
+  const source = {
+    ...metadata.sources[0]!,
+    files: [{ path, previousPath: null, additions: 1, deletions: 1 }],
+  };
+  state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await userEvent.click(screen.getByRole("button", { name: `Expand ${path}`, exact: true }));
+  await act(() =>
+    context.registry.set(
+      context.patch,
+      AsyncResult.success({
+        ...source,
+        diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`,
+      }),
+    ),
+  );
+  await userEvent.click(screen.getByText(path, { exact: true }));
+  await vi.waitFor(() => expect(openedFiles(context.threadRef)).toContain("file:src/a.ts"));
+});
+
+it("opens a file from a tool call's diff by the path its agent recorded", async () => {
+  using context = setup("origin/orphan");
+  inRepositoryFolder(context, true);
+  // Claude's Edit can record a path relative to the workspace, unlike the repository's diffs.
+  state.toolCallItem = {
+    type: "file_change",
+    fileName: "src/a.ts",
+    diffStr: "--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-before\n+after\n",
+  };
+  useDiffPanelStore.getState().selectToolCall(context.threadRef, {
+    threadId: context.threadRef.threadId,
+    itemId: TurnItemId.make("edit"),
+    revision: "1",
+  });
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await userEvent.click(screen.getByText("src/a.ts", { exact: true }));
+  await vi.waitFor(() => expect(openedFiles(context.threadRef)).toContain("file:src/a.ts"));
+});
