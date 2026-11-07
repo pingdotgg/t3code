@@ -62,6 +62,12 @@ try {
       .getByRole("dialog")
       .getByRole("button", { name: "Skip" })
       .click({ timeout: STEP_TIMEOUT_MS });
+    // The fixture has threads, so it counts as an existing install and What's new follows.
+    step = "skipping What's new";
+    await page
+      .getByRole("dialog", { name: "What's new" })
+      .getByRole("button", { name: "Skip" })
+      .click({ timeout: STEP_TIMEOUT_MS });
     step = `finding "${THREAD_TITLE}" in the sidebar`;
     const thread = page.locator("li[data-thread-item]", { hasText: THREAD_TITLE });
     await thread.waitFor({ timeout: STEP_TIMEOUT_MS });
