@@ -650,6 +650,9 @@ export const layer: Layer.Layer<
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
         readonly refreshAfterTurn: Effect.Effect<void>;
+        readonly settleUsage?: (
+          report: ProviderUsageAnalytics.RunSettledReport,
+        ) => Effect.Effect<void>;
         readonly writeIfRunCurrent?: {
           readonly activeAttemptId: RunAttemptId;
           readonly expectedStatus: OrchestrationV2Run["status"];
@@ -904,7 +907,7 @@ export const layer: Layer.Layer<
         } else {
           yield* eventSink.writeWithEffects(finalization);
         }
-        yield* turnAnalytics.runSettled({
+        yield* (input.settleUsage ?? turnAnalytics.runSettled)({
           runId: input.run.id,
           status: input.terminal.status,
           completedAt,
@@ -1097,6 +1100,8 @@ export const layer: Layer.Layer<
         );
         const rootTerminalSeen = yield* Ref.make(false);
         const rootRunFinalized = yield* Ref.make(false);
+        const pendingUsageSettlement =
+          yield* Ref.make<ProviderUsageAnalytics.RunSettledReport | null>(null);
         const providerThreadOwnerLost = yield* Ref.make(false);
         const pendingBackgroundProviderTurns = new Set<ProviderTurnId>();
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
@@ -1152,6 +1157,14 @@ export const layer: Layer.Layer<
               terminal: settledTerminal,
               failureItemPersisted: settledTerminal.status === "failed",
               refreshAfterTurn,
+              settleUsage: (report) =>
+                Ref.get(latestRootProviderTurn).pipe(
+                  Effect.flatMap((turn) =>
+                    turn?.usagePending
+                      ? Ref.set(pendingUsageSettlement, report)
+                      : turnAnalytics.runSettled(report),
+                  ),
+                ),
             }).pipe(
               Effect.mapError(
                 (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
@@ -1675,6 +1688,20 @@ export const layer: Layer.Layer<
             }
           }
           yield* trackChildLifecycle(event, deliveredEvent !== null);
+          if (
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.id === (yield* Ref.get(eventRouting)).rootProviderTurnId &&
+            !event.providerTurn.usagePending &&
+            isTerminalProviderTurnStatus(event.providerTurn.status)
+          ) {
+            const report = yield* Ref.getAndSet(pendingUsageSettlement, null);
+            if (report)
+              yield* turnAnalytics.runSettled({
+                ...report,
+                status: event.providerTurn.status,
+                completedAt: event.providerTurn.completedAt ?? report.completedAt,
+              });
+          }
           yield* scheduleIdleFlush;
         });
         const providerEventFiber = yield* eventSink
