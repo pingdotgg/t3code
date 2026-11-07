@@ -28,10 +28,16 @@ export function ExpandableText({
         // A new text can be clipped at the same box size, which a resize alone would not report.
         key={collapsedText}
         ref={(element) => {
-          if (element === null) return;
-          return observeResize(element, () => {
-            setClipped(element.scrollHeight - element.clientHeight > 1);
-          });
+          // Expanded text is unclamped, so measuring it would drop the button and its focus.
+          if (element === null || expanded) return;
+          const measure = () => setClipped(element.scrollHeight - element.clientHeight > 1);
+          const stopObserving = observeResize(element, measure);
+          // A font swap can rewrap the text without resizing the clamped box.
+          document.fonts.addEventListener("loadingdone", measure);
+          return () => {
+            stopObserving();
+            document.fonts.removeEventListener("loadingdone", measure);
+          };
         }}
         id={textId}
         className={cn("whitespace-pre-wrap break-words", !expanded && collapsedClassName)}

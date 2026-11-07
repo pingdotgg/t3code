@@ -1,6 +1,7 @@
 import "~/index.css";
 
 import { expect, it } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { ExpandableText } from "./ExpandableText";
@@ -39,8 +40,9 @@ it("keeps the disclosure while expanded and follows container resizes", async ()
   );
 
   await screen.getByRole("button", { name: "Show full error" }).click();
-  await screen.getByRole("button", { name: "Show less" }).click();
-  await expect.element(screen.getByRole("button", { name: "Show full error" })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Show less" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(screen.getByRole("button", { name: "Show full error" })).toHaveFocus();
 
   await screen.rerender(
     <div style={{ width: 960 }}>
