@@ -8,11 +8,57 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 
 import {
+  resolveTerminalDrawerHeight,
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   synchronizeTerminalOutput,
   synchronizeTerminalSession,
 } from "./ThreadTerminalDrawer";
+
+describe("resolveTerminalDrawerHeight", () => {
+  const layout = { viewportHeight: 1000 };
+
+  it("covers the default share of the window until the thread is resized", () => {
+    expect(resolveTerminalDrawerHeight({ height: null, defaultPercent: 50, layout })).toBe(500);
+    expect(
+      resolveTerminalDrawerHeight({
+        height: null,
+        defaultPercent: 30,
+        layout: { viewportHeight: 1400 },
+      }),
+    ).toBe(420);
+  });
+
+  it("prefers a height the user dragged to", () => {
+    expect(resolveTerminalDrawerHeight({ height: 610, defaultPercent: 30, layout })).toBe(610);
+  });
+
+  it("keeps both sources within the floor and the 75% window cap", () => {
+    expect(resolveTerminalDrawerHeight({ height: 2000, defaultPercent: 30, layout })).toBe(750);
+    expect(
+      resolveTerminalDrawerHeight({
+        height: null,
+        defaultPercent: 10,
+        layout: { viewportHeight: 800 },
+      }),
+    ).toBe(180);
+  });
+
+  it("still leaves room for the chat header and composer", () => {
+    expect(
+      resolveTerminalDrawerHeight({
+        height: null,
+        defaultPercent: 75,
+        layout: {
+          viewportHeight: 1000,
+          chatColumnHeight: 900,
+          headerHeight: 50,
+          composerHeight: 150,
+        },
+      }),
+    ).toBe(700);
+  });
+});
 
 describe("terminal selection actions", () => {
   it("does not let an old selection popup cancel its replacement right-click menu", () => {

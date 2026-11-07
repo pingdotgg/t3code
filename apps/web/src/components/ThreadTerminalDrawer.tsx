@@ -31,6 +31,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { MAX_TERMINAL_DRAWER_HEIGHT_PERCENT } from "@t3tools/contracts/settings";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -74,11 +75,7 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
-import {
-  DEFAULT_THREAD_TERMINAL_HEIGHT,
-  MAX_TERMINALS_PER_GROUP,
-  type ThreadTerminalGroup,
-} from "../types";
+import { MAX_TERMINALS_PER_GROUP, type ThreadTerminalGroup } from "../types";
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
@@ -109,7 +106,7 @@ import {
 } from "../appearanceFonts";
 
 const MIN_DRAWER_HEIGHT = 180;
-const MAX_DRAWER_HEIGHT_RATIO = 0.75;
+const MAX_DRAWER_HEIGHT_RATIO = MAX_TERMINAL_DRAWER_HEIGHT_PERCENT / 100;
 
 interface DrawerLayout {
   viewportHeight: number;
@@ -135,8 +132,21 @@ function resolveTerminalDrawerMaxHeight(input: DrawerLayout): number {
 const DRAG_HEIGHT_PROPERTY = "--terminal-drawer-drag-height";
 
 function clampDrawerHeight(height: number, maxHeight: number): number {
-  const safeHeight = Number.isFinite(height) ? height : DEFAULT_THREAD_TERMINAL_HEIGHT;
+  const safeHeight = Number.isFinite(height) ? height : MIN_DRAWER_HEIGHT;
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
+}
+
+/**
+ * A height the user dragged to wins; a thread never resized (`null`) covers
+ * the default share of the window. Both stay within the drawer's layout cap.
+ */
+export function resolveTerminalDrawerHeight(input: {
+  height: number | null;
+  defaultPercent: number;
+  layout: DrawerLayout;
+}): number {
+  const requested = input.height ?? (input.layout.viewportHeight * input.defaultPercent) / 100;
+  return clampDrawerHeight(requested, resolveTerminalDrawerMaxHeight(input.layout));
 }
 
 function chatColumnOf(drawer: HTMLElement | null): HTMLElement | null {
@@ -1230,7 +1240,8 @@ interface ThreadTerminalDrawerProps {
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   visible?: boolean;
-  height: number;
+  /** Height the user dragged to; `null` uses the default-height setting. */
+  height: number | null;
   /** Space the chat column keeps for the composer overlay; only read in drawer mode. */
   composerHeight?: number;
   terminalIds: string[];
@@ -1518,8 +1529,15 @@ export default function ThreadTerminalDrawer({
   );
   const drawerRef = useRef<HTMLElement | null>(null);
   const [drawerLayout, setDrawerLayout] = useState(() => readDrawerLayout(null));
+  const defaultHeightPercent = useClientSettings(
+    (settings) => settings.terminalDrawerHeightPercent,
+  );
   const maxDrawerHeight = resolveTerminalDrawerMaxHeight({ ...drawerLayout, composerHeight });
-  const drawerHeight = clampDrawerHeight(height, maxDrawerHeight);
+  const drawerHeight = resolveTerminalDrawerHeight({
+    height,
+    defaultPercent: defaultHeightPercent,
+    layout: { ...drawerLayout, composerHeight },
+  });
   // A drag only writes the drawer's style; the store hears the height once, at
   // pointerup. The custom property outranks the rendered height while it is set.
   const resizeStateRef = useRef<{
