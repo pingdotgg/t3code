@@ -120,6 +120,12 @@ const policies = (): ReadonlyArray<Policy> => [
     toggle: "BrowserCookieImport",
   },
   {
+    id: "SnapShot",
+    title: "Allow SnapShots",
+    help: "Disabled turns SnapShots off in the desktop app, so users cannot capture windows into a draft.",
+    toggle: "SnapShot",
+  },
+  {
     id: "Telemetry",
     title: "Allow usage data",
     help: "Disabled stops T3 Code from sending product usage data and relay connection traces. Enabled cannot turn them on for a user who turned them off.",

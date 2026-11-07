@@ -5,6 +5,7 @@ import {
   DesktopPendingSnapShot,
   type ClientSettings,
   type DesktopSnapShotEvent,
+  type ManagedPolicyDocument,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -423,6 +424,7 @@ vi.mock("electron", () => {
 });
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopSnapShot from "./DesktopSnapShot.ts";
@@ -485,10 +487,12 @@ const layerTest = (
     Option.Option<ClientSettings>,
     DesktopClientSettings.DesktopClientSettingsReadError
   > = Effect.succeed(initialSettings),
+  policy?: ManagedPolicyDocument,
 ) =>
   MacPermissions.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
+        DesktopManagedPolicy.layerTest(policy),
         Layer.succeed(
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
@@ -977,6 +981,70 @@ it.effect.each(["succeeds", "fails"] as const)(
     ).pipe(Effect.provide(fixture.layer), Effect.ensuring(Effect.sync(fixture.reset)));
   },
 );
+
+it.effect("a policy without SnapShots keeps capture off whatever the user saved", () => {
+  const removed: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      activeWindowMock.mockReset().mockResolvedValue({
+        platform: "macos",
+        id: 42,
+        title: "Setup",
+        owner: { name: "T3 Code", processId: 123 },
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+      });
+      macCaptureMock
+        .mockReset()
+        .mockResolvedValue({ source: { name: "Setup" }, png: Buffer.from("png") });
+      const service = yield* DesktopSnapShot.make;
+      registerShortcutMock.mockClear();
+      yield* service.configure(enabledSettings());
+      const refused = yield* service.capture.pipe(Effect.flip);
+      assert.equal(refused.operation, "disabled");
+      assert.equal(registerShortcutMock.mock.calls.length, 0);
+      yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(macCaptureMock.mock.calls.length, 0);
+      assert.equal(
+        (yield* service.state).policyDenial,
+        "Example Corp's policy does not allow SnapShots.",
+      );
+      assert.deepEqual(yield* service.listPending, []);
+      assert.deepEqual(removed, []);
+    }),
+  ).pipe(
+    Effect.provide(
+      layerTest(
+        "darwin",
+        {
+          makeTempDirectoryScoped: () => Effect.succeed("/tmp/setup-test"),
+          readDirectory: () => Effect.succeed(["capture.json"]),
+          remove: (path) =>
+            Effect.sync(() => {
+              removed.push(path);
+            }),
+          readFileString: () =>
+            Effect.succeed(
+              JSON.stringify({
+                id: "00000000-0000-4000-8000-000000000000",
+                name: "capture.png",
+                mimeType: "image/png",
+                sizeBytes: 3,
+                source: {
+                  kind: "snap-shot",
+                  capturedAt: "2026-11-05T10:00:00.000Z",
+                  appName: "Editor",
+                  windowTitle: "Editor",
+                },
+              }),
+            ),
+        },
+        Option.none(),
+        undefined,
+        { schemaVersion: 1, organization: "Example Corp", limits: { snapShot: false } },
+      ),
+    ),
+  );
+});
 
 it.effect("matches Windows accessibility windows on a scaled display", () => {
   const png = Buffer.from([1, 2, 3]);

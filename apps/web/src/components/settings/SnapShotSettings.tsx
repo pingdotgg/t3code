@@ -9,9 +9,13 @@ import {
 import { PlayIcon } from "lucide-react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { useContext, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 
-import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import {
+  persistClientSettingsUpdate,
+  useClientSettings,
+  updateClientSettings,
+} from "../../hooks/useSettings";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
   saveSnapShotSetupResume,
@@ -26,6 +30,7 @@ import {
   snapShotSetupError,
   type SnapShotSetupError,
 } from "../../state/desktopSnapShot";
+import { ManagedNotice } from "../ManagedPolicy";
 import { toastManager } from "../ui/toast";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { commandLabel } from "./KeybindingsSettings.logic";
@@ -40,6 +45,7 @@ import {
   snapShotAccessibilityUnavailableMessage,
   snapShotSetupComplete,
   type SnapShotSoundSelection,
+  resumedCaptureSetup,
 } from "./SnapShotSettings.logic";
 import {
   SettingsUnavailableGroup,
@@ -92,6 +98,8 @@ export function SnapShotSettings() {
   const bridge = getDesktopSnapShotBridge();
   const registry = useContext(RegistryContext);
   const { state, refreshError } = useAtomValue(desktopSnapShotAtom);
+  const policyDenial = state?.policyDenial;
+  const enabled = settings.snapShotEnabled && policyDenial === undefined;
   const [setupBusy, setSetupBusy] = useState(false);
   const [setupError, setSetupError] = useState<SnapShotSetupError | null>(null);
   // macOS can quit the app from a permission prompt; until the user opens or closes the wizard
@@ -101,12 +109,7 @@ export function SnapShotSettings() {
     initialStep: CaptureSetupStep;
     wasEnabled: boolean;
   } | null>();
-  const wizard =
-    chosenWizard !== undefined
-      ? chosenWizard
-      : state?.macPermissions && resume
-        ? { initialStep: "access" as const, wasEnabled: resume.wasEnabled }
-        : null;
+  const wizard = chosenWizard !== undefined ? chosenWizard : resumedCaptureSetup(state, resume);
   // The wizard shows errors inline; outside it there is nowhere to, so they become a toast.
   const reportSetupError = (title: string, error: unknown) => {
     const report = snapShotSetupError(title, error);
@@ -193,6 +196,16 @@ export function SnapShotSettings() {
       reportSetupError("Couldn't save capture settings", error);
     }
   };
+
+  // The startup redirect follows the saved resume, and the wizard that would clear it stays closed.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- localStorage is outside React.
+  useEffect(() => {
+    if (policyDenial === undefined || !resume) return;
+    const restored = captureSetupShouldDisableOnClose(resume.wasEnabled, false)
+      ? persistClientSettingsUpdate((current) => ({ ...current, snapShotEnabled: false }))
+      : Promise.resolve();
+    void restored.then(clearSnapShotSetupResume, () => undefined);
+  }, [policyDenial, resume]);
 
   const saveIncludeAccessibility = async (includeAccessibility: boolean) => {
     try {
@@ -355,19 +368,23 @@ export function SnapShotSettings() {
           <SettingsRow
             {...searchableSetting("snap-shot-enabled")}
             description={snapShotDescription(state)}
+            managed={policyDenial}
             status={
-              bridge
-                ? setupBusy && !wizard
-                  ? "Updating capture settings…"
-                  : refreshError
-                    ? `${refreshError.title}. ${refreshError.message}`
-                    : snapShotStatus(state, settings.snapShotEnabled)
-                : undefined
+              bridge ? (
+                policyDenial !== undefined ? (
+                  <ManagedNotice>{policyDenial}</ManagedNotice>
+                ) : setupBusy && !wizard ? (
+                  "Updating capture settings…"
+                ) : refreshError ? (
+                  `${refreshError.title}. ${refreshError.message}`
+                ) : (
+                  snapShotStatus(state, enabled)
+                )
+              ) : undefined
             }
             control={
               <>
-                {settings.snapShotEnabled &&
-                !snapShotSetupComplete(state, settings.snapShotIncludeAccessibility) ? (
+                {enabled && !snapShotSetupComplete(state, settings.snapShotIncludeAccessibility) ? (
                   <Button
                     size="xs"
                     variant="outline"
@@ -378,8 +395,8 @@ export function SnapShotSettings() {
                   </Button>
                 ) : null}
                 <Switch
-                  checked={settings.snapShotEnabled || Boolean(wizard)}
-                  disabled={!captureAvailable || setupBusy}
+                  checked={enabled || Boolean(wizard)}
+                  disabled={!captureAvailable || setupBusy || policyDenial !== undefined}
                   aria-label="Enable snapshots"
                   onCheckedChange={(checked) => {
                     if (!checked) void save({ snapShotEnabled: false });
@@ -390,7 +407,7 @@ export function SnapShotSettings() {
               </>
             }
           />
-          {settings.snapShotEnabled && captureAvailable ? (
+          {enabled && captureAvailable ? (
             <>
               <SettingsRow
                 {...searchableSetting("snap-shot-accessibility")}

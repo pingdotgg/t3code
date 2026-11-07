@@ -5,6 +5,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DesktopPendingSnapShot,
   isModifierPairShortcut,
+  managedPolicyDeniedMessage,
   snapShotModifierPairLabel,
   snapShotShortcutModifierPair,
   type DesktopSnapShot as DesktopSnapShotValue,
@@ -39,6 +40,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Electron from "electron";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { startGlobalShiftShortcutProcess } from "./GlobalShiftShortcutProcess.ts";
@@ -764,6 +766,14 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
+  const policyDenial = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
+    Effect.map((found) =>
+      found?.document.limits?.snapShot === false
+        ? managedPolicyDeniedMessage(found.document.organization, "SnapShots")
+        : undefined,
+    ),
+    Effect.orElseSucceed(() => "SnapShots are off because this device's policy can't be read."),
+  );
   const settingsRef = yield* Ref.make(DEFAULT_CLIENT_SETTINGS);
   const stateRef = yield* Ref.make<DesktopSnapShotState>({
     mode: captureMode(environment.platform),
@@ -1129,10 +1139,12 @@ export const make = Effect.gen(function* () {
   });
 
   const applySettings = Effect.fn("desktop.snapShot.applySettings")(function* (
-    settings: ClientSettings,
+    saved: ClientSettings,
     requestedPermissionMessage: string | null,
     forceShortcut = false,
   ) {
+    // The saved choice stays for when the policy allows it.
+    const settings = policyDenial === undefined ? saved : { ...saved, snapShotEnabled: false };
     const previousSettings = yield* Ref.get(settingsRef);
     yield* Ref.set(settingsRef, settings);
 
@@ -1393,6 +1405,8 @@ export const make = Effect.gen(function* () {
     if (action === "test-mac-capture") {
       if (environment.platform !== "darwin")
         return yield* new DesktopSnapShotSetupError({ action, reason: "unsupported-session" });
+      if (policyDenial !== undefined)
+        return yield* new DesktopSnapShotSetupError({ action, reason: "setup-failed" });
       yield* Effect.scoped(
         Effect.gen(function* () {
           const directory = yield* fileSystem
@@ -1714,6 +1728,7 @@ export const make = Effect.gen(function* () {
                 }
               : {}),
             shortcutVerified,
+            ...(policyDenial === undefined ? {} : { policyDenial }),
           };
         }),
       ),
@@ -1721,7 +1736,11 @@ export const make = Effect.gen(function* () {
     checkShortcut,
     setShortcutSuppressed,
     capture,
-    listPending: fileSystem.readDirectory(captureDirectory).pipe(
+    // Captures from before the limit stay on disk for when it is removed.
+    listPending: (policyDenial === undefined
+      ? fileSystem.readDirectory(captureDirectory)
+      : Effect.succeed([])
+    ).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           cause.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(cause),
