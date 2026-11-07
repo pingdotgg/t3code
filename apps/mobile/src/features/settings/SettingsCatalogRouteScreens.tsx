@@ -63,13 +63,14 @@ function useServerSettingsPage() {
   const writeSettings = useSettingsWriter();
   const [pending, setPending] = useState(false);
 
-  async function write(patch: ServerSettingsPatch) {
-    if (pending) return;
+  async function write(patch: ServerSettingsPatch): Promise<boolean> {
+    if (pending) return false;
     const writes = planMobileScopedSettingsPatch(targets, false, patch);
-    if (writes.length === 0) return;
+    if (writes.length === 0) return false;
     setPending(true);
-    await writeSettings(targets, writes);
+    const ok = await writeSettings(targets, writes);
     setPending(false);
+    return ok;
   }
 
   return {
@@ -259,7 +260,7 @@ function SettingsSecretsEditor(props: {
   readonly pending: boolean;
   readonly canAdd: boolean;
   readonly canRemove: boolean;
-  readonly write: (patch: ServerSettingsPatch) => Promise<void>;
+  readonly write: (patch: ServerSettingsPatch) => Promise<boolean>;
 }) {
   const [label, setLabel] = useState("");
   const [account, setAccount] = useState("");
@@ -344,7 +345,8 @@ function SettingsSecretsEditor(props: {
                       },
                     },
                   })
-                  .then(() => {
+                  .then((ok) => {
+                    if (!ok) return;
                     setLabel("");
                     setAccount("");
                   });
