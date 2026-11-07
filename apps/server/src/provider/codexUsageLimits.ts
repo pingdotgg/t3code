@@ -4,11 +4,13 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
 import type * as CodexErrors from "effect-codex-app-server/errors";
 
-import { clampPercent, makeUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import {
+  clampPercent,
+  isoFromEpochSeconds,
+  makeUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
 
 interface CodexRateLimitWindow {
   readonly usedPercent: number;
@@ -39,12 +41,6 @@ export interface CodexResetCreditsSummary {
 const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
 const MONTH_MINS = 30 * 24 * 60;
-
-function isoFromEpochSeconds(value: number | null | undefined): string | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
-  const dt = DateTime.make(value * 1000);
-  return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
-}
 
 function kindForDuration(mins: number): ServerProviderUsageWindow["kind"] {
   if (mins >= MONTH_MINS) return "monthly";

@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import {
   clampPercent,
+  isoFromEpochSeconds,
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
@@ -123,12 +124,6 @@ function readModelScoped(rateLimits: object): ReadonlyArray<ModelScopedWindow> {
       entry !== null &&
       typeof (entry as ModelScopedWindow).display_name === "string",
   );
-}
-
-function isoFromEpochSeconds(value: number | undefined): string | undefined {
-  if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
-  const dt = DateTime.make(value * 1000);
-  return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
 }
 
 function isoFromString(value: string | null | undefined): string | undefined {
