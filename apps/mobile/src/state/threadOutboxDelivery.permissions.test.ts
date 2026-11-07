@@ -501,9 +501,17 @@ describe("queued task operation access", () => {
 });
 
 describe("queued task whose launch reply is lost", () => {
-  it.each([{ edited: false }, { edited: true }])(
-    "hands only an edit back to the composer once the created thread appears (edited: $edited)",
-    async ({ edited }) => {
+  it.each([
+    { edited: false, messageAccepted: true, composer: "Keep this draft separate" },
+    { edited: true, messageAccepted: true, composer: "Keep this draft separate\nEdited idea" },
+    {
+      edited: false,
+      messageAccepted: false,
+      composer: "Keep this draft separate\nMy dictated idea",
+    },
+  ])(
+    "hands back only text the thread lacks (edited: $edited, message accepted: $messageAccepted)",
+    async ({ edited, messageAccepted, composer }) => {
       setOperateGrant("secondary", true);
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
       state.cleanups.push(() => vi.useRealTimers());
@@ -530,7 +538,11 @@ describe("queued task whose launch reply is lost", () => {
 
       appAtomRegistry.set(state.threadShells, [
         state.thread,
-        { ...state.thread, id: "new-thread" },
+        {
+          ...state.thread,
+          id: "new-thread",
+          latestUserMessageAt: messageAccepted ? "2026-09-05T00:00:01.000Z" : null,
+        },
       ]);
       const settled = Promise.withResolvers<void>();
       const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
@@ -539,9 +551,7 @@ describe("queued task whose launch reply is lost", () => {
       vi.advanceTimersByTime(threadOutboxRetryDelayMs(1));
       await settled.promise.finally(release);
 
-      expect(state.draftText).toBe(
-        edited ? "Keep this draft separate\nEdited idea" : "Keep this draft separate",
-      );
+      expect(state.draftText).toBe(composer);
       expect(state.start).toHaveBeenCalledOnce();
       expect(remaining()).toEqual([]);
     },

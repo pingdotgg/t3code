@@ -1296,6 +1296,8 @@ export function createThreadOutboxDelivery(): {
         environmentConnected: environment?.connectionState === "connected",
         ...(familyRead === undefined ? {} : { familyRead }),
       });
+      // Launch commits the thread before its first message, so a lost reply can leave it empty.
+      const initialMessageAccepted = thread !== undefined && thread.latestUserMessageAt !== null;
       if (
         deliveryAction === "wait" &&
         shellStatus === "live" &&
@@ -1397,9 +1399,10 @@ export function createThreadOutboxDelivery(): {
         const launchedRevision = launchedCreationRevisions.get(messageId);
         return deliveryAction === "remove"
           ? creation !== undefined
-            ? launchedRevision === threadOutboxRevision(messageId)
+            ? launchedRevision === threadOutboxRevision(messageId) && initialMessageAccepted
               ? finishDeliveredCreation(nextQueuedMessage, launchedRevision, undefined)
-              : // Edited since launch, or launched before a restart that lost the revision: hand it back.
+              : // Edited since launch, launched before a restart that lost the revision, or the
+                // launch created the thread without its message: hand it back.
                 recoverEditedCreationAfterDelivery(nextQueuedMessage)
             : removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
           : creation !== undefined
