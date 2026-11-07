@@ -17,8 +17,13 @@ import {
   captureComposerDraftInsertion,
   countComposerDraftAttachmentsAfterSelection,
   getComposerDraftSnapshot,
+  composerPendingMediaAtom,
+  scheduleUnusedComposerAttachmentCleanup,
+  addComposerPendingMedia,
+  removeComposerPendingMedia,
   type ComposerDraftInsertion,
 } from "./use-composer-drafts";
+import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
 
 export function useComposerAttachmentActions(props: {
@@ -63,15 +68,30 @@ export function useComposerAttachmentActions(props: {
     if (!key || props.locked) return;
     const insertion = captureComposerDraftInsertion(key);
     await withDraftOperation(key, async (signal) => {
-      const result = await pickComposerMedia({
+      let placeholderIds: ReadonlyArray<string> = [];
+      await pickComposerMedia({
         existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
         maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
-      });
-      report(
-        "Could not attach photo or video",
-        result.error,
-        await append(key, signal, result.attachments, insertion),
-      );
+        onPicked: (placeholders) => {
+          placeholderIds = placeholders.map(({ id }) => id);
+          addComposerPendingMedia(key, placeholders);
+        },
+      })
+        .then(async (result) => {
+          // Every attachment has a placeholder; one the user removed is no longer pending.
+          // append writes the draft before its first await, so no removal lands in between.
+          const pending = appAtomRegistry.get(composerPendingMediaAtom)[key] ?? [];
+          const kept = result.attachments.filter(({ id }) => pending.some((p) => p.id === id));
+          scheduleUnusedComposerAttachmentCleanup(
+            result.attachments.filter((attachment) => !kept.includes(attachment)),
+          );
+          report(
+            "Could not attach photo or video",
+            result.error,
+            await append(key, signal, kept, insertion),
+          );
+        })
+        .finally(() => removeComposerPendingMedia(key, placeholderIds));
     });
   };
   const onPickDraftFiles = async () => {

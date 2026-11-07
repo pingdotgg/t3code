@@ -375,6 +375,8 @@ export async function pickComposerImages(input: { readonly existingCount: number
 export async function pickComposerMedia(input: {
   readonly existingCount: number;
   readonly maxVideoBytes?: number;
+  /** Receives placeholders over the picker's local copies before processing; each keeps its attachment's id. */
+  readonly onPicked?: (placeholders: ReadonlyArray<DraftComposerAttachment>) => void;
 }): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
@@ -425,11 +427,28 @@ export async function pickComposerMedia(input: {
       error: null,
     };
   }
+  const ids = result.assets.map(() => uuidv4());
+  input.onPicked?.(
+    result.assets.flatMap((asset, index): DraftComposerAttachment[] => {
+      const common = {
+        id: ids[index]!,
+        name: asset.fileName ?? "",
+        mimeType: asset.mimeType ?? "",
+        sizeBytes: asset.fileSize ?? 0,
+      };
+      if (asset.type === "image" || asset.mimeType?.startsWith("image/")) {
+        return [{ ...common, type: "image", previewUri: asset.uri }];
+      }
+      return input.maxVideoBytes === undefined
+        ? []
+        : [{ ...common, type: "file", fileUri: asset.uri }];
+    }),
+  );
 
   const attachments: DraftComposerAttachment[] = [];
   let error: string | null = null;
 
-  for (const asset of result.assets) {
+  for (const [index, asset] of result.assets.entries()) {
     if (attachments.length >= remainingSlots) {
       error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`;
       break;
@@ -443,15 +462,16 @@ export async function pickComposerMedia(input: {
       try {
         const { File } = await import("expo-file-system");
         const file = new File(asset.uri);
-        attachments.push(
-          await createComposerFileAttachment({
+        attachments.push({
+          ...(await createComposerFileAttachment({
             uri: asset.uri,
             name: asset.fileName?.trim() || file.name || "video",
             mimeType: mimeType || file.type || "application/octet-stream",
             sizeBytes: asset.fileSize ?? null,
             maxBytes: clampFileAttachmentUploadBytes(input.maxVideoBytes),
-          }),
-        );
+          })),
+          id: ids[index]!,
+        });
       } catch (cause) {
         error =
           cause instanceof Error ? cause.message : `Could not read '${asset.fileName ?? "video"}'.`;
@@ -482,7 +502,8 @@ export async function pickComposerMedia(input: {
         ? mimeType
         : null;
 
-    let image: { base64: string; mimeType: string; name: string; previewUri: string };
+    let image: { base64: string; mimeType: string; name: string };
+    let renderedUri: string | undefined;
     try {
       if (originalMimeType !== null) {
         const { File } = await import("expo-file-system");
@@ -492,24 +513,33 @@ export async function pickComposerMedia(input: {
           mimeType: originalMimeType,
           base64,
         });
+        renderedUri = fitted?.uri;
         image = {
           base64: fitted?.base64 ?? base64,
           mimeType: originalMimeType,
           name,
-          previewUri: fitted?.uri ?? asset.uri,
         };
       } else {
         const rendered = await renderPhoto(asset.uri);
+        renderedUri = rendered.uri;
         image = {
           base64: rendered.base64,
           mimeType: "image/jpeg",
           name: /\.jpe?g$/i.test(name) ? name : `${name.replace(/\.[^.]+$/, "")}.jpg`,
-          previewUri: rendered.uri,
         };
       }
     } catch {
       error = `Failed to read '${name}'.`;
       continue;
+    }
+    // The bytes now live in the data URL, and the preview uses the picker copy.
+    if (renderedUri !== undefined) {
+      try {
+        const { File } = await import("expo-file-system");
+        new File(renderedUri).delete();
+      } catch (cause) {
+        console.warn("[composer-images] could not remove rendered photo", cause);
+      }
     }
 
     const sizeBytes = estimateBase64ByteSize(image.base64);
@@ -519,13 +549,14 @@ export async function pickComposerMedia(input: {
     }
 
     attachments.push({
-      id: uuidv4(),
+      id: ids[index]!,
       type: "image",
       name: image.name,
       mimeType: image.mimeType,
       sizeBytes,
       dataUrl: `data:${image.mimeType};base64,${image.base64}`,
-      previewUri: image.previewUri,
+      // The picker copy is already on screen as the placeholder; reusing it avoids a reload flash.
+      previewUri: asset.uri,
     });
   }
 

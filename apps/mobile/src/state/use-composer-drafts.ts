@@ -88,6 +88,46 @@ export function setComposerContextImporting(draftKey: string, importing: boolean
   appAtomRegistry.set(composerContextImportsAtom, next);
 }
 
+/** Placeholders for picked media still being processed, shown in the strip until their attachments land. */
+export const composerPendingMediaAtom = Atom.make<
+  Record<string, ReadonlyArray<DraftComposerAttachment>>
+>({}).pipe(Atom.keepAlive);
+
+function updateComposerPendingMedia(
+  draftKey: string,
+  update: (current: ReadonlyArray<DraftComposerAttachment>) => DraftComposerAttachment[],
+): void {
+  const all = appAtomRegistry.get(composerPendingMediaAtom);
+  const current = all[draftKey] ?? [];
+  const placeholders = update(current);
+  if (placeholders.length === current.length) return;
+  const next = { ...all };
+  if (placeholders.length > 0) next[draftKey] = placeholders;
+  else delete next[draftKey];
+  appAtomRegistry.set(composerPendingMediaAtom, next);
+}
+
+export function addComposerPendingMedia(
+  draftKey: string,
+  placeholders: ReadonlyArray<DraftComposerAttachment>,
+): void {
+  updateComposerPendingMedia(draftKey, (current) => [...current, ...placeholders]);
+}
+
+export function removeComposerPendingMedia(draftKey: string, ids: ReadonlyArray<string>): void {
+  updateComposerPendingMedia(draftKey, (current) =>
+    current.filter((placeholder) => !ids.includes(placeholder.id)),
+  );
+}
+
+/** A draft can't be sent while context is importing or picked media is still processing. */
+export function composerDraftBusy(draftKey: string): boolean {
+  return (
+    appAtomRegistry.get(composerContextImportsAtom)[draftKey] === true ||
+    appAtomRegistry.get(composerPendingMediaAtom)[draftKey] !== undefined
+  );
+}
+
 interface ComposerDraftSelection {
   readonly text: string;
   readonly start: number;
@@ -1470,6 +1510,7 @@ export function replaceComposerDraftAttachments(
 }
 
 export function removeComposerDraftAttachment(draftKey: string, imageId: string): void {
+  removeComposerPendingMedia(draftKey, [imageId]);
   const previousAttachments = getComposerDraftSnapshot(draftKey).attachments;
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);

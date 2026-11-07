@@ -61,6 +61,7 @@ import {
   composerDraftsAtom,
   setComposerDraftText,
   composerContextImportsAtom,
+  composerPendingMediaAtom,
   countComposerDraftAttachmentsAfterSelection,
   useComposerDraft,
 } from "../../state/use-composer-drafts";
@@ -454,11 +455,19 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
   const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
+  const pendingMedia = useAtomValue(composerPendingMediaAtom)[composerDraftKey];
   const hasContent =
     draftMessage.trim().length > 0 ||
     draftAttachments.length > 0 ||
+    pendingMedia !== undefined ||
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
-  const stripAttachments = composerStripAttachments(draftAttachments);
+  // A finished attachment keeps its placeholder's id; skip the placeholder once it lands.
+  const stripAttachments = [
+    ...composerStripAttachments(draftAttachments),
+    ...(pendingMedia ?? []).filter(
+      (placeholder) => !draftAttachments.some(({ id }) => id === placeholder.id),
+    ),
+  ];
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
   const onResumeQueue = props.onResumeQueue;
   const [resumingQueue, setResumingQueue] = useState(false);
@@ -616,6 +625,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     (props.canOperateThread || props.connectionState !== "connected") &&
     hasContent &&
     !contextImports[composerDraftKey] &&
+    pendingMedia === undefined &&
     !isSubmissionLocked &&
     sendBlockedReason === null &&
     !modelUnavailable;
@@ -633,7 +643,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       (current) =>
         current ?? {
           ...source,
-          gallery: filePreviewGallery(source, composerImageGallery(draftAttachments)),
+          gallery: filePreviewGallery(source, composerImageGallery(stripAttachments)),
         },
     );
   };
