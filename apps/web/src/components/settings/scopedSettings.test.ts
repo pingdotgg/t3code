@@ -3,7 +3,9 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -782,5 +784,201 @@ describe("model selection patches at project scope", () => {
       optionsPlan.serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]
         ?.textGenerationModelSelection,
     ).toEqual({ ...saved, options });
+  });
+});
+
+describe("model selections for one account under distinct instance IDs", () => {
+  const account = (
+    instanceId: string,
+    auth: Partial<ServerProvider["auth"]> = {},
+    driver = "codex",
+  ): ServerProvider => ({
+    instanceId: ProviderInstanceId.make(instanceId),
+    driver: ProviderDriverKind.make(driver),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: {
+      status: "authenticated",
+      type: driver === "codex" ? "chatgpt" : "max",
+      email: "Gmail@Example.test",
+      workspaceId: "personal",
+      ...auth,
+    },
+    checkedAt: "2026-11-03T00:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  });
+  const laptopCodex = account("codex_laptop_gmail");
+  const serverCodex = account("codex_server_gmail", { email: "gmail@example.test" });
+  const providers = (laptopProviders: ServerProvider[], serverProviders: ServerProvider[]) =>
+    new Map([
+      [laptop.environmentId, laptopProviders],
+      [server.environmentId, serverProviders],
+    ]);
+  const matching = providers([laptopCodex], [serverCodex]);
+  const fromLaptop = (providersByEnvironment: ReturnType<typeof providers>) => ({
+    sourceEnvironmentId: laptop.environmentId,
+    providersByEnvironment,
+  });
+  const luna = { instanceId: laptopCodex.instanceId, model: "gpt-6-luna" };
+  const keys = [
+    "defaultModelSelection",
+    "fallbackModelSelection",
+    "textGenerationModelSelection",
+    "sourceControlWriterModelSelection",
+    "reviewGuideModelSelection",
+    "speechPostProcessingModelSelection",
+  ] as const;
+
+  it("writes each environment's own instance for every model setting", () => {
+    const patch = Object.fromEntries(keys.map((key) => [key, luna]));
+    const plan = planScopedSettingsPatch(all, environments, patch, fromLaptop(matching));
+    expect(plan.unavailableReason).toBeNull();
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      patch,
+      Object.fromEntries(keys.map((key) => [key, { ...luna, instanceId: serverCodex.instanceId }])),
+    ]);
+    const loading = new Map(matching);
+    loading.delete(server.environmentId);
+    const pending = planScopedSettingsPatch(all, environments, patch, fromLaptop(loading));
+    expect(pending.serverWrites).toEqual([]);
+    expect(pending.unavailableReason).toContain("Server");
+  });
+
+  it("maps project overrides to each member's own instance", () => {
+    const projectKeys = [
+      "defaultModelSelection",
+      "textGenerationModelSelection",
+      "sourceControlWriterModelSelection",
+      "reviewGuideModelSelection",
+    ] as const;
+    const plan = planScopedSettingsPatch(
+      project,
+      environments,
+      Object.fromEntries(projectKeys.map((key) => [key, luna])),
+      fromLaptop(matching),
+    );
+    expect(plan.serverWrites.map((write) => write.patch.projectSettingsOverrides)).toEqual([
+      {
+        [projectId]: Object.fromEntries(
+          projectKeys.map((key) => [key, { ...luna, instanceId: serverCodex.instanceId }]),
+        ),
+      },
+      { [laptopProjectId]: Object.fromEntries(projectKeys.map((key) => [key, luna])) },
+    ]);
+  });
+
+  it("prefers the same instance ID and driver over account matching", () => {
+    const shared = account("codex_shared");
+    expect(
+      planScopedSettingsPatch(
+        all,
+        environments,
+        { defaultModelSelection: { instanceId: shared.instanceId, model: "gpt-6-luna" } },
+        fromLaptop(providers([shared, laptopCodex], [serverCodex, shared])),
+      ).serverWrites.map((write) => write.patch.defaultModelSelection?.instanceId),
+    ).toEqual([shared.instanceId, shared.instanceId]);
+  });
+
+  it.each([
+    [
+      "an API key account",
+      [account("codex_laptop_key", { type: "apiKey" })],
+      [account("codex_server_key", { type: "apiKey" })],
+    ],
+    [
+      "a different workspace",
+      [laptopCodex],
+      [account("codex_server_gmail", { workspaceId: "team" })],
+    ],
+    [
+      "a matching display name with no workspace",
+      [{ ...account("codex_laptop_gmail", { workspaceId: undefined }), displayName: "Gmail" }],
+      [{ ...account("codex_server_gmail", { workspaceId: undefined }), displayName: "Gmail" }],
+    ],
+    [
+      "an unauthenticated destination",
+      [laptopCodex],
+      [account("codex_server_gmail", { status: "unknown" })],
+    ],
+    [
+      "two matching destination accounts",
+      [laptopCodex],
+      [serverCodex, account("codex_server_other")],
+    ],
+    ["two matching source accounts", [laptopCodex, account("codex_laptop_other")], [serverCodex]],
+    ["missing from the source snapshot", [], [serverCodex]],
+    [
+      "the same ID and login on another driver",
+      [laptopCodex],
+      [account(laptopCodex.instanceId, { type: "chatgpt" }, "claudeAgent")],
+    ],
+  ])("refuses every write when the account is %s", (_name, laptopProviders, serverProviders) => {
+    const instanceId = laptopProviders[0]?.instanceId ?? laptopCodex.instanceId;
+    const plan = planScopedSettingsPatch(
+      all,
+      environments,
+      { textGenerationModelSelection: { instanceId, model: "gpt-6-luna" } },
+      fromLaptop(providers(laptopProviders, serverProviders)),
+    );
+    expect(plan.serverWrites).toEqual([]);
+    expect(plan.unavailableReason).toContain("Server");
+  });
+
+  it("treats the same account and model as one value in either order", () => {
+    const targets = [
+      {
+        environmentId: laptop.environmentId,
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          ...Object.fromEntries(keys.map((key) => [key, luna])),
+        },
+      },
+      {
+        environmentId: server.environmentId,
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          ...Object.fromEntries(
+            keys.map((key) => [key, { ...luna, instanceId: serverCodex.instanceId }]),
+          ),
+        },
+      },
+    ];
+    for (const ordered of [targets, [...targets].reverse()]) {
+      expect(scopedSettingsAreMixed(ordered, keys, matching)).toBe(false);
+      expect(
+        scopedSettingsAreMixed(
+          ordered,
+          keys,
+          providers(
+            [laptopCodex],
+            [serverCodex, account(laptopCodex.instanceId, { email: "other@example.test" })],
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        scopedSettingsAreMixed(
+          [
+            ordered[0]!,
+            {
+              ...ordered[1]!,
+              settings: {
+                ...ordered[1]!.settings,
+                reviewGuideModelSelection: {
+                  ...luna,
+                  instanceId: serverCodex.instanceId,
+                  model: "gpt-6-sol",
+                },
+              },
+            },
+          ],
+          ["reviewGuideModelSelection"],
+          matching,
+        ),
+      ).toBe(true);
+    }
   });
 });

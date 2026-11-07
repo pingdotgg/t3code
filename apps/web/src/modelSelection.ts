@@ -21,7 +21,6 @@ import { getComposerProviderState } from "./components/chat/composerProviderStat
 import { type ClientSettings, UnifiedSettings } from "@t3tools/contracts/settings";
 import { resolveModelPreferences } from "@t3tools/shared/serverSettings";
 import * as Arr from "effect/Array";
-import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import {
   getDefaultServerModel,
@@ -38,6 +37,7 @@ import {
 } from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { scopedModelSelectionsEqual } from "./components/settings/scopedModelSelection";
 
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const DEFAULT_TEXT_GENERATION_INSTANCE_ID = ProviderInstanceId.make("codex");
@@ -343,7 +343,19 @@ export function defaultModelSelectionsAreMixed(
         : null,
     };
   });
-  return selections.some((selection) => !Equal.equals(selection, selections[0]));
+  const [first] = selections;
+  const firstProviders = targets[0]?.providers ?? [];
+  return selections.some(
+    (selection, index) =>
+      !(["stored", "effective"] as const).every((key) =>
+        scopedModelSelectionsEqual(
+          first![key],
+          firstProviders,
+          selection[key],
+          targets[index]!.providers,
+        ),
+      ),
+  );
 }
 
 export function getCustomModelOptionsByInstance(
