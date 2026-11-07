@@ -18,9 +18,12 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -33,6 +36,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
@@ -634,4 +638,330 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
         outcome === "confirmed" ? ["stop-child", "settle-child"] : ["stop-child"],
       );
     }),
+);
+
+it.effect(
+  "frees four overdue worker slots while preserving ownership, ordering, and late settlement",
+  () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const hung = yield* Effect.forEach(
+        ["failure", "success", "retry", "cancellation"] as const,
+        (outcome, index) =>
+          Effect.gen(function* () {
+            return {
+              outcome,
+              id: `effect:a-hung-${index}`,
+              commandId: CommandId.make(`command:hung-${index}`),
+              threadId: ThreadId.make(`thread:hung-${index}`),
+              request:
+                index % 2 === 0
+                  ? { type: "provider-turn.start" as const, runId }
+                  : {
+                      type: "provider-turn.interrupt" as const,
+                      providerSessionId: oldSessionId,
+                      providerThreadId,
+                      providerTurnId,
+                    },
+              started: yield* Deferred.make<void>(),
+            };
+          }),
+      );
+      const unrelated = {
+        id: "effect:b-unrelated",
+        commandId: CommandId.make("command:unrelated"),
+        threadId: ThreadId.make("thread:unrelated"),
+        request: { type: "terminal.cleanup" as const },
+      };
+      const followUps = hung.map((effect, index) => ({
+        ...unrelated,
+        id: `effect:c-follow-up-${index}`,
+        threadId: effect.threadId,
+      }));
+      yield* outbox.enqueue([...hung, unrelated, ...followUps]);
+      // Give one row a prior attempt so the same worker exercises exhausted and retryable failures.
+      const prior = yield* outbox.claimNext({ workerId: "previous" });
+      assert.equal(Option.getOrThrow(prior).id, hung[0]!.id);
+      assert.isTrue(
+        yield* outbox.retry({
+          effectId: hung[0]!.id,
+          workerId: "previous",
+          error: "previous provider failure",
+          delayMs: 0,
+        }),
+      );
+      const providerAnswer = yield* Deferred.make<void>();
+      const cancelledExecution = yield* Deferred.make<void>();
+      const retryScheduled = yield* Deferred.make<void>();
+      const unrelatedStarted = yield* Deferred.make<void>();
+      const executions = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layerExecutor = Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+        execute: (effect) =>
+          Effect.gen(function* () {
+            yield* Ref.update(executions, (ids) => [...ids, effect.id]);
+            const pending = hung.find(({ id }) => id === effect.id);
+            if (pending === undefined) {
+              if (effect.id === unrelated.id) yield* Deferred.succeed(unrelatedStarted, undefined);
+              return;
+            }
+            if (pending.outcome === "retry" && effect.attemptCount === 2) return;
+            yield* Deferred.succeed(pending.started, undefined);
+            yield* Deferred.await(providerAnswer).pipe(
+              Effect.onInterrupt(() => Deferred.succeed(cancelledExecution, undefined)),
+            );
+            if (pending.outcome === "failure" || pending.outcome === "retry") {
+              return yield* new EffectWorker.OrchestrationEffectExecutionError({
+                effectId: effect.id,
+                effectType: effect.request.type,
+                cause: "late provider failure",
+              });
+            }
+          }),
+      });
+      const layerOutbox = Layer.succeed(EffectOutbox.EffectOutboxV2, {
+        ...outbox,
+        retry: (input) =>
+          outbox.retry(input).pipe(Effect.tap(() => Deferred.succeed(retryScheduled, undefined))),
+      });
+      const layerWorker = EffectWorker.layerWithOptions({
+        workerId: "bounded-worker",
+        slotWaitMs: 1_000,
+        maxAttempts: 2,
+      }).pipe(Layer.provide(Layer.merge(layerOutbox, layerExecutor)));
+      yield* EffectWorker.runDaemon.pipe(Effect.provide(layerWorker), Effect.forkScoped);
+      yield* Effect.forEach(hung, ({ started }) => Deferred.await(started));
+      yield* TestClock.adjust("999 millis");
+      assert.isFalse(yield* Deferred.isDone(unrelatedStarted));
+      yield* TestClock.adjust("1 millis");
+      assert.isTrue(yield* Deferred.isDone(unrelatedStarted));
+      yield* outbox.awaitSettled(unrelated.id);
+
+      yield* TestClock.adjust("60 seconds");
+      for (const effect of hung) {
+        const row = Option.getOrThrow(yield* outbox.get(effect.id));
+        assert.equal(row.status, "running");
+        assert.equal(row.leaseOwner, "bounded-worker");
+        assert.equal(row.attemptCount, effect.outcome === "failure" ? 2 : 1);
+      }
+      for (const followUp of followUps) {
+        assert.equal(Option.getOrThrow(yield* outbox.get(followUp.id)).status, "pending");
+      }
+      assert.sameMembers(
+        [...(yield* Ref.get(executions))],
+        [...hung.map(({ id }) => id), unrelated.id],
+      );
+      assert.isFalse(yield* Deferred.isDone(cancelledExecution));
+
+      const cancelled = hung[3]!;
+      yield* outbox
+        .cancelUnsettled({
+          threadId: cancelled.threadId,
+          effectTypes: [cancelled.request.type],
+          reason: "stopped after the worker wait expired",
+        })
+        .pipe(Effect.flatMap(outbox.signalCancellations));
+      yield* Deferred.await(cancelledExecution);
+      yield* Deferred.succeed(providerAnswer, undefined);
+      yield* Deferred.await(retryScheduled);
+      assert.equal(Option.getOrThrow(yield* outbox.get(followUps[2]!.id)).status, "pending");
+      yield* TestClock.adjust("100 millis");
+      yield* Effect.forEach([...hung, ...followUps], ({ id }) => outbox.awaitSettled(id));
+      yield* TestClock.adjust("60 seconds");
+      for (const effect of hung) {
+        const row = Option.getOrThrow(yield* outbox.get(effect.id));
+        assert.equal(
+          row.status,
+          effect.outcome === "cancellation"
+            ? "cancelled"
+            : effect.outcome === "failure"
+              ? "failed"
+              : "succeeded",
+        );
+        assert.equal(
+          row.attemptCount,
+          effect.outcome === "failure" || effect.outcome === "retry" ? 2 : 1,
+        );
+        assert.isNull(row.leaseOwner);
+      }
+      assert.sameMembers(
+        [...(yield* Ref.get(executions))],
+        [...hung.map(({ id }) => id), unrelated.id, hung[2]!.id, ...followUps.map(({ id }) => id)],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          TestClock.layer(),
+        ),
+      ),
+    ),
+);
+
+it.effect("closes the worker layer with overdue effects and recovers the remaining rows", () =>
+  Effect.gen(function* () {
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const effects = [
+      {
+        id: "effect:a-provider",
+        commandId: CommandId.make("command:shutdown"),
+        threadId,
+        request: { type: "provider-turn.start" as const, runId },
+      },
+      {
+        id: "effect:b-cleanup",
+        commandId: CommandId.make("command:shutdown"),
+        threadId: ThreadId.make("thread:cleanup"),
+        request: { type: "terminal.cleanup" as const },
+      },
+    ];
+    const followUp = { ...effects[1]!, id: "effect:c-follow-up", threadId };
+    yield* outbox.enqueue([...effects, followUp]);
+    const started = yield* Effect.forEach(effects, () => Deferred.make<void>());
+    const interrupted = yield* Effect.forEach(effects, () => Deferred.make<void>());
+    const providerAnswer = yield* Deferred.make<void>();
+    const released = yield* Deferred.make<void>();
+    const closed = yield* Deferred.make<void>();
+    const workerScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+    const layerExecutor = Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+      execute: (effect) => {
+        const index = effects.findIndex(({ id }) => id === effect.id);
+        return Deferred.succeed(started[index]!, undefined).pipe(
+          Effect.andThen(Deferred.await(providerAnswer)),
+          Effect.onInterrupt(() => Deferred.succeed(interrupted[index]!, undefined)),
+        );
+      },
+    });
+    const context = yield* Layer.buildWithScope(
+      EffectWorker.layerWithOptions({ slotWaitMs: 1_000 }).pipe(Layer.provide(layerExecutor)),
+      workerScope,
+    );
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
+      Effect.provideContext(context),
+    );
+    yield* Effect.forEach(effects, () => worker.runOnce, {
+      concurrency: "unbounded",
+      discard: true,
+    }).pipe(Effect.andThen(Deferred.succeed(released, undefined)), Effect.forkScoped);
+    yield* Effect.forEach(started, Deferred.await);
+    yield* TestClock.adjust("1 second");
+    assert.isTrue(yield* Deferred.isDone(released));
+    for (const signal of interrupted) assert.isFalse(yield* Deferred.isDone(signal));
+
+    yield* Scope.close(workerScope, Exit.void).pipe(
+      Effect.andThen(Deferred.succeed(closed, undefined)),
+      Effect.forkScoped,
+    );
+    yield* TestClock.adjust(0);
+    assert.isTrue(yield* Deferred.isDone(closed));
+    for (const signal of interrupted) assert.isTrue(yield* Deferred.isDone(signal));
+    assert.isFalse(yield* Deferred.isDone(providerAnswer));
+    for (const effect of effects) {
+      assert.equal(Option.getOrThrow(yield* outbox.get(effect.id)).status, "running");
+    }
+    assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { requeued: 1, cancelled: 1 });
+    const recovered = yield* Ref.make<ReadonlyArray<string>>([]);
+    yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((recoveryWorker) => recoveryWorker.drain()),
+      Effect.provide(
+        EffectWorker.layerWithOptions({ workerId: "replacement" }).pipe(
+          Layer.provide(
+            Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+              execute: (effect) => Ref.update(recovered, (ids) => [...ids, effect.id]),
+            }),
+          ),
+        ),
+      ),
+    );
+    assert.sameMembers([...(yield* Ref.get(recovered))], [effects[1]!.id, followUp.id]);
+    assert.equal(Option.getOrThrow(yield* outbox.get(effects[0]!.id)).status, "cancelled");
+    for (const id of [effects[1]!.id, followUp.id]) {
+      assert.equal(Option.getOrThrow(yield* outbox.get(id)).status, "succeeded");
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+        TestClock.layer(),
+      ),
+    ),
+  ),
+);
+
+it.effect("interrupts overdue executions with the daemon while the worker layer stays open", () =>
+  Effect.gen(function* () {
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const provider = {
+      id: "effect:a-daemon-provider",
+      commandId: CommandId.make("command:daemon-shutdown"),
+      threadId,
+      request: { type: "provider-turn.start" as const, runId },
+    };
+    const unrelated = {
+      ...provider,
+      id: "effect:b-daemon-unrelated",
+      threadId: ThreadId.make("thread:daemon-unrelated"),
+      request: { type: "terminal.cleanup" as const },
+    };
+    const followUp = { ...unrelated, id: "effect:c-daemon-follow-up", threadId };
+    yield* outbox.enqueue([provider, unrelated, followUp]);
+    const started = yield* Deferred.make<void>();
+    const interrupted = yield* Deferred.make<void>();
+    const providerAnswer = yield* Deferred.make<void>();
+    const cleanupStarted = yield* Deferred.make<void>();
+    const cleanupAnswer = yield* Deferred.make<void>();
+    const layerExecutor = Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+      execute: (effect) =>
+        effect.id === provider.id
+          ? Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(providerAnswer)),
+              Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+            )
+          : effect.id === followUp.id
+            ? Deferred.succeed(cleanupStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(cleanupAnswer)),
+              )
+            : Effect.void,
+    });
+    const context = yield* Layer.build(
+      EffectWorker.layerWithOptions({ slotWaitMs: 1_000 }).pipe(Layer.provide(layerExecutor)),
+    );
+    const daemon = yield* EffectWorker.runDaemonWithOptions({ concurrency: 1 }).pipe(
+      Effect.provideContext(context),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("1 second");
+    yield* outbox.awaitSettled(unrelated.id);
+    assert.isFalse(yield* Deferred.isDone(interrupted));
+    assert.equal(Option.getOrThrow(yield* outbox.get(followUp.id)).status, "pending");
+
+    yield* Fiber.interrupt(daemon);
+    assert.isTrue(yield* Deferred.isDone(interrupted));
+    assert.isFalse(yield* Deferred.isDone(providerAnswer));
+    assert.equal(Option.getOrThrow(yield* outbox.get(provider.id)).status, "running");
+    assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { requeued: 0, cancelled: 1 });
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
+      Effect.provideContext(context),
+    );
+    const drained = yield* Deferred.make<void>();
+    const draining = yield* worker.drain().pipe(
+      Effect.tap(() => Deferred.succeed(drained, undefined)),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(cleanupStarted);
+    yield* TestClock.adjust("1 second");
+    assert.isFalse(yield* Deferred.isDone(drained));
+    yield* Deferred.succeed(cleanupAnswer, undefined);
+    assert.equal(yield* Fiber.join(draining), 1);
+    assert.equal(Option.getOrThrow(yield* outbox.get(followUp.id)).status, "succeeded");
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+        TestClock.layer(),
+      ),
+    ),
+  ),
 );
