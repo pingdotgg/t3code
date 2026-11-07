@@ -2094,22 +2094,23 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
-    it.effect("waits for a run the follow-up's child queued on its own thread", () =>
+    // The child's follow-up run sends `t3_thread_send` to its own thread before it ends.
+    const startSelfQueuedFollowup = (name: string) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         const now = yield* DateTime.now;
-        const parentThreadId = ThreadId.make("thread:self-queued-followup-parent");
-        const projectId = ProjectId.make("project:self-queued-followup");
-        const parentRunId = RunId.make("run:self-queued-followup-parent");
-        const rootNodeId = NodeId.make("node:self-queued-followup-parent");
+        const parentThreadId = ThreadId.make(`thread:${name}-parent`);
+        const projectId = ProjectId.make(`project:${name}`);
+        const parentRunId = RunId.make(`run:${name}-parent`);
+        const rootNodeId = NodeId.make(`node:${name}-parent`);
         yield* seedParentWithTerminalTask({
           threadId: parentThreadId,
           projectId,
           runId: parentRunId,
           rootNodeId,
-          taskId: NodeId.make("node:self-queued-followup-seed"),
+          taskId: NodeId.make(`node:${name}-seed`),
           deliveryState: "acknowledged",
           now,
         });
@@ -2118,7 +2119,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           projectId,
           parentRunId,
           rootNodeId,
-          name: "self-queued-followup-child",
+          name: `${name}-child`,
           completionWake: "always",
           continuationPending: false,
           runStatus: "completed",
@@ -2129,7 +2130,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         while (firstWake.threadId !== parentThreadId) firstWake = yield* requests.take;
         yield* orchestrator.dispatch({
           type: "delegated_task.completion-delivery.acknowledge",
-          commandId: CommandId.make("command:self-queued-followup-ack"),
+          commandId: CommandId.make(`command:${name}-ack`),
           parentThreadId,
           taskId: child.taskId,
           observedByRunId: parentRunId,
@@ -2138,10 +2139,10 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           (run) => run.id === parentRunId,
         )!;
         yield* eventSink.write({
-          commandId: reconcileCommandId("self-queued-followup-parent-finished"),
+          commandId: reconcileCommandId(`${name}-parent-finished`),
           events: [
             {
-              id: EventId.make("event:self-queued-followup-parent-finished"),
+              id: EventId.make(`event:${name}-parent-finished`),
               type: "run.updated",
               threadId: parentThreadId,
               runId: parentRunId,
@@ -2150,12 +2151,12 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             },
           ],
         });
-        const followupMessageId = MessageId.make("message:self-queued-followup");
+        const followupMessageId = MessageId.make(`message:${name}`);
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "agent",
           creationSource: "mcp",
-          commandId: CommandId.make("command:self-queued-followup"),
+          commandId: CommandId.make(`command:${name}`),
           threadId: child.childThreadId,
           senderThreadId: parentThreadId,
           messageId: followupMessageId,
@@ -2163,18 +2164,31 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           attachments: [],
           dispatchMode: { type: "start_immediately" },
         });
-        const followupRun = (yield* orchestrator.getThreadProjection(
-          child.childThreadId,
-        )).runs.find((row) => row.userMessageId === followupMessageId)!;
-        const followupTaskId = followupRun.delegatedTaskId;
+        const queuedRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (row) => row.userMessageId === followupMessageId,
+        )!;
+        const followupTaskId = queuedRun.delegatedTaskId;
         assert.isDefined(followupTaskId);
-        // The follow-up turn sends `t3_thread_send` to its own thread before it ends.
-        const selfQueuedMessageId = MessageId.make("message:self-queued-followup-self-send");
+        const followupRun = { ...queuedRun, status: "running" as const, startedAt: now };
+        yield* eventSink.write({
+          commandId: reconcileCommandId(`${name}-running`),
+          events: [
+            {
+              id: EventId.make(`event:${name}-running`),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              occurredAt: now,
+              payload: followupRun,
+            },
+          ],
+        });
+        const selfQueuedMessageId = MessageId.make(`message:${name}-self-send`);
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "agent",
           creationSource: "mcp",
-          commandId: CommandId.make("command:self-queued-followup-self-send"),
+          commandId: CommandId.make(`command:${name}-self-send`),
           threadId: child.childThreadId,
           senderThreadId: child.childThreadId,
           messageId: selfQueuedMessageId,
@@ -2185,18 +2199,19 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const selfQueuedRun = (yield* orchestrator.getThreadProjection(
           child.childThreadId,
         )).runs.find((row) => row.userMessageId === selfQueuedMessageId)!;
-        const finishRun = (name: string, run: OrchestrationV2Run, text: string) =>
+        assert.equal(selfQueuedRun.status, "queued");
+        const finishRun = (step: string, run: OrchestrationV2Run, text: string) =>
           eventSink.write({
-            commandId: reconcileCommandId(name),
+            commandId: reconcileCommandId(`${name}-${step}`),
             events: [
               {
-                id: EventId.make(`event:${name}:result`),
+                id: EventId.make(`event:${name}-${step}:result`),
                 type: "message.updated",
                 threadId: child.childThreadId,
                 runId: run.id,
                 occurredAt: now,
                 payload: {
-                  id: MessageId.make(`message:${name}:result`),
+                  id: MessageId.make(`message:${name}-${step}:result`),
                   threadId: child.childThreadId,
                   runId: run.id,
                   nodeId: null,
@@ -2211,7 +2226,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                 },
               },
               {
-                id: EventId.make(`event:${name}:finished`),
+                id: EventId.make(`event:${name}-${step}:finished`),
                 type: "run.updated",
                 threadId: child.childThreadId,
                 runId: run.id,
@@ -2220,34 +2235,102 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               },
             ],
           });
-        yield* finishRun("self-queued-followup-handoff", followupRun, "HANDOFF-C");
-        yield* orchestrator.recoverDelegatedTasks;
-        const waiting = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
-          (task) => task.id === followupTaskId,
-        )!;
+        const removeSelfQueuedRun = orchestrator.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make(`command:${name}-remove-self-send`),
+          threadId: child.childThreadId,
+          runId: selfQueuedRun.id,
+        });
+        const readFollowup = Effect.gen(function* () {
+          yield* orchestrator.recoverDelegatedTasks;
+          return (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+            (task) => task.id === followupTaskId,
+          )!;
+        });
+        return {
+          parentThreadId,
+          parentRunId,
+          childThreadId: child.childThreadId,
+          firstWake,
+          followupRun,
+          selfQueuedRun,
+          finishRun,
+          removeSelfQueuedRun,
+          readFollowup,
+        };
+      });
+
+    it.effect("waits for a run the follow-up's child queued on its own thread", () =>
+      Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const followup = yield* startSelfQueuedFollowup("self-queued-followup");
+        yield* followup.finishRun("handoff", followup.followupRun, "HANDOFF-C");
+        const waiting = yield* followup.readFollowup;
         assert.isNull(
           waiting.result,
           "the follow-up task settled on its handoff turn while the run its child queued was pending",
         );
         assert.notEqual(waiting.status, "completed");
 
-        yield* finishRun("self-queued-followup-final", selfQueuedRun, "FINAL-D");
-        yield* orchestrator.recoverDelegatedTasks;
-        const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
-          (task) => task.id === followupTaskId,
-        )!;
-        assert.equal(followup.status, "completed");
-        assert.equal(followup.result, "FINAL-D");
-        assert.equal(followup.completionDelivery?.state, "claimed");
+        yield* followup.finishRun("final", followup.selfQueuedRun, "FINAL-D");
+        const finished = yield* followup.readFollowup;
+        assert.equal(finished.status, "completed");
+        assert.equal(finished.result, "FINAL-D");
+        assert.equal(finished.completionDelivery?.state, "claimed");
         let wake = yield* requests.take;
         while (
-          wake.threadId !== parentThreadId ||
-          wake.delegatedCompletion?.messageId === firstWake.delegatedCompletion?.messageId
+          wake.threadId !== followup.parentThreadId ||
+          wake.delegatedCompletion?.messageId === followup.firstWake.delegatedCompletion?.messageId
         ) {
           wake = yield* requests.take;
         }
-        assert.equal(wake.delegatedCompletion?.parentRunId, parentRunId);
+        assert.equal(wake.delegatedCompletion?.parentRunId, followup.parentRunId);
       }),
+    );
+
+    it.effect("keeps a follow-up running when the run its child queued is removed early", () =>
+      Effect.gen(function* () {
+        const followup = yield* startSelfQueuedFollowup("self-queued-removed-early-followup");
+        yield* followup.removeSelfQueuedRun;
+        const running = yield* followup.readFollowup;
+        assert.isNull(running.result);
+        assert.equal(running.status, "running");
+
+        yield* followup.finishRun("handoff", followup.followupRun, "HANDOFF-C");
+        const finished = yield* followup.readFollowup;
+        assert.equal(finished.status, "completed");
+        assert.equal(finished.result, "HANDOFF-C");
+      }),
+    );
+
+    it.effect.each(["removed", "held"] as const)(
+      "settles a follow-up on its last turn when the run it queued is %s",
+      (ending) =>
+        Effect.gen(function* () {
+          const eventSink = yield* EventSink.EventSinkV2;
+          const now = yield* DateTime.now;
+          const followup = yield* startSelfQueuedFollowup(`self-queued-${ending}-followup`);
+          if (ending === "held") {
+            yield* eventSink.write({
+              commandId: reconcileCommandId("self-queued-held-followup-hold"),
+              events: [
+                {
+                  id: EventId.make("event:self-queued-held-followup-hold"),
+                  type: "run.updated",
+                  threadId: followup.childThreadId,
+                  runId: followup.selfQueuedRun.id,
+                  occurredAt: now,
+                  payload: { ...followup.selfQueuedRun, queueHeld: true },
+                },
+              ],
+            });
+          }
+          yield* followup.finishRun("handoff", followup.followupRun, "HANDOFF-C");
+          if (ending === "removed") yield* followup.removeSelfQueuedRun;
+          const finished = yield* followup.readFollowup;
+          assert.equal(finished.status, "completed");
+          assert.equal(finished.result, "HANDOFF-C");
+        }),
     );
 
     const outcomes = [
