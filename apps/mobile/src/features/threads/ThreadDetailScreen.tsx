@@ -128,6 +128,7 @@ import {
 } from "../../native/native-layout-metrics";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import { getComposerDraftSnapshot, setFreshSessionPending } from "../../state/use-composer-drafts";
@@ -161,6 +162,7 @@ import {
 } from "../../state/threads";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadStreamHaptics } from "./threadStreamHaptics";
+import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
@@ -993,6 +995,41 @@ function ThreadDetailBody(
             now: Date.parse(report.createdAt),
           },
     );
+  const canCheckUsageLimits = useAtomValue(
+    serverEnvironment.refreshProviders.permissionAtom(props.environmentId),
+  );
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const checkUsageLimits = async () => {
+    const result = await refreshUsageLimits(props.environmentId, () =>
+      refreshProviders({ environmentId: props.environmentId, input: {} }),
+    );
+    if (result?._tag !== "Success") return "Could not check usage limits.";
+    // Read the response and the registry: the config stream may not have rendered yet.
+    const report = collectProviderUsageLimits(
+      props.selectedThread.modelSelection.instanceId,
+      result.value.providers,
+      appAtomRegistry.get(serverEnvironment.configValueAtom(props.environmentId))
+        ?.usageLimitSources ??
+        props.serverConfig?.usageLimitSources ??
+        [],
+      Date.now(),
+    );
+    // Never replace a panel opened for a newer context while this check was in flight.
+    setUsageLimitsPanel((current) =>
+      current !== null && current.key !== usageLimitsKey
+        ? current
+        : report === null
+          ? null
+          : {
+              key: usageLimitsKey,
+              threadKey: selectedThreadKey,
+              now: Date.parse(report.createdAt),
+            },
+    );
+    return report === null ? "This provider does not currently report limits." : null;
+  };
   const dismissUsageLimits = () => setUsageLimitsPanel(null);
   // Late sends clear only their originating thread's limits panel.
   const clearUsageLimitsFor = (threadKey: string) =>
@@ -1679,6 +1716,7 @@ function ThreadDetailBody(
                       key={props.selectedThread.latestRun?.runId}
                       thread={props.selectedThread}
                       environmentId={props.environmentId}
+                      onCheckLimits={canCheckUsageLimits ? checkUsageLimits : null}
                     />
                     <ChildThreadApprovals
                       threadRef={props.selectedThreadDetailRef}

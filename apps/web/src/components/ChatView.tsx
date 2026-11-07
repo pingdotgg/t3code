@@ -1402,6 +1402,7 @@ export default function ChatView(props: ChatViewProps) {
     offered: usageLimitsOffered,
     open: openUsageLimits,
     clearFor: clearUsageLimitsFor,
+    checkLimits,
   } = useUsageLimitsPanel({
     environmentId,
     threadKey: routeThreadKey,
@@ -2564,6 +2565,7 @@ export default function ChatView(props: ChatViewProps) {
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
           timestampFormat,
+          checkLimits,
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,
