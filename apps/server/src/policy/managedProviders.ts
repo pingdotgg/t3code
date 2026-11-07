@@ -162,13 +162,29 @@ export const providerHostEnvironment = (
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv => {
   if (summary === undefined) return environment;
-  const next = { ...environment };
-  for (const name of Object.keys(next)) {
-    if (LAUNCH_OVERRIDE_VARIABLES.some((override) => override === name.toUpperCase())) {
-      delete next[name];
-    }
-  }
-  return next;
+  const allowed = (name: string | symbol) =>
+    typeof name !== "string" ||
+    !LAUNCH_OVERRIDE_VARIABLES.some((override) => override === name.toUpperCase());
+  return new Proxy(
+    {},
+    {
+      get: (_, name) => (allowed(name) ? Reflect.get(environment, name) : undefined),
+      has: (_, name) => allowed(name) && Reflect.has(environment, name),
+      ownKeys: () => Reflect.ownKeys(environment).filter(allowed),
+      getOwnPropertyDescriptor: (_, name) =>
+        allowed(name) && Reflect.has(environment, name)
+          ? {
+              configurable: true,
+              enumerable: true,
+              value: Reflect.get(environment, name),
+              writable: false,
+            }
+          : undefined,
+      set: () => false,
+      deleteProperty: () => false,
+      defineProperty: () => false,
+    },
+  );
 };
 
 /** Each driver's home variable, and the settings that rewrite it at launch. */
