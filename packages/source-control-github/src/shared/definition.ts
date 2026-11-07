@@ -147,6 +147,11 @@ export const definition = defineSourceControl({
           baseUrl: `https://${host}`,
         }
       : null,
+  // `ssh.github.com` is the SSH-only host for networks that block port 22; it serves the web host's repositories.
+  repositoryKeyFromRemote: (key) => {
+    const match = /^ssh\.github\.com\/(.+)$/u.exec(key);
+    return match === null ? null : `github.com/${match[1]}`;
+  },
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
