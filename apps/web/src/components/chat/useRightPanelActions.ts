@@ -5,7 +5,7 @@ import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-action
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { resolveExplicitDiffOpenOnActivate } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
+import { type ScopedThreadRef, type RunId, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect } from "react";
 import {
@@ -110,12 +110,13 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }
   };
   const onToggleDiffStable = useStableCallback(onToggleDiff);
-  const createBrowserSurface = (profileId?: string) => {
+  const createBrowserSurface = (profileId?: string, duplicateFrom?: PreviewSessionSnapshot) => {
     if (!activeThreadRef || !canOperatePreview) return;
     void addBrowserSurface({
       threadRef: activeThreadRef,
       openPreview,
       ...(profileId === undefined ? {} : { profileId }),
+      ...(duplicateFrom === undefined ? {} : { duplicateFrom }),
     }).then((result) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
@@ -129,6 +130,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         );
       }
     });
+  };
+  const duplicateBrowserSurface = (surface: RightPanelSurface) => {
+    if (surface.kind !== "preview" || !surface.resourceId) return;
+    const snapshot = activePreviewState.sessions[surface.resourceId];
+    if (snapshot) createBrowserSurface(undefined, snapshot);
   };
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
   const addDiffSurface = () => {
@@ -352,6 +358,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     copyRightPanelFilePathStable,
     createBrowserSurface,
     createBrowserSurfaceStable,
+    duplicateBrowserSurface,
     moveRightPanelSurfaceStable,
     onOpenToolDiffStable,
     onOpenTurnDiffStable,
