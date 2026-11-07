@@ -281,6 +281,7 @@ function ProjectDetail({
   });
   const projectNameEditedRef = useRef(false);
 
+  const projectName = representative.isScratch ? representative.title : group.displayName;
   const faviconPath = representative.faviconPath ?? null;
   const projectIcon = representative.projectIcon ?? null;
   const pickProjectFavicon =
@@ -539,12 +540,12 @@ function ProjectDetail({
             }
             control={
               <Input
-                key={`${group.projectKey}:${group.displayName}`}
+                key={`${group.projectKey}:${projectName}`}
                 size="sm"
                 className="w-full sm:w-64"
                 aria-label="Project name"
                 disabled={!canEditGroup}
-                defaultValue={group.displayName}
+                defaultValue={projectName}
                 onChange={() => {
                   projectNameEditedRef.current = true;
                 }}
