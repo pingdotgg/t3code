@@ -579,6 +579,254 @@ const startTurn = Effect.fnUntraced(function* (
 });
 
 describe("PiAdapterV2", () => {
+  const thinkingBlock = (thinking: string) => ({ type: "thinking", thinking });
+  const textBlock = (text: string) => ({ type: "text", text });
+  it.effect.each([
+    {
+      name: "replaces ended blocks",
+      streamed: "draft",
+      ended: true,
+      content: [thinkingBlock("final"), textBlock("final")],
+      items: [
+        ["reasoning", "final"],
+        ["assistant_message", "final"],
+      ],
+    },
+    {
+      name: "replaces open blocks",
+      streamed: "draft",
+      ended: false,
+      content: [thinkingBlock("final"), textBlock("final")],
+      items: [
+        ["reasoning", "final"],
+        ["assistant_message", "final"],
+      ],
+    },
+    {
+      name: "adds final-only blocks",
+      streamed: undefined,
+      ended: false,
+      content: [thinkingBlock("final"), textBlock("final")],
+      items: [
+        ["reasoning", "final"],
+        ["assistant_message", "final"],
+      ],
+    },
+    {
+      name: "reuses text when removing thinking shifts its index",
+      streamed: "draft",
+      ended: true,
+      content: [textBlock("final")],
+      items: [
+        ["reasoning", ""],
+        ["assistant_message", "final"],
+      ],
+    },
+    {
+      name: "reuses text and adds a second final block after removing thinking",
+      streamed: "draft",
+      ended: true,
+      content: [textBlock("First"), textBlock("Second")],
+      items: [
+        ["reasoning", ""],
+        ["assistant_message", "First"],
+        ["assistant_message", "Second"],
+      ],
+    },
+    {
+      name: "reuses identities when final block kinds reorder",
+      streamed: "draft",
+      ended: true,
+      content: [textBlock("First"), thinkingBlock("Next"), textBlock("Last")],
+      items: [
+        ["reasoning", "Next"],
+        ["assistant_message", "First"],
+        ["assistant_message", "Last"],
+      ],
+    },
+    {
+      name: "leaves unchanged content alone",
+      updates: 2,
+      streamed: "draft",
+      ended: true,
+      content: [thinkingBlock("draft"), textBlock("draft")],
+      items: [
+        ["reasoning", "draft"],
+        ["assistant_message", "draft"],
+      ],
+    },
+    {
+      name: "replaces a sole thinking block with a distinct text item",
+      streamed: "draft",
+      streamedKinds: ["thinking"],
+      ended: true,
+      content: [textBlock("final")],
+      items: [
+        ["reasoning", ""],
+        ["assistant_message", "final"],
+      ],
+    },
+    {
+      name: "clears empty blocks",
+      streamed: "draft",
+      ended: true,
+      content: [thinkingBlock(""), textBlock("")],
+      items: [
+        ["reasoning", ""],
+        ["assistant_message", ""],
+      ],
+    },
+    {
+      name: "clears blocks missing from final content",
+      streamed: "draft",
+      ended: true,
+      content: [],
+      items: [
+        ["reasoning", ""],
+        ["assistant_message", ""],
+      ],
+    },
+  ])(
+    "uses authoritative assistant content: $name",
+    ({ streamed, ended, content, items, updates, streamedKinds = ["thinking", "text"] }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+        for (const [contentIndex, type] of streamedKinds.entries()) {
+          if (streamed === undefined) continue;
+          yield* fake.emit({
+            type: "message_update",
+            assistantMessageEvent: { type: `${type}_delta`, contentIndex, delta: streamed },
+          });
+          if (ended) {
+            yield* fake.emit({
+              type: "message_update",
+              assistantMessageEvent: { type: `${type}_end`, contentIndex, content: streamed },
+            });
+          }
+        }
+        yield* fake.emit({ type: "message_end", message: { role: "assistant", content } });
+        yield* fake.emit({ type: "agent_settled" });
+        let itemUpdates = 0;
+        const messages = new Map<string, { text: string; streaming: boolean }>();
+        const turnItems = new Map<
+          string,
+          { type: string; text: string; streaming: boolean; ordinal: number }
+        >();
+        yield* takeEvent((event) => {
+          if (event.type === "message.updated") {
+            messages.set(event.message.id, event.message);
+          }
+          if (
+            event.type === "turn_item.updated" &&
+            (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning")
+          ) {
+            itemUpdates += 1;
+            turnItems.set(event.turnItem.id, event.turnItem);
+          }
+          return (
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed"
+          );
+        });
+        if (updates !== undefined) {
+          assert.equal(itemUpdates, updates);
+        }
+        assert.deepEqual(
+          [...turnItems.values()].map(({ type, text, streaming }) => ({ type, text, streaming })),
+          items.map(([type, text]) => ({ type, text, streaming: false })),
+        );
+        assert.deepEqual(
+          [...messages.values()].map(({ text, streaming }) => ({ text, streaming })),
+          items
+            .filter(([type]) => type === "assistant_message")
+            .map(([, text]) => ({ text, streaming: false })),
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("preserves earlier messages, identities and positions when final content changes", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.emit({ type: "agent_start" });
+      for (const text of ["first", "draft"]) {
+        yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+        yield* fake.emit({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text },
+        });
+        yield* fake.emit({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_end", contentIndex: 0, content: text },
+        });
+        yield* fake.emit({
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content:
+              text === "first"
+                ? [textBlock("first")]
+                : [thinkingBlock("reason"), textBlock("Second"), textBlock("Third")],
+          },
+        });
+        for (const type of ["tool_execution_start", "tool_execution_end"]) {
+          yield* fake.emit({
+            type,
+            toolCallId: `tool:${text}`,
+            toolName: "read",
+            args: { path: "file.txt" },
+            result: { content: [] },
+          });
+        }
+      }
+      yield* fake.emit({ type: "agent_settled" });
+      const items = new Map<string, { type: string; text?: string; ordinal: number }>();
+      const streamedIds = new Map<string, string>();
+      yield* takeEvent((event) => {
+        if (event.type === "turn_item.updated") {
+          items.set(event.turnItem.id, event.turnItem);
+          if (event.turnItem.type === "assistant_message") {
+            if (event.turnItem.text === "first" || event.turnItem.text === "draft") {
+              streamedIds.set(event.turnItem.text, event.turnItem.id);
+            }
+            if (event.turnItem.text === "Second") {
+              assert.equal(event.turnItem.id, streamedIds.get("draft"));
+            }
+          }
+        }
+        return event.type === "provider_turn.updated" && event.providerTurn.status === "completed";
+      });
+      assert.equal(items.get(streamedIds.get("first")!)?.text, "first");
+      assert.deepEqual(
+        [...items.values()]
+          .sort((a, b) => a.ordinal - b.ordinal)
+          .map(({ type, text, ordinal }) => [type, text, ordinal]),
+        [
+          ["assistant_message", "first", 101],
+          ["dynamic_tool", undefined, 102],
+          ["assistant_message", "Second", 103],
+          ["reasoning", "reason", 104],
+          ["assistant_message", "Third", 105],
+          ["dynamic_tool", undefined, 106],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect(
     "replaces keyed extension statuses while idle without producing conversation items",
     () =>

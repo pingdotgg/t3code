@@ -313,6 +313,7 @@ const PI_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "
 interface PiStreamItemState {
   readonly nativeItemId: string;
   readonly kind: "assistant_message" | "reasoning";
+  readonly messageOrdinal: number;
   text: string;
   completed: boolean;
   flushScheduled: boolean;
@@ -1120,7 +1121,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const streamItemFor = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
         kind: PiStreamItemState["kind"],
-        contentIndex: number,
+        contentIndex: number | `final:${number}`,
       ) {
         const nativeItemId = `${turn.providerTurn.id}:m${turn.messageOrdinal}:c${contentIndex}`;
         const existing = turn.streamItems.get(nativeItemId);
@@ -1129,6 +1130,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const item: PiStreamItemState = {
           nativeItemId,
           kind,
+          messageOrdinal: turn.messageOrdinal,
           text: "",
           completed: false,
           flushScheduled: false,
@@ -1141,10 +1143,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const completeStreamItem = (turn: ActivePiTurn, item: PiStreamItemState, text?: string) =>
         Effect.suspend(() => {
-          if (item.completed) return Effect.void;
+          if (item.completed && (text === undefined || text === item.text)) return Effect.void;
+          const hadText = item.text.length > 0;
           item.completed = true;
-          if (text !== undefined && text.length > 0) item.text = text;
-          return item.text.length === 0 ? Effect.void : emitStreamItem(turn, item, false);
+          if (text !== undefined) item.text = text;
+          return hadText || item.text.length > 0 ? emitStreamItem(turn, item, false) : Effect.void;
         });
 
       const completeOpenStreamItems = (turn: ActivePiTurn) =>
@@ -1968,6 +1971,27 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (turn === null) return;
             const message = event["message"];
             if (recordString(message, "role") !== "assistant") return;
+            const content = recordField(message, "content");
+            if (Array.isArray(content)) {
+              const currentItems = Array.from(turn.streamItems.values()).filter(
+                (item) => item.messageOrdinal === turn.messageOrdinal,
+              );
+              const finalized = new Set<PiStreamItemState>();
+              for (const [index, block] of content.entries()) {
+                const type = recordString(block, "type");
+                if (type !== "text" && type !== "thinking") continue;
+                const kind = type === "text" ? "assistant_message" : "reasoning";
+                // Removing thinking can shift text indices without replacing the streamed message.
+                const item =
+                  currentItems.find((item) => item.kind === kind && !finalized.has(item)) ??
+                  (yield* streamItemFor(turn, kind, `final:${index}`));
+                finalized.add(item);
+                yield* completeStreamItem(turn, item, recordString(block, type) ?? "");
+              }
+              for (const item of currentItems) {
+                if (!finalized.has(item)) yield* completeStreamItem(turn, item, "");
+              }
+            }
             yield* completeOpenStreamItems(turn);
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
               turn.failure = makeProviderFailure({
