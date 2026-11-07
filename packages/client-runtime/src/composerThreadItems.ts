@@ -23,6 +23,11 @@ export interface ComposerThreadItem {
   readonly description: string;
 }
 
+/** A mention cannot hold a space, so dashes, underscores, and dots stand in for one. */
+export function composerThreadQuery(query: string): string {
+  return query.replace(/[-_.]+/g, " ");
+}
+
 /**
  * Threads to reference from the composer, matched and ranked like the command
  * palette, without subagent or side chat threads. The agent reads threads on its own server
@@ -40,6 +45,7 @@ export function matchComposerThreadItems(input: {
   now: number;
 }): ComposerThreadItem[] {
   const query = foldSearchQuery(input.query);
+  const normalizedQuery = foldSearchQuery(composerThreadQuery(input.query));
   if (query.length === 0) return [];
   const candidates = input.shells.filter(
     (shell) =>
@@ -49,12 +55,16 @@ export function matchComposerThreadItems(input: {
       shell.archivedAt === null &&
       isListedThreadLineage(shell.lineage),
   );
-  return rankSearchItems(candidates, (shell, options) =>
-    scoreThreadSearch(query, threadSearchSubject(shell, null), input.now, {
-      ...options,
-      picks: false,
-    }),
-  )
+  return rankSearchItems(candidates, (shell, options) => {
+    const subject = threadSearchSubject(shell, null);
+    const searchOptions = { ...options, picks: false };
+    const literal = scoreThreadSearch(query, subject, input.now, searchOptions);
+    if (query === normalizedQuery || normalizedQuery.length === 0) return literal;
+    const normalized = scoreThreadSearch(normalizedQuery, subject, input.now, searchOptions);
+    return literal !== null && (normalized === null || literal.score >= normalized.score)
+      ? literal
+      : normalized;
+  })
     .slice(0, COMPOSER_THREAD_RESULT_LIMIT)
     .map(({ item: shell }) => {
       const machine =
