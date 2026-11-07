@@ -114,6 +114,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
   },
+  pending: {
+    label: "Pending",
+    icon: "tray.and.arrow.up",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
   waiting: {
     label: "Waiting",
     icon: "circle.dashed.inset.filled",
@@ -1166,7 +1172,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {thread.title}
         </Text>
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
-          {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {props.hasQueuedMessages && status !== "pending" ? (
+            <QueuedMessageIcon selected={selected} />
+          ) : null}
           {pinnedRow ? (
             <SymbolView
               name="pin"

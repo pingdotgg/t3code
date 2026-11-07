@@ -68,6 +68,7 @@ export type ThreadListV2Status =
   | "input"
   | "request"
   | "working"
+  | "pending"
   | "waiting"
   | "failed"
   | "limited"
@@ -289,7 +290,7 @@ export function resolveThreadListV2Status(
     return "working";
   }
   if (options?.hasQueuedMessages === true) {
-    return "working";
+    return "pending";
   }
   if (thread.runtime?.status === "idle") {
     return "waiting";

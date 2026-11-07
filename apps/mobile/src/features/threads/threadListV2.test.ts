@@ -187,12 +187,12 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
   });
 
-  it("treats an outbox pending message as Working, after attention requests", () => {
+  it("treats an outbox pending message as Pending, after attention requests", () => {
     const thread = presentThreadShell(
       environmentId,
       decodeThreadShell(makeRawThreadShell({ status: "completed" })),
     );
-    expect(resolveThreadListV2Status(thread, { hasQueuedMessages: true })).toBe("working");
+    expect(resolveThreadListV2Status(thread, { hasQueuedMessages: true })).toBe("pending");
     expect(
       resolveThreadListV2Status(
         { ...thread, hasPendingUserInput: true },
