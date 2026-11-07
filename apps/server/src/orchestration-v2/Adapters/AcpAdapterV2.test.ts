@@ -6069,6 +6069,112 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("cancels pending user input questions while interrupting an ACP turn", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const releaseCancel = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("acp-test-user-input-cancel");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          extractPermissionQuestion: (request) => ({
+            question: {
+              id: request.toolCall.toolCallId,
+              header: "Question",
+              question: "Confirm?",
+              multiSelect: false,
+              allowCustomAnswer: false,
+              options: [{ value: "yes", label: "Yes", description: "Yes" }],
+            },
+            respond: () => ({ outcome: { outcome: "selected", optionId: "yes" } }),
+          }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_EMIT_TOOL_CALLS: "1" },
+            wrapCancel: (cancel) => Deferred.await(releaseCancel).pipe(Effect.andThen(cancel)),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-cancel-user-input");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-cancel-user-input"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+      );
+
+      const pendingRequest = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        pendingRequest.type !== "runtime_request.updated" ||
+        pendingRequest.runtimeRequest.providerTurnId === null
+      ) {
+        return yield* Effect.die("Expected a pending ACP user input request with a provider turn");
+      }
+
+      const interruptFiber = yield* runtime
+        .interruptTurn({
+          providerThread,
+          providerTurnId: pendingRequest.runtimeRequest.providerTurnId,
+        })
+        .pipe(Effect.forkScoped);
+
+      const cancelledRequest = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" &&
+              event.runtimeRequest.id === pendingRequest.runtimeRequest.id &&
+              event.runtimeRequest.status === "cancelled",
+          ),
+          Stream.runHead,
+        ),
+      );
+      assert.equal(cancelledRequest.type, "runtime_request.updated");
+      yield* Deferred.succeed(releaseCancel, undefined);
+      yield* Fiber.join(interruptFiber);
+      const terminal = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        ),
+      );
+      assert.equal(terminal.type, "turn.terminal");
+      assert.equal(terminal.status, "interrupted");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("keeps hard teardown excluded until a permission response is enqueued", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

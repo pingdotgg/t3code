@@ -5862,21 +5862,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ),
             ).pipe(
               Effect.flatMap((pending) => {
-                if (Option.isNone(pending)) return Effect.never;
+                if (Option.isNone(pending)) {
+                  return Effect.succeed({
+                    answers: null,
+                    acknowledgeNativeResponse: Effect.void,
+                  });
+                }
                 const { answers, requestId, transportRequestId } = pending.value;
                 return Deferred.await(answers).pipe(
                   Effect.flatMap((result) =>
                     runRuntimeCallbackAtGeneration(generation, Effect.succeed(result)).pipe(
                       Effect.flatMap((checked) =>
-                        Option.isSome(checked)
-                          ? Effect.succeed({
-                              acknowledgeNativeResponse: acknowledgeNativeResponse(
-                                generation,
-                                transportRequestId,
-                              ),
-                              answers: checked.value,
-                            })
-                          : Effect.never,
+                        Effect.succeed({
+                          acknowledgeNativeResponse: Option.isSome(checked)
+                            ? acknowledgeNativeResponse(generation, transportRequestId)
+                            : Effect.void,
+                          answers: Option.isSome(checked) ? checked.value : null,
+                        }),
                       ),
                     ),
                   ),
