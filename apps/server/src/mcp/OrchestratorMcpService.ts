@@ -426,6 +426,8 @@ function taskStatusForRun(
   switch (run === undefined ? undefined : runOutcome(run)) {
     case "queued":
       return "queued";
+    case "starting":
+      return "starting";
     case "waiting":
       return "waiting";
     case "completed":
@@ -438,7 +440,6 @@ function taskStatusForRun(
     case "interrupted":
       return "interrupted";
     case "preparing":
-    case "starting":
     case "running":
     case undefined:
       return "running";
@@ -1557,6 +1558,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(threadManagementFailure)));
     const workState =
       task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
+    const runStatus = taskStatusForRun(taskResultRun ?? childRun);
     const status =
       task.result !== null
         ? taskStatusForRun(
@@ -1567,11 +1569,9 @@ const make = Effect.gen(function* () {
               ? { status: task.status }
               : childRun,
           )
-        : workState === "result_available"
-          ? taskStatusForRun(taskResultRun ?? childRun)
-          : taskStatusForRun(taskResultRun ?? childRun) === "queued"
-            ? "queued"
-            : "running";
+        : workState === "result_available" || runStatus === "queued" || runStatus === "starting"
+          ? runStatus
+          : "running";
     const derivedResult =
       task.result !== null
         ? task.result
