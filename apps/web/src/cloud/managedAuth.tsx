@@ -1,5 +1,6 @@
 import { useClerk } from "@clerk/react";
 import {
+  type CloudAccountSource,
   createCloudAccountService,
   ManagedRelay,
   setManagedRelaySession,
@@ -38,28 +39,38 @@ function clerkTokenReader(clerk: ClerkInstance): () => Promise<string | null> {
     clerk.session ? await clerk.session.getToken(resolveRelayClerkTokenOptions()) : null;
 }
 
-const managedRelayAccountService = createCloudAccountService<ClerkInstance>({
-  deactivate: deactivateManagedRelayAuthentication,
-  detach: deactivateManagedRelayAuthentication,
-  cleanUp: async () => {
-    const results = await Promise.all([
-      runAtomCommand(appAtomRegistry, environmentCatalog.removeRelayEnvironments, undefined, {
-        reportFailure: false,
-        reportDefect: false,
-      }),
-      settleAsyncResult(() =>
-        runtime.runPromiseExit(
-          ManagedRelay.ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
+/** Shared by every sign-in provider: only how a source yields its relay token differs. */
+export function createManagedRelayAccountService<S extends CloudAccountSource>(
+  readToken: (source: S) => () => Promise<string | null>,
+) {
+  return createCloudAccountService<S>({
+    deactivate: deactivateManagedRelayAuthentication,
+    detach: deactivateManagedRelayAuthentication,
+    cleanUp: async () => {
+      const results = await Promise.all([
+        runAtomCommand(appAtomRegistry, environmentCatalog.removeRelayEnvironments, undefined, {
+          reportFailure: false,
+          reportDefect: false,
+        }),
+        settleAsyncResult(() =>
+          runtime.runPromiseExit(
+            ManagedRelay.ManagedRelayClient.pipe(
+              Effect.flatMap((client) => client.resetTokenCache),
+            ),
+          ),
         ),
-      ),
-    ]);
-    for (const result of results) {
-      reportAtomCommandResult(result, { label: "cloud account cleanup" });
-    }
-  },
-  activate: ({ source, accountId }) =>
-    activateManagedRelayAuthentication(accountId, clerkTokenReader(source)),
-});
+      ]);
+      for (const result of results) {
+        reportAtomCommandResult(result, { label: "cloud account cleanup" });
+      }
+    },
+    activate: ({ source, accountId }) =>
+      activateManagedRelayAuthentication(accountId, readToken(source)),
+  });
+}
+
+const managedRelayAccountService =
+  createManagedRelayAccountService<ClerkInstance>(clerkTokenReader);
 
 export function ManagedRelayAuthProvider({ children }: { readonly children: ReactNode }) {
   // ClerkProvider creates the Clerk instance and owns its lifetime, so the

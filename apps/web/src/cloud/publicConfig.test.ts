@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { hasCloudPublicConfig } from "./publicConfig.ts";
+import { cloudAuthProvider, hasCloudPublicConfig } from "./publicConfig.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -14,6 +14,32 @@ describe("hasCloudPublicConfig", () => {
     vi.stubEnv("VITE_T3CODE_RELAY_URL", "http://relay.example.test");
 
     expect(hasCloudPublicConfig()).toBe(false);
+  });
+
+  describe("OpenID Connect provider", () => {
+    beforeEach(() => {
+      vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
+      vi.stubEnv("VITE_OIDC_ISSUER", "https://sso.example.test/realms/t3");
+      vi.stubEnv("VITE_OIDC_CLIENT_ID", "t3-code");
+    });
+
+    it("works on any origin and takes the place of Clerk", () => {
+      vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", "pk_test_example");
+      vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
+      vi.stubGlobal("window", { location: new URL("http://localhost:3773") });
+
+      expect(hasCloudPublicConfig()).toBe(true);
+      expect(cloudAuthProvider()).toBe("oidc");
+    });
+
+    it.each([
+      ["a missing client id", "VITE_OIDC_CLIENT_ID", ""],
+      ["an insecure relay URL", "VITE_T3CODE_RELAY_URL", "http://relay.example.test"],
+    ])("stays off with %s", (_name, key, value) => {
+      vi.stubEnv(key, value);
+
+      expect(hasCloudPublicConfig()).toBe(false);
+    });
   });
 
   describe("browser origins", () => {

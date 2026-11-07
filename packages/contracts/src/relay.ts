@@ -473,6 +473,7 @@ export const RelayEnvironmentConnectNotAuthorizedReason = Schema.Literals([
   "managed_endpoint_allocation_not_ready",
   "managed_endpoint_hostname_invalid",
   "managed_endpoint_mismatch",
+  "manual_endpoint_not_allowed",
 ]);
 export type RelayEnvironmentConnectNotAuthorizedReason =
   typeof RelayEnvironmentConnectNotAuthorizedReason.Type;

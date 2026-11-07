@@ -641,7 +641,7 @@ const connectLinkCommand = Command.make("link", {
   headless: headlessFlag,
   publishOnly: Flag.Boolean("publish-only").pipe(
     Flag.withDescription(
-      "Link to publish agent activity only, with no managed tunnel. Reach this environment out of band (e.g. Tailscale).",
+      "Link without a managed tunnel. Set T3CODE_PUBLIC_URL when serving to let a self-hosted relay broker connections to that address; otherwise reach this environment out of band (e.g. Tailscale).",
     ),
     Flag.withDefault(false),
   ),

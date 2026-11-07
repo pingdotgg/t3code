@@ -1,24 +1,38 @@
 import { UserButton, useAuth } from "@clerk/react";
-import { LogInIcon } from "lucide-react";
+import { LogInIcon, LogOutIcon } from "lucide-react";
 
-import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { useCloudAuth } from "../../cloud/cloudAuth";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { T3_CONNECT_ACCOUNT_PAGES } from "./T3ConnectAccountPages";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
 
 export function T3ConnectSidebarSignIn() {
-  if (!hasCloudPublicConfig()) return null;
+  const { provider, isLoaded, isSignedIn } = useCloudAuth();
+  const { openAuthPrompt } = useT3ConnectAuthPrompt();
 
-  return <ConfiguredT3ConnectSidebarSignIn />;
+  if (provider === null || !isLoaded || isSignedIn) return null;
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton onClick={openAuthPrompt}>
+          <LogInIcon />
+          <span>Sign in to T3 Connect</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
 }
 
 export function T3ConnectSidebarAvatar() {
-  if (!hasCloudPublicConfig()) return null;
+  const { provider } = useCloudAuth();
 
-  return <ConfiguredT3ConnectSidebarAvatar />;
+  if (provider === "clerk") return <ClerkSidebarAvatar />;
+  if (provider === "oidc") return <OidcSidebarAccount />;
+  return null;
 }
 
-function ConfiguredT3ConnectSidebarAvatar() {
+function ClerkSidebarAvatar() {
   const { isLoaded, isSignedIn } = useAuth();
 
   if (!isLoaded || !isSignedIn) return null;
@@ -47,18 +61,18 @@ function ConfiguredT3ConnectSidebarAvatar() {
   );
 }
 
-function ConfiguredT3ConnectSidebarSignIn() {
-  const { isLoaded, isSignedIn } = useAuth();
-  const { openAuthPrompt } = useT3ConnectAuthPrompt();
+/** An OpenID Connect provider hosts no account pages, so the account is just a way to sign out. */
+function OidcSidebarAccount() {
+  const { isSignedIn, accountLabel, signOut } = useCloudAuth();
 
-  if (!isLoaded || isSignedIn) return null;
+  if (!isSignedIn) return null;
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton onClick={openAuthPrompt}>
-          <LogInIcon />
-          <span>Sign in to T3 Connect</span>
+        <SidebarMenuButton onClick={() => void signOut()} title="Sign out of T3 Connect">
+          <LogOutIcon />
+          <span className="truncate">Sign out{accountLabel ? ` (${accountLabel})` : ""}</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

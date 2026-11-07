@@ -1,0 +1,5 @@
+# Caddy terminates TLS and forwards to the relay. The relay trusts its configured
+# RELAY_PUBLIC_ORIGIN, not forwarded headers, so no proxy header configuration is needed.
+{$RELAY_DOMAIN} {
+	reverse_proxy relay:8080
+}

@@ -12,6 +12,7 @@ import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@t3tools/shared/code
 import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCallback.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
+import { isDesktopOidcCallbackUrl } from "@t3tools/shared/oidc";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { readPairingAppLink } from "@t3tools/shared/remote";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -210,9 +211,25 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const openAppLink = (value: string | undefined) => {
-        if (!value || (promptLinkAppPath(value) === null && readPairingAppLink(value) === null))
+        if (
+          !value ||
+          (promptLinkAppPath(value) === null &&
+            readPairingAppLink(value) === null &&
+            !isDesktopOidcCallbackUrl(value))
+        )
           return false;
-        void runPromise(webLinks.receive(value));
+        void runPromise(
+          webLinks.receive(value).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                // The identity provider left the user in the system browser.
+                if (!isDesktopOidcCallbackUrl(value)) return;
+                const mainWindow = yield* electronWindow.currentMainOrFirst;
+                if (Option.isSome(mainWindow)) yield* electronWindow.reveal(mainWindow.value);
+              }),
+            ),
+          ),
+        );
         return true;
       };
       const args = yield* HostProcess.Arguments;

@@ -118,6 +118,9 @@ export const make = Effect.gen(function* () {
   ) {
     return yield* Effect.tryPromise({
       try: async () => {
+        if (config.clerkSecretKey === undefined || config.clerkPublishableKey === undefined) {
+          throw new Error("Clerk is not configured.");
+        }
         const user = await createClerkClient({
           secretKey: Redacted.value(config.clerkSecretKey),
           publishableKey: config.clerkPublishableKey,

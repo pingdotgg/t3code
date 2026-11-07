@@ -1,12 +1,14 @@
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import {
   hostedAppUrlConfig,
   makeCloudCliOAuthConfig,
   makeRelayUrlConfig,
+  oidcSettingsConfig,
   resolveRelayClientTracingConfig,
 } from "./publicConfig.ts";
 
@@ -47,11 +49,33 @@ it.effect("derives direct Clerk OAuth endpoints from statically injected public 
     assert.deepEqual(config, {
       tokenEndpoint: "https://clerk.example.test/oauth/token",
       deviceAuthorizationEndpoint: "https://clerk.example.test/oauth/device_authorization",
+      authorizationEndpoint: null,
+      bearerToken: "access_token",
       clientId: "oauth_client_embedded",
       loopbackPort: 34338,
       redirectUri: "http://127.0.0.1:34338/callback",
       scopes: ["openid", "profile", "email", "offline_access"],
     });
+  }),
+);
+
+it.effect("reads an OIDC provider from the environment and treats a partial one as absent", () =>
+  Effect.gen(function* () {
+    const configured = yield* oidcSettingsConfig.pipe(
+      provideEnv({
+        T3CODE_OIDC_ISSUER: "https://sso.example.test/realms/t3",
+        T3CODE_OIDC_CLIENT_ID: "t3-code",
+      }),
+    );
+    assert.deepEqual(Option.getOrNull(configured), {
+      issuer: "https://sso.example.test/realms/t3",
+      clientId: "t3-code",
+    });
+
+    const partial = yield* oidcSettingsConfig.pipe(
+      provideEnv({ T3CODE_OIDC_ISSUER: "https://sso.example.test/realms/t3" }),
+    );
+    assert.isTrue(Option.isNone(partial));
   }),
 );
 

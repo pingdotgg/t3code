@@ -2,109 +2,30 @@ import * as Alchemy from "alchemy";
 import * as Axiom from "@alchemy.run/axiom";
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Drizzle from "@alchemy.run/drizzle/Postgres";
-import * as Config from "effect/Config";
 import * as Cause from "effect/Cause";
-import * as DateTime from "effect/DateTime";
-import * as Digest from "effect/crypto/Digest";
-import * as Mac from "effect/crypto/Mac";
-import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
-import * as Stream from "effect/Stream";
-import * as Etag from "effect/http/Etag";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpMiddleware from "effect/http/HttpMiddleware";
-import * as HttpPlatform from "effect/http/HttpPlatform";
-import * as HttpRouter from "effect/http/HttpRouter";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import * as HttpApiScalar from "effect/http-api/HttpApiScalar";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 
-import { RelayApi } from "@t3tools/contracts/relay";
-
-import {
-  RELAY_HTTP_ROUTER_CONFIG,
-  traceRelayHttpRequestWith,
-  withoutCapturedParentSpan,
-} from "./http/Api.ts";
-import * as CloudMintSigner from "./auth/CloudMintSigner.ts";
-import * as RelayHttpApi from "./http/Api.ts";
-import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
-import { RelayObservability } from "./observability.ts";
-import * as Observability from "./observability.ts";
-import * as DeliveryAttempts from "./agentActivity/DeliveryAttempts.ts";
-import * as AgentActivityRows from "./agentActivity/AgentActivityRows.ts";
-import * as Devices from "./agentActivity/Devices.ts";
-import * as DpopProofs from "./auth/DpopProofs.ts";
-import * as RelayTokens from "./auth/RelayTokens.ts";
-import * as EnvironmentCredentials from "./environments/EnvironmentCredentials.ts";
-import * as EnvironmentLinks from "./environments/EnvironmentLinks.ts";
-import * as ManagedEndpointAllocations from "./environments/ManagedEndpointAllocations.ts";
-import * as LiveActivities from "./agentActivity/LiveActivities.ts";
+import { composeRelay } from "./composition.ts";
 import * as RelayDb from "./db.ts";
+import * as HookForwarder from "./hooks/HookForwarder.ts";
+import * as HookInbox from "./hooks/HookInbox.ts";
+import * as HookInboxObject from "./hooks/HookInboxObject.ts";
+import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
+import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
+import { RelayObservability } from "./observability.ts";
 import {
   RelayApnsDeliveryDeadLetterQueue,
   RelayApnsDeliveryQueue,
-  RelayFcmDeliveryQueue,
   RelayFcmDeliveryDeadLetterQueue,
+  RelayFcmDeliveryQueue,
 } from "./queues.ts";
-import * as WebCrypto from "./WebCrypto.ts";
-import * as FcmAssertionSigner from "./agentActivity/FcmAssertionSigner.ts";
-import * as FcmClient from "./agentActivity/FcmClient.ts";
-import * as FcmDeliveryQueueSender from "./agentActivity/FcmDeliveryQueueSender.ts";
-import * as FcmDeliveries from "./agentActivity/FcmDeliveries.ts";
-import * as FcmDeliveryQueueConsumer from "./agentActivity/FcmDeliveryQueueConsumer.ts";
-import * as RelayConfiguration from "./Config.ts";
-import * as AgentActivityPublisher from "./agentActivity/AgentActivityPublisher.ts";
-import * as ApnsClient from "./agentActivity/ApnsClient.ts";
-import * as ApnsProviderTokens from "./agentActivity/ApnsProviderTokens.ts";
-import * as ApnsDeliveryQueue from "./agentActivity/ApnsDeliveryQueue.ts";
-import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
-import * as CloudflareApiPause from "./environments/CloudflareApiPause.ts";
-import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
-import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
-import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
-import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
-import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
-import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
-import * as T3ChatAccounts from "./t3chat/T3ChatAccounts.ts";
-import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
-import * as HookForwarder from "./hooks/HookForwarder.ts";
-import * as HeldHooks from "./hooks/HeldHooks.ts";
-import * as HookInbox from "./hooks/HookInbox.ts";
-import * as HookInboxObject from "./hooks/HookInboxObject.ts";
-import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
-
-const layerWebcrypto = Layer.mergeAll(
-  Digest.layerWebCrypto,
-  Mac.layerWebCrypto,
-  Signature.layerWebCrypto,
-).pipe(Layer.provideMerge(SecureRandom.layerWebCrypto));
-
-const layerHttpPlatformNotSupported = Layer.succeed(HttpPlatform.HttpPlatform, {
-  platform: "web",
-  compression: {
-    algorithms: new Set<HttpPlatform.CompressionAlgorithm>(),
-    compressResponse: (response) => Effect.succeed(response),
-  },
-  fileResponse: Effect.fn("HttpPlatform.fileResponse")(function () {
-    return Effect.die("Relay API does not serve filesystem responses");
-  }),
-  fileWebResponse: Effect.fn("HttpPlatform.fileWebResponse")(function () {
-    return Effect.die("Relay API does not serve file responses");
-  }),
-});
-
-const layerRelayApi = Layer.mergeAll(
-  RelayHttpApi.layerHealthApi,
-  RelayHttpApi.layerMetadataApi,
-  RelayHttpApi.layerMobileApi,
-  RelayHttpApi.layerClientApi,
-  RelayHttpApi.layerTokenApi,
-  RelayHttpApi.layerDpopClientApi,
-  RelayHttpApi.layerServerApi,
-);
+import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
+import type { RelayHost } from "./host/RelayHost.ts";
+import * as Ports from "./host/ports.ts";
 
 const CloudMintKeyPair = Alchemy.KeyPair("CloudMintKeyPair");
 const ApnsDeliveryJobSigningSecret = Alchemy.makeRandom("ApnsDeliveryJobSigningSecret", {
@@ -113,6 +34,8 @@ const ApnsDeliveryJobSigningSecret = Alchemy.makeRandom("ApnsDeliveryJobSigningS
 
 export class Api extends Cloudflare.Worker<Api, {}>()("Api") {}
 
+// Cloudflare host: wires the platform-neutral relay (`composition.ts`) to Workers, Queues,
+// Durable Objects, Hyperdrive, Rate Limiting, R2 and Cloudflare-managed tunnels.
 export const layer = Api.make(
   RelayDeploymentConfig.pipe(
     Effect.map(({ relayPublicDomain }) => ({
@@ -140,60 +63,28 @@ export const layer = Api.make(
     const managedEndpointZone = yield* ManagedEndpointZone;
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
     const observability = yield* RelayObservability;
+    const alchemyRuntimeContext: Alchemy.BaseRuntimeContext = yield* Cloudflare.Worker;
+    const inRuntime = <A, E, R>(effect: Effect.Effect<A, E, R | Alchemy.RuntimeContext>) =>
+      effect.pipe(Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext));
 
-    const apnsEnabled = yield* Config.Boolean("APNS_ENABLED").pipe(Config.withDefault(true));
-    const apnsCredentials = apnsEnabled
-      ? {
-          environment: yield* Config.schema(RelayConfiguration.ApnsEnvironment, "APNS_ENVIRONMENT"),
-          teamId: yield* Config.String("APNS_TEAM_ID"),
-          keyId: yield* Config.String("APNS_KEY_ID"),
-          bundleId: yield* Config.String("APNS_BUNDLE_ID"),
-          privateKey: yield* Config.Redacted("APNS_PRIVATE_KEY"),
-        }
-      : null;
-    const fcmServiceAccount = Option.getOrUndefined(
-      Option.filter(
-        yield* Config.option(Config.Redacted("FCM_SERVICE_ACCOUNT")),
-        (value) => Redacted.value(value).trim().length > 0,
-      ),
-    );
-    const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
-    const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
-    const fcmDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
+    const cloudMintPrivateKey = yield* yield* cloudMintKeyPair.privateKey;
+    const cloudMintPublicKey = yield* yield* cloudMintKeyPair.publicKey;
+    const apnsJobSigningSecret = yield* yield* randomApnsDeliveryJobSigningSecret;
+    const apnsWriteQueue = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
+    const fcmWriteQueue = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
 
-    const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
-    const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
-    const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
-    const t3ChatLinkSecret = Option.getOrUndefined(
-      Option.filter(
-        yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
-        (value) => Redacted.value(value).trim().length > 0,
-      ),
-    );
-    const t3ChatBaseUrl = yield* Config.String("T3CHAT_URL").pipe(
-      Config.withDefault("https://t3.chat"),
-    );
-
-    const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
-    const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
     const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(yield* RelayDb.RelayHyperdrive);
     // Named statements collide behind Hyperdrive transaction pooling (Effect-TS/effect#8320); use unnamed statements.
     const db = yield* Drizzle.Postgres(hyperdrive.connectionString, {
       client: { prepare: false },
     });
+    const managedEndpointBaseDomain = yield* yield* managedEndpointZone.name;
 
-    const managedEndpointTunnelBinding = yield* Cloudflare.Tunnel.ReadWriteTunnel();
+    const tunnel = yield* Cloudflare.Tunnel.ReadWriteTunnel();
     // Keep Worker custom-domain reconciliation ordered after API zone provisioning.
     yield* yield* relayApiZone.zoneId;
-    const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
-    const managedEndpointZoneName = yield* managedEndpointZone.name;
-    const managedEndpointCleanupMode = yield* RelayConfiguration.managedEndpointCleanupModeConfig;
-    const legacyManagedEndpointCleanupMode =
-      yield* RelayConfiguration.legacyManagedEndpointCleanupModeConfig;
-    const legacyTunnelGraceMinutes = Option.getOrUndefined(
-      yield* RelayConfiguration.legacyTunnelGraceMinutesConfig,
-    );
-    // Endpoint keys and their hashes differ by stage, including in shared accounts.
+    const dns = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
+
     const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
       namespaceId: 1001,
       simple: {
@@ -208,7 +99,6 @@ export const layer = Api.make(
         period: HookForwarder.RELAY_HOOK_ENDPOINT_RATE_LIMIT.periodSeconds,
       },
     });
-    const hookInboxes = yield* HookInboxObject.HookInboxObject;
     const mobileTelemetryRateLimit = yield* Cloudflare.RateLimit("MOBILE_TELEMETRY_RATE_LIMIT", {
       namespaceId: 1003,
       simple: {
@@ -216,44 +106,20 @@ export const layer = Api.make(
         period: MobileTelemetry.MOBILE_TELEMETRY_RATE_LIMIT.periodSeconds,
       },
     });
-    const mobileSourceMaps = yield* Cloudflare.R2.ReadBucket(observability.mobileSourceMaps);
-    const mobileTelemetryToken = yield* observability.mobileTelemetryIngestToken.token;
-    const mobileTracesUrl = yield* observability.traces.otelTracesEndpoint;
-    const mobileTracesDataset = yield* observability.traces.name;
-    const mobileLogsUrl = yield* observability.mobileLogs.otelLogsEndpoint;
-    const mobileLogsDataset = yield* observability.mobileLogs.name;
-    const mobileMetricsUrl = yield* observability.mobileMetrics.otelMetricsEndpoint;
-    const mobileMetricsDataset = yield* observability.mobileMetrics.name;
+    // Fails open at the composition; here a limiter error is only reported as unavailable.
+    const limitKey =
+      (limiter: typeof hookRateLimit) =>
+      (key: string): Effect.Effect<boolean, Ports.RateLimitUnavailableError> =>
+        inRuntime(limiter.limit({ key })).pipe(
+          Effect.map((result) => result.success),
+          Effect.mapError((cause) => new Ports.RateLimitUnavailableError({ cause })),
+        );
 
-    const alchemyRuntimeContext: Alchemy.BaseRuntimeContext = yield* Cloudflare.Worker;
-
-    const loadSettings = Effect.gen(function* () {
-      return RelayConfiguration.RelayConfiguration.of({
-        relayIssuer: relayPublicOrigin,
-        ...(fcmServiceAccount ? { fcmServiceAccount } : {}),
-        apns: apnsCredentials,
-        apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
-        clerkSecretKey,
-        clerkPublishableKey,
-        clerkJwtAudience,
-        cloudMintPrivateKey: yield* cloudMintPrivateKey,
-        cloudMintPublicKey: yield* cloudMintPublicKey,
-        managedEndpointBaseDomain: yield* managedEndpointZoneName,
-        managedEndpointNamespace: stage,
-        managedEndpointCleanupMode,
-        legacyManagedEndpointCleanupMode,
-        ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),
-        ...(t3ChatLinkSecret
-          ? { t3Chat: { baseUrl: t3ChatBaseUrl, linkSecret: t3ChatLinkSecret } }
-          : {}),
-      });
-    });
-
+    const hookInboxes = yield* HookInboxObject.HookInboxObject;
     const inboxCall =
       <A>(operation: HookInbox.HookInboxError["operation"], endpointKey: string) =>
       (effect: Effect.Effect<A, never, Alchemy.RuntimeContext>) =>
-        effect.pipe(
-          Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+        inRuntime(effect).pipe(
           Effect.catchCause((cause) =>
             Effect.fail(
               new HookInbox.HookInboxError({
@@ -264,300 +130,129 @@ export const layer = Api.make(
             ),
           ),
         );
-    const layerHookInbox = Layer.succeed(HookInbox.HookInbox, {
-      hold: Effect.fn("HookInbox.hold")(function ({ endpointKey, baseUrl, hook }) {
-        return hookInboxes
-          .getByName(endpointKey)
-          .hold(hook, baseUrl)
-          .pipe(inboxCall("hold", endpointKey));
-      }),
-      wake: Effect.fn("HookInbox.wake")(function ({ endpointKey, baseUrl }) {
-        return hookInboxes
-          .getByName(endpointKey)
-          .wake(baseUrl)
-          .pipe(inboxCall("wake", endpointKey));
-      }),
-      clear: Effect.fn("HookInbox.clear")(function ({ endpointKey }) {
-        return hookInboxes.getByName(endpointKey).clear().pipe(inboxCall("clear", endpointKey));
-      }),
-    });
 
-    const layerRuntime = Layer.empty.pipe(
-      Layer.provideMerge(MobileRegistrations.layer),
-      Layer.provideMerge(AgentActivityPublisher.layer),
-      Layer.provideMerge(EnvironmentConnector.layer),
-      Layer.provideMerge(EnvironmentLinker.layer),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          EnvironmentPublishSignatures.layer,
-          ManagedEndpointReaper.layer,
-          HeldHooks.layer,
-        ),
-      ),
-      Layer.provideMerge(
-        ManagedEndpointProvider.layerCloudflareBindings(
-          managedEndpointTunnelBinding,
-          managedEndpointDnsBinding,
-          alchemyRuntimeContext,
-        ),
-      ),
-      Layer.provideMerge(DpopProofs.layer),
-      Layer.provideMerge(ApnsDeliveries.layer),
-      Layer.provideMerge(
-        FcmDeliveries.layer.pipe(
-          Layer.provide(
-            Layer.succeed(FcmDeliveryQueueSender.FcmDeliveryQueueSender, {
-              send: Effect.fn("FcmDeliveryQueueSender.send")(
-                function* (body) {
-                  return yield* fcmDeliveryQueueSender.send(body);
-                },
-                Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-              ),
-            }),
-          ),
-          Layer.provideMerge(
-            FcmClient.layer.pipe(
-              Layer.provide(FcmAssertionSigner.layer),
-              Layer.provide(
-                Layer.succeed(WebCrypto.WebCrypto, { subtle: globalThis.crypto.subtle }),
-              ),
-            ),
-          ),
-        ),
-      ),
-      Layer.provideMerge(ApnsClient.layer.pipe(Layer.provideMerge(ApnsProviderTokens.layer))),
-      Layer.provideMerge(
-        ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
-      ),
-      Layer.provideMerge(Layer.mergeAll(AgentActivityRows.layer, Devices.layer, layerHookInbox)),
-      Layer.provideMerge(EnvironmentCredentials.layer),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          CloudflareApiPause.layer,
-          EnvironmentLinks.layer,
-          ManagedEndpointAllocations.layer,
-          ManagedTunnelLimits.layer,
-        ),
-      ),
-      Layer.provideMerge(Layer.mergeAll(LiveActivities.layer, T3ChatAccounts.layer)),
-      Layer.provideMerge(DeliveryAttempts.layer),
-      Layer.provideMerge(RelayTokens.layer.pipe(Layer.provideMerge(CloudMintSigner.layer))),
-      Layer.provideMerge(
-        RelayDb.RelayTransactions.layer.pipe(
-          Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
-        ),
-      ),
-      Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
-      Layer.provideMerge(layerWebcrypto),
-    );
+    const mobileSourceMaps = yield* Cloudflare.R2.ReadBucket(observability.mobileSourceMaps);
+    const mobileTelemetryToken = yield* observability.mobileTelemetryIngestToken.token;
+    const mobileTracesUrl = yield* observability.traces.otelTracesEndpoint;
+    const mobileTracesDataset = yield* observability.traces.name;
+    const mobileLogsUrl = yield* observability.mobileLogs.otelLogsEndpoint;
+    const mobileLogsDataset = yield* observability.mobileLogs.name;
+    const mobileMetricsUrl = yield* observability.mobileMetrics.otelMetricsEndpoint;
+    const mobileMetricsDataset = yield* observability.mobileMetrics.name;
 
-    // Fails open: a limiter outage must not drop webhooks or app telemetry.
-    const allowWith =
-      (
-        limiter: typeof hookRateLimit,
-        failedOpenAttribute = "relay.hook.rate_limiter_failed_open",
-      ) =>
-      (key: string): Effect.Effect<boolean> =>
-        limiter.limit({ key }).pipe(
-          Effect.map((result) => result.success),
-          Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-          Effect.catch((error) =>
-            Effect.logWarning("Rate limiter unavailable", { error: error.message }).pipe(
-              Effect.andThen(Effect.annotateCurrentSpan({ [failedOpenAttribute]: true })),
-              Effect.as(true),
-            ),
-          ),
-        );
-    const layerHookRateLimiter = Layer.succeed(HookForwarder.HookRateLimiter, {
-      allowHook: allowWith(hookRateLimit),
-      allowEndpoint: allowWith(hookEndpointRateLimit),
-    });
-
-    // `fetch` rebuilds its layers per request; the source map cache must outlive one.
-    const mobileSourceMapLookups = yield* MobileTelemetry.SourceMaps.pipe(
-      Effect.provide(MobileTelemetry.layerSourceMaps),
-      Effect.provideService(MobileTelemetry.SourceMapObjects, {
-        get: (key) =>
-          mobileSourceMaps.get(key).pipe(
-            Effect.map((object) =>
-              object === null
-                ? undefined
-                : {
-                    size: object.size,
-                    text: object.text().pipe(
-                      Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-                      Effect.mapError(
-                        (cause) => new MobileTelemetry.SourceMapObjectError({ key, cause }),
+    const host: RelayHost<CloudflareEventSources> = {
+      deployment: { relayPublicOrigin, stage },
+      mintKeyPair: Effect.succeed({
+        privateKey: cloudMintPrivateKey,
+        publicKey: cloudMintPublicKey,
+      }),
+      apnsJobSigningSecret: Effect.succeed(apnsJobSigningSecret),
+      managedEndpointBaseDomain,
+      database: db,
+      managedEndpointClients: ManagedEndpointProvider.layerCloudflareClients(
+        tunnel,
+        dns,
+        alchemyRuntimeContext,
+      ),
+      hookInbox: Layer.succeed(HookInbox.HookInbox, {
+        hold: Effect.fn("HookInbox.hold")(function ({ endpointKey, baseUrl, hook }) {
+          return hookInboxes
+            .getByName(endpointKey)
+            .hold(hook, baseUrl)
+            .pipe(inboxCall("hold", endpointKey));
+        }),
+        wake: Effect.fn("HookInbox.wake")(function ({ endpointKey, baseUrl }) {
+          return hookInboxes
+            .getByName(endpointKey)
+            .wake(baseUrl)
+            .pipe(inboxCall("wake", endpointKey));
+        }),
+        clear: Effect.fn("HookInbox.clear")(function ({ endpointKey }) {
+          return hookInboxes.getByName(endpointKey).clear().pipe(inboxCall("clear", endpointKey));
+        }),
+      }),
+      rateLimits: {
+        hook: limitKey(hookRateLimit),
+        hookEndpoint: limitKey(hookEndpointRateLimit),
+        mobileTelemetry: limitKey(mobileTelemetryRateLimit),
+      },
+      mobileTelemetry: {
+        settings: Effect.gen(function* () {
+          return MobileTelemetry.MobileTelemetrySettings.of({
+            axiomToken: yield* mobileTelemetryToken,
+            destinations: {
+              traces: { url: yield* mobileTracesUrl, dataset: yield* mobileTracesDataset },
+              logs: { url: yield* mobileLogsUrl, dataset: yield* mobileLogsDataset },
+              metrics: { url: yield* mobileMetricsUrl, dataset: yield* mobileMetricsDataset },
+            },
+          });
+        }),
+        sourceMaps: Effect.succeed({
+          get: (key) =>
+            inRuntime(mobileSourceMaps.get(key)).pipe(
+              Effect.map((object) =>
+                object === null
+                  ? undefined
+                  : {
+                      size: object.size,
+                      text: inRuntime(object.text()).pipe(
+                        Effect.mapError(
+                          (cause) => new MobileTelemetry.SourceMapObjectError({ key, cause }),
+                        ),
                       ),
-                    ),
-                  },
+                    },
+              ),
+              Effect.mapError((cause) => new MobileTelemetry.SourceMapObjectError({ key, cause })),
             ),
-            Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            Effect.mapError((cause) => new MobileTelemetry.SourceMapObjectError({ key, cause })),
+        }),
+      },
+      apnsSender: Effect.succeed({
+        send: (body) =>
+          inRuntime(apnsWriteQueue.send(body)).pipe(
+            Effect.mapError((cause) => new Ports.DeliveryQueueSendError({ cause })),
           ),
       }),
-    );
-    const layerMobileTelemetry = MobileTelemetry.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.effect(
-            MobileTelemetry.MobileTelemetrySettings,
-            Effect.gen(function* () {
-              return MobileTelemetry.MobileTelemetrySettings.of({
-                axiomToken: yield* mobileTelemetryToken,
-                destinations: {
-                  traces: { url: yield* mobileTracesUrl, dataset: yield* mobileTracesDataset },
-                  logs: { url: yield* mobileLogsUrl, dataset: yield* mobileLogsDataset },
-                  metrics: { url: yield* mobileMetricsUrl, dataset: yield* mobileMetricsDataset },
-                },
-              });
-            }),
+      fcmSender: Effect.succeed({
+        send: (body) =>
+          inRuntime(fcmWriteQueue.send(body)).pipe(
+            Effect.mapError((cause) => new Ports.DeliveryQueueSendError({ cause })),
           ),
-          Layer.succeed(MobileTelemetry.MobileTelemetryRateLimiter, {
-            allow: allowWith(
-              mobileTelemetryRateLimit,
-              "relay.mobile_telemetry.rate_limiter_failed_open",
-            ),
-          }),
-          Layer.succeed(MobileTelemetry.SourceMaps, mobileSourceMapLookups),
-        ),
-      ),
-    );
-
-    const layerApp = Layer.mergeAll(
-      layerRelayApi,
-      HookForwarder.layerApi.pipe(
-        Layer.provide(HookForwarder.layer),
-        Layer.provide(layerHookRateLimiter),
-      ),
-      MobileTelemetry.layerApi.pipe(Layer.provide(layerMobileTelemetry)),
-    ).pipe(
-      Layer.provideMerge(RelayHttpApi.layerClientAuth),
-      Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),
-      Layer.provideMerge(RelayHttpApi.layerEnvironmentAuth),
-      Layer.provide(layerRuntime),
-    );
-
-    yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
-      apnsDeliveryQueue,
-      {
-        batchSize: 10,
-        maxRetries: 5,
-        maxWaitTime: "5 seconds",
-        retryDelay: "30 seconds",
-        deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
-      },
-      (stream) =>
-        stream.pipe(
-          Stream.withSpan("relay.apn_delivery_queue.process_batch"),
-          Stream.runForEach((message) =>
-            ApnsDeliveries.ApnsDeliveries.pipe(
-              Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
-              Effect.withSpan("relay.apn_delivery_queue.process_message"),
-            ),
-          ),
-          Effect.provide(layerRuntime),
-        ),
-    );
-
-    yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
-      fcmDeliveryQueue,
-      {
-        batchSize: 10,
-        maxRetries: 5,
-        maxWaitTime: "1 second",
-        retryDelay: "30 seconds",
-        deadLetterQueue: fcmDeliveryDeadLetterQueue.queueName as unknown as string,
-      },
-      (stream) =>
-        stream.pipe(
-          Stream.withSpan("relay.fcm_delivery_queue.process_batch"),
-          Stream.runForEach(FcmDeliveryQueueConsumer.processMessage),
-          Effect.provide(layerRuntime),
-        ),
-    );
-
-    yield* Cloudflare.Workers.cron("*/5 * * * *", () =>
-      Effect.all(
-        [
-          DpopProofs.DpopProofReplay.pipe(
-            Effect.flatMap((dpopProofs) => dpopProofs.pruneExpired),
-            Effect.andThen(
-              Effect.all([AgentActivityRows.AgentActivityRows, DateTime.now]).pipe(
-                Effect.flatMap(([activityRows, now]) =>
-                  activityRows.pruneTerminal({
-                    updatedBefore: DateTime.formatIso(DateTime.subtract(now, { minutes: 30 })),
+      }),
+      // Acknowledge or retry each message on its own, so one bad job cannot replay its batch.
+      consumeQueue: (name, options, handler) =>
+        Cloudflare.Queues.consumeQueueMessages<unknown>(
+          name === "apns" ? apnsDeliveryQueue : fcmDeliveryQueue,
+          {
+            batchSize: options.batchSize,
+            maxRetries: options.maxRetries,
+            maxWaitTime: name === "apns" ? "5 seconds" : "1 second",
+            retryDelay: options.retryDelay,
+            deadLetterQueue: (name === "apns"
+              ? apnsDeliveryDeadLetterQueue
+              : fcmDeliveryDeadLetterQueue
+            ).queueName as unknown as string,
+          },
+          (stream) =>
+            stream.pipe(
+              Stream.withSpan(`relay.${name}_delivery_queue.process_batch`),
+              Stream.runForEach((message) =>
+                handler(message.body).pipe(
+                  Effect.matchEffect({
+                    onFailure: () => Effect.sync(() => message.retry()),
+                    onSuccess: () => Effect.sync(() => message.ack()),
                   }),
                 ),
               ),
             ),
-            Effect.andThen(
-              DeliveryAttempts.DeliveryAttempts.pipe(
-                Effect.flatMap((attempts) => attempts.pruneExpired),
-              ),
-            ),
-            Effect.catchCause((cause) =>
-              Cause.hasInterrupts(cause)
-                ? Effect.interrupt
-                : Effect.logWarning("Failed to prune expired relay state", { cause }),
-            ),
-          ),
-          ManagedEndpointReaper.ManagedEndpointReaper.pipe(
-            Effect.flatMap((reaper) => reaper.sweep.pipe(Effect.timeout("2 minutes"))),
-            Effect.tap((result) =>
-              result.scanned > 0
-                ? Effect.logInfo("Finished managed tunnel cleanup", result)
-                : Effect.void,
-            ),
-            Effect.catchCause((cause) =>
-              Cause.hasInterrupts(cause)
-                ? Effect.interrupt
-                : Effect.logWarning("Failed to clean up inactive managed tunnels", { cause }),
-            ),
-          ),
-          AgentActivityPublisher.AgentActivityPublisher.pipe(
-            Effect.flatMap((publisher) => publisher.endIdleLiveActivities),
-            Effect.catchCause((cause) =>
-              Cause.hasInterrupts(cause)
-                ? Effect.interrupt
-                : Effect.logWarning("Failed to end idle Live Activities", { cause }),
-            ),
-          ),
-        ],
-        { concurrency: 3, discard: true },
-      ).pipe(
-        Effect.withSpan("relay.cron.prune_expired_state"),
-        Observability.withSchemaErrorSpanAttributes,
-        Effect.provide(layerRuntime),
-      ),
-    );
-
-    const fetch = Layer.merge(
-      Layer.mergeAll(
-        HttpApiBuilder.layer(RelayApi, { openapiPath: "/openapi.json" }).pipe(
-          Layer.provide(layerApp),
         ),
-        HttpApiScalar.layer(RelayApi, { path: "/docs" }),
-        RelayHttpApi.layerDocsRedirectRoute,
-      ).pipe(
-        Layer.provide([Etag.layerWeak, layerHttpPlatformNotSupported, RelayHttpApi.layerCors]),
-      ),
-      RelayHttpApi.layerNotFoundRoute,
-    ).pipe(
-      HttpRouter.toHttpEffect,
-      Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG),
-      withoutCapturedParentSpan,
-      Effect.map((httpEffect) =>
-        traceRelayHttpRequestWith(httpEffect, Layer.empty).pipe(
-          Observability.withSchemaErrorSpanAttributes,
-        ),
-      ),
-    );
+      schedule: (cron, effect) => Cloudflare.Workers.cron(cron, () => effect),
+    };
 
-    return { fetch };
+    return yield* composeRelay(host);
   }).pipe(
     Effect.provide(
       Layer.empty.pipe(
+        Layer.provideMerge(FetchHttpClient.layer),
         Layer.provideMerge(Cloudflare.Hyperdrive.ConnectBinding),
         Layer.provideMerge(Cloudflare.Workers.CronEventSourceLive),
         Layer.provideMerge(Cloudflare.Queues.WriteQueueBinding),
@@ -586,5 +281,9 @@ export const layer = Api.make(
     ),
   ),
 );
+
+type CloudflareEventSources =
+  | Layer.Success<typeof Cloudflare.Queues.EventSourceLive>
+  | Layer.Success<typeof Cloudflare.Workers.CronEventSourceLive>;
 
 export default layer;

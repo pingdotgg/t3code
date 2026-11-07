@@ -58,6 +58,11 @@ describe("mapManagedRelayError", () => {
       reason: "permission",
       detail: expect.stringContaining("turn T3 Connect on"),
     });
+    expect(mapConnectRefusal("manual_endpoint_not_allowed")).toMatchObject({
+      _tag: "ConnectionBlockedError",
+      reason: "permission",
+      detail: expect.stringContaining("HTTPS address"),
+    });
     expect(mapConnectRefusal(undefined)).toMatchObject({
       _tag: "ConnectionBlockedError",
       reason: "permission",

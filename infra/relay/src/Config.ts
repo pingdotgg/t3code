@@ -5,6 +5,8 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
+import type { SubjectTokenVerificationFailed, VerifiedSubject } from "./auth/SubjectTokens.ts";
+
 export const ApnsEnvironment = Schema.Literals(["sandbox", "production"]);
 export type ApnsEnvironment = typeof ApnsEnvironment.Type;
 
@@ -54,15 +56,31 @@ export interface T3ChatSettings {
   readonly linkSecret: Redacted.Redacted<string>;
 }
 
+// Whether the relay brokers connections to endpoints an environment declares itself, with no tunnel.
+// "public" accepts internet-reachable HTTPS addresses; "private" also accepts private networks.
+export const ManualEndpointsMode = Schema.Literals(["off", "public", "private"]);
+export type ManualEndpointsMode = typeof ManualEndpointsMode.Type;
+
+export interface OidcSettings {
+  // Must equal the issuer's discovery `issuer` exactly, so a path prefix or trailing slash matters.
+  readonly issuer: string;
+  readonly verify: (
+    token: string,
+  ) => Effect.Effect<VerifiedSubject, SubjectTokenVerificationFailed>;
+}
+
 export class RelayConfiguration extends Context.Service<
   RelayConfiguration,
   {
     readonly relayIssuer: string;
     readonly apns: ApnsCredentials | null;
     readonly fcmServiceAccount?: Redacted.Redacted<string>;
-    readonly clerkSecretKey: Redacted.Redacted<string>;
-    readonly clerkPublishableKey: string;
-    readonly clerkJwtAudience: string;
+    // Optional: a self-hosted relay can run on OIDC alone.
+    readonly clerkSecretKey?: Redacted.Redacted<string>;
+    readonly clerkPublishableKey?: string;
+    readonly clerkJwtAudience?: string;
+    readonly oidc?: OidcSettings;
+    readonly manualEndpoints?: ManualEndpointsMode;
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;

@@ -19,6 +19,8 @@ export class CloudPublicConfigMissingError extends Schema.TaggedError<CloudPubli
 export interface CloudPublicConfig {
   readonly clerkPublishableKey: string | null;
   readonly clerkJwtTemplate: string | null;
+  readonly oidcIssuer: string | null;
+  readonly oidcClientId: string | null;
   readonly relayUrl: string | null;
   readonly relayTracing: {
     readonly tracesUrl: string | null;
@@ -46,6 +48,8 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
       import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined,
     ),
     clerkJwtTemplate: trimNonEmpty(import.meta.env.VITE_CLERK_JWT_TEMPLATE as string | undefined),
+    oidcIssuer: trimNonEmpty(import.meta.env.VITE_OIDC_ISSUER as string | undefined),
+    oidcClientId: trimNonEmpty(import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined),
     relayUrl: normalizeSecureRelayUrl(
       (import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined) ?? "",
     ),
@@ -76,7 +80,29 @@ export function resolveRelayTracingConfig() {
     : null;
 }
 
+export interface OidcPublicConfig {
+  readonly issuer: string;
+  readonly clientId: string;
+}
+
+/** An OpenID Connect provider takes the place of Clerk when the build configures one. */
+export function resolveOidcPublicConfig(): OidcPublicConfig | null {
+  const { oidcIssuer, oidcClientId, relayUrl } = resolveCloudPublicConfig();
+  return oidcIssuer && oidcClientId && relayUrl
+    ? { issuer: oidcIssuer, clientId: oidcClientId }
+    : null;
+}
+
+export function cloudAuthProvider(): "oidc" | "clerk" | null {
+  if (resolveOidcPublicConfig() !== null) return "oidc";
+  return hasClerkPublicConfig() ? "clerk" : null;
+}
+
 export function hasCloudPublicConfig(): boolean {
+  return cloudAuthProvider() !== null;
+}
+
+function hasClerkPublicConfig(): boolean {
   const config = resolveCloudPublicConfig();
   if (!config.clerkPublishableKey || !config.clerkJwtTemplate || !config.relayUrl) {
     return false;

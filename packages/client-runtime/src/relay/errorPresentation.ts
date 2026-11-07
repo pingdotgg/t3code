@@ -53,6 +53,9 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
       if (error.reason === "endpoint_provider_not_managed") {
         return "This environment is linked only to publish agent activity, so it cannot accept connections. On that computer, open Settings > Sharing & access and turn T3 Connect on.";
       }
+      if (error.reason === "manual_endpoint_not_allowed") {
+        return "The address this environment published is not one the relay may contact. It must be an HTTPS address reachable from the internet, not localhost or a private network.";
+      }
       return error.reason
         ? `Relay rejected the environment connection request (${error.reason}).`
         : "Relay rejected the environment connection request.";

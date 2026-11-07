@@ -1,0 +1,79 @@
+# Self-hosted T3 relay: Postgres, the relay, and Caddy as the HTTPS reverse proxy.
+# Usage and configuration: see README.md next to this file.
+name: t3-relay
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: relay
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay -d relay"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  relay:
+    build:
+      context: ../../..
+      dockerfile: infra/relay/selfhost/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://relay:${POSTGRES_PASSWORD}@postgres:5432/relay
+      RELAY_PUBLIC_ORIGIN: ${RELAY_PUBLIC_ORIGIN:?set RELAY_PUBLIC_ORIGIN in .env}
+      OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER in .env}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:?set OIDC_AUDIENCE in .env}
+      RELAY_MANUAL_ENDPOINTS: ${RELAY_MANUAL_ENDPOINTS:-public}
+      CLOUD_MINT_PRIVATE_KEY_FILE: /run/secrets/cloud_mint_private_key
+      CLOUD_MINT_PUBLIC_KEY_FILE: /run/secrets/cloud_mint_public_key
+      # Push notifications need the publisher's APNs and FCM credentials; leave them off here.
+      APNS_ENABLED: "false"
+    secrets:
+      - cloud_mint_private_key
+      - cloud_mint_public_key
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then((r) => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      RELAY_DOMAIN: ${RELAY_DOMAIN:?set RELAY_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+secrets:
+  cloud_mint_private_key:
+    file: ./secrets/cloud-mint-private.pem
+  cloud_mint_public_key:
+    file: ./secrets/cloud-mint-public.pem
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

@@ -26,13 +26,26 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
-import { buildConnectAuthorizeRequestUrl } from "@t3tools/shared/connectAuth";
+import {
+  buildConnectAuthorizeRequestUrl,
+  connectLoopbackRedirectUri,
+} from "@t3tools/shared/connectAuth";
+import {
+  OIDC_SCOPES,
+  buildAuthorizeUrl,
+  decodeIdTokenClaims,
+  oidcAccountLabel,
+  oidcDiscoveryUrl,
+  parseOidcMetadata,
+} from "@t3tools/shared/oidc";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
 import {
+  CLOUD_CLI_OAUTH_LOOPBACK_PORT,
   cloudCliOAuthConfig,
   hostedAppUrlConfig,
+  oidcSettingsConfig,
   type CloudCliOAuthConfig,
 } from "./publicConfig.ts";
 import { renderLoopbackAuthorizationCompleteHtml } from "./cliAuthHtml.ts";
@@ -297,23 +310,44 @@ function bytesToString(value: Uint8Array): string {
 const readTokenResponse = Effect.fn("cloud.cli_token.read_token_response")(function* (
   response: HttpClientResponse.HttpClientResponse,
   params: Record<string, string>,
+  bearerToken: CloudCliOAuthConfig["bearerToken"],
 ) {
   const body = yield* HttpClientResponse.schemaBodyJson(OAuthTokenResponse)(response);
+  const refreshToken = body.refresh_token ?? params.refresh_token ?? "";
+  if (bearerToken === "id_token") {
+    // The relay verifies the ID token, so it is the credential and its expiry is the expiry.
+    const claims = yield* Effect.try({
+      try: () => decodeIdTokenClaims(body.id_token ?? ""),
+      catch: (cause) => new CloudCliAuthorizationError({ cause }),
+    });
+    const identity = oidcAccountLabel(claims);
+    return {
+      token: {
+        accessToken: body.id_token ?? "",
+        refreshToken,
+        expiresAtEpochMs: claims.exp * 1_000,
+        identity,
+      } satisfies PersistedToken,
+      identity,
+      nonce: claims.nonce,
+    };
+  }
   const now = yield* Clock.currentTimeMillis;
   const identity = idTokenIdentity(body.id_token);
   return {
     token: {
       accessToken: body.access_token,
-      refreshToken: body.refresh_token ?? params.refresh_token ?? "",
+      refreshToken,
       expiresAtEpochMs: now + body.expires_in * 1_000,
       ...(identity === null ? {} : { identity }),
     } satisfies PersistedToken,
     identity,
+    nonce: undefined,
   };
 });
 
 const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
-  metadata: Pick<CloudCliOAuthConfig, "tokenEndpoint">,
+  metadata: Pick<CloudCliOAuthConfig, "tokenEndpoint" | "bearerToken">,
   params: Record<string, string>,
 ) {
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
@@ -321,7 +355,7 @@ const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
   return yield* HttpClientRequest.post(metadata.tokenEndpoint).pipe(
     HttpClientRequest.bodyUrlParams(params),
     httpClient.execute,
-    Effect.flatMap((response) => readTokenResponse(response, params)),
+    Effect.flatMap((response) => readTokenResponse(response, params, metadata.bearerToken)),
     Effect.timeout(OAUTH_REQUEST_TIMEOUT),
     Effect.catchTags({
       // The enclosing operation owns the span for this inline handler.
@@ -374,7 +408,37 @@ const makePkceRequest = Effect.gen(function* () {
     yield* digest.digest(Digest.sha256, new TextEncoder().encode(verifier)),
   );
   const state = Base64Url.encode(yield* random.randomBytes(16));
-  return { verifier, challenge, state };
+  const nonce = Base64Url.encode(yield* random.randomBytes(16));
+  return { verifier, challenge, state, nonce };
+});
+
+/** OIDC when configured, otherwise Clerk. Discovery runs per call, so a provider change applies without a restart. */
+const resolveCloudCliOAuth = Effect.fn("cloud.cli_token.resolve_oauth")(function* () {
+  const oidc = yield* oidcSettingsConfig;
+  if (Option.isNone(oidc)) return yield* cloudCliOAuthConfig;
+  const { issuer, clientId } = oidc.value;
+  const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const metadata = yield* HttpClientRequest.get(oidcDiscoveryUrl(issuer)).pipe(
+    httpClient.execute,
+    Effect.flatMap((response) => response.json),
+    Effect.timeout(OAUTH_REQUEST_TIMEOUT),
+    Effect.flatMap((body) =>
+      Effect.try({
+        try: () => parseOidcMetadata(issuer, body),
+        catch: (cause) => new CloudCliAuthorizationError({ cause }),
+      }),
+    ),
+  );
+  return {
+    tokenEndpoint: metadata.tokenEndpoint,
+    deviceAuthorizationEndpoint: metadata.deviceAuthorizationEndpoint,
+    authorizationEndpoint: metadata.authorizationEndpoint,
+    bearerToken: "id_token",
+    clientId,
+    loopbackPort: CLOUD_CLI_OAUTH_LOOPBACK_PORT,
+    redirectUri: connectLoopbackRedirectUri(CLOUD_CLI_OAUTH_LOOPBACK_PORT),
+    scopes: OIDC_SCOPES,
+  } satisfies CloudCliOAuthConfig;
 });
 
 export interface DeviceAuthorizationPrompt {
@@ -388,7 +452,7 @@ const isTransportError = (error: unknown) =>
   HttpClientError.isHttpClientError(error) && error.reason._tag === "TransportError";
 
 const pollDeviceToken = Effect.fn("cloud.cli_token.poll_device_token")(function* (
-  metadata: Pick<CloudCliOAuthConfig, "tokenEndpoint" | "clientId">,
+  metadata: Pick<CloudCliOAuthConfig, "tokenEndpoint" | "clientId" | "bearerToken">,
   deviceCode: string,
   initialInterval: Duration.Duration,
 ) {
@@ -414,7 +478,7 @@ const pollDeviceToken = Effect.fn("cloud.cli_token.poll_device_token")(function*
       continue;
     }
     if (response.value.status >= 200 && response.value.status < 300) {
-      return yield* readTokenResponse(response.value, params);
+      return yield* readTokenResponse(response.value, params, metadata.bearerToken);
     }
     const failure = yield* HttpClientResponse.schemaBodyJson(OAuthErrorResponse)(response.value);
     switch (failure.error) {
@@ -437,7 +501,12 @@ const pollDeviceToken = Effect.fn("cloud.cli_token.poll_device_token")(function*
 
 export const deviceAuthorizationLogin = Effect.fn("cloud.cli_token.device_authorization_login")(
   function* <E, R>(showPrompt: (prompt: DeviceAuthorizationPrompt) => Effect.Effect<void, E, R>) {
-    const metadata = yield* cloudCliOAuthConfig;
+    const metadata = yield* resolveCloudCliOAuth();
+    if (metadata.deviceAuthorizationEndpoint === null) {
+      return yield* new CloudCliAuthorizationError({
+        cause: "The identity provider does not support device authorization.",
+      });
+    }
     const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
     const authorization = yield* HttpClientRequest.post(metadata.deviceAuthorizationEndpoint).pipe(
       HttpClientRequest.bodyUrlParams({
@@ -498,7 +567,7 @@ export const make = Effect.gen(function* () {
   });
 
   const refresh = Effect.fn("cloud.cli_token.refresh")(function* (token: PersistedToken) {
-    const metadata = yield* cloudCliOAuthConfig;
+    const metadata = yield* resolveCloudCliOAuth();
     const { token: refreshed } = yield* exchangeToken(metadata, {
       grant_type: "refresh_token",
       refresh_token: token.refreshToken,
@@ -510,9 +579,8 @@ export const make = Effect.gen(function* () {
   });
 
   const login = Effect.fn("cloud.cli_token.login")(function* () {
-    const metadata = yield* cloudCliOAuthConfig;
-    const hostedAppUrl = yield* hostedAppUrlConfig;
-    const { verifier, challenge, state } = yield* makePkceRequest;
+    const metadata = yield* resolveCloudCliOAuth();
+    const { verifier, challenge, state, nonce } = yield* makePkceRequest;
     const callback = yield* Deferred.make<string>();
     const layerCallbackRoute = HttpRouter.add(
       "GET",
@@ -543,13 +611,25 @@ export const make = Effect.gen(function* () {
       ),
       Layer.build,
     );
-    // /connect establishes a Clerk session first; /oauth/authorize loses parameters across sign-in.
-    const authorizationUrl = buildConnectAuthorizeRequestUrl({
-      hostedAppUrl,
-      state,
-      challenge,
-      loopbackPort: metadata.loopbackPort,
-    });
+    // Clerk: /connect establishes a session first, because /oauth/authorize loses parameters across
+    // sign-in. An OIDC provider keeps them, so the CLI sends the user straight to it.
+    const authorizationUrl =
+      metadata.authorizationEndpoint === null
+        ? buildConnectAuthorizeRequestUrl({
+            hostedAppUrl: yield* hostedAppUrlConfig,
+            state,
+            challenge,
+            loopbackPort: metadata.loopbackPort,
+          })
+        : buildAuthorizeUrl({
+            authorizationEndpoint: metadata.authorizationEndpoint,
+            clientId: metadata.clientId,
+            redirectUri: metadata.redirectUri,
+            scopes: metadata.scopes,
+            state,
+            nonce,
+            challenge,
+          });
     yield* Console.log(formatLoopbackAuthorizationPrompt(authorizationUrl));
     const authorization = yield* waitForLoopbackAuthorization({
       authorizationUrl,
@@ -565,13 +645,18 @@ export const make = Effect.gen(function* () {
     if (authorization._tag === "HeadlessRequested") {
       return authorization;
     }
-    const { token } = yield* exchangeToken(metadata, {
+    const { token, nonce: returnedNonce } = yield* exchangeToken(metadata, {
       grant_type: "authorization_code",
       code: authorization.code,
       redirect_uri: metadata.redirectUri,
       client_id: metadata.clientId,
       code_verifier: verifier,
     });
+    if (metadata.authorizationEndpoint !== null && returnedNonce !== nonce) {
+      return yield* new CloudCliAuthorizationError({
+        cause: "The ID token nonce does not match the authorization request.",
+      });
+    }
     return { _tag: "Authorized", token } as const;
   });
 

@@ -95,6 +95,28 @@ export function canLinkHere(
   );
 }
 
+/**
+ * The HTTPS address a machine reaches the internet at, when the user exposes it themselves.
+ * Same shape as a managed endpoint, so clients connect the same way.
+ */
+export function parsePublicEndpoint(value: string) {
+  const url = new URL(value);
+  if (
+    value !== value.trim() ||
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    value.includes("?") ||
+    value.includes("#")
+  ) {
+    throw new Error("Invalid public endpoint");
+  }
+  return { httpBaseUrl: `${url.origin}/`, wsBaseUrl: `wss://${url.host}/ws` };
+}
+
 export function isAllowedEndpointOrigin(input: {
   readonly origin: RelayManagedEndpointOrigin;
   readonly requestUrl: string;

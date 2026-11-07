@@ -19,6 +19,10 @@ export interface CloudPublicConfig {
     readonly publishableKey: string | null;
     readonly jwtTemplate: string | null;
   };
+  readonly oidc: {
+    readonly issuer: string | null;
+    readonly clientId: string | null;
+  };
   readonly relay: {
     readonly url: string | null;
   };
@@ -62,6 +66,10 @@ export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig
       publishableKey: trimNonEmpty(extra?.clerk?.publishableKey),
       jwtTemplate: trimNonEmpty(extra?.clerk?.jwtTemplate),
     },
+    oidc: {
+      issuer: trimNonEmpty(extra?.oidc?.issuer),
+      clientId: trimNonEmpty(extra?.oidc?.clientId),
+    },
     relay: {
       url: normalizeSecureRelayUrl(trimNonEmpty(extra?.relay?.url) ?? ""),
     },
@@ -73,9 +81,17 @@ export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig
   } satisfies CloudPublicConfig;
 }
 
+/** An OpenID Connect provider takes the place of Clerk when the build configures one. */
+export function cloudAuthProvider(
+  config: CloudPublicConfig = resolveCloudPublicConfig(),
+): "oidc" | "clerk" | null {
+  if (!config.relay.url) return null;
+  if (config.oidc.issuer && config.oidc.clientId) return "oidc";
+  return config.clerk.publishableKey && config.clerk.jwtTemplate ? "clerk" : null;
+}
+
 export function hasCloudPublicConfig(): boolean {
-  const config = resolveCloudPublicConfig();
-  return Boolean(config.clerk.publishableKey && config.clerk.jwtTemplate && config.relay.url);
+  return cloudAuthProvider() !== null;
 }
 
 type Configured<T> = {

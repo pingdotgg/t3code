@@ -1,7 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
 
-import { linkProofScopes, parseManagedEndpointLocalOrigin } from "./linkChecks.ts";
+import {
+  linkProofScopes,
+  parseManagedEndpointLocalOrigin,
+  parsePublicEndpoint,
+} from "./linkChecks.ts";
 
 describe("parseManagedEndpointLocalOrigin", () => {
   it.each([
@@ -33,6 +37,30 @@ describe("parseManagedEndpointLocalOrigin", () => {
     "http://127.0.0.1:3773#fragment",
   ])("rejects non-origin URL %s", (input) => {
     expect(() => parseManagedEndpointLocalOrigin(input)).toThrow("Invalid local origin");
+  });
+});
+
+describe("parsePublicEndpoint", () => {
+  it.each([
+    ["https://t3.example.dev", "https://t3.example.dev/", "wss://t3.example.dev/ws"],
+    [
+      "https://t3.example.dev:8443/",
+      "https://t3.example.dev:8443/",
+      "wss://t3.example.dev:8443/ws",
+    ],
+  ])("builds a managed-shaped endpoint from %s", (input, httpBaseUrl, wsBaseUrl) => {
+    expect(parsePublicEndpoint(input)).toEqual({ httpBaseUrl, wsBaseUrl });
+  });
+
+  it.each([
+    "http://t3.example.dev",
+    "https://user:pass@t3.example.dev",
+    "https://t3.example.dev/t3",
+    "https://t3.example.dev?x=1",
+    "https://t3.example.dev#top",
+    " https://t3.example.dev",
+  ])("rejects %s", (input) => {
+    expect(() => parsePublicEndpoint(input)).toThrow("Invalid public endpoint");
   });
 });
 

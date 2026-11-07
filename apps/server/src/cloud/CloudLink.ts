@@ -39,6 +39,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
@@ -115,6 +116,7 @@ import {
   linkProofScopes,
   managedEndpointRuntimeConfigsMatch,
   parseManagedEndpointLocalOrigin,
+  parsePublicEndpoint,
   requestAbsoluteUrl,
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
@@ -299,6 +301,9 @@ export const shouldRetryCloudLink = (error: unknown): boolean =>
 
 const rollbackFailed = (cause: unknown) =>
   Effect.logWarning("Could not roll back a T3 Connect preference", { cause });
+
+// Where a publish-only link says this machine can be reached; unset keeps the local placeholder.
+const publicEndpointConfig = Config.option(Config.NonEmptyString("T3CODE_PUBLIC_URL"));
 
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
@@ -850,6 +855,17 @@ const make = Effect.gen(function* () {
       );
       const mode = yield* readCliDesiredLinkMode.pipe(withSecrets);
       const managedTunnelsEnabled = mode !== "publish_only";
+      const configuredPublicEndpoint = managedTunnelsEnabled
+        ? Option.none()
+        : yield* publicEndpointConfig.pipe(
+            Effect.mapError(() => new CloudLinkOriginInvalidError({ origin: "endpoint" })),
+          );
+      const publicEndpoint = Option.isSome(configuredPublicEndpoint)
+        ? yield* Effect.try({
+            try: () => parsePublicEndpoint(configuredPublicEndpoint.value),
+            catch: () => new CloudLinkOriginInvalidError({ origin: "endpoint" }),
+          })
+        : null;
       const relayUrl = yield* requireRelayUrl;
       const challenge = yield* relayClientRequest({
         url: `${relayUrl}/v1/client/environment-link-challenges`,
@@ -866,8 +882,8 @@ const make = Effect.gen(function* () {
           challenge: challenge.challenge,
           relayIssuer: relayUrl,
           endpoint: {
-            httpBaseUrl: parsedOrigin.httpBaseUrl,
-            wsBaseUrl: parsedOrigin.wsBaseUrl,
+            httpBaseUrl: publicEndpoint?.httpBaseUrl ?? parsedOrigin.httpBaseUrl,
+            wsBaseUrl: publicEndpoint?.wsBaseUrl ?? parsedOrigin.wsBaseUrl,
             providerKind: managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
           },
           origin: parsedOrigin.origin,

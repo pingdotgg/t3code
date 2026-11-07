@@ -1,0 +1,12 @@
+**/node_modules
+.git
+.t3
+.repos
+.env
+.env.*
+**/.env
+infra/relay/selfhost/secrets
+infra/relay/selfhost/.env
+**/dist
+**/dist-*
+**/*.log

@@ -87,6 +87,19 @@ export const isTailnetHost = (host: string): boolean => {
   return ipv6 !== null && ipv6PrefixMatches(ipv6, [0xfd7a, 0x115c, 0xa1e0, 0, 0, 0, 0, 0], 48);
 };
 
+/** Addresses that never name another machine: loopback, link-local (cloud metadata) and unspecified. */
+export const isInternalOnlyHost = (host: string): boolean => {
+  const normalized = normalizeHostname(host);
+  if (isLocalLoopbackHost(normalized) || normalized.endsWith(".localhost")) return true;
+  const ipv4 = parseIpv4Address(normalized) ?? parseIpv4MappedIpv6Address(normalized);
+  if (ipv4) return ipv4[0] === 0 || ipv4[0] === 127 || (ipv4[0] === 169 && ipv4[1] === 254);
+  const ipv6 = parseIpv6Address(normalized);
+  return (
+    ipv6 !== null &&
+    (ipv6.every((part) => part === 0) || ipv6PrefixMatches(ipv6, [0xfe80, 0, 0, 0, 0, 0, 0, 0], 10))
+  );
+};
+
 export const isSharedAddressSpaceHost = (host: string): boolean => {
   const parts = parseIpv4Address(host);
   return parts !== null && parts[0] === 100 && parts[1]! >= 64 && parts[1]! <= 127;
