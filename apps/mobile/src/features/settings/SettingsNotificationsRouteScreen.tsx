@@ -466,12 +466,17 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     if (mode === "off") {
       liveActivityWriteInFlight.current = true;
       setLiveActivityStatus("linking");
+      let cleared = true;
       if (liveActivitiesPreferenceEnabled) {
-        await disableLiveActivities();
+        cleared = await disableLiveActivities();
       } else {
         setLiveActivityStatus(isSignedIn ? "disabled" : "signed-out");
       }
       liveActivityWriteInFlight.current = false;
+      // disableLiveActivities already reports failures; only prompt for OS settings after success.
+      if (!cleared) {
+        return;
+      }
       Dialog.alert(
         "Turn off agent alerts",
         "Open system Settings to disable notifications for T3 Code. Until then, banner delivery stays available if permission is still granted.",
