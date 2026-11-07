@@ -8,9 +8,18 @@ import {
   type TextDirection,
 } from "@t3tools/shared/textDirection";
 import { useRef } from "react";
-import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  TextInput,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
 import Animated, {
+  useAnimatedRef,
   useAnimatedStyle,
+  useScrollOffset,
   useSharedValue,
   type DerivedValue,
   type SharedValue,
@@ -29,6 +38,9 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import type { PendingUserInput } from "../../lib/threadActivity";
+import { deriveRevealScrollOffset } from "./pendingUserInputLayout";
+
+const VIEWPORT_SETTLE_MS = 120;
 
 export interface PendingUserInputCardProps {
   readonly environmentId: EnvironmentId;
@@ -139,6 +151,41 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   }));
   const overlayHeightStyle = useAnimatedStyle(() => ({ height: maxHeight.value }));
 
+  // The keyboard shrinks this list under a focused input. Android scrolls it back natively; on
+  // iOS only UIKit's implicit first-responder scroll does, and not reliably on devices.
+  const scrollRef = useAnimatedRef<ScrollView>();
+  const scrollOffset = useScrollOffset(scrollRef);
+  const viewportHeightRef = useRef(0);
+  const viewportSettle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealFocusedInput = () => {
+    const scrollView = scrollRef.current;
+    const content = scrollView?.getInnerViewRef();
+    const input = TextInput.State.currentlyFocusedInput();
+    if (!scrollView || !content || !input) return;
+    // Fails without calling back when the focused input is outside this list.
+    input.measureLayout(content, (_x, top, _width, height) => {
+      const offset = deriveRevealScrollOffset({
+        top,
+        height,
+        viewportHeight: viewportHeightRef.current,
+        offset: scrollOffset.get(),
+      });
+      if (offset !== null) scrollView.scrollTo({ y: offset, animated: true });
+    });
+  };
+  const handleScrollLayout = (event: LayoutChangeEvent) => {
+    viewportHeightRef.current = event.nativeEvent.layout.height;
+    if (viewportSettle.current !== null) clearTimeout(viewportSettle.current);
+    viewportSettle.current = setTimeout(() => {
+      viewportSettle.current = null;
+      revealFocusedInput();
+    }, VIEWPORT_SETTLE_MS);
+  };
+  const handleInputFocusChange = (focused: boolean) => {
+    if (focused) revealFocusedInput();
+    props.onInputFocusChange?.(focused);
+  };
+
   const bar = (
     <View
       onLayout={handleBarLayout}
@@ -212,6 +259,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         </View>
       </Pressable>
       <ScrollView
+        ref={scrollRef}
+        onLayout={handleScrollLayout}
         bounces={false}
         className="min-h-0"
         contentContainerClassName="gap-2.5 pb-1"
@@ -299,7 +348,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   onChangeText={(value) =>
                     props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
                   }
-                  onInputFocusChange={props.onInputFocusChange}
+                  onInputFocusChange={handleInputFocusChange}
                 />
               ) : null}
             </View>
