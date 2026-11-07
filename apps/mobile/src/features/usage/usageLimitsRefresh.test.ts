@@ -144,7 +144,6 @@ it.each(["limits", "thread", "thread-and-other-provider"] as const)(
           a,
           () => Promise.resolve(success),
           true,
-          false,
           instanceLimitsRefreshSelection(
             ProviderInstanceId.make("cursor-instance"),
             ProviderDriverKind.make("cursor"),

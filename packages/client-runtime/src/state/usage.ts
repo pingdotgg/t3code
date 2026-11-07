@@ -142,7 +142,6 @@ export async function refreshUsageLimits<A>(
   environmentId: EnvironmentId,
   refresh: () => Promise<A>,
   automatic = false,
-  afterPending = false,
   selectionKey:
     | string
     | {
@@ -162,15 +161,7 @@ export async function refreshUsageLimits<A>(
     typeof selectionKey === "string" ? selectionKey : selectionKey.key,
   ]);
   const pending = limitsRefreshes.get(key);
-  if (pending !== undefined) {
-    if (afterPending) {
-      try {
-        await pending;
-      } catch {}
-      return refreshUsageLimits(environmentId, refresh, false, true, selectionKey);
-    }
-    return (await pending) as A;
-  }
+  if (pending !== undefined) return (await pending) as A;
   if (automatic && usageLimitsRefreshDelay(environmentId, selections) > 0) return;
   const refreshedSelections =
     typeof selectionKey === "string"

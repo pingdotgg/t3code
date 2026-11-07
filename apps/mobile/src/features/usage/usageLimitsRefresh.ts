@@ -94,7 +94,6 @@ export async function refreshEnvironmentLimits(
   environmentId: EnvironmentId,
   options: {
     readonly automatic?: boolean;
-    readonly afterPending?: boolean;
     readonly instanceId?: ProviderInstanceId;
     readonly driver?: ProviderDriverKind;
   } = {},
@@ -119,7 +118,6 @@ export async function refreshEnvironmentLimits(
         { reportFailure: false },
       ),
     options.automatic,
-    options.afterPending,
     {
       ...(options.instanceId
         ? instanceLimitsRefreshSelection(options.instanceId, options.driver, providers, generation)

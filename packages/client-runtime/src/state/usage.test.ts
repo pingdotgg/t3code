@@ -200,42 +200,30 @@ describe("manual usage refresh", () => {
 
 describe("limits refresh cooldown", () => {
   it.each(["legacy", "resources"] as const)(
-    "runs a fresh check after an in-flight check when settings change (%s)",
+    "coalesces an in-flight check while other providers refresh (%s)",
     async (kind) => {
-      const id = EnvironmentId.make(`limits-after-enable-${kind}`);
+      const id = EnvironmentId.make(`limits-coalesced-${kind}`);
       const cursor =
         kind === "legacy" ? "cursor" : { key: "cursor", resources: ["cursor", "instance-a"] };
       const claude = kind === "legacy" ? "claude" : { key: "claude", resources: ["claude"] };
       const oldCheck = Promise.withResolvers<string>();
-      const first = refreshUsageLimits(id, () => oldCheck.promise, true, false, cursor);
-      const otherProviders = refreshUsageLimits(
-        id,
-        async () => "claude limits",
-        false,
-        false,
-        claude,
-      );
+      const first = refreshUsageLimits(id, () => oldCheck.promise, true, cursor);
+      const otherProviders = refreshUsageLimits(id, async () => "claude limits", false, claude);
       const automaticCheck = vi.fn(async () => "unexpected extra limits");
       const coalescedAutomatic = refreshUsageLimits(
         id,
         automaticCheck,
         true,
-        false,
         typeof cursor === "string"
           ? cursor
           : { ...cursor, resources: [...cursor.resources].reverse().concat("new-instance") },
       );
-      const newCheck = vi.fn(async () => "new limits");
-      const afterEnable = refreshUsageLimits(id, newCheck, false, true, cursor);
-      expect(newCheck).not.toHaveBeenCalled();
       oldCheck.resolve("old limits");
       expect(await first).toBe("old limits");
       expect(await coalescedAutomatic).toBe("old limits");
       expect(automaticCheck).not.toHaveBeenCalled();
       if (kind === "resources") expect(usageLimitsRefreshDelay(id, "new-instance")).toBe(0);
       expect(await otherProviders).toBe("claude limits");
-      expect(await afterEnable).toBe("new limits");
-      expect(newCheck).toHaveBeenCalledTimes(1);
     },
   );
   it("keeps a provider's deadline when a wider refresh runs before it is due", async () => {
@@ -260,26 +248,26 @@ describe("limits refresh cooldown", () => {
       310_000,
     );
     expect(overdue).toBe(300_000);
-    await refreshUsageLimits(remote, async () => overdue, true, false, {
+    await refreshUsageLimits(remote, async () => overdue, true, {
       key: "overdue",
       resources: ["expired", "new"],
       refreshDeadline: (deadline) => deadline,
     });
     expect(usageLimitsRefreshDelay(remote, "expired")).toBe(0);
     now.mockReturnValue(4 * 60_000);
-    await refreshUsageLimits(remote, async () => 300_000, true, false, {
+    await refreshUsageLimits(remote, async () => 300_000, true, {
       key: "",
       resources: ["claude"],
       refreshDeadline: (deadline) => deadline,
     });
     expect(usageLimitsRefreshDelay(remote, "claude")).toBe(60_000);
     now.mockReturnValue(0);
-    await refreshUsageLimits(id, async () => "claude", true, false, {
+    await refreshUsageLimits(id, async () => "claude", true, {
       key: "thread",
       resources: ["claude"],
     });
     now.mockReturnValue(4 * 60_000);
-    await refreshUsageLimits(id, async () => "all", true, false, {
+    await refreshUsageLimits(id, async () => "all", true, {
       key: "",
       resources: ["claude", "codex"],
     });
@@ -287,7 +275,7 @@ describe("limits refresh cooldown", () => {
     now.mockReturnValue(5 * 60_000);
     const due = vi.fn(async () => "claude due");
     expect(
-      await refreshUsageLimits(id, due, true, false, { key: "", resources: ["claude", "codex"] }),
+      await refreshUsageLimits(id, due, true, { key: "", resources: ["claude", "codex"] }),
     ).toBe("claude due");
     expect(usageLimitsRefreshDelay(id, ["claude"])).toBe(5 * 60_000);
     expect(usageLimitsRefreshDelay(id, ["claude", "codex"])).toBe(4 * 60_000);
@@ -300,14 +288,12 @@ describe("limits refresh cooldown", () => {
     };
     now.mockReturnValue(0);
     const oldKey = usageRefreshAccountKey([provider]);
-    await refreshUsageLimits(rebuilt, async () => "old quota", true, false, oldKey);
+    await refreshUsageLimits(rebuilt, async () => "old quota", true, oldKey);
     now.mockReturnValue(60_000);
     const currentKey = usageRefreshAccountKey([{ ...provider, instanceRevision: 2 }]);
     const readRebuilt = vi.fn(async () => "rebuilt quota");
-    expect(await refreshUsageLimits(rebuilt, readRebuilt, true, false, currentKey)).toBe(
-      "rebuilt quota",
-    );
-    expect(await refreshUsageLimits(rebuilt, readRebuilt, true, false, currentKey)).toBeUndefined();
+    expect(await refreshUsageLimits(rebuilt, readRebuilt, true, currentKey)).toBe("rebuilt quota");
+    expect(await refreshUsageLimits(rebuilt, readRebuilt, true, currentKey)).toBeUndefined();
     expect(readRebuilt).toHaveBeenCalledTimes(1);
   });
 });
