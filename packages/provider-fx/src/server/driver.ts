@@ -14,7 +14,7 @@ import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   buildInitialFxProviderSnapshot,
   checkFxProviderStatus,
-  fxDefaultModelId,
+  readFxDefaultChoice,
 } from "./status.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
@@ -115,6 +115,8 @@ export const FxDriver: ProviderDriver<FxSettings, FxDriverEnv> = {
       checkProvider: checkFxProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       ),
     }).pipe(
       Effect.mapError(
@@ -128,9 +130,10 @@ export const FxDriver: ProviderDriver<FxSettings, FxDriverEnv> = {
       ),
     );
 
-    // "Default" selects the model the snapshot read from `fx status`.
-    const orchestrationAdapter = yield* makeFxAdapterV2Driver(
-      snapshot.getSnapshot.pipe(Effect.map((current) => fxDefaultModelId(current.models))),
+    const orchestrationAdapter = yield* makeFxAdapterV2Driver((cwd) =>
+      readFxDefaultChoice(effectiveConfig, processEnv, cwd).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
     )
       .create({ instanceId, displayName, accentColor, environment, enabled, config })
       .pipe(
