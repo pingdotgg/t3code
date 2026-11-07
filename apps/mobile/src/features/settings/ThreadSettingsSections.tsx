@@ -231,45 +231,79 @@ export function NewThreadSettingsSection() {
 /** Per machine, since each machine's own setting decides whether it links and answers links. */
 function BetaSettingsSection() {
   const { environments } = useEnvironments();
-  const supported = environments.filter(
+  const connected = environments.filter(
     (environment) =>
-      environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities.peerLinks === true,
+      environment.connection.phase === "connected" && environment.serverConfig !== null,
   );
-  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
+  const linkedEnvironments = connected.filter(
+    (environment) => environment.serverConfig?.environment.capabilities.peerLinks === true,
+  );
+  const writable = useEnvironmentsWithScope(connected, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "linked environments beta update",
+    label: "labs beta update",
     reportFailure: true,
   });
-  if (supported.length === 0) return null;
+  if (connected.length === 0) return null;
   return (
-    <View className="gap-3">
-      <SettingsSection title="Beta: Linked environments">
-        {supported.map((environment) => {
-          const policy = environment.serverConfig?.managedPolicy;
-          const managed = isManagedSettingPath(policy, "linkedEnvironmentsEnabled");
-          return (
-            <SettingsSwitchRow
-              key={environment.environmentId}
-              icon="link"
-              label={environment.label}
-              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
-              value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
-              disabled={managed || !writable.has(environment.environmentId)}
-              onValueChange={(value) =>
-                void updateSettings({
-                  environmentId: environment.environmentId,
-                  input: { patch: { linkedEnvironmentsEnabled: value } },
-                })
-              }
-            />
-          );
-        })}
-      </SettingsSection>
-      <Text className="px-2 text-sm text-foreground-muted">
-        Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
-        machine. While off, nothing new starts over a link; running tasks finish.
-      </Text>
+    <View className="gap-6">
+      {linkedEnvironments.length > 0 ? (
+        <View className="gap-3">
+          <SettingsSection title="Beta: Linked environments">
+            {linkedEnvironments.map((environment) => {
+              const policy = environment.serverConfig?.managedPolicy;
+              const managed = isManagedSettingPath(policy, "linkedEnvironmentsEnabled");
+              return (
+                <SettingsSwitchRow
+                  key={environment.environmentId}
+                  icon="link"
+                  label={environment.label}
+                  {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+                  value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
+                  disabled={managed || !writable.has(environment.environmentId)}
+                  onValueChange={(value) =>
+                    void updateSettings({
+                      environmentId: environment.environmentId,
+                      input: { patch: { linkedEnvironmentsEnabled: value } },
+                    })
+                  }
+                />
+              );
+            })}
+          </SettingsSection>
+          <Text className="px-2 text-sm text-foreground-muted">
+            Let agents on a machine work on your other machines, and theirs on it. Turn it on for
+            each machine. While off, nothing new starts over a link; running tasks finish.
+          </Text>
+        </View>
+      ) : null}
+      <View className="gap-3">
+        <SettingsSection title="Beta: Send git action failures to agent">
+          {connected.map((environment) => {
+            const policy = environment.serverConfig?.managedPolicy;
+            const managed = isManagedSettingPath(policy, "sendGitActionFailuresToAgent");
+            return (
+              <SettingsSwitchRow
+                key={environment.environmentId}
+                icon="arrow.branch"
+                label={environment.label}
+                {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+                value={environment.serverConfig?.settings.sendGitActionFailuresToAgent === true}
+                disabled={managed || !writable.has(environment.environmentId)}
+                onValueChange={(value) =>
+                  void updateSettings({
+                    environmentId: environment.environmentId,
+                    input: { patch: { sendGitActionFailuresToAgent: value } },
+                  })
+                }
+              />
+            );
+          })}
+        </SettingsSection>
+        <Text className="px-2 text-sm text-foreground-muted">
+          When Commit, Push, or Create PR fails from a thread, send the error to that thread's agent
+          so it can fix and retry.
+        </Text>
+      </View>
     </View>
   );
 }
