@@ -1,4 +1,11 @@
-import { type CSSProperties, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type FocusEvent,
+  type ReactNode,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
@@ -66,6 +73,7 @@ function PreviewPanelShellFrame(
   const hostRef = useRef<HTMLDivElement | null>(null);
   const returnedFocus = useRef(false);
   const focusOrigin = useRef<HTMLElement | null>(null);
+  const lastBlurred = useRef<EventTarget | null>(null);
   const { width, handlers, observeRow } = props.inlineSize;
   // Width animates only for an open or close. Any other width change disables
   // the transition in the same commit that changes the width, so the browser
@@ -93,17 +101,18 @@ function PreviewPanelShellFrame(
   const attachHost = (host: HTMLDivElement) => {
     hostRef.current = host;
     const stopObservingRow = observeRow(host);
-    const rememberFocusOrigin = (event: FocusEvent) => {
-      const from = event.relatedTarget;
-      if (from instanceof Node && host.contains(from)) return;
-      focusOrigin.current = from instanceof HTMLElement ? from : null;
-    };
-    host.addEventListener("focusin", rememberFocusOrigin);
     return () => {
       hostRef.current = null;
-      host.removeEventListener("focusin", rememberFocusOrigin);
       stopObservingRow();
     };
+  };
+  // React focus events, unlike a listener added in attachHost, also see content that focuses
+  // itself while mounting (a terminal does, from a ref that attaches before the host's).
+  // Focus moving within the panel, portalled menus included, first blurs an element of it.
+  const rememberFocusOrigin = (event: FocusEvent<HTMLDivElement>) => {
+    const from = event.relatedTarget;
+    if (from === null || from === lastBlurred.current) return;
+    focusOrigin.current = from instanceof HTMLElement ? from : null;
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on unmount, returns DOM focus to where it came from if removal dropped it on the body
   useLayoutEffect(() => {
@@ -135,6 +144,10 @@ function PreviewPanelShellFrame(
   return (
     <div
       ref={attachHost}
+      onFocus={rememberFocusOrigin}
+      onBlur={(event) => {
+        lastBlurred.current = event.target;
+      }}
       {...(props.workspaceArea ? panelArea : {})}
       data-workspace-focus-key={props.workspaceFocusKey}
       data-workspace-unavailable={collapsible && !open ? "true" : undefined}
