@@ -43,6 +43,7 @@ const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
 const mapSpeechError = <A, R>(effect: Effect.Effect<A, SpeechService.SpeechError, R>) =>
   effect.pipe(
     Effect.catchTags({
+      SpeechInvalidModelDirectoryError: () => failEnvironmentInvalidRequest("invalid_command"),
       SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
       SpeechUnsupportedPlatformError: () => failEnvironmentInvalidRequest("speech_unavailable"),
       SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
@@ -113,6 +114,15 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.removeModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
           return yield* speech.removeModel(args.payload.modelId).pipe(mapSpeechError);
+        }),
+      )
+      .handle(
+        "updateModelDirectories",
+        Effect.fn("environment.voice.updateModelDirectories")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* speech
+            .updateModelDirectories(args.payload.directories)
+            .pipe(mapSpeechError);
         }),
       )
       .handle(

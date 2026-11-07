@@ -50,6 +50,7 @@ import {
 } from "./baseSchemas.ts";
 import {
   EnvironmentSpeechAccelerationRequest,
+  EnvironmentSpeechModelDirectoriesRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
   EnvironmentSpeechModelUnloadTimeoutRequest,
@@ -826,6 +827,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechModelRequest,
       success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateModelDirectories", "/api/voice/model-directories", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelDirectoriesRequest,
+      success: EnvironmentSpeechStatus,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )

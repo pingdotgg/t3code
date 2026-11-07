@@ -1,6 +1,9 @@
+import * as Schema from "effect/Schema";
+import * as session from "../../state/session";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
   EnvironmentId,
+  EnvironmentSpeechModelDirectoriesRequest,
   type EnvironmentSpeechModel,
   type EnvironmentSpeechStatus,
 } from "@t3tools/contracts";
@@ -19,8 +22,12 @@ import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 vi.mock(import("../../speech/useEnvironmentSpeechInput"), { spy: true });
+vi.mock(import("../../state/session"), { spy: true });
 
-it("preserves the model test transcript when its model is filtered out", async () => {
+const decodeModelDirectories = Schema.decodeUnknownSync(EnvironmentSpeechModelDirectoriesRequest);
+
+it("keeps one folder row across removals and preserves the filtered model test transcript", async () => {
+  using _permissions = vi.spyOn(session, "useEnvironmentScope").mockReturnValue(true);
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-filter"),
     label: "Test environment",
@@ -54,10 +61,16 @@ it("preserves the model test transcript when its model is filtered out", async (
     acceleration: "cpu",
     modelUnloadTimeout: "never",
     gpuDevices: [],
+    modelDirectories: ["C:/models"],
   } satisfies EnvironmentSpeechStatus;
   const fetch = globalThis.fetch;
-  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+    if (url.pathname === "/api/voice/model-directories") {
+      const request = input instanceof Request ? input : new Request(url, init);
+      status.modelDirectories = [...decodeModelDirectories(await request.json()).directories];
+      return Response.json(status);
+    }
     if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
     if (url.pathname === "/api/voice/models")
       return Promise.resolve(
@@ -128,6 +141,25 @@ it("preserves the model test transcript when its model is filtered out", async (
               <VoiceSettingsPanel />
             </SettingsScopeProvider>,
           );
+          const folderInput = screen.getByRole("textbox", { name: "Add a model folder" });
+          await expect.element(folderInput).toBeVisible();
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            await userEvent.click(screen.getByRole("button", { name: "Remove folder C:/models" }));
+            await expect
+              .element(screen.getByRole("button", { name: "Remove folder C:/models" }))
+              .not.toBeInTheDocument();
+            await vi.waitFor(() =>
+              expect(screen.container.querySelectorAll("#speech-model-folders")).toHaveLength(1),
+            );
+            await userEvent.fill(folderInput, "C:/models");
+            await userEvent.type(folderInput, "{Enter}");
+            await expect
+              .element(screen.getByRole("button", { name: "Remove folder C:/models" }))
+              .toBeVisible();
+            await vi.waitFor(() =>
+              expect(screen.container.querySelectorAll("#speech-model-folders")).toHaveLength(1),
+            );
+          }
           const testModel = screen.getByRole("button", { name: "Test model", exact: true });
           await expect.element(testModel).toBeVisible();
           await userEvent.click(testModel);
