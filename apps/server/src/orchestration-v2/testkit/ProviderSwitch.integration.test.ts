@@ -3132,6 +3132,7 @@ describe("orchestration v2 provider switching", () => {
     ["automatic", "Claude"],
     ["queue.resume", "compatible Codex"],
     ["queue.resume", "broken current provider"],
+    ["queue.resume", "broken compatible Codex"],
   ] as const)(
     "delivers a queued PR update on the current provider through %s (%s)",
     ([delivery, target]) =>
@@ -3141,17 +3142,18 @@ describe("orchestration v2 provider switching", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const started = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
-          const compatible = target === "compatible Codex";
-          const broken = target === "broken current provider";
+          const compatible = target === "compatible Codex" || target === "broken compatible Codex";
+          const broken =
+            target === "broken current provider" || target === "broken compatible Codex";
           const generation = yield* Ref.make(0);
           const selection = {
-            ...(broken
-              ? CODEX_MODEL_SELECTION
-              : compatible
-                ? {
-                    ...CODEX_MODEL_SELECTION,
-                    instanceId: ProviderInstanceId.make("codex-alternate"),
-                  }
+            ...(compatible
+              ? {
+                  ...CODEX_MODEL_SELECTION,
+                  instanceId: ProviderInstanceId.make("codex-alternate"),
+                }
+              : broken
+                ? CODEX_MODEL_SELECTION
                 : CLAUDE_MODEL_SELECTION),
             options: [{ id: "reasoningEffort", value: "low" }],
           };
@@ -3160,7 +3162,7 @@ describe("orchestration v2 provider switching", () => {
                 ...CodexProviderCapabilitiesV2,
                 context: {
                   ...CodexProviderCapabilitiesV2.context,
-                  canConsumeHandoffSummaries: false,
+                  canConsumeHandoffSummaries: broken,
                 },
               }
             : ClaudeProviderCapabilitiesV2;
@@ -3191,9 +3193,12 @@ describe("orchestration v2 provider switching", () => {
               modelSelection: selection,
               responseByRunOrdinal: {},
               capturedTurns,
+              ...(broken && compatible
+                ? { brokenRunOrdinals: new Set<number>(), nativeThreadGeneration: generation }
+                : {}),
             }),
           ];
-          if (broken) adapters.pop();
+          if (broken && !compatible) adapters.pop();
           const layerRegistry = compatible
             ? Layer.succeed(
                 ProviderAdapterRegistry.ProviderAdapterRegistryV2,
@@ -3336,7 +3341,7 @@ describe("orchestration v2 provider switching", () => {
               assert.isFalse(executed.nativeThreadHasTurns);
               assert.include(executed.text, "Original work");
             }
-            if (compatible) {
+            if (compatible && !broken) {
               assert.equal(executed.nativeThreadId, turns[0]!.nativeThreadId);
               assert.isEmpty(after.contextHandoffs);
             }
