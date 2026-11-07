@@ -781,6 +781,7 @@ describe("subagent worktree ownership", () => {
     "idle",
     "grandchild",
     "branchless",
+    "branchless-running",
     "null-branch",
     "stale-branch",
     "isolated-owner",
@@ -812,7 +813,7 @@ describe("subagent worktree ownership", () => {
         },
       });
       const root = shell({
-        branch: scenario === "branchless" ? null : "feature",
+        branch: ["branchless", "branchless-running"].includes(scenario) ? null : "feature",
         worktreePath: fixture.worktree,
         settledAt: scenario === "child-settled-only" ? null : at(-20 * DAY_MS),
         ...(scenario === "isolated-owner" || scenario === "fork-owner"
@@ -854,7 +855,7 @@ describe("subagent worktree ownership", () => {
                 : "subagent",
           ...(scenario === "side-chat" ? { sideChat: true } : {}),
         },
-        status: scenario === "running" ? "running" : "completed",
+        status: ["running", "branchless-running"].includes(scenario) ? "running" : "completed",
         pendingBackgroundTasks: scenario === "pending" ? [{ taskId: "task", kind: "command" }] : [],
         latestRunCompletedAt:
           scenario === "recent-activity" || scenario === "recent-inactive"
@@ -903,7 +904,7 @@ describe("subagent worktree ownership", () => {
         outcome: removed ? "removed" : "kept",
         reason: removed
           ? "Settled for 20 days"
-          : scenario === "running" || scenario === "pending"
+          : ["running", "pending", "branchless-running"].includes(scenario)
             ? "Thread is running or has pending work"
             : shared
               ? "Shared by 2 threads"
