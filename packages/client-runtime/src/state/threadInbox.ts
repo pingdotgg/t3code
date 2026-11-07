@@ -108,9 +108,9 @@ type TrackedInboxThread = WorkingThreadInput &
 type ThreadKeyInput = Pick<EnvironmentThreadShell, "environmentId" | "id">;
 
 /**
- * How long a thread that stopped working keeps reading as working. An orchestrator
- * run can end moments before its continuation starts, so clients wait this long
- * before treating the thread as done.
+ * Default hold for clients that animate shelf moves (web). Mobile passes `graceMs: 0` and
+ * animates the list instead: a finished row should leave Working immediately, like Mail.
+ * A non-zero hold also lets auto-settle land as Working → Settled without flashing Active.
  */
 const WORKING_EXIT_GRACE_MS = 2_000;
 
@@ -119,7 +119,8 @@ const WORKING_EXIT_GRACE_MS = 2_000;
  * `observe` when the shells or the snapshot version change, or with null while the beta
  * is off. Its result stays fixed, so a list built from it can be cached.
  */
-export function createInboxReturnTracker() {
+export function createInboxReturnTracker(options?: { readonly graceMs?: number }) {
+  const graceMs = options?.graceMs ?? WORKING_EXIT_GRACE_MS;
   const keyOf = (thread: ThreadKeyInput) => `${thread.environmentId}:${thread.id}`;
   const states = new Map<
     string,
@@ -216,8 +217,8 @@ export function createInboxReturnTracker() {
           effectiveSnoozed(thread, { now: observedAt });
         // Only shelf placement is held: execution state and attention requests stay authoritative.
         const deadline =
-          !actual && previous?.working && !actionable && !moved && !excluded
-            ? (previous.deadline ?? at + WORKING_EXIT_GRACE_MS)
+          graceMs > 0 && !actual && previous?.working && !actionable && !moved && !excluded
+            ? (previous.deadline ?? at + graceMs)
             : null;
         const working = actual || (deadline !== null && deadline > at);
         if (previous?.working && !working) returns.set(key, at);

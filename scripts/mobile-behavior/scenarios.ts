@@ -372,8 +372,8 @@ export const SCENARIOS = {
     );
     yield* ctx.env.release(key);
     yield* ctx.env.settled(threadId);
-    // The shelf keeps a finished row for WORKING_EXIT_GRACE_MS (2 s) on purpose.
-    yield* Effect.sleep("5 seconds");
+    // Mobile leaves Working immediately; wait only for the list and shell to settle.
+    yield* Effect.sleep("2 seconds");
     const after = yield* ctx.device.state;
     return {
       shelfShownWhileWorking: shelfCount(working) > 0,

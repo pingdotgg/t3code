@@ -45,7 +45,8 @@ import {
   type PendingThreadOrder,
 } from "./threadOrder";
 
-export const threadListInboxReturns = createInboxReturnTracker();
+/** No exit hold: the list animates the move instead of parking a finished row in Working. */
+export const threadListInboxReturns = createInboxReturnTracker({ graceMs: 0 });
 
 export function resolveThreadListV2ProviderDrivers(
   thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
