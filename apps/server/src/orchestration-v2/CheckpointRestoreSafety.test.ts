@@ -252,3 +252,143 @@ it.effect.each([
       assert.equal(result, isolated);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect.each([
+  {
+    child: "a completed subagent",
+    depth: 1,
+    parent: "restoring",
+    record: "completed",
+    live: {},
+    isolated: true,
+  },
+  {
+    child: "a completed sub-subagent",
+    depth: 2,
+    parent: "restoring",
+    record: "completed",
+    live: {},
+    isolated: true,
+  },
+  {
+    child: "a finished native subagent",
+    depth: 1,
+    parent: "restoring",
+    record: "completed",
+    live: { status: "idle" },
+    isolated: true,
+  },
+  {
+    child: "a running native subagent",
+    depth: 1,
+    parent: "restoring",
+    record: "running",
+    live: { status: "idle" },
+    isolated: false,
+  },
+  {
+    child: "a running subagent",
+    depth: 1,
+    parent: "restoring",
+    record: "running",
+    live: { status: "running", activeRunId: "child-run", activityRunStatus: "running" },
+    isolated: false,
+  },
+  {
+    child: "a subagent awaiting approval",
+    depth: 1,
+    parent: "restoring",
+    record: "waiting",
+    live: { status: "waiting", pendingRuntimeRequest: { requestId: "child-request" } },
+    isolated: false,
+  },
+  {
+    child: "a completed subagent with a held queued follow-up",
+    depth: 1,
+    parent: "restoring",
+    record: "completed",
+    live: { runs: ["completed", "queued"] },
+    isolated: false,
+  },
+  {
+    child: "a subagent with background work",
+    depth: 1,
+    parent: "restoring",
+    record: "completed",
+    live: { pendingBackgroundTasks: [{ taskId: "child-task" }] },
+    isolated: false,
+  },
+  {
+    child: "another thread's subagent",
+    depth: 1,
+    parent: "other",
+    record: "completed",
+    live: {},
+    isolated: false,
+  },
+] as const)(
+  "$child in the parent's worktree leaves file restore isolated: $isolated",
+  ({ depth, parent, record, live, isolated }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const worktreePath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-v2-restore-subagent-",
+      });
+      const restoringId = ThreadId.make("restore-subagent-parent");
+      const rootId = parent === "restoring" ? restoringId : ThreadId.make("restore-unrelated");
+      const subagent = (id: string, parentThreadId: ThreadId) => ({
+        id: ThreadId.make(id),
+        projectId: ProjectId.make("restore-project"),
+        deletedAt: null,
+        worktreePath,
+        status: "completed",
+        activeRunId: null,
+        activityRunStatus: null,
+        pendingRuntimeRequest: null,
+        pendingBackgroundTasks: [],
+        lineage: { parentThreadId, relationshipToParent: "subagent", rootThreadId: rootId },
+      });
+      const child = { ...subagent("restore-subagent-child", rootId), ...(depth === 1 ? live : {}) };
+      const threads =
+        depth === 1
+          ? [child]
+          : [child, { ...subagent("restore-subagent-grandchild", child.id), ...live }];
+      const tested = threads[threads.length - 1]!;
+      const result = yield* isCheckpointRestoreIsolated(
+        { id: restoringId, worktreePath },
+        { cwd: worktreePath },
+        {
+          fileSystem,
+          path,
+          projections: {
+            getShellSnapshot: () => Effect.succeed({ threads, archivedThreads: [] }),
+            getThreadRecords: (threadId: ThreadId, fields: ReadonlyArray<string>) =>
+              Effect.succeed(
+                fields.includes("subagents")
+                  ? {
+                      subagents: threads
+                        .filter((candidate) => candidate.lineage.parentThreadId === threadId)
+                        .map((candidate) => ({
+                          childThreadId: candidate.id,
+                          status: candidate === tested ? record : "completed",
+                        })),
+                    }
+                  : fields.includes("runs")
+                    ? {
+                        runs: (threadId === tested.id && "runs" in live ? live.runs : []).map(
+                          (status) => ({ status }),
+                        ),
+                      }
+                    : { turnItems: [{ type: "file_change" }] },
+              ),
+            getCheckpointContext: () =>
+              Effect.succeed({ checkpointScopes: [{ cwd: worktreePath }] }),
+            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+          } as never,
+          projects: {} as never,
+        },
+      );
+      assert.equal(result, isolated);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
