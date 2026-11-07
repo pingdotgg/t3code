@@ -168,7 +168,9 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
           ),
         );
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
-        const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
+        // OpenCode 2 records a compaction request's spend on its compaction message.
+        const predicates =
+          table === "session_message" ? ["type IN ('assistant', 'compaction')"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
         predicates.push("rowid > ?", "rowid <= ?");
         const [range] = yield* sql.unsafe<{
