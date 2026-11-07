@@ -35,9 +35,7 @@ describe("response.shared", () => {
   it.effect("decodeResponse returns the result for an ok envelope", () =>
     Effect.gen(function* () {
       const response = Response.json({ ok: true, result: { hello: "world" } });
-      const result = yield* Effect.promise(() =>
-        decodeResponse<{ hello: string }>(response),
-      );
+      const result = yield* Effect.promise(() => decodeResponse<{ hello: string }>(response));
       expect(result).toEqual({ hello: "world" });
     }),
   );
@@ -45,16 +43,10 @@ describe("response.shared", () => {
   it.effect("decodeResponse throws the encoded RuntimeError", () =>
     Effect.gen(function* () {
       const response = new Response(
-        JSON.stringify(
-          makeErrorEnvelope(
-            new ConfigError({ subtag: "X", message: "thrown" }),
-          ),
-        ),
+        JSON.stringify(makeErrorEnvelope(new ConfigError({ subtag: "X", message: "thrown" }))),
         { status: 500 },
       );
-      const error = yield* Effect.tryPromise(() =>
-        decodeResponse(response),
-      ).pipe(Effect.flip);
+      const error = yield* Effect.tryPromise(() => decodeResponse(response)).pipe(Effect.flip);
       expect(error).toMatchObject({
         cause: { _tag: "ConfigError", subtag: "X", message: "thrown" },
       });
@@ -64,9 +56,7 @@ describe("response.shared", () => {
   it.effect("decodeResponse wraps invalid JSON as a SystemError", () =>
     Effect.gen(function* () {
       const response = new Response("<<not json>>", { status: 503 });
-      const error = yield* Effect.tryPromise(() =>
-        decodeResponse(response),
-      ).pipe(Effect.flip);
+      const error = yield* Effect.tryPromise(() => decodeResponse(response)).pipe(Effect.flip);
       expect(error).toMatchObject({
         cause: {
           _tag: "SystemError",

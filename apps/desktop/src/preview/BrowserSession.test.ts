@@ -117,83 +117,68 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("keeps the guest's effective User-Agent equal to Electron's native one", () =>
-    Effect.gen(function* () {
-      const nativeUserAgent =
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
-      fromPartition.mockReset();
-      fromPartition.mockImplementation((partition: string) => {
-        let userAgent = nativeUserAgent;
-        const browserSession = {
-          clearCache: vi.fn(() => Promise.resolve()),
-          clearStorageData: vi.fn(() => Promise.resolve()),
-          getUserAgent: vi.fn(() => userAgent),
-          setPermissionRequestHandler: vi.fn(),
-          setPermissionCheckHandler: vi.fn(),
-          setUserAgent: vi.fn((next: string) => {
-            userAgent = next;
-          }),
-          webRequest: { onBeforeSendHeaders: vi.fn() },
-        };
-        sessions.set(partition, browserSession);
-        return browserSession;
-      });
-
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      const partition = yield* browserSessions.getPartition("scope-a");
-      yield* browserSessions.getSession("scope-a");
-
-      const browserSession = sessions.get(partition);
-      assert.isDefined(browserSession);
-      assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it("strips only the Electron token from a User-Agent", () => {
-    const withElectron =
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) T3CodeBeta/0.1.6 Chrome/152.0.7977.169 Electron/44.10.0 Safari/537.36";
-    const withoutElectron =
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) T3CodeBeta/0.1.6 Chrome/152.0.7977.169 Safari/537.36";
-    assert.strictEqual(BrowserSession.stripElectronUserAgentToken(withElectron), withoutElectron);
-    assert.strictEqual(
-      BrowserSession.stripElectronUserAgentToken(withoutElectron),
-      withoutElectron,
-    );
-  });
-
   it.effect(
-    "strips the Electron token from User-Agent headers on Microsoft sign-in hosts only",
+    "keeps the native User-Agent except for the Electron token sent to Teams and Microsoft sign-in",
     () =>
       Effect.gen(function* () {
+        const nativeUserAgent =
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
+        const teamsUserAgent =
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Safari/537.36";
+        fromPartition.mockReset();
+        fromPartition.mockImplementation((partition: string) => {
+          let userAgent = nativeUserAgent;
+          const browserSession = {
+            clearCache: vi.fn(() => Promise.resolve()),
+            clearStorageData: vi.fn(() => Promise.resolve()),
+            getUserAgent: vi.fn(() => userAgent),
+            setPermissionRequestHandler: vi.fn(),
+            setPermissionCheckHandler: vi.fn(),
+            setUserAgent: vi.fn((next: string) => {
+              userAgent = next;
+            }),
+            webRequest: { onBeforeSendHeaders: vi.fn() },
+          };
+          sessions.set(partition, browserSession);
+          return browserSession;
+        });
+
         const browserSessions = yield* BrowserSession.BrowserSession;
         const partition = yield* browserSessions.getPartition("scope-a");
         yield* browserSessions.getSession("scope-a");
 
-        const calls = sessions.get(partition)?.webRequest.onBeforeSendHeaders.mock.calls ?? [];
+        const browserSession = sessions.get(partition);
+        assert.isDefined(browserSession);
+        assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
+
+        // Teams and Microsoft sign-in get the stripped token; every other host sees the native one.
+        const calls = browserSession.webRequest.onBeforeSendHeaders.mock.calls;
         assert.strictEqual(calls.length, 1);
         const [filter, listener] = calls[0] ?? [];
         assert.deepStrictEqual(filter, {
           urls: [
+            "https://teams.cloud.microsoft/*",
+            "https://teams.microsoft.com/*",
             "https://login.microsoftonline.com/*",
             "https://login.microsoft.com/*",
             "https://login.live.com/*",
           ],
         });
-        assert.isFunction(listener);
-
-        const nativeUserAgent = "Mozilla/5.0 Chrome/152.0.0.0 Electron/44.10.0 Safari/537.36";
+        const send = (requestHeaders: Record<string, string>) => {
+          let response: { requestHeaders?: Record<string, string> } | undefined;
+          listener({ requestHeaders }, (next: typeof response) => {
+            response = next;
+          });
+          return response;
+        };
         for (const key of ["User-Agent", "user-agent"]) {
           const requestHeaders = { [key]: nativeUserAgent, Accept: "*/*" };
-          let rewritten: { requestHeaders: Record<string, string> } | undefined;
-          listener({ requestHeaders }, (response: { requestHeaders: Record<string, string> }) => {
-            rewritten = response;
+          assert.deepStrictEqual(send(requestHeaders), {
+            requestHeaders: { [key]: teamsUserAgent, Accept: "*/*" },
           });
-          assert.deepStrictEqual(rewritten, {
-            requestHeaders: { [key]: "Mozilla/5.0 Chrome/152.0.0.0 Safari/537.36", Accept: "*/*" },
-          });
-          // The original request headers object is left untouched.
           assert.strictEqual(requestHeaders[key], nativeUserAgent);
         }
+        assert.deepStrictEqual(send({ Accept: "*/*" }), {});
       }).pipe(Effect.provide(layer)),
   );
 

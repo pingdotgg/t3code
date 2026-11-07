@@ -55,15 +55,15 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
   }
 };
 
-/** Entra hides passkey sign-in when it detects an Electron User-Agent. */
-const MICROSOFT_SIGN_IN_URL_PATTERNS: ReadonlyArray<string> = [
+// Teams sends Electron User-Agents to an error page before sign-in, and Entra hides passkey sign-in.
+// Electron allows one listener per session.
+const ELECTRON_TOKEN_STRIPPED_URL_PATTERNS = [
+  "https://teams.cloud.microsoft/*",
+  "https://teams.microsoft.com/*",
   "https://login.microsoftonline.com/*",
   "https://login.microsoft.com/*",
   "https://login.live.com/*",
 ];
-
-export const stripElectronUserAgentToken = (userAgent: string): string =>
-  userAgent.replace(/ Electron\/\S+/, "");
 
 const MAX_PROMPT_URL_LENGTH = 300;
 
@@ -352,21 +352,20 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               ? clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
               : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
-          // Scoped to Microsoft sign-in hosts and to the request header only: rewriting the User-Agent
-          // for every site breaks Turnstile (see above).
           browserSession.webRequest.onBeforeSendHeaders(
-            { urls: [...MICROSOFT_SIGN_IN_URL_PATTERNS] },
-            (details, callback) => {
-              const requestHeaders = { ...details.requestHeaders };
-              const userAgentKey = Object.keys(requestHeaders).find(
-                (key) => key.toLowerCase() === "user-agent",
+            { urls: ELECTRON_TOKEN_STRIPPED_URL_PATTERNS },
+            ({ requestHeaders }, callback) => {
+              const userAgent = Object.entries(requestHeaders).find(
+                ([name]) => name.toLowerCase() === "user-agent",
               );
-              const userAgent =
-                userAgentKey === undefined ? undefined : requestHeaders[userAgentKey];
-              if (userAgentKey !== undefined && userAgent !== undefined) {
-                requestHeaders[userAgentKey] = stripElectronUserAgentToken(userAgent);
+              if (userAgent === undefined) {
+                callback({});
+                return;
               }
-              callback({ requestHeaders });
+              const [name, value] = userAgent;
+              callback({
+                requestHeaders: { ...requestHeaders, [name]: value.replace(/ Electron\/\S+/, "") },
+              });
             },
           );
           const next = new Map(sessions);
