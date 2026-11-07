@@ -878,8 +878,11 @@ export class Launcher {
     this.#clearTimer();
     process.stderr.write("[service-launcher] The T3 home is free again. Starting the server.\n");
     const update = this.#state.update;
-    if (update?.status === "pending") await this.#startTrial(update);
-    else await this.#startChild(this.#state.activeVersion, "active", update);
+    if (update?.status === "pending") {
+      // The idle discard swallows errors; a stale backup would roll back over the other owner's writes.
+      await discardDatabaseBackup(this.#baseDir, update.id);
+      await this.#startTrial(update);
+    } else await this.#startChild(this.#state.activeVersion, "active", update);
   }
 
   async #returnToPrevious(

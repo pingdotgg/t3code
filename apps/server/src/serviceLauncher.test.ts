@@ -319,95 +319,103 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect("keeps a pending update while owned, drops its backup, then resumes the trial", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-reclaim-update-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      const ownerPath = path.join(root, "userdata", "server-owner.sqlite");
-      const databasePath = path.join(root, "userdata", "state.sqlite");
-      const startsPath = path.join(root, "starts.log");
-      yield* fs.makeDirectory(path.dirname(ownerPath), { recursive: true });
-      yield* fs.writeFileString(databasePath, "before update");
-      for (const version of ["1.0.0", "1.1.0"]) {
-        yield* writeFakeRuntime(
-          fs,
-          path,
-          path.join(root, "runtime", "versions", version),
-          [
-            `const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(ownerPath)});`,
-            `try { db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); }`,
-            `catch { process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED}); }`,
-            "const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);",
-            `require("node:fs").appendFileSync(${JSON.stringify(startsPath)}, context.childVersion + "\\n");`,
-            'process.on("message", (message) => message.type === "committed" && process.send("committed"));',
-            'if (context.update?.status === "pending") process.send({ type: "prepared", updateId: context.update.id });',
-            "setInterval(() => {}, 1_000);",
-          ].join("\n"),
+  it.effect(
+    "keeps a pending update while owned and rolls a failed resumed trial back to the other owner's writes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-reclaim-update-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        const ownerPath = path.join(root, "userdata", "server-owner.sqlite");
+        const databasePath = path.join(root, "userdata", "state.sqlite");
+        const startsPath = path.join(root, "starts.log");
+        yield* fs.makeDirectory(path.dirname(ownerPath), { recursive: true });
+        yield* fs.writeFileString(databasePath, "before update");
+        for (const version of ["1.0.0", "1.1.0"]) {
+          yield* writeFakeRuntime(
+            fs,
+            path,
+            path.join(root, "runtime", "versions", version),
+            [
+              `const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(ownerPath)});`,
+              `try { db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); }`,
+              `catch { process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED}); }`,
+              "const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);",
+              `require("node:fs").appendFileSync(${JSON.stringify(startsPath)}, context.childVersion + "\\n");`,
+              'if (context.update?.status === "pending") {',
+              `  require("node:fs").writeFileSync(${JSON.stringify(databasePath)}, "migrated by failed trial");`,
+              "  process.exit(1);",
+              "}",
+              'process.send("active");',
+              "setInterval(() => {}, 1_000);",
+            ].join("\n"),
+          );
+        }
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+            update: {
+              id: "update-1",
+              fromVersion: "1.0.0",
+              targetVersion: "1.1.0",
+              dbPath: databasePath,
+              status: "pending",
+            },
+          }),
         );
-      }
-      yield* Effect.promise(() =>
-        writeServiceState(statePath, {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: "1.0.0",
-          update: {
-            id: "update-1",
-            fromVersion: "1.0.0",
-            targetVersion: "1.1.0",
-            dbPath: databasePath,
-            status: "pending",
-          },
-        }),
-      );
-      using otherOwner = new NodeSqlite.DatabaseSync(ownerPath);
-      otherOwner.exec("BEGIN EXCLUSIVE;");
-      const refused = Promise.withResolvers<void>();
-      const committed = Promise.withResolvers<void>();
-      yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
-            if (String(chunk).includes("owns this T3 home")) refused.resolve();
-            return true;
-          }),
-        ),
-        (spy) => Effect.sync(() => spy.mockRestore()),
-      );
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          spawnHook.current = (child) =>
-            child.on("message", (message) => message === "committed" && committed.resolve());
-        }),
-        () =>
+        using otherOwner = new NodeSqlite.DatabaseSync(ownerPath);
+        otherOwner.exec("BEGIN EXCLUSIVE;");
+        const refused = Promise.withResolvers<void>();
+        const active = Promise.withResolvers<void>();
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+              if (String(chunk).includes("owns this T3 home")) refused.resolve();
+              return true;
+            }),
+          ),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
+        yield* Effect.acquireRelease(
           Effect.sync(() => {
-            spawnHook.current = undefined;
+            spawnHook.current = (child) =>
+              child.on("message", (message) => message === "active" && active.resolve());
           }),
-      );
-      const launcher = new Launcher(
-        root,
-        yield* Effect.promise(() => readServiceState(statePath)),
-        { stateDirOwnerPollMs: 10 },
-      );
-      const running = launcher.run();
-      yield* Effect.promise(() => refused.promise);
-      const idle = yield* Effect.promise(() => readServiceState(statePath));
-      assert.strictEqual(idle.activeVersion, "1.0.0");
-      assert.strictEqual(idle.update?.status, "pending");
-      assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", "update-1")));
+          () =>
+            Effect.sync(() => {
+              spawnHook.current = undefined;
+            }),
+        );
+        const launcher = new Launcher(
+          root,
+          yield* Effect.promise(() => readServiceState(statePath)),
+          { stateDirOwnerPollMs: 10 },
+        );
+        const running = launcher.run();
+        yield* Effect.promise(() => refused.promise);
+        const idle = yield* Effect.promise(() => readServiceState(statePath));
+        assert.strictEqual(idle.activeVersion, "1.0.0");
+        assert.strictEqual(idle.update?.status, "pending");
+        assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", "update-1")));
 
-      // The other owner runs the target version and migrates before it releases the home.
-      yield* fs.writeFileString(databasePath, "migrated by 1.1.0");
-      otherOwner.close();
-      yield* Effect.promise(() => committed.promise);
-      yield* Effect.promise(() => launcher.stop("SIGTERM"));
-      yield* Effect.promise(() => running);
+        // A pre-owner backup left behind by a failed discard must not be restored.
+        const backupDir = path.join(root, "runtime", "db-backup", "update-1");
+        yield* fs.makeDirectory(backupDir, { recursive: true });
+        yield* fs.writeFileString(path.join(backupDir, "database"), "before update");
+        yield* fs.writeFileString(databasePath, "written by the other owner");
+        otherOwner.close();
+        yield* Effect.promise(() => active.promise);
+        yield* Effect.promise(() => launcher.stop("SIGTERM"));
+        yield* Effect.promise(() => running);
 
-      const state = yield* Effect.promise(() => readServiceState(statePath));
-      assert.strictEqual(state.activeVersion, "1.1.0");
-      assert.strictEqual(state.update?.status, "committed");
-      assert.strictEqual(yield* fs.readFileString(startsPath), "1.1.0\n");
-      assert.strictEqual(yield* fs.readFileString(databasePath), "migrated by 1.1.0");
-    }),
+        const state = yield* Effect.promise(() => readServiceState(statePath));
+        assert.strictEqual(state.activeVersion, "1.0.0");
+        assert.strictEqual(state.update?.status, "rolled-back");
+        assert.strictEqual(yield* fs.readFileString(startsPath), "1.1.0\n1.0.0\n");
+        assert.strictEqual(yield* fs.readFileString(databasePath), "written by the other owner");
+      }),
   );
 
   it.effect("treats the T3 home as owned while the lock or a pre-lock server holds it", () =>
