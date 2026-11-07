@@ -390,12 +390,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     learn: NonNullable<EnvironmentSupervisorOptions["learnGatewayPeers"]>,
     lease: ConnectedLease,
   ) {
-    const gatewayHttpBaseUrl = lease.prepared.httpBaseUrl;
+    // Include the live gateway origin so a reconnect on a new host rewrites peer routes even when
+    // the advertisement list is unchanged.
     yield* lease.session.subscribeServerConfig().pipe(
       Stream.filter((event) => event.type === "snapshot"),
-      Stream.map((event) => event.config.lanGatewayPeers ?? []),
+      Stream.map((event) => ({
+        advertised: event.config.lanGatewayPeers ?? [],
+        gatewayHttpBaseUrl: lease.prepared.httpBaseUrl,
+      })),
       Stream.changesWith((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
-      Stream.runForEach((advertised) => learn({ gatewayHttpBaseUrl, advertised })),
+      Stream.runForEach((snapshot) => learn(snapshot)),
       Effect.ignoreCause({ log: true }),
     );
   });

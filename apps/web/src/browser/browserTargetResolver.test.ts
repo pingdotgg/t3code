@@ -38,6 +38,16 @@ describe("browser target resolver", () => {
     ).toBe("http://192.168.1.25:3000/app");
   });
 
+  it("does not remap loopback previews through a LAN gateway hop", async () => {
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "http://192.168.1.25:3773/__t3_gateway/env_peer/",
+    });
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    expect(
+      resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3000/app"),
+    ).toBe("http://localhost:3000/app");
+  });
+
   it("keeps localhost for servers on the desktop's own WSL or primary backend", async () => {
     // WSL NAT advertises a distro IP, but loopback-bound servers only answer on localhost.
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");

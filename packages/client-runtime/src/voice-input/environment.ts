@@ -14,11 +14,12 @@ import type {
 } from "@t3tools/contracts";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
-import type { PreparedConnection } from "../connection/model.ts";
+import { ticketedEnvironmentEndpointUrl, type PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   makeEnvironmentHttpApiGroupClient,
   makeEnvironmentHttpApiUrlBuilder,
+  RemoteEnvironmentAuthFetchError,
 } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
 import { VoiceTranscriptionError } from "./transcription.ts";
@@ -159,26 +160,35 @@ export const transcribeCloudPcm = (
   );
 };
 
-export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
-  let endpoint = prepared.httpBaseUrl;
-  return request({
+export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) =>
+  request({
     group: "auth",
     prepared,
     method: "POST",
-    path: (urls) => {
-      endpoint = urls.webSocketTicketFor({ params: { use: "media" } });
-      return endpoint;
-    },
+    path: (urls) => urls.webSocketTicketFor({ params: { use: "media" } }),
     run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
   }).pipe(
-    Effect.map(({ ticket }) => {
-      const url = new URL(SPEECH_STREAM_PATH, endpoint);
-      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-      url.searchParams.set("wsTicket", Redacted.value(ticket));
-      return url.toString();
-    }),
+    Effect.flatMap(({ ticket }) =>
+      ticketedEnvironmentEndpointUrl(prepared, SPEECH_STREAM_PATH).pipe(
+        Effect.mapError(
+          (error) =>
+            new RemoteEnvironmentAuthFetchError({
+              message:
+                error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
+                  ? error.detail
+                  : "Could not prepare the speech stream URL.",
+              cause: error,
+            }),
+        ),
+        Effect.map((streamBase) => {
+          const url = new URL(streamBase);
+          url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+          url.searchParams.set("wsTicket", Redacted.value(ticket));
+          return url.toString();
+        }),
+      ),
+    ),
   );
-};
 
 export const getEnvironmentSpeechModels = (
   prepared: PreparedConnection,

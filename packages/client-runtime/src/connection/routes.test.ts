@@ -621,6 +621,79 @@ describe("gateway routes", () => {
     });
     expect(ids(next)).toContain(`gateway:${GATEWAY_ID}:${PEER_ID}@lan`);
   });
+
+  it("rewrites gateway peer URLs when the host origin changes", () => {
+    const first = mergeGatewayRoutes({
+      entry: paired,
+      gatewayEnvironmentId: GATEWAY_ID,
+      gatewayHttpBaseUrl: "https://lan-host.example/",
+      advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+    })!;
+    const entry: ConnectionCatalogEntry = {
+      ...paired,
+      target: first[0]!.target,
+      profile: first[0]!.profile,
+      alternateRoutes: first.slice(1),
+    };
+    const next = mergeGatewayRoutes({
+      entry,
+      gatewayEnvironmentId: GATEWAY_ID,
+      gatewayHttpBaseUrl: gatewayOrigin,
+      advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+    });
+    expect(
+      profileOf(next!.find((route) => connectionRouteKind(route) === "gateway")!),
+    ).toMatchObject({
+      httpBaseUrl: `https://connect-host.example/__t3_gateway/${PEER_ID}/`,
+    });
+  });
+
+  it("drops http gateway routes on an https page", () => {
+    const previous = globalThis.location;
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: { protocol: "https:" },
+    });
+    try {
+      const lanGateway = "http://192.168.1.10:13773/";
+      expect(
+        mergeGatewayRoutes({
+          entry: paired,
+          gatewayEnvironmentId: GATEWAY_ID,
+          gatewayHttpBaseUrl: lanGateway,
+          advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+        }),
+      ).toBeNull();
+
+      const withHttpsGateway = mergeGatewayRoutes({
+        entry: paired,
+        gatewayEnvironmentId: GATEWAY_ID,
+        gatewayHttpBaseUrl: gatewayOrigin,
+        advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+      })!;
+      const entry: ConnectionCatalogEntry = {
+        ...paired,
+        target: withHttpsGateway[0]!.target,
+        profile: withHttpsGateway[0]!.profile,
+        alternateRoutes: withHttpsGateway.slice(1),
+      };
+      expect(
+        ids(
+          mergeGatewayRoutes({
+            entry,
+            gatewayEnvironmentId: GATEWAY_ID,
+            gatewayHttpBaseUrl: lanGateway,
+            advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+          }),
+        ),
+      ).toEqual(["lan", "relay"]);
+    } finally {
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: previous,
+      });
+    }
+  });
 });
 
 describe("gateway peer upstream selection", () => {

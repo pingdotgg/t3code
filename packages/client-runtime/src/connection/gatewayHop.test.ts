@@ -1,8 +1,10 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
@@ -21,45 +23,55 @@ const PREPARED: PreparedConnection = {
   target: TARGET,
 };
 
+const dpopHopLayer = (input: {
+  readonly requests: Array<{ readonly url: string; readonly authorization: string | null }>;
+  readonly proofTokens: Array<string | undefined>;
+  readonly expiresAt: string;
+  readonly ticket?: string;
+}) =>
+  GatewayHop.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        RpcHttp.layerRemoteHttpClient(async (request, init) => {
+          input.requests.push({
+            url: String(request),
+            authorization: new Headers(init?.headers).get("authorization"),
+          });
+          return Response.json({
+            ticket: input.ticket ?? "hop",
+            expiresAt: input.expiresAt,
+          });
+        }),
+        Layer.mock(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization)({
+          authorizeDpopHttp: () =>
+            Effect.succeed({
+              environmentId: GATEWAY_ID,
+              label: "Gateway",
+              httpBaseUrl: "https://current.example.test/",
+              httpAuthorization: {
+                _tag: "Dpop",
+                accessToken: "current-token",
+                expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+              },
+            }),
+        }),
+        Layer.mock(ManagedRelay.ManagedRelayDpopSigner)({
+          createProof: ({ accessToken }) =>
+            Effect.sync(() => {
+              input.proofTokens.push(accessToken);
+              return "proof";
+            }),
+        }),
+      ),
+    ),
+  );
+
 describe("GatewayHopAuthorization", () => {
   it.effect(
     "mints a DPoP ticket with the renewed token and endpoint, not the prepared ones",
     () => {
       const requests: Array<{ readonly url: string; readonly authorization: string | null }> = [];
       const proofTokens: Array<string | undefined> = [];
-      const layer = GatewayHop.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            RpcHttp.layerRemoteHttpClient(async (input, init) => {
-              requests.push({
-                url: String(input),
-                authorization: new Headers(init?.headers).get("authorization"),
-              });
-              return Response.json({ ticket: "hop", expiresAt: "2026-05-01T12:05:00.000Z" });
-            }),
-            Layer.mock(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization)({
-              authorizeDpopHttp: () =>
-                Effect.succeed({
-                  environmentId: GATEWAY_ID,
-                  label: "Gateway",
-                  httpBaseUrl: "https://current.example.test/",
-                  httpAuthorization: {
-                    _tag: "Dpop",
-                    accessToken: "current-token",
-                    expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
-                  },
-                }),
-            }),
-            Layer.mock(ManagedRelay.ManagedRelayDpopSigner)({
-              createProof: ({ accessToken }) =>
-                Effect.sync(() => {
-                  proofTokens.push(accessToken);
-                  return "proof";
-                }),
-            }),
-          ),
-        ),
-      );
       return Effect.gen(function* () {
         const hop = yield* GatewayHop.GatewayHopAuthorization;
         yield* hop.remember(GATEWAY_ID, Option.some(PREPARED));
@@ -72,7 +84,66 @@ describe("GatewayHopAuthorization", () => {
           },
         ]);
         expect(proofTokens).toEqual(["current-token"]);
-      }).pipe(Effect.provide(layer));
+      }).pipe(
+        Effect.provide(
+          dpopHopLayer({
+            requests,
+            proofTokens,
+            expiresAt: "2026-05-01T12:05:00.000Z",
+          }),
+        ),
+      );
     },
   );
+
+  it.effect("reuses a media hop ticket until near expiry", () => {
+    const requests: Array<{ readonly url: string; readonly authorization: string | null }> = [];
+    const proofTokens: Array<string | undefined> = [];
+    return Effect.gen(function* () {
+      const hop = yield* GatewayHop.GatewayHopAuthorization;
+      yield* hop.remember(GATEWAY_ID, Option.some(PREPARED));
+
+      expect(yield* hop.issueTicket(GATEWAY_ID)).toEqual(Option.some("hop"));
+      expect(yield* hop.issueTicket(GATEWAY_ID)).toEqual(Option.some("hop"));
+      expect(requests).toHaveLength(1);
+
+      yield* TestClock.adjust("29 seconds");
+      expect(yield* hop.issueTicket(GATEWAY_ID)).toEqual(Option.some("hop"));
+      expect(requests).toHaveLength(1);
+
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* hop.issueTicket(GATEWAY_ID)).toEqual(Option.some("hop"));
+      expect(requests).toHaveLength(2);
+    }).pipe(
+      Effect.provide(
+        dpopHopLayer({
+          requests,
+          proofTokens,
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(60_000)),
+        }),
+      ),
+    );
+  });
+
+  it.effect("forgets a cached hop ticket when the gateway disconnects", () => {
+    const requests: Array<{ readonly url: string; readonly authorization: string | null }> = [];
+    const proofTokens: Array<string | undefined> = [];
+    return Effect.gen(function* () {
+      const hop = yield* GatewayHop.GatewayHopAuthorization;
+      yield* hop.remember(GATEWAY_ID, Option.some(PREPARED));
+      expect(yield* hop.issueTicket(GATEWAY_ID)).toEqual(Option.some("hop"));
+      yield* hop.remember(GATEWAY_ID, Option.none());
+      yield* hop.remember(GATEWAY_ID, Option.some(PREPARED));
+      expect(yield* hop.issueTicket(GATEWAY_ID)).toEqual(Option.some("hop"));
+      expect(requests).toHaveLength(2);
+    }).pipe(
+      Effect.provide(
+        dpopHopLayer({
+          requests,
+          proofTokens,
+          expiresAt: "2026-05-01T12:05:00.000Z",
+        }),
+      ),
+    );
+  });
 });
