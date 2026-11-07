@@ -39,6 +39,14 @@ function roundedPath(width: number, height: number, radius: number, path = new S
   return path;
 }
 
+/** Case outline: a circle for round watches, otherwise a rounded rectangle. */
+function outlinePath(profile: DeviceShapeProfile, width: number, height: number, radius: number) {
+  if (!profile.round) return roundedPath(width, height, radius);
+  const path = new Shape();
+  path.absarc(0, 0, Math.min(width, height) / 2, 0, Math.PI * 2, false);
+  return path;
+}
+
 export function phoneDisplayLayout(
   screen: DeviceScreenSize | null,
   rawWidth: number,
@@ -98,27 +106,33 @@ export function createPhoneScene(
   const materials = [metal, glass, backMaterial, lensMaterial];
 
   const body = new Mesh(
-    new ExtrudeGeometry(roundedPath(width, height, profile.bodyRadius), {
+    new ExtrudeGeometry(outlinePath(profile, width, height, profile.bodyRadius), {
       depth: profile.depth,
       bevelEnabled: true,
       bevelSize: 0.012,
       bevelThickness: 0.012,
       bevelSegments: 3,
       steps: 1,
-      curveSegments: 12,
+      curveSegments: profile.round ? 48 : 12,
     }),
     metal,
   );
   body.position.z = 0.025 - profile.depth;
   orientation.add(body);
   const face = new Mesh(
-    new ShapeGeometry(roundedPath(width - 0.014, height - 0.014, profile.bodyRadius - 0.01), 16),
+    new ShapeGeometry(
+      outlinePath(profile, width - 0.014, height - 0.014, profile.bodyRadius - 0.01),
+      profile.round ? 64 : 16,
+    ),
     glass,
   );
   face.position.z = 0.04;
   orientation.add(face);
   const back = new Mesh(
-    new ShapeGeometry(roundedPath(width - 0.012, height - 0.012, profile.bodyRadius - 0.01), 16),
+    new ShapeGeometry(
+      outlinePath(profile, width - 0.012, height - 0.012, profile.bodyRadius - 0.01),
+      profile.round ? 64 : 16,
+    ),
     backMaterial,
   );
   back.name = "device-back";
@@ -126,9 +140,10 @@ export function createPhoneScene(
   back.position.z = backZ;
   orientation.add(back);
 
+  // The round display is a real circle, so raycasts miss the framebuffer's masked corners.
   const screenGeometry = new ShapeGeometry(
-    roundedPath(screenWidth, SCREEN_HEIGHT, profile.screenRadius),
-    20,
+    outlinePath(profile, screenWidth, SCREEN_HEIGHT, profile.screenRadius),
+    profile.round ? 64 : 20,
   );
   updateDisplayUv(screenGeometry, screenWidth, SCREEN_HEIGHT, layout);
   const screenMaterial = new MeshBasicMaterial({ map: texture, toneMapped: false });
@@ -136,69 +151,97 @@ export function createPhoneScene(
   display.position.z = 0.043;
   orientation.add(display);
 
-  for (const { edge, offset, length } of profile.buttons) {
-    const button = new Mesh(
-      new BoxGeometry(
-        edge === "top" ? length : 0.026,
-        edge === "top" ? 0.026 : length,
-        profile.depth * 0.65,
-      ),
-      metal,
-    );
-    button.position.set(
-      edge === "top" ? offset : (edge === "left" ? -1 : 1) * (width / 2 + 0.015),
-      edge === "top" ? height / 2 + 0.015 : offset,
-      (0.025 + backZ) / 2,
-    );
+  const middleZ = (0.025 + backZ) / 2;
+  for (const { edge, offset, length, crown } of profile.buttons) {
+    const side = edge === "left" ? -1 : 1;
+    const button = crown
+      ? new Mesh(new CylinderGeometry(length / 2, length / 2, crown, 32), metal)
+      : new Mesh(
+          new BoxGeometry(
+            edge === "top" ? length : 0.026,
+            edge === "top" ? 0.026 : length,
+            profile.depth * 0.65,
+          ),
+          metal,
+        );
+    const out = crown ? crown / 2 : 0.015;
+    if (edge === "top") {
+      button.position.set(offset, height / 2 + out, middleZ);
+    } else if (profile.round) {
+      // Keys on a round case sit on the rim, tangent to it.
+      const angle = Math.asin(Math.max(-1, Math.min(1, offset / (width / 2))));
+      button.position.set(
+        side * (width / 2 + out) * Math.cos(angle),
+        (width / 2 + out) * Math.sin(angle),
+        middleZ,
+      );
+      button.rotation.z = side * angle;
+    } else {
+      button.position.set(side * (width / 2 + out), offset, middleZ);
+    }
+    if (crown && edge !== "top") button.rotation.z += Math.PI / 2;
     orientation.add(button);
   }
-  const rearCamera = new Group();
-  rearCamera.name = "rear-camera";
-  rearCamera.position.set(
-    width / 2 - profile.camera.insetX,
-    height / 2 - profile.camera.insetY,
-    back.position.z + 0.001,
-  );
-  rearCamera.rotation.y = Math.PI;
-  orientation.add(rearCamera);
-  const plateFront = 0.025 + 0.007;
-  const ringDepth = 0.025;
-  const cameraPlate = new Mesh(
-    new ExtrudeGeometry(
-      roundedPath(
-        profile.camera.width,
-        profile.camera.height,
-        Math.min(profile.camera.width, profile.camera.height) / 4,
-      ),
-      {
-        depth: 0.025,
-        bevelEnabled: true,
-        bevelSize: 0.009,
-        bevelThickness: 0.007,
-        bevelSegments: 2,
-      },
-    ),
-    backMaterial,
-  );
-  cameraPlate.name = "camera-plate";
-  rearCamera.add(cameraPlate);
-  for (const [x, y] of profile.camera.lenses) {
-    const radius = profile.camera.lensRadius;
-    const ring = new Mesh(new CylinderGeometry(radius + 0.014, radius + 0.014, 0.025, 32), metal);
-    ring.rotation.x = Math.PI / 2;
-    ring.name = "camera-ring";
-    ring.position.set(x, y, plateFront + ringDepth / 2 - 0.003);
-    rearCamera.add(ring);
-    const lens = new Mesh(new CircleGeometry(radius, 32), lensMaterial);
-    lens.name = "camera-lens";
-    lens.position.set(x, y, ring.position.z + ringDepth / 2 + 0.0005);
-    rearCamera.add(lens);
+  if (profile.lugs) {
+    const { span, width: lugWidth, length } = profile.lugs;
+    const x = (span - lugWidth) / 2;
+    // Each lug starts a little inside the case so it reads as one piece with the rim.
+    const rim = Math.sqrt(Math.max(0, (width / 2) ** 2 - x ** 2));
+    for (const direction of [1, -1]) {
+      for (const sideX of [x, -x]) {
+        const lug = new Mesh(new BoxGeometry(lugWidth, length, profile.depth * 0.55), metal);
+        lug.name = "watch-lug";
+        lug.position.set(sideX, direction * (rim + length / 2 - 0.08), middleZ);
+        orientation.add(lug);
+      }
+    }
   }
   const flashMaterial = new MeshBasicMaterial({ color: 0xf2ead6 });
-  if (profile.camera.flash) {
-    const flash = new Mesh(new CircleGeometry(0.022, 20), flashMaterial);
-    flash.position.set(profile.camera.flash[0], profile.camera.flash[1], plateFront + 0.0005);
-    rearCamera.add(flash);
+  const { camera } = profile;
+  if (camera) {
+    const rearCamera = new Group();
+    rearCamera.name = "rear-camera";
+    rearCamera.position.set(
+      width / 2 - camera.insetX,
+      height / 2 - camera.insetY,
+      back.position.z + 0.001,
+    );
+    rearCamera.rotation.y = Math.PI;
+    orientation.add(rearCamera);
+    const plateFront = 0.025 + 0.007;
+    const ringDepth = 0.025;
+    const cameraPlate = new Mesh(
+      new ExtrudeGeometry(
+        roundedPath(camera.width, camera.height, Math.min(camera.width, camera.height) / 4),
+        {
+          depth: 0.025,
+          bevelEnabled: true,
+          bevelSize: 0.009,
+          bevelThickness: 0.007,
+          bevelSegments: 2,
+        },
+      ),
+      backMaterial,
+    );
+    cameraPlate.name = "camera-plate";
+    rearCamera.add(cameraPlate);
+    for (const [x, y] of camera.lenses) {
+      const radius = camera.lensRadius;
+      const ring = new Mesh(new CylinderGeometry(radius + 0.014, radius + 0.014, 0.025, 32), metal);
+      ring.rotation.x = Math.PI / 2;
+      ring.name = "camera-ring";
+      ring.position.set(x, y, plateFront + ringDepth / 2 - 0.003);
+      rearCamera.add(ring);
+      const lens = new Mesh(new CircleGeometry(radius, 32), lensMaterial);
+      lens.name = "camera-lens";
+      lens.position.set(x, y, ring.position.z + ringDepth / 2 + 0.0005);
+      rearCamera.add(lens);
+    }
+    if (camera.flash) {
+      const flash = new Mesh(new CircleGeometry(0.022, 20), flashMaterial);
+      flash.position.set(camera.flash[0], camera.flash[1], plateFront + 0.0005);
+      rearCamera.add(flash);
+    }
   }
 
   let activeLayout = layout;
