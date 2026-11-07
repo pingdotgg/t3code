@@ -1121,7 +1121,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const streamItemFor = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
         kind: PiStreamItemState["kind"],
-        contentIndex: number,
+        contentIndex: number | `final:${number}`,
       ) {
         const blockId = `${turn.providerTurn.id}:m${turn.messageOrdinal}:c${contentIndex}`;
         const previous = turn.streamItems.get(blockId);
@@ -1145,9 +1145,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return item;
       });
 
-      const completeStreamItem = (turn: ActivePiTurn, item: PiStreamItemState, text?: string) =>
+      const completeStreamItem = (
+        turn: ActivePiTurn,
+        item: PiStreamItemState,
+        text?: string,
+        ordinal = itemOrdinal(turn, item.nativeItemId),
+      ) =>
         Effect.suspend(() => {
-          if (item.completed && (text === undefined || text === item.text)) return Effect.void;
+          const reordered = ordinal !== itemOrdinal(turn, item.nativeItemId);
+          if (item.completed && !reordered && (text === undefined || text === item.text)) {
+            return Effect.void;
+          }
+          turn.itemOrdinals.set(item.nativeItemId, ordinal);
           const hadText = item.text.length > 0;
           item.completed = true;
           if (text !== undefined) item.text = text;
@@ -1977,22 +1986,31 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (recordString(message, "role") !== "assistant") return;
             const content = recordField(message, "content");
             if (Array.isArray(content)) {
+              const currentItems = Array.from(turn.streamItems.values()).filter(
+                (item) => item.messageOrdinal === turn.messageOrdinal,
+              );
               const finalized = new Set<PiStreamItemState>();
+              const replacements: { item: PiStreamItemState; text: string }[] = [];
               for (const [index, block] of content.entries()) {
                 const type = recordString(block, "type");
                 if (type !== "text" && type !== "thinking") continue;
-                const item = yield* streamItemFor(
-                  turn,
-                  type === "text" ? "assistant_message" : "reasoning",
-                  index,
-                );
+                const kind = type === "text" ? "assistant_message" : "reasoning";
+                // Removing thinking can shift text indices without replacing the streamed message.
+                const item =
+                  currentItems.find((item) => item.kind === kind && !finalized.has(item)) ??
+                  (yield* streamItemFor(turn, kind, `final:${index}`));
                 finalized.add(item);
-                yield* completeStreamItem(turn, item, recordString(block, type) ?? "");
+                replacements.push({ item, text: recordString(block, type) ?? "" });
               }
-              for (const item of turn.streamItems.values()) {
-                if (item.messageOrdinal === turn.messageOrdinal && !finalized.has(item)) {
-                  yield* completeStreamItem(turn, item, "");
-                }
+              // Reuse only these blocks' slots so tool and retry ordinals stay in place.
+              const ordinals = replacements
+                .map(({ item }) => itemOrdinal(turn, item.nativeItemId))
+                .sort((a, b) => a - b);
+              for (const [index, { item, text }] of replacements.entries()) {
+                yield* completeStreamItem(turn, item, text, ordinals[index]);
+              }
+              for (const item of currentItems) {
+                if (!finalized.has(item)) yield* completeStreamItem(turn, item, "");
               }
             }
             yield* completeOpenStreamItems(turn);
