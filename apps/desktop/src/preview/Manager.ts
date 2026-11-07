@@ -1,10 +1,13 @@
 import * as NodeZlib from "node:zlib";
 import {
+  DesktopPreviewAnnotationVoiceEventSchema,
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
 } from "@t3tools/contracts";
 import type {
   DesktopPreviewAnnotationTheme,
+  DesktopPreviewAnnotationVoiceConfig,
+  DesktopPreviewAnnotationVoiceState,
   DesktopPreviewColorScheme,
   DesktopPreviewFavicon,
   DesktopPreviewOpenLinkEvent,
@@ -35,7 +38,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -56,13 +59,19 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
-import { MENU_ACTION_CHANNEL, PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
+import {
+  MENU_ACTION_CHANNEL,
+  PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL,
+  PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
+  ANNOTATION_VOICE_EVENT_CHANNEL,
+  ANNOTATION_VOICE_STATE_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
@@ -396,8 +405,13 @@ interface PendingRecording {
 }
 
 interface PickSession {
+  readonly voiceSessionId?: string | undefined;
   readonly cancel: Effect.Effect<void>;
 }
+
+const decodeAnnotationVoiceEvent = Schema.decodeUnknownOption(
+  DesktopPreviewAnnotationVoiceEventSchema,
+);
 
 interface BrowserControlSession {
   readonly webContentsId: number;
@@ -423,13 +437,17 @@ type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<vo
 // about:blank inherits relaxed guest preferences; external editor schemes must reach the OS handler.
 const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
 
-const isPopupUrl = (rawUrl: string): boolean => {
-  try {
-    return POPUP_PROTOCOLS.has(new URL(rawUrl).protocol);
-  } catch {
-    return false;
-  }
-};
+// Main-process loadURL bypasses Chromium's renderer-side restrictions on local and inline URLs.
+const IN_PLACE_DENIED_PROTOCOLS = new Set([
+  "about:",
+  "chrome:",
+  "data:",
+  "devtools:",
+  "file:",
+  "filesystem:",
+  "javascript:",
+  "view-source:",
+]);
 
 /** Popups bypass will-attach-webview hardening and would inherit the picker's contextIsolation:false. */
 const POPUP_WINDOW_OPTIONS = {
@@ -440,15 +458,19 @@ const POPUP_WINDOW_OPTIONS = {
   },
 } satisfies Electron.BrowserWindowConstructorOptions;
 
-/** OAuth needs a surviving popup opener; unhardenable schemes and form POSTs must stay in place. */
+/**
+ * OAuth needs a surviving popup opener. `blob:`, app links (behind the session's `openExternal`
+ * prompt) and form POSTs stay in place.
+ */
 export const previewWindowOpenAction = (details: {
   readonly url: string;
   readonly disposition: Electron.HandlerDetails["disposition"];
   readonly postBody?: Electron.PostBody;
 }): "popup" | "new-tab" | "navigate" | "deny" => {
+  const protocol = URL.parse(details.url)?.protocol;
   // MSAL redirects on a denied blank popup; navigating the tab would destroy that fallback.
-  if (details.url === "" || details.url === "about:blank") return "deny";
-  if (!isPopupUrl(details.url)) return "navigate";
+  if (protocol === undefined || IN_PLACE_DENIED_PROTOCOLS.has(protocol)) return "deny";
+  if (!POPUP_PROTOCOLS.has(protocol)) return "navigate";
   if (details.disposition === "new-window") return "popup";
   return !details.postBody &&
     (details.disposition === "foreground-tab" || details.disposition === "background-tab")
@@ -456,10 +478,10 @@ export const previewWindowOpenAction = (details: {
     : "navigate";
 };
 
-const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
+const isPreviewRefreshShortcut = (input: Electron.Input, platform: NodeJS.Platform): boolean =>
   input.type === "keyDown" &&
   input.key.toLowerCase() === "r" &&
-  (input.meta || input.control) &&
+  (platform === "darwin" ? input.meta && !input.control : input.control && !input.meta) &&
   !input.shift &&
   !input.alt;
 
@@ -515,7 +537,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const hostPlatform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const parentScope = yield* Scope.Scope;
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
@@ -1470,7 +1492,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         if (!input.isAutoRepeat) {
           if (
             forwarded.command === "workspace.focusNext" ||
-            forwarded.command === "workspace.focusPrevious"
+            forwarded.command === "workspace.focusPrevious" ||
+            forwarded.command === "preview.focusUrl"
           ) {
             // DOM focus in the renderer cannot by itself release the guest's native keyboard focus.
             host.focus();
@@ -1479,7 +1502,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
         return;
       }
-      if (isPreviewRefreshShortcut(input)) {
+      if (isPreviewRefreshShortcut(input, hostPlatform)) {
         event.preventDefault();
         runFork(
           attempt({ operation: "shortcut.refresh", tabId, webContentsId: wc.id }, () =>
@@ -1676,6 +1699,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     if (Option.isNone(tab)) return;
     const closedTab = tab.value;
+    if (closedTab.serverTab) browserHost.setShown(closedTab.serverTab, undefined);
     if (closedTab.webContentsId != null) {
       yield* Effect.all(
         [
@@ -1884,6 +1908,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
     wc.once("destroyed", () => {
+      runFork(hideDestroyedGuest(webContentsId));
       runFork(detachControlSession(webContentsId));
     });
     yield* ensureControlSession(wc).pipe(
@@ -2063,16 +2088,35 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
   });
 
-  const pickElement = Effect.fn("PreviewManager.pickElement")(function* (tabId: string) {
+  // Voice state reaches a guest only while its pick session, by id, still owns the tab.
+  const updateAnnotationVoice = Effect.fn("PreviewManager.updateAnnotationVoice")(function* (
+    state: DesktopPreviewAnnotationVoiceState,
+  ) {
+    const sessions = yield* Ref.get(pickSessionsRef);
+    if (sessions.get(state.tabId)?.voiceSessionId !== state.sessionId) return;
+    const wc = yield* requireWebContents(state.tabId);
+    yield* attempt({ operation: "annotationVoice.update", tabId: state.tabId }, () =>
+      wc.send(ANNOTATION_VOICE_STATE_CHANNEL, state),
+    );
+  });
+
+  const pickElement = Effect.fn("PreviewManager.pickElement")(function* (
+    tabId: string,
+    voice?: DesktopPreviewAnnotationVoiceConfig,
+  ) {
     const wc = yield* requireWebContents(tabId);
     yield* cancelPickElement(tabId);
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     return yield* Effect.callback<PreviewAnnotationSubmissionResult | null, PreviewManagerError>(
       (resume) => {
-        const session: PickSession = { cancel: Effect.suspend(() => cancelPickSession()) };
+        const session: PickSession = {
+          voiceSessionId: voice?.sessionId,
+          cancel: Effect.suspend(() => cancelPickSession()),
+        };
         const cleanup = Effect.fn("PreviewManager.cleanupPickElement")(function* () {
           yield* attempt({ operation: "pickElement.cleanup", tabId, webContentsId: wc.id }, () => {
             wc.ipc.removeListener(ELEMENT_PICKED_CHANNEL, onMessage);
+            wc.ipc.removeListener(ANNOTATION_VOICE_EVENT_CHANNEL, onVoiceEvent);
             wc.off("destroyed", onDestroyed);
             wc.off("did-start-navigation", onNavigated);
           }).pipe(Effect.ignore);
@@ -2180,6 +2224,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             ),
           );
         };
+        // Only this guest's listener sees these; the renderer still checks the session id.
+        const onVoiceEvent = (_event: Electron.IpcMainEvent, value: unknown) => {
+          const decoded = decodeAnnotationVoiceEvent(value);
+          if (settled || !voice || Option.isNone(decoded)) return;
+          if (decoded.value.sessionId !== voice.sessionId) return;
+          runFork(
+            Effect.gen(function* () {
+              const window = yield* Ref.get(mainWindowRef);
+              if (Option.isNone(window) || window.value.isDestroyed()) return;
+              yield* attempt({ operation: "annotationVoice.forward", tabId }, () =>
+                window.value.webContents.send(
+                  PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL,
+                  tabId,
+                  decoded.value,
+                ),
+              ).pipe(Effect.ignore);
+            }),
+          );
+        };
         const onDestroyed = () => settle(null);
         const onNavigated = (
           event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
@@ -2199,10 +2262,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           if (settled) return;
           yield* attempt({ operation: "pickElement.register", tabId, webContentsId: wc.id }, () => {
             wc.ipc.on(ELEMENT_PICKED_CHANNEL, onMessage);
+            if (voice) wc.ipc.on(ANNOTATION_VOICE_EVENT_CHANNEL, onVoiceEvent);
             wc.once("destroyed", onDestroyed);
             wc.on("did-start-navigation", onNavigated);
             if (!wc.isFocused()) wc.focus();
-            wc.send(START_PICK_CHANNEL, annotationTheme, annotationSendEnabled.get(tabId) === true);
+            wc.send(
+              START_PICK_CHANNEL,
+              annotationTheme,
+              annotationSendEnabled.get(tabId) === true,
+              voice,
+            );
           });
         });
         runFork(
@@ -2337,6 +2406,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* applyColorScheme(tabId, wc, colorScheme);
   });
 
+  const setShown = Effect.fn("PreviewManager.setShown")(function* (tabId: string, shown: boolean) {
+    const serverTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.serverTab;
+    if (serverTab) browserHost.setShown(serverTab, shown);
+  });
+
+  // A window reload or guest crash destroys the guest without the renderer reporting it hidden.
+  // The renderer reports again once a new guest registers.
+  const hideDestroyedGuest = Effect.fnUntraced(function* (webContentsId: number) {
+    for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
+      if (tab.webContentsId === webContentsId && tab.serverTab) {
+        browserHost.setShown(tab.serverTab, false);
+      }
+    }
+  });
+
   const setAudioMuted = Effect.fn("PreviewManager.setAudioMuted")(function* (
     tabId: string,
     audioMuted: boolean,
@@ -2381,7 +2465,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc,
       ),
     ]);
-    const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const uuid = yield* random.uuidV4();
     const id = `browser-screenshot-${artifactSiteSlug(wc.getURL())}-${millis.toString(36)}-${uuid.slice(0, 8)}`;
     const artifactPath = path.join(resolvedArtifactDirectory, `${id}.png`);
     const data = image.toPNG();
@@ -3286,6 +3370,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     openPictureInPicture,
     openDevTools,
     pickElement,
+    updateAnnotationVoice,
     prepareWebview,
     reapplyZoom,
     refresh,
@@ -3298,6 +3383,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationTheme,
     setAnnotationSendEnabled,
     setAudioMuted,
+    setShown,
     setColorScheme,
     setMainWindow,
     setForwardedShortcuts: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) =>
@@ -3503,6 +3589,7 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setShown: (tabId: string, shown: boolean) => Effect.Effect<void>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
@@ -3524,7 +3611,11 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly pickElement: (
       tabId: string,
+      voice?: DesktopPreviewAnnotationVoiceConfig,
     ) => Effect.Effect<PreviewAnnotationSubmissionResult | null, PreviewManagerError>;
+    readonly updateAnnotationVoice: (
+      state: DesktopPreviewAnnotationVoiceState,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly cancelPickElement: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly captureScreenshot: (
       tabId: string,
@@ -3643,6 +3734,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setColorScheme: operations.setColorScheme,
     setZoomFactor: operations.setZoomFactor,
     setAudioMuted: operations.setAudioMuted,
+    setShown: operations.setShown,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession
@@ -3674,6 +3766,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setAnnotationTheme: operations.setAnnotationTheme,
     setAnnotationSendEnabled: operations.setAnnotationSendEnabled,
     pickElement: operations.pickElement,
+    updateAnnotationVoice: operations.updateAnnotationVoice,
     cancelPickElement: operations.cancelPickElement,
     captureScreenshot: operations.captureScreenshot,
     revealArtifact: operations.revealArtifact,

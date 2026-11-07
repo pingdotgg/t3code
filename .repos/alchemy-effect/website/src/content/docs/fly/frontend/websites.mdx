@@ -30,7 +30,7 @@ container integration on top.
 - [`Nuxt`](/fly/frontend/nuxt) — Nuxt apps through nitro's Node
   server; your `nuxt.config.ts` loads natively. Do not set
   `nitro.preset`.
-- [`ReactRouter`](/fly/frontend/react-router) — React Router v7 in
+- [`ReactRouter`](/fly/frontend/react-router) — React Router v8 in
   framework mode, built through your own `vite build`.
 - [`SolidStart`](/fly/frontend/solidstart) — SolidStart 2.x SSR;
   Alchemy appends nitro's `node` preset to your `vite build`.
@@ -43,8 +43,8 @@ container integration on top.
   on Node, with SSG pages served extensionless.
 - [`Octane`](/fly/frontend/octane) — OctaneJS SSR. Alchemy wraps
   native Node output; no hosting adapter is needed in `octane.config.ts`.
-- [`Foldkit`](/fly/frontend/foldkit) — client-only Foldkit SPA;
-  deep links fall back to `index.html`.
+- [`Foldkit`](/fly/frontend/foldkit) — Foldkit SPA, SSR, and prerendered apps;
+  browser-only deep links fall back to `index.html`.
 - [`Vocs`](/fly/frontend/vocs) — prerendered Vocs docs; extensionless
   pages (`/about` → `about/index.html`).
 - [`StaticSite`](/fly/frontend/static-site) — any build command's
@@ -138,9 +138,21 @@ const site = yield* Fly.Website.Astro("Web", {
 });
 ```
 
-`domain` is a hostname string. Alchemy requests ACME on the App;
-point existing DNS at the App first (v1 does not create records).
-`url` becomes `https://app.example.com`.
+A hostname string makes Alchemy request ACME on the App; you point DNS
+at the App yourself. `url` becomes `https://app.example.com`.
+
+To have Alchemy publish the records, pass the DNS host as `dns`. The site
+then publishes the ACME challenge `CNAME` and the `A`/`AAAA` records at the
+App through that host:
+
+```typescript
+const site = yield* Fly.Website.Astro("Web", {
+  domain: { name: "app.example.com", dns: Cloudflare.DNS.Adapter() },
+});
+```
+
+`AWS.Route53.Adapter()` and `Hetzner.DNS.Adapter()` work the same way. See
+[DNS Adapters](/infrastructure-as-code/dns-adapters).
 
 ## Where next
 

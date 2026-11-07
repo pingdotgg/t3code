@@ -70,6 +70,7 @@ export const MuseSessionResult = Schema.Struct({
   history: Schema.optional(
     Schema.Struct({
       items: Schema.NullOr(Schema.Array(MuseItem)),
+      noneReason: Schema.optional(Schema.String),
       snapshot: Schema.optional(
         Schema.NullOr(
           Schema.Struct({

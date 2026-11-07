@@ -767,12 +767,20 @@ describe("MuseAdapterV2", () => {
       yield* fake.emit("turn/completed", {
         turnId: nativeId,
         terminal: "failed",
-        error: { message: "Provider rejected this turn" },
+        error: { message: "Provider rejected this turn: api_key=abc123" },
       });
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "failed");
       assert.strictEqual(terminal.threadDisposition, "reusable");
-      assert.isNotNull(terminal.failure);
+      assert.strictEqual(
+        terminal.failure?.message,
+        "Provider rejected this turn: api_key=[REDACTED]",
+      );
+      assert.strictEqual(
+        harness.allEvents.findLast((event) => event.type === "provider_session.updated")
+          ?.providerSession.lastError,
+        terminal.failure?.message,
+      );
       assert.isTrue(
         harness.allEvents.some(
           (event) =>
@@ -842,16 +850,33 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect(
-    "closes a newly opened host when native session registration returns another identity",
-    () =>
+  it.effect.each([
+    {
+      reason: "another identity",
+      method: "session/start",
+      sessionId: "unexpected-session",
+      initialNativeThreadId: undefined,
+      history: { items: [] },
+    },
+    {
+      reason: "an unavailable projection",
+      method: "session/resume",
+      sessionId: "saved-session",
+      initialNativeThreadId: "saved-session",
+      history: { items: null, mode: "none", noneReason: "projectionUnavailable" },
+    },
+  ])(
+    "closes a newly opened host when native session registration returns $reason",
+    ({ method, sessionId, initialNativeThreadId, history }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakeMuse();
-        fake.queueResponse("session/start", {
-          session: { sessionId: "unexpected-session", modelId: MODEL, activeTurnId: null },
-          history: { items: [] },
+        fake.queueResponse(method, {
+          session: { sessionId, modelId: MODEL, activeTurnId: null },
+          history,
         });
-        const result = yield* makeHarness(fake).pipe(Effect.exit);
+        const result = yield* makeHarness(fake, INSTANCE_ID, initialNativeThreadId).pipe(
+          Effect.exit,
+        );
         assert.strictEqual(result._tag, "Failure");
         yield* Effect.promise(() => fake.host.exited);
         assert.strictEqual(fake.closeCount(), 1);
@@ -1433,6 +1458,11 @@ describe("MuseAdapterV2", () => {
         text: "Previous answer",
       };
       fake.setHistory([nativeItem]);
+      fake.queueResponse("session/resume", {
+        session: { sessionId: "saved-session", modelId: MODEL, activeTurnId: null },
+        viewCursor: "",
+        history: { items: null, mode: "none", noneReason: "excluded" },
+      });
       const harness = yield* makeHarness(fake, INSTANCE_ID, "saved-session");
       const resumed = yield* fake.takeCall("session/resume");
       assert.strictEqual(resumed.params.sessionId, "saved-session");
@@ -1736,6 +1766,59 @@ describe("MuseAdapterV2", () => {
       yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("lists a running subagent under its turn item's native id as Muse reveals it", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const revisions = [
+        { revision: 1, status: "inProgress" },
+        { revision: 2, status: "inProgress", subagentId: "" },
+        { revision: 3, status: "inProgress", subagentId: "subagent-1" },
+        {
+          revision: 4,
+          status: "inProgress",
+          subagentId: "subagent-1",
+          childSessionId: "child-session-1",
+        },
+        {
+          revision: 5,
+          status: "completed",
+          subagentId: "subagent-1",
+          childSessionId: "child-session-1",
+        },
+      ];
+      const listed: Array<{ nativeId: string | null | undefined; roster: Array<string> }> = [];
+      for (const fields of revisions) {
+        yield* fake.emit(fields.revision === 1 ? "item/started" : "item/updated", {
+          turnId: nativeId,
+          item: { itemId: "sub-1", kind: "subagent", turnId: nativeId, ...fields },
+        });
+        const item = yield* harness.takeEvent(
+          "turn_item.updated",
+          (event) => event.turnItem.type === "subagent",
+        );
+        const roster = harness.allEvents.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        listed.push({
+          nativeId: item.turnItem.nativeItemRef?.nativeId,
+          roster:
+            roster?.type === "provider_thread.updated"
+              ? (roster.providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId)
+              : [],
+        });
+      }
+      assert.deepStrictEqual(listed, [
+        { nativeId: "sub-1", roster: ["sub-1"] },
+        { nativeId: "sub-1", roster: ["sub-1"] },
+        { nativeId: "subagent-1", roster: ["subagent-1"] },
+        { nativeId: "child-session-1", roster: ["child-session-1"] },
+        { nativeId: "child-session-1", roster: [] },
+      ]);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
