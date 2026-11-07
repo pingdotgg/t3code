@@ -156,13 +156,41 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return imagePaths;
   });
 
+  // Config files Codex merges: the user's, then `.codex/config.toml` in cwd and its ancestors.
+  const codexConfigStamp = (cwd: string, codexHome: string) => {
+    const paths = [path.join(codexHome, "config.toml")];
+    for (let directory = cwd; ; directory = path.dirname(directory)) {
+      paths.push(path.join(directory, ".codex", "config.toml"));
+      if (path.dirname(directory) === directory) break;
+    }
+    return Effect.forEach(
+      paths,
+      (configPath) =>
+        fileSystem.stat(configPath).pipe(
+          Effect.map((info) => `${Option.getOrUndefined(info.mtime)?.getTime()}:${info.size}`),
+          Effect.orElseSucceed(() => "missing"),
+        ),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.map((stamps) => stamps.join(",")));
+  };
+  // Listing spawns Codex on every call; reuse the last answer until a config file changes.
+  const mcpServerCache = new Map<
+    string,
+    { readonly configStamp: string; readonly names: ReadonlyArray<string> }
+  >();
+
   const listEnabledMcpServers = Effect.fn("listEnabledMcpServers")(
     function* (input: {
       readonly binary: string;
       readonly cwd: string;
       readonly env: NodeJS.ProcessEnv;
+      readonly codexHome: string;
       readonly launchArgs: ReadonlyArray<string>;
     }) {
+      const cacheKey = [input.binary, input.codexHome, input.cwd, ...input.launchArgs].join("\0");
+      const configStamp = yield* codexConfigStamp(input.cwd, input.codexHome);
+      const cached = mcpServerCache.get(cacheKey);
+      if (cached?.configStamp === configStamp) return cached.names;
       const spawnCommand = yield* resolveSpawnCommand(
         input.binary,
         [...input.launchArgs, ...CODEX_NO_PLUGIN_ARGS, "mcp", "list", "--json"],
@@ -198,7 +226,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           }),
         ),
       );
-      return servers.filter((server) => server.enabled).map((server) => server.name);
+      const names = servers.filter((server) => server.enabled).map((server) => server.name);
+      mcpServerCache.set(cacheKey, { configStamp, names });
+      return names;
     },
     Effect.scoped,
     Effect.timeoutOption(CODEX_MCP_LIST_TIMEOUT_MS),
@@ -276,15 +306,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const serviceTier =
         resolved || fellBack ? undefined : getCodexServiceTierOptionValue(modelSelection);
       const binary = effectiveConfig.binaryPath || "codex";
+      const homeDirectory = yield* HostProcess.HomeDirectory;
       const env = {
         ...effectiveEnvironment,
         ...(effectiveConfig.homePath
-          ? {
-              CODEX_HOME: expandHomePath(
-                effectiveConfig.homePath,
-                yield* HostProcess.HomeDirectory,
-              ),
-            }
+          ? { CODEX_HOME: expandHomePath(effectiveConfig.homePath, homeDirectory) }
           : {}),
       };
       const execLaunchArgs = codexExecLaunchArgs(launchArgs);
@@ -292,6 +318,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         binary,
         cwd,
         env,
+        codexHome: env.CODEX_HOME ?? path.join(homeDirectory, ".codex"),
         // `codex mcp` rejects --strict-config; the overrides still apply.
         launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
       }).pipe(Effect.map(codexMcpServersOff));
