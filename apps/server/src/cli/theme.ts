@@ -1,28 +1,109 @@
-import { EnvironmentThemeId } from "@t3tools/contracts";
+import {
+  EnvironmentThemeFile,
+  EnvironmentThemeId,
+  environmentThemeFileHasColors,
+} from "@t3tools/contracts";
+import { BUILT_IN_THEME_IDS, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 
 import * as ServerConfig from "../config.ts";
 import {
+  MAX_THEME_FILE_BYTES,
+  publishThemeContents,
   readPublishedThemes,
   readSettingsObject,
+  readThemeFileGuarded,
   writeDefaultTheme,
-  publishThemeFile,
-  resolvableThemeIds,
-  ThemeTargetMissingError,
-  ThemeFileUnreadableError,
-  ThemeIdUnknownError,
-  ThemeIdInvalidError,
 } from "../environmentTheme.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
 
+const decodeThemeFileJsonExit = Schema.decodeUnknownExit(
+  Schema.fromJsonString(EnvironmentThemeFile),
+);
 const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
+
+export class ThemeFileUnreadableError extends Schema.TaggedError<ThemeFileUnreadableError>()(
+  "ThemeFileUnreadableError",
+  { filePath: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return `Could not read ${this.filePath}.`;
+  }
+}
+
+export class ThemeFileInvalidError extends Schema.TaggedError<ThemeFileInvalidError>()(
+  "ThemeFileInvalidError",
+  { filePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `${this.filePath} is not a valid theme file. Use a theme exported from T3 Code, or a seeded file with name, appearance, canvas, and accent.`;
+  }
+}
+
+export class ThemeFileTooLargeError extends Schema.TaggedError<ThemeFileTooLargeError>()(
+  "ThemeFileTooLargeError",
+  { filePath: Schema.String, limit: Schema.Number },
+) {
+  override get message(): string {
+    return `${this.filePath} is larger than ${this.limit} bytes, which is more than a theme can publish.`;
+  }
+}
+
+export class ThemeFileColorlessError extends Schema.TaggedError<ThemeFileColorlessError>()(
+  "ThemeFileColorlessError",
+  { filePath: Schema.String },
+) {
+  override get message(): string {
+    return `${this.filePath} has no colors to publish.`;
+  }
+}
+
+const INVALID_THEME_ID_REASON =
+  "is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword)";
+
+export class ThemeIdUnknownError extends Schema.TaggedError<ThemeIdUnknownError>()(
+  "ThemeIdUnknownError",
+  { themeId: Schema.String, known: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `No theme named "${this.themeId}". Available: ${this.known.join(", ")}. Publish one by passing a theme file instead of an id.`;
+  }
+}
+
+export class ThemeIdInvalidError extends Schema.TaggedError<ThemeIdInvalidError>()(
+  "ThemeIdInvalidError",
+  { themeId: Schema.String },
+) {
+  override get message(): string {
+    return `"${this.themeId}" ${INVALID_THEME_ID_REASON}.`;
+  }
+}
+
+export class ThemeFileIdInvalidError extends Schema.TaggedError<ThemeFileIdInvalidError>()(
+  "ThemeFileIdInvalidError",
+  { themeId: Schema.String, filePath: Schema.String },
+) {
+  override get message(): string {
+    return `"${this.themeId}" ${INVALID_THEME_ID_REASON}. Pass one with --id.`;
+  }
+}
+
+export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissingError>()(
+  "ThemeTargetMissingError",
+  {},
+) {
+  override get message(): string {
+    return "Provide a theme id or file, or run `t3 theme clear` to remove the theme.";
+  }
+}
 
 const envT3Home = Config.String("T3CODE_HOME").pipe(Config.option);
 
@@ -37,6 +118,62 @@ const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<st
     settingsPath: derivedPaths.settingsPath,
     themesDir: derivedPaths.environmentThemesDir,
   };
+});
+
+const publishThemeFile = Effect.fn(function* (input: {
+  readonly themesDir: string;
+  readonly filePath: string;
+  readonly explicitId: Option.Option<string>;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const info = yield* fs
+    .stat(input.filePath)
+    .pipe(
+      Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
+    );
+  if (info.type !== "File") {
+    return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
+  }
+  if (Number(info.size) > MAX_THEME_FILE_BYTES) {
+    return yield* new ThemeFileTooLargeError({
+      filePath: input.filePath,
+      limit: MAX_THEME_FILE_BYTES,
+    });
+  }
+
+  const resolvedSource = yield* fs
+    .realPath(input.filePath)
+    .pipe(
+      Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
+    );
+  const raw = readThemeFileGuarded(resolvedSource, MAX_THEME_FILE_BYTES);
+  if (raw === null) {
+    return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
+  }
+
+  const decoded = decodeThemeFileJsonExit(raw);
+  if (decoded._tag === "Failure") {
+    return yield* new ThemeFileInvalidError({ filePath: input.filePath, cause: decoded.cause });
+  }
+  if (!environmentThemeFileHasColors(decoded.value)) {
+    return yield* new ThemeFileColorlessError({ filePath: input.filePath });
+  }
+
+  const fileBasename = path.basename(input.filePath, ".json");
+  const themeId = Option.getOrElse(input.explicitId, () => fileBasename);
+  // Match watcher validation so published files will not be skipped.
+  if (!isEnvironmentThemeId(themeId) || UNPUBLISHABLE_THEME_IDS.has(themeId)) {
+    return yield* new ThemeFileIdInvalidError({ themeId, filePath: input.filePath });
+  }
+
+  return yield* publishThemeContents({ themesDir: input.themesDir, themeId, raw });
+});
+
+/** Web and desktop cannot resolve the mobile default, and mobile does not follow this setting. */
+const resolvableThemeIds = Effect.fn(function* (themesDir: string) {
+  const published = yield* readPublishedThemes(themesDir);
+  return [...BUILT_IN_THEME_IDS, ...published.map((theme) => theme.id)].toSorted();
 });
 
 const themeSetCommand = Command.make("set", {

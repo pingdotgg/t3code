@@ -81,7 +81,6 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
             Queue.offer(seen, themes),
           ).pipe(Effect.forkScoped);
           assert.deepEqual(yield* Queue.take(seen), []);
-          assert.equal((yield* service.list).length, 5);
           yield* service.save({ id: "nightfall", theme: NIGHTFALL_THEME, overwrite: false });
           assert.deepEqual(
             (yield* Queue.take(seen)).map((theme) => theme.id),

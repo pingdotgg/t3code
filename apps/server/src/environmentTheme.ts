@@ -9,16 +9,11 @@ import {
   EnvironmentThemeId,
   environmentThemeFileHasColors,
 } from "@t3tools/contracts";
-import {
-  BUILT_IN_THEMES,
-  BUILT_IN_THEME_IDS,
-  UNPUBLISHABLE_THEME_IDS,
-} from "@t3tools/shared/themePalettes";
+import { BUILT_IN_THEMES, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
 import { parseThemeColor } from "@t3tools/shared/themeColor";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -47,7 +42,8 @@ const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
 const THEME_FILE_SUFFIX = ".json";
 
 const MAX_THEME_FILES = 32;
-const MAX_THEME_FILE_BYTES = 32 * 1024;
+/** Shared with publishing so it cannot accept files the watcher skips. */
+export const MAX_THEME_FILE_BYTES = 32 * 1024;
 const MAX_THEME_TOTAL_BYTES = 192 * 1024;
 
 interface PublishedThemes {
@@ -102,7 +98,7 @@ export class EnvironmentThemeService extends Context.Service<
 
 /** Validates and reads one handle; rejects symlinked files, allows symlinked directories.
  * Uses non-blocking opens against FIFOs; Windows lacks these flags and checks symlinks with lstat. */
-const readThemeFileGuarded = (filePath: string, maxBytes: number): string | null => {
+export const readThemeFileGuarded = (filePath: string, maxBytes: number): string | null => {
   let fd: number;
   try {
     if (NodeFS.constants.O_NOFOLLOW === undefined && NodeFS.lstatSync(filePath).isSymbolicLink()) {
@@ -203,9 +199,6 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
 const SparseSettings = Schema.Record(Schema.String, Schema.Unknown);
 const decodeSettingsJson = Schema.decodeUnknownEffect(fromLenientJson(SparseSettings));
 const encodeSettingsJson = Schema.encodeEffect(fromJsonStringPretty(SparseSettings));
-const decodeThemeFileJsonExit = Schema.decodeUnknownExit(
-  Schema.fromJsonString(EnvironmentThemeFile),
-);
 
 class ThemeSettingsUnreadableError extends Schema.TaggedError<ThemeSettingsUnreadableError>()(
   "ThemeSettingsUnreadableError",
@@ -243,87 +236,12 @@ class ThemeSettingsWriteError extends Schema.TaggedError<ThemeSettingsWriteError
   }
 }
 
-export class ThemeFileUnreadableError extends Schema.TaggedError<ThemeFileUnreadableError>()(
-  "ThemeFileUnreadableError",
-  { filePath: Schema.String, cause: Schema.optional(Schema.Defect()) },
-) {
-  override get message(): string {
-    return `Could not read ${this.filePath}.`;
-  }
-}
-
-class ThemeFileInvalidError extends Schema.TaggedError<ThemeFileInvalidError>()(
-  "ThemeFileInvalidError",
-  { filePath: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `${this.filePath} is not a valid theme file. Use a theme exported from T3 Code, or a seeded file with name, appearance, canvas, and accent.`;
-  }
-}
-
-class ThemeFileTooLargeError extends Schema.TaggedError<ThemeFileTooLargeError>()(
-  "ThemeFileTooLargeError",
-  { filePath: Schema.String, limit: Schema.Number },
-) {
-  override get message(): string {
-    return `${this.filePath} is larger than ${this.limit} bytes, which is more than a theme can publish.`;
-  }
-}
-
-class ThemeFileColorlessError extends Schema.TaggedError<ThemeFileColorlessError>()(
-  "ThemeFileColorlessError",
-  { filePath: Schema.String },
-) {
-  override get message(): string {
-    return `${this.filePath} has no colors to publish.`;
-  }
-}
-
 class ThemePublishError extends Schema.TaggedError<ThemePublishError>()("ThemePublishError", {
   themesDir: Schema.String,
   cause: Schema.Defect(),
 }) {
   override get message(): string {
     return `Could not publish the theme into ${this.themesDir}.`;
-  }
-}
-
-const INVALID_THEME_ID_REASON =
-  "is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword)";
-
-export class ThemeIdUnknownError extends Schema.TaggedError<ThemeIdUnknownError>()(
-  "ThemeIdUnknownError",
-  { themeId: Schema.String, known: Schema.Array(Schema.String) },
-) {
-  override get message(): string {
-    return `No theme named "${this.themeId}". Available: ${this.known.join(", ")}. Publish one by passing a theme file instead of an id.`;
-  }
-}
-
-export class ThemeIdInvalidError extends Schema.TaggedError<ThemeIdInvalidError>()(
-  "ThemeIdInvalidError",
-  { themeId: Schema.String },
-) {
-  override get message(): string {
-    return `"${this.themeId}" ${INVALID_THEME_ID_REASON}.`;
-  }
-}
-
-class ThemeFileIdInvalidError extends Schema.TaggedError<ThemeFileIdInvalidError>()(
-  "ThemeFileIdInvalidError",
-  { themeId: Schema.String, filePath: Schema.String },
-) {
-  override get message(): string {
-    return `"${this.themeId}" ${INVALID_THEME_ID_REASON}. Pass one with --id.`;
-  }
-}
-
-export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissingError>()(
-  "ThemeTargetMissingError",
-  {},
-) {
-  override get message(): string {
-    return "Provide a theme id or file, or run `t3 theme clear` to remove the theme.";
   }
 }
 
@@ -396,57 +314,8 @@ export const writeDefaultTheme = Effect.fn("EnvironmentTheme.writeDefault")(func
   }
 });
 
-export const publishThemeFile = Effect.fn("EnvironmentTheme.publishFile")(function* (input: {
-  readonly themesDir: string;
-  readonly filePath: string;
-  readonly explicitId: Option.Option<string>;
-}) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const info = yield* fs
-    .stat(input.filePath)
-    .pipe(
-      Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
-    );
-  if (info.type !== "File") {
-    return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
-  }
-  if (Number(info.size) > MAX_THEME_FILE_BYTES) {
-    return yield* new ThemeFileTooLargeError({
-      filePath: input.filePath,
-      limit: MAX_THEME_FILE_BYTES,
-    });
-  }
-
-  const resolvedSource = yield* fs
-    .realPath(input.filePath)
-    .pipe(
-      Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
-    );
-  const raw = readThemeFileGuarded(resolvedSource, MAX_THEME_FILE_BYTES);
-  if (raw === null) {
-    return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
-  }
-
-  const decoded = decodeThemeFileJsonExit(raw);
-  if (decoded._tag === "Failure") {
-    return yield* new ThemeFileInvalidError({ filePath: input.filePath, cause: decoded.cause });
-  }
-  if (!environmentThemeFileHasColors(decoded.value)) {
-    return yield* new ThemeFileColorlessError({ filePath: input.filePath });
-  }
-
-  const fileBasename = path.basename(input.filePath, ".json");
-  const themeId = Option.getOrElse(input.explicitId, () => fileBasename);
-  // Match watcher validation so published files will not be skipped.
-  if (!isEnvironmentThemeId(themeId) || UNPUBLISHABLE_THEME_IDS.has(themeId)) {
-    return yield* new ThemeFileIdInvalidError({ themeId, filePath: input.filePath });
-  }
-
-  return yield* publishThemeContents({ themesDir: input.themesDir, themeId, raw });
-});
-
-const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(function* (input: {
+/** Stages and renames into the watched directory; callers run `cleanup` on success or `revert` to undo. */
+export const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(function* (input: {
   readonly themesDir: string;
   readonly themeId: string;
   readonly raw: string;
@@ -454,48 +323,38 @@ const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(function* (in
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { themeId, raw } = input;
+  const publishFailure = (cause: unknown) =>
+    new ThemePublishError({ themesDir: input.themesDir, cause });
   yield* fs
     .makeDirectory(input.themesDir, { recursive: true })
-    .pipe(Effect.mapError((cause) => new ThemePublishError({ themesDir: input.themesDir, cause })));
-  const entries = (yield* fs
-    .readDirectory(input.themesDir)
-    .pipe(
-      Effect.mapError((cause) => new ThemePublishError({ themesDir: input.themesDir, cause })),
-    )).filter(
-    (entry) =>
-      entry.endsWith(".json") &&
-      isEnvironmentThemeId(entry.slice(0, -5)) &&
-      !UNPUBLISHABLE_THEME_IDS.has(entry.slice(0, -5)),
-  );
-  const totalBytes = entries
-    .filter((entry) => entry !== `${themeId}.json`)
-    .reduce(
-      (total, entry) =>
-        total +
-        Buffer.byteLength(
-          readThemeFileGuarded(path.join(input.themesDir, entry), MAX_THEME_FILE_BYTES) ?? "",
-        ),
-      Buffer.byteLength(raw),
-    );
-  if (
-    entries.filter((entry) => entry !== `${themeId}.json`).length >= MAX_THEME_FILES ||
-    totalBytes > MAX_THEME_TOTAL_BYTES
-  )
-    return yield* new ThemePublishError({
-      themesDir: input.themesDir,
-      cause: "Publication limit exceeded",
+    .pipe(Effect.mapError(publishFailure));
+  // The watcher reads entries in name order up to its limits, so a new id must not push others out.
+  const others = (yield* fs.readDirectory(input.themesDir).pipe(Effect.mapError(publishFailure)))
+    .filter((entry) => entry !== `${themeId}${THEME_FILE_SUFFIX}`)
+    .filter((entry) => {
+      const id = entry.slice(0, -THEME_FILE_SUFFIX.length);
+      return (
+        entry.endsWith(THEME_FILE_SUFFIX) &&
+        isEnvironmentThemeId(id) &&
+        !UNPUBLISHABLE_THEME_IDS.has(id)
+      );
     });
-  const destinationPath = path.join(input.themesDir, `${themeId}.json`);
+  const totalBytes = others.reduce(
+    (total, entry) =>
+      total +
+      Buffer.byteLength(
+        readThemeFileGuarded(path.join(input.themesDir, entry), MAX_THEME_FILE_BYTES) ?? "",
+      ),
+    Buffer.byteLength(raw),
+  );
+  if (others.length >= MAX_THEME_FILES || totalBytes > MAX_THEME_TOTAL_BYTES)
+    return yield* publishFailure("Publication limit exceeded");
+
+  const destinationPath = path.join(input.themesDir, `${themeId}${THEME_FILE_SUFFIX}`);
   // Non-JSON suffixes hide staging and rollback entries from the watcher.
   const token = NodeCrypto.randomUUID();
   const backupPath = `${destinationPath}.rollback-${token}`;
   const stagingPath = `${destinationPath}.staging-${token}`;
-  yield* fs
-    .makeDirectory(input.themesDir, { recursive: true })
-    .pipe(Effect.mapError((cause) => new ThemePublishError({ themesDir: input.themesDir, cause })));
-
-  const publishFailure = (cause: unknown) =>
-    new ThemePublishError({ themesDir: input.themesDir, cause });
 
   // O_EXCL prevents following a symlink at the predictable staging path.
   // Preserve bytes exactly: even an added newline could exceed the watcher's size limit.
@@ -565,23 +424,13 @@ const publishThemeContents = Effect.fn("EnvironmentTheme.publish")(function* (in
     catch: publishFailure,
   }).pipe(Effect.onError(() => revert));
 
+  // A concurrent writer outside this process can still fill the directory after the check above.
   const visible = yield* readPublishedThemes(input.themesDir);
   if (!visible.some((theme) => theme.id === themeId)) {
     yield* revert;
-    return yield* new ThemePublishError({
-      themesDir: input.themesDir,
-      cause: "Publication limit exceeded",
-    });
+    return yield* publishFailure("Publication limit exceeded");
   }
   return { themeId, revert, cleanup };
-});
-
-/** Web and desktop cannot resolve the mobile default, and mobile does not follow this setting. */
-export const resolvableThemeIds = Effect.fn("EnvironmentTheme.resolvableIds")(function* (
-  themesDir: string,
-) {
-  const published = yield* readPublishedThemes(themesDir);
-  return [...BUILT_IN_THEME_IDS, ...published.map((theme) => theme.id)].toSorted();
 });
 
 const make = Effect.gen(function* () {
@@ -630,6 +479,14 @@ const make = Effect.gen(function* () {
   );
 
   const mutationSemaphore = yield* Semaphore.make(1);
+  // One mutation at a time, never abandoned between staging and rename.
+  const locked = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
+    mutationSemaphore
+      .withPermits(1)(Effect.uninterruptible(effect))
+      .pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
   const storageError = (cause: unknown) => new ThemeLibraryError({ reason: "storage", cause });
   const builtins: ReadonlyArray<EnvironmentTheme> = BUILT_IN_THEMES.map((theme) => ({
     id: theme.id,
@@ -656,20 +513,20 @@ const make = Effect.gen(function* () {
     const theme = yield* decodeThemeFile(input.theme).pipe(
       Effect.mapError(() => new ThemeLibraryError({ reason: "invalid" })),
     );
-    const palettes = [theme.colors, theme.variants?.light, theme.variants?.dark];
-    if (
-      palettes.some(
-        (palette) =>
-          palette && Object.values(palette).some((color) => parseThemeColor(color) === null),
-      )
-    )
-      return yield* new ThemeLibraryError({ reason: "invalid" });
+    // Clients render these values as CSS, so reject anything the web palette parser cannot read.
+    const colors = [theme.colors, theme.variants?.light, theme.variants?.dark].flatMap((palette) =>
+      Object.values(palette ?? {}),
+    );
     const raw = yield* encodeThemeFile(theme).pipe(
       Effect.mapError(() => new ThemeLibraryError({ reason: "invalid" })),
     );
-    if (!environmentThemeFileHasColors(theme) || Buffer.byteLength(raw) > MAX_THEME_FILE_BYTES)
+    if (
+      !environmentThemeFileHasColors(theme) ||
+      colors.some((color) => parseThemeColor(color) === null) ||
+      Buffer.byteLength(raw) > MAX_THEME_FILE_BYTES
+    )
       return yield* new ThemeLibraryError({ reason: "invalid" });
-    const destination = path.join(environmentThemesDir, `${input.id}.json`);
+    const destination = path.join(environmentThemesDir, `${input.id}${THEME_FILE_SUFFIX}`);
     const exists = yield* Effect.try({
       try: () => {
         try {
@@ -696,13 +553,6 @@ const make = Effect.gen(function* () {
     yield* refresh;
     return { id: input.id, ...theme };
   });
-  const lockedSave = (input: Parameters<typeof save>[0]) =>
-    mutationSemaphore
-      .withPermits(1)(Effect.uninterruptible(save(input)))
-      .pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
   const duplicate = Effect.fn("EnvironmentTheme.duplicate")(function* (input: {
     readonly sourceId: string;
     readonly id: string;
@@ -720,7 +570,7 @@ const make = Effect.gen(function* () {
     if (settings.defaultTheme === id)
       return yield* new ThemeLibraryError({ reason: "default_in_use" });
     yield* fs
-      .remove(path.join(environmentThemesDir, `${id}.json`))
+      .remove(path.join(environmentThemesDir, `${id}${THEME_FILE_SUFFIX}`))
       .pipe(Effect.mapError(storageError));
     yield* refresh;
   });
@@ -732,25 +582,10 @@ const make = Effect.gen(function* () {
   return {
     list,
     read,
-    save: lockedSave,
-    duplicate: (input) =>
-      mutationSemaphore
-        .withPermits(1)(Effect.uninterruptible(duplicate(input)))
-        .pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-        ),
-    remove: (id) =>
-      mutationSemaphore
-        .withPermits(1)(remove(id))
-        .pipe(Effect.provideService(FileSystem.FileSystem, fs)),
-    setDefault: (id) =>
-      mutationSemaphore
-        .withPermits(1)(setDefault(id))
-        .pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-        ),
+    save: (input) => locked(save(input)),
+    duplicate: (input) => locked(duplicate(input)),
+    remove: (id) => locked(remove(id)),
+    setDefault: (id) => locked(setDefault(id)),
     current: Effect.map(refresh, (state) => state.themes),
     get streamChanges() {
       return Stream.unwrap(
