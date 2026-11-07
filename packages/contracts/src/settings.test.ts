@@ -41,6 +41,36 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("sidebar variant setting", () => {
+  it("defaults old settings files to the sidebar users have today", () => {
+    expect(decodeClientSettings({}).sidebarVariant).toBe("default");
+    expect(decodeClientSettings({ boringSidebarEnabled: true }).sidebarVariant).toBe("default");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("sidebarVariant");
+  });
+
+  it("round-trips each variant and refuses an unknown one", () => {
+    for (const sidebarVariant of ["default", "detailed", "slim"] as const) {
+      const decoded = decodeClientSettings({ sidebarVariant });
+      expect(decodeClientSettings(encodeClientSettings(decoded)).sidebarVariant).toBe(
+        sidebarVariant,
+      );
+      expect(decodeClientSettingsPatch({ sidebarVariant }).sidebarVariant).toBe(sidebarVariant);
+    }
+    expect(() => decodeClientSettings({ sidebarVariant: "wide" })).toThrow();
+  });
+});
+
+describe("opt-in display settings", () => {
+  it("default off, so existing users see no change", () => {
+    const decoded = decodeClientSettings({});
+    expect(decoded.windowTitleWaitingCount).toBe(false);
+    expect(decoded.sidebarHideLoneProvider).toBe(false);
+    expect(decoded.chatWorkingShimmer).toBe(false);
+    expect(decoded.terminalActionsStrip).toBe(false);
+    expect(decoded.composerQuietStopWhileWaiting).toBe(false);
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

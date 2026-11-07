@@ -1,5 +1,6 @@
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
+import { useClientSettings } from "~/hooks/useSettings";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -294,6 +295,8 @@ function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
+  /** Whether an open question's number shortcut will pick an option with this key. */
+  questionTakesKey: (key: string) => boolean;
   addDroppedFiles: (files: File[]) => void;
   addDroppedFolders: (folders: File[]) => void;
   hasPendingAttachments: () => boolean;
@@ -512,6 +515,9 @@ const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
+  const quietStopWhileWaiting = useClientSettings(
+    (settings) => settings.composerQuietStopWhileWaiting,
+  );
   const {
     composerDraftTarget,
     environmentId,
@@ -1079,6 +1085,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
 
   const backgroundThread = use(BackgroundThreadContext);
+  const answerableQuestionId =
+    !backgroundThread && pendingUserInputs[0]?.responseCapability !== "not_resumable"
+      ? (activePendingProgress?.activeQuestion?.id ?? null)
+      : null;
+  const hadAnswerableQuestionRef = useRef(false);
+  const questionOptionKeyRef = useRef<((key: string) => boolean) | null>(null);
+  const syncFocusWithQuestion = useEffectEvent(() => {
+    const active = document.activeElement;
+    if (answerableQuestionId === null) {
+      if (!isMobileViewport && (active === null || active === document.body)) {
+        composerEditorRef.current?.focusAtEnd();
+      }
+      return;
+    }
+    const typing = prompt.trim() !== "" || activePendingProgress?.customAnswer.trim() !== "";
+    if (
+      !typing &&
+      active instanceof HTMLElement &&
+      active.isContentEditable &&
+      composerFormRef.current?.contains(active)
+    ) {
+      active.blur();
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus when a question opens or closes, so the number keys work and typing can resume
+  useEffect(() => {
+    const hadQuestion = hadAnswerableQuestionRef.current;
+    hadAnswerableQuestionRef.current = answerableQuestionId !== null;
+    if (hadQuestion || answerableQuestionId !== null) syncFocusWithQuestion();
+  }, [answerableQuestionId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to keydown, window blur and the desktop paste-as-text event to arm plain-text paste
   useEffect(() => {
     // A background composer listens on its own form, so it never hears the main composer's keys.
@@ -2941,6 +2977,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       focusAt: (cursor: number) => {
         composerEditorRef.current?.focusAt(cursor);
       },
+      questionTakesKey: (key: string) => questionOptionKeyRef.current?.(key) ?? false,
       addDroppedFiles: (files: File[]) => {
         void addComposerAttachments(files).then((inserted) => {
           if (!inserted) focusComposer();
@@ -3319,6 +3356,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
+                    voiceInputActive={voiceInputActive}
+                    optionKeyRef={questionOptionKeyRef}
                   />
                 ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
                   <ComposerPlanFollowUpBanner
@@ -3631,6 +3670,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     canInterrupt={canInterrupt}
+                    quietStop={
+                      quietStopWhileWaiting &&
+                      (pendingApprovals.length > 0 || pendingUserInputs.length > 0)
+                    }
                     followUpBehavior={followUpBehavior}
                     canSteer={!isCompacting}
                     alternateShortcutLabel={shortcutLabelForCommand(

@@ -30,6 +30,7 @@ interface ComposerPrimaryActionsProps {
   canOperateThread: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
+  quietStop?: boolean;
   canInterrupt: boolean;
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
@@ -86,6 +87,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   canOperateThread,
   pendingAction,
   isRunning,
+  quietStop = false,
   canInterrupt,
   followUpBehavior = "steer",
   canSteer = true,
@@ -134,7 +136,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <button
             type="button"
             className={cn(
-              "flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-control-highlight transition-colors duration-150 hover:bg-destructive active:inset-shadow-control-pressed active:shadow-none [&_svg]:pointer-events-none",
+              "flex shrink-0 cursor-pointer items-center justify-center rounded-full inset-shadow-control-highlight transition-colors duration-150 active:inset-shadow-control-pressed active:shadow-none [&_svg]:pointer-events-none",
+              quietStop
+                ? "bg-secondary text-foreground hover:bg-destructive hover:text-white"
+                : "bg-destructive/90 text-white shadow-xs shadow-destructive/24 hover:bg-destructive",
               insidePendingAction ? "size-8 sm:size-7" : "size-8 sm:h-8 sm:w-8",
             )}
             {...pointerFocusProps}

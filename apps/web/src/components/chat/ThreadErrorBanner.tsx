@@ -57,6 +57,23 @@ export function shouldShowThreadErrorBanner(
   return getThreadErrorBannerKey(threadKey, error) !== null && !isDismissed;
 }
 
+/**
+ * Whether a floating banner would only repeat a failure already on screen. Usage limits have the
+ * recovery notice and other classified failures have a timeline row. A ChatGPT limit in another
+ * class has neither, and OpenAI's partner guidelines require its notice.
+ */
+export function threadFailureIsShownElsewhere(
+  errorClass: OrchestrationV2ProviderFailureClass | null | undefined,
+  errorCode: string | null | undefined,
+): boolean {
+  if (errorClass === "usage_limit") return true;
+  return (
+    errorClass != null &&
+    errorCode !== CHATGPT_USAGE_LIMIT_CODE &&
+    errorCode !== CHATGPT_WORKSPACE_USAGE_LIMIT_CODE
+  );
+}
+
 const sessionDismissedThreadErrorBannerKeys = new Set<string>();
 
 export function dismissThreadErrorBannerForSession(bannerKey: string | null): void {

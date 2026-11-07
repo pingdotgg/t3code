@@ -73,6 +73,8 @@ const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
+export const SidebarVariant = Schema.Literals(["default", "detailed", "slim"]);
+export type SidebarVariant = typeof SidebarVariant.Type;
 
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
@@ -504,6 +506,13 @@ export const ClientSettingsSchema = Schema.Struct({
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   composerRichTextEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  windowTitleWaitingCount: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarHideLoneProvider: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  chatWorkingShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  terminalActionsStrip: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  composerQuietStopWhileWaiting: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   sendShortcut: Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("enter")),
   ),
@@ -516,6 +525,7 @@ export const ClientSettingsSchema = Schema.Struct({
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  sidebarVariant: SidebarVariant.pipe(Schema.withDecodingDefault(Effect.succeed("default"))),
   toolCallVisibility: ToolCallVisibility.pipe(
     Schema.withDecodingDefault(Effect.succeed("showAll" as const)),
   ),
@@ -1906,12 +1916,18 @@ export const ClientSettingsPatch = Schema.Struct({
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
+  windowTitleWaitingCount: Schema.optionalKey(Schema.Boolean),
+  sidebarHideLoneProvider: Schema.optionalKey(Schema.Boolean),
+  chatWorkingShimmer: Schema.optionalKey(Schema.Boolean),
+  terminalActionsStrip: Schema.optionalKey(Schema.Boolean),
+  composerQuietStopWhileWaiting: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   boringSidebarMultilineRows: Schema.optionalKey(Schema.Boolean),
+  sidebarVariant: Schema.optionalKey(SidebarVariant),
   toolCallVisibility: Schema.optionalKey(ToolCallVisibility),
   threadDetailsUsageEnabled: Schema.optionalKey(Schema.Boolean),
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),

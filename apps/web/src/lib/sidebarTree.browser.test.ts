@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
-import { installSidebarTree } from "./sidebarTree";
+import { installSidebarTree, releaseSidebarRowFocus } from "./sidebarTree";
 
 function setup() {
   const root = document.createElement("div");
@@ -161,6 +161,36 @@ describe("sidebar keyboard navigation", () => {
     const moved = tree.row("settled");
     await vi.waitFor(() => expect(document.activeElement).toBe(moved));
     expect(tree.root.scrollTop).toBe(0);
+  });
+
+  it("leaves focus on a rename input inside a row", () => {
+    using tree = setup();
+    const row = tree.row("first");
+    const input = document.createElement("input");
+    row.append(input);
+    tree.install();
+    input.focus();
+    releaseSidebarRowFocus();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("does not pull focus back to a row that let go of it", async () => {
+    using tree = setup();
+    const first = tree.row("first");
+    tree.install();
+    first.focus();
+    releaseSidebarRowFocus();
+    expect(document.activeElement).toBe(document.body);
+    // why: this observer registers after the tree's, so it runs after the tree has reacted.
+    await new Promise<void>((resolve) => {
+      const observer = new MutationObserver(() => {
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(tree.root, { childList: true, subtree: true });
+      tree.row("added");
+    });
+    expect(document.activeElement).toBe(document.body);
   });
 
   it("does not pull focus back after a click outside the rows", async () => {

@@ -449,6 +449,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "sidebar-variant",
+    title: "Sidebar layout",
+    to: "/settings/general",
+    searchTerms: ["sidebar variant detailed slim default rows workers answers"],
+  },
+  {
+    id: "sidebar-hide-lone-provider",
+    title: "Hide lone provider logo",
+    to: "/settings/general",
+    searchTerms: ["provider logo icon sidebar row single one hide"],
+  },
+  {
     id: "working-shelf",
     title: "Working section",
     to: "/settings/general",
@@ -641,10 +653,28 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "window-title-waiting-count",
+    title: "Waiting count in window title",
+    to: "/settings/general",
+    searchTerms: ["window title tab count waiting approval needs you badge"],
+  },
+  {
     id: "in-app-notifications",
     title: "In-app notifications",
     to: "/settings/general",
     searchTerms: ["notification toast popup completion input approval failure"],
+  },
+  {
+    id: "terminal-actions-strip",
+    title: "Terminal actions strip",
+    to: "/settings/general",
+    searchTerms: ["terminal actions buttons strip overlap output first line"],
+  },
+  {
+    id: "chat-working-shimmer",
+    title: "Working shimmer",
+    to: "/settings/general",
+    searchTerms: ["shimmer animation working row motion chat timeline"],
   },
   {
     id: "time-format",
@@ -688,6 +718,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Show skills in slash menu",
     to: "/settings/chat",
     searchTerms: ["command menu dollar $ slash /"],
+  },
+  {
+    id: "composer-quiet-stop",
+    title: "Quiet stop button",
+    to: "/settings/chat",
+    searchTerms: ["composer stop interrupt button red quiet neutral waiting approval"],
   },
   {
     id: "composer-rich-text",

@@ -1,4 +1,14 @@
 const ROW = "[data-sidebar-row]";
+const RELEASE_FOCUS_EVENT = "sidebar-tree:release-focus";
+
+/** Takes focus off the active sidebar row, so the tree does not restore it to that row. */
+export function releaseSidebarRowFocus() {
+  const active = document.activeElement;
+  // why: a rename input inside a row commits its title on blur.
+  if (!(active instanceof HTMLElement) || !active.matches(ROW)) return;
+  active.dispatchEvent(new Event(RELEASE_FOCUS_EVENT, { bubbles: true }));
+  active.blur();
+}
 
 /** Ref callback for a sidebar list; installs its keyboard navigation and returns its cleanup. */
 export function attachSidebarTree(element: HTMLElement | null) {
@@ -68,6 +78,9 @@ export function installSidebarTree(root: HTMLElement) {
         ? event.target.closest(`${ROW}, button, a[href], input, [tabindex]`)
         : null;
     ownsFocus = focusable !== null && root.contains(focusable);
+  };
+  const onReleaseFocus = () => {
+    ownsFocus = false;
   };
   const onFocus = (event: FocusEvent) => {
     ownsFocus = root.contains(event.target as Node);
@@ -171,12 +184,14 @@ export function installSidebarTree(root: HTMLElement) {
     attributeFilter: ["hidden", "inert", "aria-hidden"],
   });
   document.addEventListener("focusin", onFocus);
+  root.addEventListener(RELEASE_FOCUS_EVENT, onReleaseFocus);
   document.addEventListener("pointerdown", onPointerDown, true);
   root.addEventListener("keydown", onKeyDown, true);
   root.addEventListener("keyup", onKeyUp, true);
   return () => {
     observer.disconnect();
     document.removeEventListener("focusin", onFocus);
+    root.removeEventListener(RELEASE_FOCUS_EVENT, onReleaseFocus);
     document.removeEventListener("pointerdown", onPointerDown, true);
     root.removeEventListener("keydown", onKeyDown, true);
     root.removeEventListener("keyup", onKeyUp, true);

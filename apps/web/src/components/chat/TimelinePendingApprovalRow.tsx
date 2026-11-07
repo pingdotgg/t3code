@@ -79,20 +79,14 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
                 Waiting for approval
               </span>
               {onRespondToApproval ? (
-                <>
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
-                  </span>
-                  <ComposerPendingApprovalActions
-                    presentation="inline"
-                    requestId={approval.requestId}
-                    disabled={!canOperateThread}
-                    isResponding={respondingRequestIds.includes(approval.requestId)}
-                    canRespond={canRespond}
-                    options={approval.options}
-                    onRespondToApproval={onRespondToApproval}
-                  />
-                </>
+                <ComposerPendingApprovalActions
+                  requestId={approval.requestId}
+                  disabled={!canOperateThread}
+                  isResponding={respondingRequestIds.includes(approval.requestId)}
+                  canRespond={canRespond}
+                  options={approval.options}
+                  onRespondToApproval={onRespondToApproval}
+                />
               ) : null}
             </>
           ) : (

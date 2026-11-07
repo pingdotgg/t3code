@@ -61,6 +61,7 @@ import {
 } from "~/state/session";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { resolveSidebarLayout } from "~/components/sidebar/variants/sidebarLayout";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -417,9 +418,7 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
 
 /** Legacy sidebar opt-ins still count, so those users land in the boring sidebar. */
 export function useBoringSidebarEnabled(): boolean {
-  return useClientSettings(
-    (settings) => settings.boringSidebarEnabled || settings.legacySidebarEnabled,
-  );
+  return useClientSettings((settings) => resolveSidebarLayout(settings).folders);
 }
 
 export async function prepareModelPreferencesPatch(

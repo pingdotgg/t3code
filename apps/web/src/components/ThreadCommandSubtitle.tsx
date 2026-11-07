@@ -13,7 +13,7 @@ export type ThreadCommandSubtitleVariant =
 
 const THREAD_COMMAND_SUBTITLE_VARIANT: ThreadCommandSubtitleVariant = "favicon-workspace-harness";
 
-export const COMMAND_PALETTE_META_ICON_CLASS = "size-3 shrink-0 text-muted-foreground/70";
+export const COMMAND_PALETTE_META_ICON_CLASS = "size-3 shrink-0 text-muted-foreground";
 
 export function CommandPaletteMetaDot() {
   return <span className="shrink-0 text-muted-foreground/50">·</span>;
@@ -58,7 +58,7 @@ export function ThreadCommandSubtitle(props: {
   return (
     <span
       className={cn(
-        "inline-flex min-w-0 max-w-full items-center gap-1 text-xs text-muted-foreground/70",
+        "inline-flex min-w-0 max-w-full items-center gap-1 text-xs text-muted-foreground",
         props.className,
       )}
     >

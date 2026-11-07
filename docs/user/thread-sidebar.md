@@ -159,6 +159,15 @@ needs you. Use the pen button on a folder, or right-click it, to start a thread 
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
 cannot drag threads, and the Working section is off. Each device keeps its own choice.
 
+### Choose a sidebar layout (beta)
+
+**Settings → General → Sidebar layout** on web and desktop picks Default, Detailed or Slim. Each
+device keeps its own choice. Detailed and Slim let you answer a question or approval from its row
+without opening the thread.
+
+Detailed and Slim always group by project and have no Working section, so those settings are locked
+while either is on. Your values for them return when you go back to Default.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

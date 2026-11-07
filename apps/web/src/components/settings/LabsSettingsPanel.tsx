@@ -13,6 +13,7 @@ import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { LegacyFeaturesSection } from "./SettingsPanels";
+import { resolveSidebarLayout } from "../sidebar/variants/sidebarLayout";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
@@ -38,13 +39,19 @@ export function LabsSettingsPanel() {
 function BoringSidebarRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const layout = resolveSidebarLayout(settings);
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar")}
-      description="Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders."
+      description={
+        layout.locked
+          ? "The Detailed and Slim sidebar layouts always group threads by project."
+          : "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders."
+      }
       control={
         <Switch
-          checked={settings.boringSidebarEnabled || settings.legacySidebarEnabled}
+          checked={layout.folders}
+          disabled={layout.locked}
           // Turning it off also clears the opt-in of the removed legacy sidebar.
           onCheckedChange={(checked) =>
             updateSettings({ boringSidebarEnabled: Boolean(checked), legacySidebarEnabled: false })
@@ -59,13 +66,19 @@ function BoringSidebarRow() {
 function BoringSidebarMultilineRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const layout = resolveSidebarLayout(settings);
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar-multiline")}
-      description="In the boring sidebar, show folder threads on two lines: the title, then the branch, pull request, and agent."
+      description={
+        layout.locked
+          ? "The Detailed layout always uses two lines, and Slim always uses one."
+          : "In the boring sidebar, show folder threads on two lines: the title, then the branch, pull request, and agent."
+      }
       control={
         <Switch
-          checked={settings.boringSidebarMultilineRows}
+          checked={layout.twoLineRows}
+          disabled={layout.locked}
           onCheckedChange={(checked) =>
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }

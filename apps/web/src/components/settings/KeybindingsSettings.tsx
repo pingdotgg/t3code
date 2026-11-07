@@ -980,7 +980,7 @@ function KeybindingRowWhen({
 }) {
   return (
     <span className="flex h-6 items-center gap-1.5">
-      <span className="text-xs leading-none text-muted-foreground/70">When</span>
+      <span className="text-xs leading-none text-muted-foreground">When</span>
       <WhenClauseControl
         label={commandLabel(row.command)}
         expression={editor.whenDraftExpression}
@@ -1226,7 +1226,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
       title="New keybinding"
       description={
         <span className="flex h-6 items-center gap-1.5">
-          <span className="text-xs leading-none text-muted-foreground/70">When</span>
+          <span className="text-xs leading-none text-muted-foreground">When</span>
           <NewKeybindingWhen draft={draft} variables={variables} />
         </span>
       }

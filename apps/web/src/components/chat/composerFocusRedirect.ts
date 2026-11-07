@@ -69,6 +69,15 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   return true;
 }
 
+/** Whether a focused control, a secret request or an open layer owns this key, not a shortcut. */
+export function keyBelongsToFocusedControl(event: Event): boolean {
+  return (
+    eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR) ||
+    eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR) ||
+    document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) !== null
+  );
+}
+
 export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.isComposing) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;

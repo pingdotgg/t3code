@@ -55,6 +55,8 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { resolveSidebarLayout } from "../sidebar/variants/sidebarLayout";
+import { SidebarVariantRow } from "./SidebarVariantSetting";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
@@ -480,6 +482,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
       ? ["Project order"]
       : []),
+    ...(settings.sidebarVariant !== DEFAULT_UNIFIED_SETTINGS.sidebarVariant
+      ? ["Sidebar layout"]
+      : []),
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
@@ -520,6 +525,22 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
+      : []),
+    ...(settings.composerQuietStopWhileWaiting !==
+    DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting
+      ? ["Quiet stop button"]
+      : []),
+    ...(settings.chatWorkingShimmer !== DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer
+      ? ["Working shimmer"]
+      : []),
+    ...(settings.terminalActionsStrip !== DEFAULT_UNIFIED_SETTINGS.terminalActionsStrip
+      ? ["Terminal actions strip"]
+      : []),
+    ...(settings.sidebarHideLoneProvider !== DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider
+      ? ["Hide lone provider logo"]
+      : []),
+    ...(settings.windowTitleWaitingCount !== DEFAULT_UNIFIED_SETTINGS.windowTitleWaitingCount
+      ? ["Waiting count in window title"]
       : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
@@ -643,6 +664,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      windowTitleWaitingCount: DEFAULT_UNIFIED_SETTINGS.windowTitleWaitingCount,
+      sidebarHideLoneProvider: DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider,
+      chatWorkingShimmer: DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer,
+      terminalActionsStrip: DEFAULT_UNIFIED_SETTINGS.terminalActionsStrip,
+      composerQuietStopWhileWaiting: DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
@@ -651,6 +677,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarVariant: DEFAULT_UNIFIED_SETTINGS.sidebarVariant,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
@@ -785,6 +812,7 @@ export function LegacyFeaturesSection() {
 export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const sidebarLayout = resolveSidebarLayout(settings);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -804,9 +832,36 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("window-title-waiting-count")}
+          description="Show how many threads wait on you in the window title, like (2) T3 Code."
+          resetAction={
+            settings.windowTitleWaitingCount !==
+            DEFAULT_UNIFIED_SETTINGS.windowTitleWaitingCount ? (
+              <SettingResetButton
+                label="waiting count in window title"
+                onClick={() =>
+                  updateSettings({
+                    windowTitleWaitingCount: DEFAULT_UNIFIED_SETTINGS.windowTitleWaitingCount,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.windowTitleWaitingCount}
+              onCheckedChange={(checked) =>
+                updateSettings({ windowTitleWaitingCount: Boolean(checked) })
+              }
+              aria-label="Waiting count in window title"
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="sidebar" title="Sidebar">
+        <SidebarVariantRow />
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."
@@ -884,7 +939,11 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("working-shelf")}
-          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you. The boring sidebar in Labs has no Working section."
+          description={
+            sidebarLayout.locked
+              ? "The Detailed and Slim sidebars have no Working section."
+              : "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you. The boring sidebar in Labs has no Working section."
+          }
           resetAction={
             settings.sidebarWorkingShelfEnabled !==
             DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
@@ -900,11 +959,38 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Switch
-              checked={settings.sidebarWorkingShelfEnabled}
+              checked={settings.sidebarWorkingShelfEnabled && !sidebarLayout.locked}
+              disabled={sidebarLayout.locked}
               onCheckedChange={(checked) =>
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label="Working section"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-hide-lone-provider")}
+          description="In the Default layout, leave the provider logo off thread rows when only one provider is set up."
+          resetAction={
+            settings.sidebarHideLoneProvider !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider ? (
+              <SettingResetButton
+                label="hide lone provider logo"
+                onClick={() =>
+                  updateSettings({
+                    sidebarHideLoneProvider: DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarHideLoneProvider}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarHideLoneProvider: Boolean(checked) })
+              }
+              aria-label="Hide lone provider logo"
             />
           }
         />
@@ -1071,6 +1157,56 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+        <SettingsRow
+          {...searchableSetting("chat-working-shimmer")}
+          description="Run a shimmer across the chat's Working row while an agent works."
+          resetAction={
+            settings.chatWorkingShimmer !== DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer ? (
+              <SettingResetButton
+                label="working shimmer"
+                onClick={() =>
+                  updateSettings({
+                    chatWorkingShimmer: DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.chatWorkingShimmer}
+              onCheckedChange={(checked) =>
+                updateSettings({ chatWorkingShimmer: Boolean(checked) })
+              }
+              aria-label="Working shimmer"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("terminal-actions-strip")}
+          description="Keep the terminal's actions in a strip above it, so they never cover output. It costs about two terminal rows."
+          resetAction={
+            settings.terminalActionsStrip !== DEFAULT_UNIFIED_SETTINGS.terminalActionsStrip ? (
+              <SettingResetButton
+                label="terminal actions strip"
+                onClick={() =>
+                  updateSettings({
+                    terminalActionsStrip: DEFAULT_UNIFIED_SETTINGS.terminalActionsStrip,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.terminalActionsStrip}
+              onCheckedChange={(checked) =>
+                updateSettings({ terminalActionsStrip: Boolean(checked) })
+              }
+              aria-label="Terminal actions strip"
+            />
+          }
+        />
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -1159,6 +1295,33 @@ export function ChatSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("composer-quiet-stop")}
+          description="Show the stop button in a neutral color while a thread waits on you. It turns red on hover."
+          resetAction={
+            settings.composerQuietStopWhileWaiting !==
+            DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting ? (
+              <SettingResetButton
+                label="quiet stop button"
+                onClick={() =>
+                  updateSettings({
+                    composerQuietStopWhileWaiting:
+                      DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.composerQuietStopWhileWaiting}
+              onCheckedChange={(checked) =>
+                updateSettings({ composerQuietStopWhileWaiting: Boolean(checked) })
+              }
+              aria-label="Quiet stop button"
+            />
           }
         />
         <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>

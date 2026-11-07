@@ -54,9 +54,10 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
-    // Type-to-focus only calls insertTextAtEnd, so the stand-in composer implements just that.
+    // Type-to-focus only calls these two, so the stand-in composer implements just them.
     composerRef: {
       current: {
+        questionTakesKey: (key: string) => key === "2",
         insertTextAtEnd: (key: string) => {
           props.composerKeys.push(key);
           return true;
@@ -84,6 +85,15 @@ it("leaves the launcher's letters to the launcher, in either case", async () => 
 
   expect(received).toEqual(["t", "T"]);
   expect(composerKeys).toEqual([]);
+});
+
+it("leaves a digit that picks a question's option out of the composer", async () => {
+  const composerKeys: string[] = [];
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  expect(screen.container).toBeDefined();
+  await userEvent.keyboard("2");
+  await userEvent.keyboard("7");
+  expect(composerKeys).toEqual(["7"]);
 });
 
 it("still types other letters into the composer while the launcher is open", async () => {

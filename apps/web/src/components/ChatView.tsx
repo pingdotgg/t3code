@@ -308,6 +308,7 @@ import {
   getThreadErrorBannerKey,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
+  threadFailureIsShownElsewhere,
 } from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
@@ -997,7 +998,10 @@ export default function ChatView(props: ChatViewProps) {
     snoozedUntil: activeThreadShell?.snoozedUntil,
   });
   const timelineThreadError =
-    limitRecoveryRun !== null && visibleThreadError === serverRuntime?.lastError
+    serverRuntime?.status === "failed" &&
+    threadFailureIsShownElsewhere(serverRuntime.lastErrorClass, serverRuntime.lastErrorCode) &&
+    activeThreadShell?.latestRun &&
+    visibleThreadError === serverRuntime.lastError
       ? null
       : visibleThreadError;
 
@@ -1815,6 +1819,15 @@ export default function ChatView(props: ChatViewProps) {
     composerRef.current?.focusAtEnd();
   };
   const focusComposerStable = useStableCallback(focusComposer);
+  // why: the number keys pick a question's option only while focus is outside the answer box.
+  const focusComposerUnlessQuestionWaits = useStableCallback(() => {
+    if (
+      !activePendingProgress?.activeQuestion ||
+      activePendingUserInput?.responseCapability === "not_resumable"
+    ) {
+      focusComposer();
+    }
+  });
   const canInterruptRunningThread =
     canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   const onInterrupt = async () => {
@@ -2133,12 +2146,12 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (embedded || !activeThread?.id || terminalUiState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
-      focusComposerStable();
+      focusComposerUnlessQuestionWaits();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, embedded, focusComposerStable, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, embedded, focusComposerUnlessQuestionWaits, terminalUiState.terminalOpen]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
   useEffect(() => {
@@ -2155,7 +2168,7 @@ export default function ChatView(props: ChatViewProps) {
             !isInSideChatPane(document.activeElement) &&
             shouldRefocusComposerOnWindowFocus(document.activeElement)
           ) {
-            focusComposerStable();
+            focusComposerUnlessQuestionWaits();
           }
         });
       });
@@ -2168,7 +2181,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeThread?.id,
     embedded,
-    focusComposerStable,
+    focusComposerUnlessQuestionWaits,
     isMobileViewport,
     terminalUiState.terminalOpen,
   ]);

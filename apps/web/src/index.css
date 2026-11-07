@@ -1,6 +1,7 @@
 /* Clerk injects its component styles into the clerk layer (clerkAppearance.cssLayerName). */
 @layer theme, base, clerk, components, utilities;
 @import "tailwindcss";
+@import "./components/sidebar/variants/sidebarVariants.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));

@@ -101,7 +101,7 @@ function Button({ className, variant, size, render, ...props }: ButtonProps) {
 export { Button, buttonVariants, type ButtonSize, type ButtonVariant };
 
 const inlineButtonVariants = cva(
-  "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 [text-align:var(--inline-button-text-align,center)] [white-space:var(--inline-button-white-space,nowrap)] hover:underline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64",
+  "relative after:absolute after:-inset-y-1 after:-inset-x-0.5 inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 [text-align:var(--inline-button-text-align,center)] [white-space:var(--inline-button-white-space,nowrap)] hover:underline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64",
   {
     defaultVariants: { tone: "default" },
     variants: {

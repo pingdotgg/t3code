@@ -1,0 +1,414 @@
+/* Two-row-wide tiles slide four row widths left, as background-position -200% to 200% does. */
+@keyframes sidebar-row-sweep {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-66.6667%);
+  }
+}
+
+@keyframes sidebar-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  /* Pitwall's 0.5 stays under 3:1 on 8 of the 12 themes at any clamp. */
+  50% {
+    opacity: var(--row-dot-dim);
+  }
+}
+
+/* Lightness is clamped to hold 4.5:1. On light themes chroma stays inside sRGB at that lightness, or the browser clips the hue: amber turns red. */
+@utility sidebar-variant-tokens {
+  --contrast-secondary-label: color-mix(in srgb, var(--foreground) 72%, transparent);
+  --row-muted: color-mix(in srgb, var(--foreground) 80%, transparent);
+  --row-state-floor: 0.75;
+  --row-dot-dim: 0.6;
+  --variant-warning: oklch(from var(--warning-foreground) min(l, 0.38) min(c, 0.1) h);
+  --variant-success: oklch(from var(--success-foreground) min(l, 0.38) min(c, 0.078) h);
+  --variant-info: oklch(from var(--info-foreground) min(l, 0.38) c h);
+  --variant-error: oklch(from var(--error-foreground) min(l, 0.38) min(c, 0.15) h);
+  --variant-guest: oklch(from var(--guest-foreground) min(l, 0.38) min(c, 0.18) h);
+  --input-state: var(--color-indigo-600);
+  --variant-input: oklch(from var(--input-state) min(l, 0.38) c h);
+
+  .dark & {
+    --variant-warning: oklch(from var(--warning-foreground) max(l, var(--row-state-floor)) c h);
+    --variant-success: oklch(from var(--success-foreground) max(l, var(--row-state-floor)) c h);
+    --variant-info: oklch(from var(--info-foreground) max(l, var(--row-state-floor)) c h);
+    --variant-error: oklch(from var(--error-foreground) max(l, var(--row-state-floor)) c h);
+    --variant-guest: oklch(from var(--guest-foreground) max(l, var(--row-state-floor)) c h);
+    --input-state: var(--color-indigo-300);
+    --variant-input: oklch(from var(--input-state) max(l, var(--row-state-floor)) c h);
+  }
+
+  /* These dark themes have lighter surfaces, so their colours need a higher floor to pass. */
+  .dark[data-theme-id="grove"] & {
+    --row-state-floor: 0.95;
+    --row-dot-dim: 0.7;
+  }
+  .dark[data-theme-id="ocean"] &,
+  .dark[data-theme-id="ember"] & {
+    --row-state-floor: 0.9;
+    --row-dot-dim: 0.7;
+  }
+  .dark[data-theme-id="iris"] & {
+    --row-state-floor: 0.85;
+    --row-dot-dim: 0.7;
+  }
+
+  & .text-warning-foreground {
+    --pill-state: var(--warning-foreground);
+    color: var(--variant-warning);
+  }
+  & .text-success-foreground {
+    --pill-state: var(--success-foreground);
+    color: var(--variant-success);
+  }
+  & .text-info-foreground {
+    --pill-state: var(--info-foreground);
+    color: var(--variant-info);
+  }
+  & .text-error-foreground {
+    --pill-state: var(--error-foreground);
+    color: var(--variant-error);
+  }
+  & .text-muted-foreground {
+    color: var(--row-muted);
+  }
+  & .text-guest-foreground {
+    --pill-state: var(--guest-foreground);
+    color: var(--variant-guest);
+  }
+  & .text-indigo-600,
+  & .sidebar-input-mark {
+    --pill-state: var(--input-state);
+    color: var(--variant-input);
+  }
+  /* The pill's dark: colour would otherwise outrank the token. */
+  && [class*="dark:text-indigo-300"] {
+    --pill-state: var(--input-state);
+    color: var(--variant-input);
+  }
+}
+
+/* The sheet paints the root sidebar token, while the docked sidebar rescopes it locally. */
+@utility sidebar-waiting-surface {
+  background-color: var(--sidebar);
+
+  [data-mobile="true"] & {
+    background-color: var(--color-sidebar);
+  }
+}
+
+@utility sidebar-input-mark {
+  color: var(--color-indigo-600);
+}
+
+/* Six row widths of two-row-wide tiles, so the slide never shows an edge. */
+@utility sidebar-row-sweep {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+  contain: strict;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: 600%;
+    background-image: linear-gradient(
+      to right,
+      transparent 0%,
+      rgb(255 255 255 / 0.02) 40%,
+      rgb(255 255 255 / 0.04) 50%,
+      rgb(255 255 255 / 0.02) 60%,
+      transparent 100%
+    );
+    background-size: 33.3333% 100%;
+    animation: sidebar-row-sweep 3s ease-in-out infinite;
+    animation-play-state: var(--visible-animation-state, paused);
+    will-change: var(--visible-animation-will-change, auto);
+  }
+
+  /* A collapsed sidebar's rows skip rendering, so their visibility observer never reports them. */
+  [data-slot="sidebar"][data-state="collapsed"] &::before {
+    animation: none;
+  }
+
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+    display: none;
+  }
+}
+
+@utility sidebar-status-dot {
+  background-color: currentColor;
+
+  [data-slot="sidebar"][data-state="collapsed"] & {
+    animation: none;
+  }
+
+  @media (forced-colors: active) {
+    background-color: CanvasText;
+    forced-color-adjust: none;
+  }
+  animation: sidebar-status-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+    animation: none;
+    will-change: auto;
+  }
+}
+
+/* As tall as line 2, with the state colour mixed 14% into the row. */
+@utility sidebar-row-pill {
+  height: 1.03125rem;
+  padding-inline: 0.4375rem;
+  background-color: color-mix(in srgb, var(--pill-state, currentColor) 14%, transparent);
+}
+
+/* Centres the capitals in the pill in any font, whatever fraction the row lands on. */
+@utility sidebar-row-pill-word {
+  line-height: 1.03125rem;
+  text-box: trim-both cap alphabetic;
+}
+
+@utility sidebar-row-title {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+/* 55% primary painted over the row's fill is primary mixed 55% into that fill. */
+@utility sidebar-row-stroke {
+  --tw-ring-color: color-mix(in srgb, var(--primary) 55%, transparent);
+}
+
+@utility sidebar-row-look {
+  --row-fill: transparent;
+  --row-state: transparent;
+  --row-tint-state: transparent;
+  --row-tint: color-mix(in srgb, var(--row-tint-state) 10%, transparent);
+  background-color: var(--row-fill);
+  background-image: linear-gradient(var(--row-tint), var(--row-tint));
+
+  &:hover {
+    --row-fill: var(--sidebar-row-hover);
+  }
+
+  &[data-surface="draft"] {
+    --row-fill: color-mix(in srgb, var(--warning) 4%, transparent);
+  }
+
+  &[data-surface="draft"]:hover {
+    --row-fill: color-mix(in srgb, var(--warning) 8%, transparent);
+  }
+
+  &[data-surface="selected"] {
+    --row-fill: var(--sidebar-row-selected);
+  }
+
+  &[data-surface="active"] {
+    --row-fill: var(--sidebar-row-active);
+    --row-tint: transparent;
+  }
+
+  &[data-surface="worker-active"] {
+    --row-fill: color-mix(in srgb, var(--primary) 8%, transparent);
+  }
+
+  &[data-surface="worker-selected"] {
+    --row-fill: color-mix(in srgb, var(--primary) 7%, transparent);
+  }
+
+  &[data-surface^="worker-"]:hover {
+    --row-fill: var(--sidebar-row-hover);
+  }
+
+  &[data-attention="warning"] {
+    --row-state: var(--variant-warning);
+    --row-tint-state: var(--warning-foreground);
+  }
+
+  &[data-attention="input"] {
+    --row-state: var(--variant-input);
+    --row-tint-state: var(--input-state);
+  }
+
+  &[data-attention="guest"] {
+    --row-state: var(--variant-guest);
+    --row-tint-state: var(--guest-foreground);
+  }
+
+  &[data-attention="error"] {
+    --row-state: var(--variant-error);
+    --row-tint-state: var(--error-foreground);
+  }
+
+  &[data-attention="success"] {
+    --row-state: var(--variant-success);
+    --row-tint-state: var(--success-foreground);
+  }
+
+  &[data-attention]::after {
+    content: "";
+    position: absolute;
+    left: 2px;
+    inset-block: 10px;
+    width: 3px;
+    border-radius: 1.5px;
+    background: var(--row-state);
+    pointer-events: none;
+  }
+
+  /* Hover hides the time for Settle, so keyboard focus on that action has to as well. */
+  & [data-status-slot]:has(> button:focus-visible) > [data-yields-to-action] {
+    opacity: 0;
+  }
+
+  /* Forced colors drop fills and shadows, so the bar and the stroke need system colours. */
+  @media (forced-colors: active) {
+    &[data-attention]::after {
+      background: CanvasText;
+      forced-color-adjust: none;
+    }
+
+    &[data-surface="active"],
+    &[data-surface="selected"] {
+      outline: 1px solid Highlight;
+      outline-offset: -1px;
+    }
+  }
+}
+
+/* An opaque copy of the row's own layers, so the mark reads the same on every row state. */
+@utility sidebar-row-disc {
+  background-color: var(--background);
+  background-image:
+    linear-gradient(var(--row-tint), var(--row-tint)),
+    linear-gradient(var(--row-fill), var(--row-fill)),
+    linear-gradient(var(--sidebar), var(--sidebar));
+
+  [data-mobile="true"] & {
+    background-image:
+      linear-gradient(var(--row-tint), var(--row-tint)),
+      linear-gradient(var(--row-fill), var(--row-fill)),
+      linear-gradient(var(--color-sidebar), var(--color-sidebar));
+  }
+}
+
+/* While the row asks, the answers take line 2 and the fold chip only counts. */
+@utility sidebar-row-line2 {
+  line-height: 1.5;
+
+  /* Taller controls overhang the line, so the row keeps its height. */
+  & [data-line2-rest] > *,
+  & [data-status-slot] {
+    margin-block: -0.5rem;
+  }
+
+  & [data-chip-short] {
+    display: none;
+  }
+
+  &:has([data-row-answers]:not(:empty)) [data-line2-rest],
+  &:has([data-row-answers]:not(:empty)) [data-chip-full] {
+    display: none;
+  }
+
+  &:has([data-row-answers]:not(:empty)) [data-chip-short] {
+    display: inline;
+  }
+
+  /* Filled from the right, so answers that do not fit wrap alone to a full line under the rest. */
+  &:has([data-row-answers]:not(:empty)) {
+    flex-flow: row-reverse wrap;
+    row-gap: 0.25rem;
+  }
+
+  &:has([data-row-answers]:not(:empty)) > [data-status-slot] {
+    order: -1;
+  }
+
+  &:has([data-row-answers]:not(:empty)) > [data-worker-fold],
+  &:has([data-row-answers]:not(:empty)) > [data-worker-chip] {
+    order: 1;
+  }
+
+  /* Settle's slot overhangs the line, and must not take the top of the button below it. */
+  & > [data-row-answers] {
+    position: relative;
+    z-index: 1;
+    order: 2;
+    flex: 1 1 auto;
+    max-width: 100%;
+  }
+}
+
+/* The tree line from a row's icon down its workers, with an elbow into the last one. */
+@utility sidebar-worker-guide {
+  --guide: color-mix(in srgb, var(--muted-foreground) 35%, var(--sidebar));
+
+  &::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 18px;
+    width: 1px;
+    background: var(--guide);
+  }
+
+  &[data-last-worker]::before {
+    bottom: 50%;
+  }
+
+  &[data-last-worker]::after {
+    content: "";
+    position: absolute;
+    top: calc(50% - 1px);
+    left: 18px;
+    width: 4px;
+    height: 1px;
+    background: var(--guide);
+  }
+}
+
+/* Only the buttons decide whether the answers fit, and a long detail gets a line of its own. */
+[data-answer-detail] {
+  flex-basis: 1rem;
+  contain: inline-size;
+}
+
+[data-row-answers] button {
+  height: 1.125rem;
+  min-height: 0;
+  min-width: 1.5rem;
+  padding-inline: 0.4375rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  max-width: 100%;
+}
+
+[data-row-answers] button[aria-label="More approval options"] {
+  width: 1.125rem;
+  padding-inline: 0;
+}
+
+/* The pills are 18px tall with a 1px border, and this keeps their hit area at 24px. */
+[data-row-answers] button::after {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+}
+
+/* Keeps a focused or revealed row clear of the sticky Waiting on you list. */
+ul:has(> [data-testid="sidebar-waiting-on-you"]) > li > [data-sidebar-row] {
+  scroll-margin-bottom: 14rem;
+}

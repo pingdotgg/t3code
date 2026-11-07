@@ -20,6 +20,12 @@ import { startMainAppLocationTracking } from "./components/sidebar/mainAppLocati
 import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEverythingRun";
 import { startSlowRpcRequestToasts } from "./components/SlowRpcRequestToastCoordinator";
 import { startThreadNotifications } from "./components/ThreadNotificationCoordinator";
+import { resolveSidebarThreadStatus } from "./components/Sidebar.logic";
+import { environmentCatalog } from "./connection/catalog";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import { Atom } from "effect/reactivity";
 import { startGuideRunNotifications } from "./components/pullRequest/guide/PullRequestGuideRunCoordinator";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "./branding";
 import { resolveServerBackedAppDisplayName } from "./branding.logic";
@@ -117,19 +123,66 @@ function startClientAppearance(): void {
   apply();
 }
 
+const waitingThreadCountAtom = Atom.make((get) => {
+  const delegated = get(environmentThreadShells.delegatedUnderParentAtom);
+  let waiting = 0;
+  for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
+    const subagentRequests = get(
+      environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
+    );
+    for (const thread of get(environmentThreadShells.environmentThreadsAtom(environmentId))) {
+      if (isShownUnderParent({ environmentId, threadId: thread.id }, thread.lineage, delegated)) {
+        continue;
+      }
+      const status = resolveSidebarThreadStatus(
+        presentThreadShell(environmentId, thread, subagentRequests.get(thread.id) ?? null),
+      );
+      if (status === "approval" || status === "input" || status === "request") waiting += 1;
+    }
+  }
+  return waiting;
+});
+
 function startDocumentTitle(): void {
+  let name = document.title;
+  let waiting = 0;
+  let stopCounting: (() => void) | null = null;
+  const apply = () => {
+    document.title = waiting > 0 ? `(${waiting}) ${name}` : name;
+  };
+  const applySetting = () => {
+    const enabled = getClientSettings().windowTitleWaitingCount;
+    if (enabled && stopCounting === null) {
+      stopCounting = appAtomRegistry.subscribe(
+        waitingThreadCountAtom,
+        (count) => {
+          waiting = count;
+          apply();
+        },
+        { immediate: true },
+      );
+    } else if (!enabled && stopCounting !== null) {
+      stopCounting();
+      stopCounting = null;
+      waiting = 0;
+      apply();
+    }
+  };
+  subscribeClientSettings(applySetting);
   appAtomRegistry.subscribe(
     primaryServerConfigAtom,
     (config) => {
-      document.title = resolveServerBackedAppDisplayName({
+      name = resolveServerBackedAppDisplayName({
         baseName: APP_BASE_NAME,
         fallbackDisplayName: APP_DISPLAY_NAME,
         fallbackStageLabel: APP_STAGE_LABEL,
         primaryServerVersion: config?.environment.serverVersion ?? null,
       });
+      apply();
     },
     { immediate: true },
   );
+  applySetting();
 }
 
 /**

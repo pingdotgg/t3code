@@ -14,6 +14,7 @@ import { act, fakeTimers, render } from "../../test/render";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 
 const fixture = vi.hoisted(() => ({
+  terminalActionsStrip: false,
   statusByThreadId: new Map<string, "running" | "exited">(),
   pendingSurfaces: [] as Array<() => void>,
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
@@ -102,7 +103,7 @@ vi.mock("../hooks/useSettings", async () => {
   const { DEFAULT_CLIENT_SETTINGS } = await import("@t3tools/contracts/settings");
   return {
     useClientSettings: <T,>(select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => T) =>
-      select(DEFAULT_CLIENT_SETTINGS),
+      select({ ...DEFAULT_CLIENT_SETTINGS, terminalActionsStrip: fixture.terminalActionsStrip }),
   };
 });
 
@@ -142,6 +143,7 @@ function setup() {
     environmentId: EnvironmentId.make("environment-b"),
     threadId: ThreadId.make("thread-b"),
   };
+  fixture.terminalActionsStrip = false;
   fixture.statusByThreadId = new Map([
     [original.threadId, "exited"],
     [other.threadId, "running"],
@@ -247,4 +249,14 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   expect(await validate("~/notes.ts:5:2")).toBe(true);
   await hover("~/notes.ts:5:2");
   expect(canActivate("~/notes.ts:5:2")).toBe(true);
+});
+
+it("reserves the actions strip only when the setting is on", async () => {
+  const { other: threadRef } = setup();
+  await using off = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  expect(off.container.querySelector(".pt-8")).toBeNull();
+  await off.unmount();
+  fixture.terminalActionsStrip = true;
+  await using on = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  expect(on.container.querySelector(".pt-8")).not.toBeNull();
 });

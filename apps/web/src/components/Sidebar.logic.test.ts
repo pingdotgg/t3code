@@ -284,6 +284,18 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe(false);
   });
 
+  it("never recedes a thread waiting on approval, even once read", () => {
+    expect(
+      shouldRecedeSidebarThread({
+        status: "approval",
+        isUnread: false,
+        isWoke: false,
+        isActive: false,
+        isSelected: false,
+      }),
+    ).toBe(false);
+  });
+
   it("reports worktree setup as preparing, and failed only while the latest run failed", () => {
     expect(
       resolveSidebarThreadStatus({

@@ -153,7 +153,7 @@ export function NoticeText({
             aria-label="Notice details"
             tooltipStyle
             side="top"
-            className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full"
+            className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full [&_[data-slot=inline-button]]:after:hidden"
           >
             <ComposerBanner.Scroll>{children}</ComposerBanner.Scroll>
           </PopoverPopup>
