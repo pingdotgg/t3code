@@ -757,9 +757,10 @@ function legacyPullRequestLink(
 
 const DELEGATED_RESULT_INLINE_BYTES = 16_000;
 
-/** Provider output that shows a delivery run's agent acted on the wake; `subagent` rows can be other tasks'. */
+/** Provider output that shows a delivery run's agent acted on the wake; app-owned `subagent` rows can be other tasks'. */
 const DELIVERY_ANSWER_TURN_ITEM_TYPES: ReadonlyArray<OrchestrationV2TurnItem["type"]> = [
   "assistant_message",
+  "subagent",
   "reasoning",
   "proposed_plan",
   "todo_list",
@@ -12888,16 +12889,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
-      const startMessage = childControls.messages.find(
-        (message) =>
-          message.id === taskRuns.toSorted((a, b) => a.ordinal - b.ordinal)[0]?.userMessageId,
-      );
-      // Tasks are ordered by start and a child runs one task at a time.
-      const lastResult = parentProjection.subagents.findLast(
-        (candidate) =>
-          candidate.childThreadId === childThreadId &&
-          candidate.id !== task.id &&
-          candidate.result !== null,
+      const startMessageId = taskRuns.toSorted((a, b) => a.ordinal - b.ordinal)[0]?.userMessageId;
+      const startMessage = childControls.messages.find((message) => message.id === startMessageId);
+      // Queued follow-ups can run out of start order, so the last result is the last to complete.
+      const lastResult = parentProjection.subagents.reduce<OrchestrationV2Subagent | undefined>(
+        (latest, candidate) =>
+          candidate.childThreadId !== childThreadId ||
+          candidate.id === task.id ||
+          candidate.result === null ||
+          (latest?.completedAt != null &&
+            (candidate.completedAt === null ||
+              DateTime.toEpochMillis(candidate.completedAt) <
+                DateTime.toEpochMillis(latest.completedAt)))
+            ? latest
+            : candidate,
+        undefined,
       );
       // A follow-up the child started on its own that only repeats what the parent already got stays readable but silent.
       const repeatsUnprompted =
@@ -12906,7 +12912,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         startMessage.createdBy !== "user" &&
         startMessage.senderThreadId !== parentThreadId &&
         lastResult?.status === terminalStatus &&
-        lastResult.result === result.text;
+        lastResult.result === result.text &&
+        lastResult.completionDelivery?.state !== "disposed";
       const updatedTask: OrchestrationV2Subagent = {
         ...task,
         providerThreadId: childRun.providerThreadId,
@@ -13197,7 +13204,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
         turnItemRunId: runId,
         turnItemTypes: DELIVERY_ANSWER_TURN_ITEM_TYPES,
-      })).turnItems.length > 0;
+      })).turnItems.some((item) => item.type !== "subagent" || item.origin === "provider_native");
     const now = yield* DateTime.now;
     const nextTaskStates = new Map<
       OrchestrationV2Subagent["id"],

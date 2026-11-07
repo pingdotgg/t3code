@@ -2404,6 +2404,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       readonly name: string;
       readonly startedBy: "background-command" | "parent";
       readonly result: "repeat" | "new";
+      /** Rewrites the original before the follow-up: disposed, or out-finished by a task that started earlier. */
+      readonly prior?: "disposed" | "reordered";
     }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2448,9 +2450,39 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const settled = yield* orchestrator.getThreadProjection(parentThreadId);
         const original = settled.subagents.find((task) => task.id === child.taskId)!;
         const parentRun = settled.runs.find((run) => run.id === parentRunId)!;
+        const prior =
+          input.prior === "disposed"
+            ? {
+                ...original,
+                completionDelivery: { state: "disposed" as const, observedByRunId: null },
+              }
+            : input.prior === "reordered"
+              ? {
+                  ...original,
+                  id: NodeId.make(`node:${name}-later`),
+                  result: "A later run found something else.",
+                  startedAt: DateTime.subtract(now, { minutes: 1 }),
+                  completedAt: DateTime.add(now, { seconds: 1 }),
+                }
+              : undefined;
         yield* eventSink.write({
           commandId: reconcileCommandId(`${name}-parent-finished`),
           events: [
+            ...(prior === undefined
+              ? []
+              : [
+                  {
+                    id: EventId.make(`event:${name}-prior`),
+                    type: "subagent.updated" as const,
+                    threadId: parentThreadId,
+                    runId: parentRunId,
+                    nodeId: prior.id,
+                    driver,
+                    providerInstanceId: modelSelection.instanceId,
+                    occurredAt: now,
+                    payload: prior,
+                  },
+                ]),
             {
               id: EventId.make(`event:${name}-parent-finished`),
               type: "run.updated",
@@ -2609,6 +2641,21 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         assert.equal(followup.completionDelivery?.state, "claimed");
         assert.deepEqual(delivery?.taskIds, [followup.id]);
       }),
+    );
+
+    it.effect.each(["disposed", "reordered"] as const)(
+      "a self-started repeat wakes when the last result is %s",
+      (prior) =>
+        Effect.gen(function* () {
+          const { followup, delivery } = yield* finishFollowup({
+            name: `followup-repeat-${prior}`,
+            startedBy: "background-command",
+            result: "repeat",
+            prior,
+          });
+          assert.equal(followup.completionDelivery?.state, "claimed");
+          assert.deepEqual(delivery?.taskIds, [followup.id]);
+        }),
     );
 
     it.effect("tracks a child's usage-limit auto-resume as a follow-up", () =>
@@ -3494,6 +3541,110 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         "a cut delivery run that already answered should not offer the result again",
       );
       assert.isNull(projection.runs.find((row) => row.id === runId)?.delegatedCompletion?.delivery);
+    }),
+  );
+
+  it.effect.each([
+    { origin: "provider_native", state: "delivered" },
+    { origin: "app_owned", state: "claimed" },
+  ] as const)("a cut delivery run whose only item is a $origin subagent ends $state", (input) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const name = `delivery-cut-${input.origin}`;
+      const threadId = ThreadId.make(`thread:${name}`);
+      const runId = RunId.make(`run:${name}`);
+      const taskId = NodeId.make(`node:${name}-task`);
+      const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+      const deliveryRunId = RunId.make(`run:${name}:delivery`);
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make(`project:${name}`),
+        runId,
+        rootNodeId: NodeId.make(`node:${name}-root`),
+        taskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [taskId],
+        now,
+      });
+      yield* eventSink.writeWithEffects({
+        commandId: reconcileCommandId(name),
+        events: [
+          {
+            id: EventId.make(`event:${name}:delivery-message`),
+            type: "message.updated",
+            threadId,
+            runId: deliveryRunId,
+            occurredAt: now,
+            payload: {
+              id: messageId,
+              threadId,
+              runId: deliveryRunId,
+              nodeId: null,
+              role: "user",
+              text: `Delegated task ${taskId} reached a terminal state.`,
+              attachments: [],
+              streaming: false,
+              createdBy: "agent",
+              creationSource: "server",
+              createdAt: now,
+              updatedAt: now,
+              delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
+            },
+          },
+          {
+            id: EventId.make(`event:${name}:subagent-item`),
+            type: "turn-item.updated",
+            threadId,
+            runId: deliveryRunId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`item:${name}:subagent`),
+              threadId,
+              runId: deliveryRunId,
+              nodeId: null,
+              providerThreadId: parentProviderThreadId(threadId),
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "running",
+              title: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              type: "subagent",
+              subagentId: NodeId.make(`node:${name}-launched`),
+              origin: input.origin,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              childThreadId: null,
+              prompt: "Check the merged findings.",
+              result: null,
+            },
+          },
+          runEvent({
+            threadId,
+            runId: deliveryRunId,
+            ordinal: 2,
+            status: "cancelled",
+            now,
+            providerThreadId: parentProviderThreadId(threadId),
+            userMessageId: messageId,
+          }),
+        ],
+        effects: [],
+      });
+
+      yield* orchestrator.recoverDelegatedTasks;
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        projection.subagents.find((row) => row.id === taskId)?.completionDelivery?.state,
+        input.state,
+      );
     }),
   );
 
