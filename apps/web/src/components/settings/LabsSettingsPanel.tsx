@@ -199,15 +199,7 @@ function LanGatewayRow() {
       serverScoped
       {...searchableSetting("lan-gateway-beta")}
       settingKeys={["lanGatewayEnabled"]}
-      description={
-        <>
-          Reverse-proxy LAN or Tailscale peers through this Connect-linked machine. Add peers in{" "}
-          <Link to="/settings/connections" className="underline underline-offset-2">
-            Connections
-          </Link>
-          ; pair each on the LAN once.
-        </>
-      }
+      description="Reverse-proxy other enabled environments on this device through T3 Connect. Pair those peers on the LAN once; remote clients discover them automatically."
       control={
         <ScopedSwitch
           settingKeys={["lanGatewayEnabled"]}

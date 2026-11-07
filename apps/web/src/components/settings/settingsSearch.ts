@@ -1295,7 +1295,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "LAN gateway peers",
     to: "/settings/connections",
     targetId: "lan-gateway-peers",
-    searchTerms: ["lan gateway peers reverse proxy tailscale tunnel connect add url"],
+    searchTerms: [
+      "lan gateway peers reverse proxy tailscale tunnel connect enabled environments automatic",
+    ],
   },
   {
     id: "remote-environments",

@@ -16,9 +16,12 @@ import {
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
+  desiredGatewayPeers,
+  gatewayPeerUpstreamUrl,
   mergeGatewayRoutes,
   mergeLearnedRoutes,
   pendingRouteOrder,
+  planGatewayPeerReconcile,
   removedWithRelay,
   routesAfterRemoving,
   sendsTokenInClear,
@@ -617,5 +620,87 @@ describe("gateway routes", () => {
       allowInsecure: true,
     });
     expect(ids(next)).toContain(`gateway:${GATEWAY_ID}:${PEER_ID}@lan`);
+  });
+});
+
+describe("gateway peer upstream selection", () => {
+  const GATEWAY_ID = EnvironmentId.make("env_gateway");
+
+  it("prefers LAN over Tailscale and loopback", () => {
+    const entry: ConnectionCatalogEntry = {
+      target: LAN.target,
+      profile: LAN.profile,
+      alternateRoutes: [TAILNET, direct("loop", "http://127.0.0.1:3773/")],
+      enabled: true,
+    };
+    expect(gatewayPeerUpstreamUrl(entry)).toBe("http://192.168.1.10:3773");
+  });
+
+  it("skips gateway, relay, and public routes", () => {
+    expect(
+      gatewayPeerUpstreamUrl({
+        target: RELAY.target,
+        profile: RELAY.profile,
+        enabled: true,
+      }),
+    ).toBeNull();
+    expect(
+      gatewayPeerUpstreamUrl({
+        target: PUBLIC.target,
+        profile: PUBLIC.profile,
+        enabled: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("builds the desired peer set from enabled catalog entries", () => {
+    const peer: ConnectionCatalogEntry = {
+      target: LAN.target,
+      profile: LAN.profile,
+      enabled: true,
+    };
+    const disabled: ConnectionCatalogEntry = {
+      target: new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("env_off"),
+        label: "Off",
+        connectionId: "off",
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: "off",
+          environmentId: EnvironmentId.make("env_off"),
+          label: "Off",
+          httpBaseUrl: "http://192.168.1.99:3773/",
+          wsBaseUrl: "ws://192.168.1.99:3773/",
+        }),
+      ),
+      enabled: false,
+    };
+    expect(desiredGatewayPeers([peer, disabled], GATEWAY_ID)).toEqual([
+      { environmentId: ENVIRONMENT_ID, url: "http://192.168.1.10:3773" },
+    ]);
+    expect(desiredGatewayPeers([peer], ENVIRONMENT_ID)).toEqual([]);
+  });
+
+  it("plans adds for missing or moved peers and removes stale ones", () => {
+    const keep = EnvironmentId.make("env_keep");
+    const move = EnvironmentId.make("env_move");
+    const drop = EnvironmentId.make("env_drop");
+    expect(
+      planGatewayPeerReconcile({
+        desired: [
+          { environmentId: keep, url: "http://192.168.1.10:3773" },
+          { environmentId: move, url: "http://192.168.1.20:3773" },
+        ],
+        listed: [
+          { environmentId: keep, httpBaseUrl: "http://192.168.1.10:3773/" },
+          { environmentId: move, httpBaseUrl: "http://192.168.1.99:3773/" },
+          { environmentId: drop, httpBaseUrl: "http://192.168.1.30:3773/" },
+        ],
+      }),
+    ).toEqual({
+      add: [{ environmentId: move, url: "http://192.168.1.20:3773" }],
+      remove: [drop],
+    });
   });
 });
