@@ -1,17 +1,23 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -23,6 +29,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -41,6 +48,15 @@ const layerRelayClientAvailable = Layer.succeed(
 
 const unusedHttpClient = HttpClient.make(() => Effect.die("unused"));
 
+const decodeLogEntry = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      level: Schema.String,
+      message: Schema.Tuple([Schema.String, Schema.Unknown]),
+    }),
+  ),
+);
+
 const emptySecretStoreLayer = Layer.mock(ServerSecretStore.ServerSecretStore)({
   get: () => Effect.succeedNone,
   set: () => Effect.void,
@@ -53,17 +69,20 @@ const runtimeDependencies = (
   secretStoreLayer = emptySecretStoreLayer,
 ) =>
   Layer.mergeAll(
+    ManagedPolicy.layerTest(),
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Layer.succeed(HttpClient.HttpClient, httpClient),
     relayClientLayer,
     secretStoreLayer,
-  );
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-endpoint-" }),
+  ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
   httpClient = unusedHttpClient,
   secretStoreLayer = emptySecretStoreLayer,
+  env: Record<string, string> = {},
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
@@ -74,7 +93,10 @@ const buildCloudManagedEndpointRuntime = (
     return yield* Effect.service(ManagedEndpointRuntime.CloudManagedEndpointRuntime).pipe(
       Effect.provide(context),
     );
-  });
+  }).pipe(
+    Effect.provideService(HostProcess.Environment, env),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+  );
 
 function makeHandle(input: {
   readonly pid: number;
@@ -329,19 +351,6 @@ describe("CloudManagedEndpointRuntime", () => {
       isRunning?: Effect.Effect<boolean>;
     } = {},
   ) {
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        const previous = process.env.TUNNEL_TRANSPORT_PROTOCOL;
-        if (options.transport === undefined) delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
-        else process.env.TUNNEL_TRANSPORT_PROTOCOL = options.transport;
-        return previous;
-      }),
-      (previous) =>
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
-          else process.env.TUNNEL_TRANSPORT_PROTOCOL = previous;
-        }),
-    );
     const spawned: Array<ChildProcess.StandardCommand> = [];
     const killed: Array<number> = [];
     const outputs: Array<Queue.Queue<Uint8Array>> = [];
@@ -394,13 +403,43 @@ describe("CloudManagedEndpointRuntime", () => {
         index,
         lines + "2026-10-16T20:30:00Z INF Registered tunnel connection connIndex=0\n",
       ).pipe(Effect.andThen(Stream.runHead(runtime.tunnelConnected)));
-    return { spawner, spawned, killed, exits, started, emit, observe };
+    const env: Record<string, string> =
+      options.transport === undefined ? {} : { TUNNEL_TRANSPORT_PROTOCOL: options.transport };
+    return { spawner, env, spawned, killed, exits, started, emit, observe };
   });
+
+  it.effect("restarts only the inspected connector and supervises its replacement", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner();
+      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(false);
+      yield* runtime.applyConfig(tunnelConfig);
+      yield* fixture.observe(runtime, 0);
+      expect(yield* runtime.inspectConnector).toMatchObject({ pid: 800 });
+      expect(yield* runtime.restartConnector(799, Effect.succeed(true))).toBe(false);
+      // A newer check saw the tunnel recover while this one waited for the lock.
+      expect(yield* runtime.restartConnector(800, Effect.succeed(false))).toBe(false);
+      expect(fixture.killed).toEqual([]);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(true);
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      expect(yield* Queue.take(fixture.started)).toBe(1);
+      yield* fixture.observe(runtime, 1);
+      expect(fixture.killed).toContain(800);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(false);
+      expect(yield* runtime.inspectConnector).toMatchObject({ pid: 801 });
+    }),
+  );
 
   it.effect("preserves an explicit transport choice despite repeated QUIC stalls", () =>
     Effect.gen(function* () {
       const fixture = yield* makeTransportSpawner({ transport: "quic" });
-      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        fixture.spawner,
+        layerRelayClientAvailable,
+        unusedHttpClient,
+        emptySecretStoreLayer,
+        fixture.env,
+      );
       yield* runtime.applyConfig(tunnelConfig);
       yield* fixture.observe(runtime, 0, quicDialWarning.repeat(30));
       yield* fixture.observe(runtime, 0, quicDatagramWarning.repeat(30));
@@ -418,7 +457,7 @@ describe("CloudManagedEndpointRuntime", () => {
         const context = yield* Layer.build(
           ServerSecretStore.layer.pipe(
             Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-transport-test-" })),
-            Layer.provide(NodeServices.layer),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         );
         const secretStoreLayer = Layer.succeed(
@@ -426,12 +465,13 @@ describe("CloudManagedEndpointRuntime", () => {
           context.pipe(Context.get(ServerSecretStore.ServerSecretStore)),
         );
         const fixture = yield* makeTransportSpawner();
-        const start = (spawner = fixture.spawner) =>
+        const start = (spawner = fixture.spawner, env = fixture.env) =>
           buildCloudManagedEndpointRuntime(
             spawner,
             layerRelayClientAvailable,
             unusedHttpClient,
             secretStoreLayer,
+            env,
           );
         yield* Effect.gen(function* () {
           const runtime = yield* start();
@@ -448,7 +488,7 @@ describe("CloudManagedEndpointRuntime", () => {
         for (const transport of [undefined, "quic", "http2", "auto", undefined]) {
           yield* Effect.gen(function* () {
             const next = yield* makeTransportSpawner(transport ? { transport } : {});
-            const restarted = yield* start(next.spawner);
+            const restarted = yield* start(next.spawner, next.env);
             yield* restarted.applyConfig(tunnelConfig);
             if (transport === undefined) {
               expect(next.spawned[0]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
@@ -539,6 +579,130 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* fixture.observe(runtime, 2);
       expect(fixture.spawned[2]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
     }),
+  );
+
+  it.effect("decides a restart only once it holds the reconcile lock", () =>
+    Effect.gen(function* () {
+      const checking = yield* Deferred.make<void>();
+      const releaseCheck = yield* Deferred.make<void>();
+      const fixture = yield* makeTransportSpawner({
+        isRunning: Deferred.succeed(checking, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCheck)),
+          Effect.as(true),
+        ),
+      });
+      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      yield* runtime.applyConfig(tunnelConfig);
+      yield* fixture.observe(runtime, 0);
+
+      // Hold reconciliation in a process probe so the restart waits for the lock.
+      const probe = yield* runtime.applyConfig(tunnelConfig).pipe(Effect.forkChild);
+      yield* Deferred.await(checking);
+      let stillDead = true;
+      const restart = yield* runtime
+        .restartConnector(
+          800,
+          Effect.sync(() => stillDead),
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      stillDead = false;
+      yield* Deferred.succeed(releaseCheck, undefined);
+      yield* Fiber.join(probe);
+
+      expect(yield* Fiber.join(restart)).toBe(false);
+      expect(fixture.killed).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps redacted connector logs bounded even when rotation fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      for (const rotationBlocked of [false, true]) {
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-client-log-" });
+        const logPath = path.join(baseDir, "userdata", "logs", "relay-client.ndjson");
+        const existingLog = "x".repeat(1024 * 1024);
+        if (rotationBlocked) {
+          yield* fs.makeDirectory(`${logPath}.2`, { recursive: true });
+          yield* fs.writeFileString(`${logPath}.2/blocked`, "blocks rotation");
+          yield* fs.writeFileString(logPath, existingLog);
+        }
+        const warnings: unknown[] = [];
+        const logger = Logger.make(({ message }) => {
+          if (Array.isArray(message) && message[0] === "Relay client log unavailable") {
+            warnings.push(message);
+          }
+        });
+        const fixture = yield* makeTransportSpawner();
+        yield* Effect.gen(function* () {
+          const context = yield* Layer.build(
+            ManagedEndpointRuntime.layer.pipe(
+              Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+              Layer.provide(runtimeDependencies(fixture.spawner)),
+            ),
+          );
+          const runtime = yield* Effect.service(
+            ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+          ).pipe(Effect.provide(context));
+          yield* runtime.applyConfig({ ...tunnelConfig, connectorToken: "connector-secret" });
+          yield* fixture.observe(
+            runtime,
+            0,
+            '2026-10-16T20:29:40Z ERR Failed to serve tunnel connection error="rejected connector-secret" connIndex=0\n',
+          );
+        }).pipe(Effect.scoped, Effect.withLogger(logger));
+
+        const log = yield* fs.readFileString(logPath);
+        if (rotationBlocked) {
+          expect(log.length).toBe(existingLog.length);
+          expect(warnings).toHaveLength(1);
+          continue;
+        }
+        const entries = log
+          .trim()
+          .split("\n")
+          .map((line) => decodeLogEntry(line));
+        expect(entries.map((entry) => [entry.level, entry.message[0]])).toEqual([
+          ["INFO", "Relay client process started; waiting for tunnel connection"],
+          ["WARN", "Relay client reported a transport warning"],
+          ["INFO", "Relay client tunnel connection registered"],
+          ["INFO", "Relay client stopped"],
+        ]);
+        expect(log).toContain("rejected <redacted>");
+        expect(log).not.toContain("connector-secret");
+        const oversizedFixture = yield* makeTransportSpawner();
+        yield* Effect.gen(function* () {
+          const context = yield* Layer.build(
+            ManagedEndpointRuntime.layer.pipe(
+              Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+              Layer.provide(runtimeDependencies(oversizedFixture.spawner)),
+            ),
+          );
+          const runtime = yield* Effect.service(
+            ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+          ).pipe(Effect.provide(context));
+          yield* runtime.applyConfig(tunnelConfig);
+          yield* oversizedFixture.observe(runtime, 0, "ERR " + "界".repeat(1024 * 1024) + "\n");
+        }).pipe(Effect.scoped);
+        const files = yield* fs.readDirectory(path.dirname(logPath));
+        const allEntries = [];
+        for (const file of files.filter((name) => name.startsWith("relay-client.ndjson"))) {
+          const contents = yield* fs.readFileString(path.join(path.dirname(logPath), file));
+          expect(Buffer.byteLength(contents)).toBeLessThanOrEqual(1024 * 1024);
+          allEntries.push(
+            ...contents
+              .trim()
+              .split("\n")
+              .map((line) => decodeLogEntry(line)),
+          );
+        }
+        expect(
+          allEntries.some(
+            (entry) => entry.message[0] === "Relay client log entry omitted: exceeds 1 MiB",
+          ),
+        ).toBe(true);
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("discards a pending fallback when its connector is replaced or removed", () =>
