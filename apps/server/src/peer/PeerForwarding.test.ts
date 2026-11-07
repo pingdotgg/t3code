@@ -136,6 +136,8 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
           threadId: input.threadId,
           run: run(waits.length < 3 ? "running" : "completed"),
           timedOut: waits.length < 3,
+          hasPendingQuestion: false,
+          pendingApproval: null,
         })),
       ),
   });
@@ -450,6 +452,8 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
         runId: boxRun,
         status: "completed",
         timedOut: false,
+        hasPendingQuestion: false,
+        pendingApproval: null,
       });
       // Three pieces of at most 50 s each, the later ones pinned to the run
       // the first one found.
