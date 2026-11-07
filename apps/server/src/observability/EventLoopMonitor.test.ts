@@ -20,6 +20,7 @@ const stalled: EventLoopMonitor.EventLoopReadings = {
   heapUsedBytes: 512 * 1024 * 1024,
   elapsedMs: 30_000,
   loadAverage: 219.43,
+  cpuBusy: 0.98,
   cpuCount: 18,
 };
 
