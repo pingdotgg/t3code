@@ -130,6 +130,19 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(nav.button);
   });
 
+  it("enters the Settings sections on the open section", () => {
+    using fixture = setup();
+    const nav = fixture.area("settings-nav", 0);
+    const content = fixture.area("settings", 1);
+    nav.element.insertAdjacentHTML(
+      "beforeend",
+      '<button data-settings-section="/settings/general">General</button><button data-settings-section="/settings/chat" aria-current="page">Chat</button>',
+    );
+    content.button.focus();
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(nav.element.querySelector('[aria-current="page"]'));
+  });
+
   it("keeps moving while a shortcut recorder is on the page but not focused", () => {
     using fixture = setup();
     const nav = fixture.area("settings-nav", 0);

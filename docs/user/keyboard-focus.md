@@ -33,5 +33,5 @@ expand and collapse groups. `F2` renames the focused thread.
 Press `Shift+F10` or the Context Menu key to open the focused thread's menu. Use the arrow
 keys to move through it, Enter to choose, and Escape to close it.
 
-The Settings section list works the same way: Up and Down move between sections, and Enter
-opens one.
+The Settings section list works the same way: Tab moves through each section, Up and Down
+also move between sections without opening them, and Enter opens one.
