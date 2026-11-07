@@ -83,10 +83,57 @@ describe("appendTerminalOutput", () => {
 
   it("drops an escape sequence that never terminates and resumes after it", () => {
     expect(feed(["ok\u001b]", "x".repeat(200), "\nafter"]).text).toBe("ok\nafter");
+    expect(feed(["ok\u001b]0;title\u001b", "\u001b[31mred"]).text).toBe(
+      "ok\u001b[0;31mred\u001b[0m",
+    );
   });
 });
 
 describe("appendTerminalOutput edge cases from review", () => {
+  const boldRed = { color: TERMINAL_PALETTES.dark[1], fontWeight: "600" } as const;
+  it.each([
+    [
+      "a curly underline",
+      "\u001b[1;31m\u001b[4:3mX",
+      { ...boldRed, textDecorationLine: "underline" },
+    ],
+    ["underline off in colon form", "\u001b[1;31m\u001b[4:0mX", boldRed],
+    ["a true-colour underline colour", "\u001b[1;31m\u001b[58;2;255;0;0mX", boldRed],
+    ["a 256-colour underline colour", "\u001b[58;5;31mX", null],
+    [
+      "a colon-form underline colour",
+      "\u001b[4m\u001b[58:2::255:0:0mX",
+      { textDecorationLine: "underline" },
+    ],
+    ["extra fields in a colon-form indexed underline colour", "\u001b[58:5:0:32mX", null],
+    [
+      "extra fields in a colon-form indexed colour",
+      "\u001b[38:5:1:4mX",
+      { color: TERMINAL_PALETTES.dark[1] },
+    ],
+    [
+      "a true colour with its fields after colons",
+      "\u001b[38;2:255:0:0;1mX",
+      { color: "rgb(255,0,0)", fontWeight: "600" },
+    ],
+    [
+      "an indexed colour with its index after a colon",
+      "\u001b[38;5:1;4mX",
+      { color: TERMINAL_PALETTES.dark[1], textDecorationLine: "underline" },
+    ],
+    [
+      "a semicolon-form colour value that looks like a colour code",
+      "\u001b[38;5;38;2:1:2:3mX",
+      { color: "rgb(0,175,215)", opacity: 0.65 },
+    ],
+  ])("reads %s without disturbing the other attributes", (_, input, style) => {
+    const text = normalizeTerminalOutput(input).text;
+    expect(terminalOutputSpans(text, TERMINAL_PALETTES.dark)).toEqual([{ text: "X", style }]);
+    for (let cut = 1; cut < input.length; cut += 1) {
+      expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(text);
+    }
+  });
+
   it("leaves the screen and cursor alone for unsupported erase modes", () => {
     for (const sequence of ["3K", "4J", "99K", "99J"]) {
       const input = `a\nb\nc\u001b[${sequence}X`;
@@ -124,6 +171,24 @@ describe("appendTerminalOutput under adversarial output", () => {
       expect(feed([input]).text).toBe("a\nb\ncX");
       for (let cut = 1; cut < input.length; cut += 1) {
         expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("a\nb\ncX");
+      }
+    }
+  });
+
+  it("drops escape sequences with intermediate bytes without printing their final byte", () => {
+    for (const sequence of ["#8", "#6", "%G", " F", "-A", ".A", "(%5", "(B"]) {
+      const input = `a\u001b${sequence}b`;
+      expect(feed([input]).text).toBe("ab");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("ab");
+      }
+    }
+    for (const [interrupted, expected] of [
+      ["a\u001b#\u001b[31mb", feed(["a\u001b[31mb"]).text],
+      ["a\u001b#\n8b", "a\n8b"],
+    ] as const) {
+      for (let cut = 0; cut < interrupted.length; cut += 1) {
+        expect(feed([interrupted.slice(0, cut), interrupted.slice(cut)]).text).toBe(expected);
       }
     }
   });
