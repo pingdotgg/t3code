@@ -712,7 +712,7 @@ function useChatMarkdownState({
       );
     }
     return openUrlInPreview({ threadRef, url, openPreview }).then((result) => {
-      if (result._tag === "Success") recordVisitForThread(threadRef, url);
+      if (result._tag === "Success") recordVisitForThread(threadRef, url, result.value.profileId);
       else if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         if (isBrowserSettingsReadError(error)) {

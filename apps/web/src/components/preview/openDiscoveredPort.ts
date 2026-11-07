@@ -26,7 +26,7 @@ export async function openDiscoveredPort<E>(input: {
     url: resolvedUrl,
   });
   return mapAtomCommandResult(result, (snapshot) => {
-    recordVisitForThread(input.threadRef, input.port.url);
+    recordVisitForThread(input.threadRef, input.port.url, snapshot.profileId);
     useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
   });
 }

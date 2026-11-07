@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
+  DEFAULT_BROWSER_PROFILE_ID,
   EnvironmentId,
+  INCOGNITO_BROWSER_PROFILE_ID,
   type PreviewSessionSnapshot,
   ProjectId,
   ThreadId,
@@ -157,11 +159,18 @@ const threadRef = {
 
 let settledAt = 0;
 
-function settle(url: string, title: string, tabId = "tab_a", ref = threadRef): void {
+function settle(
+  url: string,
+  title: string,
+  tabId = "tab_a",
+  ref = threadRef,
+  profileId?: string,
+): void {
   settledAt += 1;
   const snapshot: PreviewSessionSnapshot = {
     threadId: ref.threadId,
     tabId,
+    ...(profileId === undefined ? {} : { profileId }),
     navStatus: { _tag: "Success", url, title },
     canGoBack: false,
     canGoForward: false,
@@ -179,20 +188,83 @@ function resetStores(): () => void {
 describe("useBrowserHistoryStore", () => {
   beforeEach(resetStores);
 
+  it.each([false, true])(
+    "excludes incognito visits from saved history with project already registered: %s",
+    async (registered) => {
+      if (registered) useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
+      recordVisitForThread(
+        threadRef,
+        "https://private.example/unique",
+        INCOGNITO_BROWSER_PROFILE_ID,
+        1,
+      );
+      expect(useBrowserHistoryStore.getState().pendingVisitsByThreadKey).toEqual({});
+      useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
+      for (const [index, profileId] of [undefined, DEFAULT_BROWSER_PROFILE_ID, "work"].entries()) {
+        recordVisitForThread(threadRef, `https://public.example/${index}`, profileId, index + 2);
+      }
+      expect(
+        useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.map((entry) => entry.url),
+      ).toEqual([
+        "https://public.example/2",
+        "https://public.example/1",
+        "https://public.example/0",
+      ]);
+      const { storage, name } = useBrowserHistoryStore.persist.getOptions();
+      const saved = JSON.stringify(await storage!.getItem(name!));
+      expect(saved).not.toContain("private.example");
+      expect(saved).toContain("public.example");
+      await useBrowserHistoryStore.persist.rehydrate();
+      expect(
+        useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.map((entry) => entry.url),
+      ).toEqual([
+        "https://public.example/2",
+        "https://public.example/1",
+        "https://public.example/0",
+      ]);
+    },
+  );
+
+  it.each([false, true])(
+    "excludes incognito titles from regular history with page settled before visit: %s",
+    async (settledBeforeVisit) => {
+      useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
+      if (!settledBeforeVisit) {
+        recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
+        settle("http://a.test/", "Public page");
+      }
+      settle(
+        "http://a.test/",
+        "Private page",
+        "private-tab",
+        threadRef,
+        INCOGNITO_BROWSER_PROFILE_ID,
+      );
+      if (settledBeforeVisit) recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
+      expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]?.title).toBe(
+        settledBeforeVisit ? undefined : "Public page",
+      );
+      const { storage, name } = useBrowserHistoryStore.persist.getOptions();
+      expect(JSON.stringify(await storage!.getItem(name!))).not.toContain("Private page");
+      settle("http://a.test/", "Work page", "work-tab", threadRef, "work");
+      expect(JSON.stringify(await storage!.getItem(name!))).toContain("Work page");
+    },
+  );
+
   it("titles only pages already in history when they settle", () => {
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
     settle("http://a.test/", "Should not create");
     expect(useBrowserHistoryStore.getState().byProjectKey).toEqual({});
-    recordVisitForThread(threadRef, "http://a.test/#/settings", 1);
+    recordVisitForThread(threadRef, "http://a.test/#/settings", undefined, 1);
     settle("http://a.test/#/settings", "My App");
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]?.title).toBe("My App");
   });
 
   it("titles a visit recorded after its page already settled", () => {
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://other.test/", 1);
+    recordVisitForThread(threadRef, "http://other.test/", undefined, 1);
     settle("http://a.test/", "My App");
-    recordVisitForThread(threadRef, "http://a.test/", 2);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 2);
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]).toMatchObject({
       url: "http://a.test/",
       title: "My App",
@@ -201,7 +273,7 @@ describe("useBrowserHistoryStore", () => {
 
   it("keeps the newest title when another tab shows the same url", () => {
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://a.test/", 1);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
     settle("http://a.test/", "Old", "tab_a");
     settle("http://a.test/", "Old", "tab_b");
     settle("http://a.test/", "New", "tab_a");
@@ -213,7 +285,7 @@ describe("useBrowserHistoryStore", () => {
     const store = useBrowserHistoryStore.getState();
     store.registerThreadProject(threadRef, "proj-a");
     store.registerThreadProject(otherThreadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://a.test/", 1);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
     settle("http://a.test/", "Old", "tab_a", threadRef);
     settle("http://a.test/", "New", "tab_a", otherThreadRef);
     settle("http://b.test/", "Unrelated", "tab_b", threadRef);
@@ -229,10 +301,10 @@ describe("useBrowserHistoryStore", () => {
     const store = useBrowserHistoryStore.getState();
     store.registerThreadProject(threadRef, "proj-a");
     store.registerThreadProject(otherThreadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://a.test/", 1);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
     settle("http://a.test/", "Old", "tab_a", threadRef);
     settle("http://a.test/", "New", "tab_a", otherThreadRef);
-    recordVisitForThread(threadRef, "http://b.test/", 2);
+    recordVisitForThread(threadRef, "http://b.test/", undefined, 2);
     expect(
       useBrowserHistoryStore
         .getState()
@@ -245,7 +317,7 @@ describe("useBrowserHistoryStore", () => {
     const store = useBrowserHistoryStore.getState();
     store.registerThreadProject(threadRef, "proj-a");
     store.registerThreadProject(otherThreadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://a.test/", 1);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
     settle("http://a.test/", "Old", "tab_a", threadRef);
     settle("http://a.test/", "New", "tab_a", otherThreadRef);
     // A resize or a list reconcile replaces the session without a new page load.
@@ -258,16 +330,16 @@ describe("useBrowserHistoryStore", () => {
     const store = useBrowserHistoryStore.getState();
     store.registerThreadProject(threadRef, "proj-a");
     store.registerThreadProject(otherThreadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://a.test/", 1);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
     settle("http://a.test/", "Old", "tab_a", threadRef);
     settle("http://a.test/", "New", "tab_a", otherThreadRef);
-    recordVisitForThread(threadRef, "http://a.test/", 2);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 2);
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]?.title).toBe("New");
   });
 
   it("sets a title against a settled url that differs from the stored one only by a trailing slash", () => {
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://a.test/community", 1);
+    recordVisitForThread(threadRef, "http://a.test/community", undefined, 1);
     settle("http://a.test/community/", "Community");
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]).toMatchObject({
       url: "http://a.test/community",
@@ -275,7 +347,7 @@ describe("useBrowserHistoryStore", () => {
     });
 
     useBrowserHistoryStore.setState({ byProjectKey: {} });
-    recordVisitForThread(threadRef, "http://a.test/community/", 1);
+    recordVisitForThread(threadRef, "http://a.test/community/", undefined, 1);
     settle("http://a.test/community", "Community");
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]).toMatchObject({
       url: "http://a.test/community/",
@@ -285,7 +357,7 @@ describe("useBrowserHistoryStore", () => {
 
   it("matches a requested localhost URL to the resolved environment host", () => {
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://localhost:5173/app", 1);
+    recordVisitForThread(threadRef, "http://localhost:5173/app", undefined, 1);
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.64.2:3773" });
     settle("http://192.168.64.2:5173/app", "Local App");
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]?.title).toBe("Local App");
@@ -294,16 +366,16 @@ describe("useBrowserHistoryStore", () => {
   it("deduplicates loopback aliases and the resolved environment host", () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.64.2:3773" });
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://localhost:5173/app", 1);
-    recordVisitForThread(threadRef, "http://127.0.0.1:5173/app", 2);
-    recordVisitForThread(threadRef, "http://192.168.64.2:5173/app", 3);
+    recordVisitForThread(threadRef, "http://localhost:5173/app", undefined, 1);
+    recordVisitForThread(threadRef, "http://127.0.0.1:5173/app", undefined, 2);
+    recordVisitForThread(threadRef, "http://192.168.64.2:5173/app", undefined, 3);
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]).toEqual([
       { url: "http://localhost:5173/app", lastVisitedAt: 3 },
     ]);
 
     useBrowserHistoryStore.setState({ byProjectKey: {} });
-    recordVisitForThread(threadRef, "http://192.168.64.2:5173/app", 4);
-    recordVisitForThread(threadRef, "http://localhost:5173/app", 5);
+    recordVisitForThread(threadRef, "http://192.168.64.2:5173/app", undefined, 4);
+    recordVisitForThread(threadRef, "http://localhost:5173/app", undefined, 5);
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]).toEqual([
       { url: "http://localhost:5173/app", lastVisitedAt: 5 },
     ]);
@@ -325,7 +397,7 @@ describe("thread project resolution", () => {
     entities.projects = [repoProject];
     entities.shellProjectId = "project-1";
 
-    recordVisitForThread(threadRef, "http://localhost:5173/", 1);
+    recordVisitForThread(threadRef, "http://localhost:5173/", undefined, 1);
     settle("http://localhost:5173/", "Dev App");
 
     expect(useBrowserHistoryStore.getState().byProjectKey).toEqual({
@@ -343,7 +415,7 @@ describe("thread project resolution", () => {
         threadId: threadRef.threadId,
       });
 
-    recordVisitForThread(threadRef, "http://localhost:5173/", 1);
+    recordVisitForThread(threadRef, "http://localhost:5173/", undefined, 1);
 
     expect(useBrowserHistoryStore.getState().byProjectKey).toEqual({
       "env-1:/repo": [{ url: "http://localhost:5173/", lastVisitedAt: 1 }],
@@ -362,7 +434,7 @@ describe("thread project resolution", () => {
       };
     });
 
-    recordVisitForThread(threadRef, "http://localhost:5173/", 1);
+    recordVisitForThread(threadRef, "http://localhost:5173/", undefined, 1);
     expect(useBrowserHistoryStore.getState().projectKeyByThreadKey).toEqual({});
 
     settingsHydration.finish();
@@ -373,24 +445,32 @@ describe("thread project resolution", () => {
     expect(useBrowserHistoryStore.getState().pendingVisitsByThreadKey).toEqual({});
   });
 
-  it("lands visits queued before the thread's project loaded with the next visit", () => {
-    recordVisitForThread(threadRef, "http://a.test/", 1);
-    entities.projects = [repoProject];
-    entities.shellProjectId = "project-1";
-    recordVisitForThread(threadRef, "http://b.test/", 2);
+  it.each([undefined, INCOGNITO_BROWSER_PROFILE_ID])(
+    "lands queued regular visits when the next visit uses profile %s",
+    (profileId) => {
+      recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
+      entities.projects = [repoProject];
+      entities.shellProjectId = "project-1";
+      recordVisitForThread(threadRef, "http://b.test/", profileId, 2);
 
-    expect(
-      useBrowserHistoryStore.getState().byProjectKey["env-1:/repo"]?.map((entry) => entry.url),
-    ).toEqual(["http://b.test/", "http://a.test/"]);
-  });
+      expect(
+        useBrowserHistoryStore.getState().byProjectKey["env-1:/repo"]?.map((entry) => entry.url),
+      ).toEqual(
+        profileId === INCOGNITO_BROWSER_PROFILE_ID
+          ? ["http://a.test/"]
+          : ["http://b.test/", "http://a.test/"],
+      );
+      expect(useBrowserHistoryStore.getState().pendingVisitsByThreadKey).toEqual({});
+    },
+  );
 });
 
 describe("pendingVisitsByThreadKey", () => {
   beforeEach(resetStores);
 
   it("queues a visit recorded before registration and drains it in order on registration", () => {
-    recordVisitForThread(threadRef, "http://a.test/", 1);
-    recordVisitForThread(threadRef, "http://b.test/", 2);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
+    recordVisitForThread(threadRef, "http://b.test/", undefined, 2);
     expect(useBrowserHistoryStore.getState().byProjectKey).toEqual({});
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.map((e) => e.url)).toEqual([
@@ -408,8 +488,8 @@ describe("pendingVisitsByThreadKey", () => {
       threadId: ThreadId.make("thread-2"),
     };
     useBrowserHistoryStore.getState().registerThreadProject(otherThreadRef, "proj-a");
-    recordVisitForThread(otherThreadRef, "http://newer.test/", 2000);
-    recordVisitForThread(threadRef, "http://older.test/", 1000);
+    recordVisitForThread(otherThreadRef, "http://newer.test/", undefined, 2000);
+    recordVisitForThread(threadRef, "http://older.test/", undefined, 1000);
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
 
     const entries = useBrowserHistoryStore.getState().byProjectKey["proj-a"];
@@ -422,7 +502,7 @@ describe("titles before registration", () => {
   beforeEach(resetStores);
 
   it("applies a settled page's title once the matching visit drains", () => {
-    recordVisitForThread(threadRef, "http://a.test/", 1);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
     settle("http://a.test/", "My App");
     expect(useBrowserHistoryStore.getState().byProjectKey).toEqual({});
 
@@ -434,10 +514,10 @@ describe("titles before registration", () => {
 
   it("keeps another thread's title when a queued visit to the same url drains", () => {
     const otherThreadRef = { ...threadRef, threadId: ThreadId.make("thread-2") };
-    recordVisitForThread(threadRef, "http://a.test/", 1);
+    recordVisitForThread(threadRef, "http://a.test/", undefined, 1);
     settle("http://a.test/", "Old", "tab_a", threadRef);
     useBrowserHistoryStore.getState().registerThreadProject(otherThreadRef, "proj-a");
-    recordVisitForThread(otherThreadRef, "http://a.test/", 2);
+    recordVisitForThread(otherThreadRef, "http://a.test/", undefined, 2);
     settle("http://a.test/", "New", "tab_a", otherThreadRef);
 
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
