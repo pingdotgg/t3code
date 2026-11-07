@@ -244,43 +244,62 @@ export const make = Effect.gen(function* () {
     );
     return permissions(repo, pr, viewer);
   });
+  const readCheckPolicy = Effect.fn("ForgejoPullRequestProvider.readCheckPolicy")(
+    (input: ProviderRepositoryRef, base: string) =>
+      read(
+        {
+          ...input,
+          path: `${repoPath(input)}/branches/${base.split("/").map(encodeURIComponent).join("/")}`,
+        },
+        ForgejoBranchStatusChecks,
+      ).pipe(
+        Effect.catchTags({
+          PullRequestProviderError: (error) => {
+            if (
+              isForgejoCliError(error.cause) &&
+              (error.cause.reason === "forbidden" || error.cause.reason === "not-found")
+            ) {
+              return Effect.void;
+            }
+            return Effect.fail(error);
+          },
+        }),
+      ),
+  );
+  const readStatuses = Effect.fn("ForgejoPullRequestProvider.readStatuses")(
+    (input: ProviderRepositoryRef, sha: string) =>
+      page(
+        {
+          ...input,
+          path: `${repoPath(input)}/statuses/${encodeURIComponent(sha)}?sort=recentupdate`,
+        },
+        ForgejoStatus,
+      ).pipe(Effect.map(({ items }) => items)),
+  );
   const readChecks = Effect.fn("ForgejoPullRequestProvider.readChecks")(function* (
     input: ProviderRepositoryRef,
     pr: typeof ForgejoPullRequest.Type,
   ) {
-    const branch = read(
-      {
-        ...input,
-        path: `${repoPath(input)}/branches/${pr.base.ref.split("/").map(encodeURIComponent).join("/")}`,
-      },
-      ForgejoBranchStatusChecks,
-    ).pipe(
-      Effect.catchTags({
-        PullRequestProviderError: (error) => {
-          if (
-            isForgejoCliError(error.cause) &&
-            (error.cause.reason === "forbidden" || error.cause.reason === "not-found")
-          ) {
-            return Effect.succeed({});
-          }
-          return Effect.fail(error);
-        },
-      }),
-    );
     const [statuses, policy] = yield* Effect.all(
-      [
-        page(
-          {
-            ...input,
-            path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
-          },
-          ForgejoStatus,
-        ),
-        branch,
-      ],
+      [readStatuses(input, pr.head.sha), readCheckPolicy(input, pr.base.ref)],
       { concurrency: 2 },
     );
-    return markRequiredForgejoChecks(forgejoChecks(statuses.items, pr.html_url), policy);
+    return {
+      checks: markRequiredForgejoChecks(forgejoChecks(statuses, pr.html_url), policy ?? {}),
+      policyAvailable: policy !== undefined,
+    };
+  });
+  const readSummary = Effect.fn("ForgejoPullRequestProvider.readSummary")(function* (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) {
+    const pr = yield* getPull(input);
+    const { checks, policyAvailable } = yield* readChecks(input, pr).pipe(
+      Effect.catchTags({
+        PullRequestProviderError: () =>
+          Effect.succeed({ checks: undefined, policyAvailable: false }),
+      }),
+    );
+    return forgejoChangeRequest(pr, policyAvailable ? checks : undefined);
   });
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
@@ -293,7 +312,7 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("ForgejoPullRequestProvider.listChangeRequests")(
       function* (input) {
         const offset = input.cursor?.delivered ?? 0;
-        const items: ReturnType<typeof forgejoChangeRequest>[] = [];
+        const pulls: (typeof ForgejoPullRequest.Type)[] = [];
         const state = input.state === "merged" ? "closed" : input.state;
         const params = new URLSearchParams({ state, sort: "recentupdate" });
         const filters = input.filters;
@@ -332,31 +351,66 @@ export const make = Effect.gen(function* () {
         // Forgejo has no `merged` list state: `state=closed` returns merged and
         // closed-unmerged rows alike, so rows are filtered by their mapped state and
         // only matching rows count toward the requested limit.
-        for (let index = firstIndex; more && items.length < input.limit; index++) {
+        for (let index = firstIndex; more && pulls.length < input.limit; index++) {
           const result =
             index === 1 ? first : yield* readPage(query, Schema.NullOr(ForgejoPullRequest), index);
           const rows = result.rows;
           const start = index === firstIndex ? offset % pageSize : 0;
           const countBefore = consumed;
           for (const row of rows.slice(start)) {
-            if (items.length >= input.limit) break;
+            if (pulls.length >= input.limit) break;
             consumed++;
             if (!row) continue;
             const changeRequest = forgejoChangeRequest(row);
             if (input.state !== "all" && changeRequest.state !== input.state) continue;
-            items.push(changeRequest);
+            pulls.push(row);
           }
           more = result.more || rows.length - start > consumed - countBefore;
         }
+        const policies = new Map(
+          yield* Effect.forEach(
+            new Set(pulls.map((pr) => pr.base.ref)),
+            (base) =>
+              readCheckPolicy(input, base).pipe(
+                Effect.map((policy) => [base, policy] as const),
+                Effect.orElseSucceed(() => [base, undefined] as const),
+              ),
+            { concurrency: 4 },
+          ),
+        );
+        const statuses = new Map(
+          yield* Effect.forEach(
+            new Set(pulls.map((pr) => pr.head.sha)),
+            (sha) =>
+              readStatuses(input, sha).pipe(
+                Effect.map((checks) => [sha, checks] as const),
+                Effect.orElseSucceed(() => [sha, undefined] as const),
+              ),
+            { concurrency: 4 },
+          ),
+        );
+        const items = pulls.map((pr) => {
+          const checks = statuses.get(pr.head.sha);
+          const policy = policies.get(pr.base.ref);
+          return forgejoChangeRequest(
+            pr,
+            checks === undefined || policy === undefined
+              ? undefined
+              : markRequiredForgejoChecks(forgejoChecks(checks, pr.html_url), policy),
+          );
+        });
         return { items, truncated: more, continues: true, cursorAdvance: consumed };
       },
     ),
     getChangeRequestPreview: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
-    getChangeRequestSummary: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
+    getChangeRequestSummary: readSummary,
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
         const pr = yield* getPull(input);
-        return { state: forgejoChangeRequest(pr).state, checks: yield* readChecks(input, pr) };
+        return {
+          state: forgejoChangeRequest(pr).state,
+          checks: (yield* readChecks(input, pr)).checks,
+        };
       },
     ),
     getChangeRequest: Effect.fn("ForgejoPullRequestProvider.getChangeRequest")(function* (input) {
@@ -364,9 +418,9 @@ export const make = Effect.gen(function* () {
         [getPull(input), getRepo(input), getViewer(input)],
         { concurrency: 3 },
       );
-      const checks = yield* readChecks(input, pr);
+      const { checks, policyAvailable } = yield* readChecks(input, pr);
       return {
-        ...forgejoChangeRequest(pr),
+        ...forgejoChangeRequest(pr, policyAvailable ? checks : undefined),
         headSha: pr.head.sha,
         body: pr.body ?? "",
         changedFiles: pr.changed_files ?? 0,
