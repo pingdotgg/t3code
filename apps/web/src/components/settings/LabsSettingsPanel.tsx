@@ -5,6 +5,8 @@ import { ToolCallVisibility } from "@t3tools/contracts/settings";
 import * as Schema from "effect/Schema";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { isElectron } from "~/env";
+import { isMacPlatform } from "~/lib/utils";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -29,6 +31,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <SimlockHostsRow />
+        {isElectron && !isMacPlatform(navigator.platform) ? <KeepRunningInTrayRow /> : null}
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
@@ -111,6 +114,29 @@ function ToolCallVisibilityRow() {
             </SelectPopup>
           </Select>
         </div>
+      }
+    />
+  );
+}
+
+function KeepRunningInTrayRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("keep-running-in-tray")}
+      description={
+        "Closing the window keeps T3 Code running in the system tray, so agents and remote connections keep working. Open or quit it from the tray icon." +
+        (navigator.platform.toLowerCase().includes("linux")
+          ? " Linux requires system tray support. If no icon appears, launch T3 Code again to restore the window."
+          : "")
+      }
+      control={
+        <Switch
+          checked={settings.keepRunningInTray}
+          onCheckedChange={(checked) => updateSettings({ keepRunningInTray: Boolean(checked) })}
+          aria-label="Keep running in tray"
+        />
       }
     />
   );

@@ -24,8 +24,13 @@ choice, and `t3 status` to see it.
 The background service is not available on Windows, so there `t3 up` prints the
 `t3 serve` command to keep running in a terminal. You can also keep the desktop
 app running with its local environment enabled. Closing the desktop app's last
-window stops its local server. Saving your sign-in alone does not start a server
-or make the machine reachable.
+window stops its local server unless you turn on **Settings > Labs > Keep
+running in tray** on Windows or Linux; then T3 Code keeps running in the system
+tray until you choose **Quit** from the tray icon. Saving your sign-in alone
+does not start a server or make the machine reachable.
+
+On Linux, close-to-tray needs system tray support from your desktop environment.
+If no tray icon appears, launch T3 Code again to restore the window.
 
 On your other device, sign in to the same T3 Connect account and choose the
 environment. On the app.t3.codes home page with no computer added yet, signing
