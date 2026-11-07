@@ -3092,6 +3092,174 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["unwatch", "merged", "unlink"] as const)(
+    "discards queued PR updates when the watch ends: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const maintenance = yield* ProjectionReplay.ProjectionReplay;
+        const threadId = ThreadId.make(`pr-watch-queue-${mode}`);
+        const projectId = ProjectId.make(`pr-watch-queue-project-${mode}`);
+        yield* seedProject({
+          projectId,
+          title: "Queued watch updates",
+          workspaceRoot: "/workspace/watch-queue",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-queue-create-${mode}`),
+          threadId,
+          projectId,
+          title: "Queued watch updates",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const send = (id: string, automatic = false) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${mode}:${id}`),
+            threadId,
+            messageId: MessageId.make(id),
+            text: "Update on pull request #7",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: automatic ? "agent" : "user",
+            creationSource: automatic ? "server" : "web",
+            ...(automatic && {
+              notification: {
+                source: { kind: "monitor" as const },
+                outcome: "updated" as const,
+                summary: "Monitor update",
+              },
+            }),
+          });
+        yield* Effect.addFinalizer(() =>
+          orchestrator
+            .dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make(`${mode}:cleanup`),
+              threadId,
+            })
+            .pipe(Effect.orDie),
+        );
+        yield* send("active-work");
+        const key = { host: "github.com", repository: "pingdotgg/t3code" };
+        for (const number of [7, 8]) {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`${mode}:watch:${number}`),
+            threadId,
+            ...key,
+            number,
+            watching: true,
+            link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
+          });
+          const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.find(
+            (link) => link.number === number,
+          )?.watch;
+          assert.isDefined(watch);
+          if (watch === undefined) return;
+          for (const sequence of number === 7 ? [1, 2] : [1]) {
+            yield* orchestrator.dispatch({
+              type: "thread.pull-request-watch.sync",
+              commandId: CommandId.make(`${mode}:wake:${number}:${sequence}`),
+              threadId,
+              ...key,
+              number,
+              startedAt: watch.startedAt,
+              watch,
+              wake: {
+                messageId: MessageId.make(`message:pr-watch:${number}:${sequence}`),
+                text: `PR ${number} changed`,
+                notification: {
+                  source: { kind: "monitor" },
+                  outcome: "updated",
+                  summary: `#${number}`,
+                },
+              },
+            });
+          }
+        }
+        yield* send("user-follow-up");
+        yield* send("background-monitor", true);
+        yield* send("message:pr-watch:legacy", true);
+        const before = yield* orchestrator.getThreadRecords(threadId, ["runs"]);
+        assert.equal(before.runs.filter((run) => run.status === "queued").length, 6);
+        if (mode === "merged") {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-link.sync",
+            commandId: CommandId.make(`${mode}:end`),
+            threadId,
+            ...key,
+            number: 7,
+            snapshot: {
+              state: "merged",
+              title: "Merged PR",
+              headBranch: "feature/pr",
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: null,
+              syncedAt: "2026-10-13T12:00:00.000Z",
+            },
+            stack: null,
+          });
+        } else {
+          yield* orchestrator.dispatch(
+            mode === "unwatch"
+              ? {
+                  type: "thread.pull-request.watch",
+                  commandId: CommandId.make(`${mode}:end`),
+                  threadId,
+                  ...key,
+                  number: 7,
+                  watching: false,
+                }
+              : {
+                  type: "thread.pull-request.unlink",
+                  commandId: CommandId.make(`${mode}:end`),
+                  threadId,
+                  ...key,
+                  number: 7,
+                },
+          );
+        }
+        const statuses = Effect.map(orchestrator.getThreadRecords(threadId, ["runs"]), ({ runs }) =>
+          Object.fromEntries(runs.map((run) => [run.userMessageId, run.status])),
+        );
+        assert.deepEqual(yield* statuses, {
+          "active-work": before.runs[0]!.status,
+          "message:pr-watch:7:1": "cancelled",
+          "message:pr-watch:7:2": "cancelled",
+          "message:pr-watch:8:1": "queued",
+          "user-follow-up": "queued",
+          "background-monitor": "queued",
+          "message:pr-watch:legacy": "queued",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`${mode}:stop-last`),
+          threadId,
+          ...key,
+          number: 8,
+          watching: false,
+        });
+        const final = yield* statuses;
+        assert.equal(final["message:pr-watch:8:1"], "cancelled");
+        assert.equal(final["message:pr-watch:legacy"], "cancelled");
+        assert.equal(final["user-follow-up"], "queued");
+        assert.equal(final["background-monitor"], "queued");
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.deepEqual(yield* statuses, final);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect.each(["manual", "automatic"])("settling ends every pull request watch: %s", (mode) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

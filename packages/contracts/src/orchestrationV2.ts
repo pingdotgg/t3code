@@ -1275,7 +1275,12 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     Schema.Struct({ kind: Schema.Literal("background_command").transform("command") }),
     SubagentNotificationSource,
     CommandNotificationSource,
-    Schema.Struct({ kind: Schema.Literal("monitor") }),
+    Schema.Struct({
+      kind: Schema.Literal("monitor"),
+      pullRequestWatch: Schema.optional(
+        Schema.Struct({ ...ThreadPullRequestKey.fields, startedAt: IsoDateTime }),
+      ),
+    }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
     Schema.Struct({ kind: Schema.Literal("system") }),
   ],

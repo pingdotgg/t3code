@@ -3120,7 +3120,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           messageId: command.wake.messageId,
           text: command.wake.text,
-          notification: command.wake.notification,
+          notification: {
+            ...command.wake.notification,
+            source: {
+              kind: "monitor",
+              pullRequestWatch: { ...key, startedAt: command.startedAt },
+            },
+          },
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
@@ -4135,6 +4141,55 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    if (command.type.startsWith("thread.pull-request")) {
+      const watches = threadPullRequestsOf(updatedThread).filter(
+        (link) =>
+          link.source !== "stack-dismissed" &&
+          link.watch !== undefined &&
+          link.snapshot?.state !== "merged" &&
+          link.snapshot?.state !== "closed",
+      );
+      const ended = threadPullRequestsOf(thread).some(
+        (link) =>
+          link.watch !== undefined &&
+          !watches.some(
+            (next) =>
+              threadPullRequestKeysEqual(next, link) &&
+              next.watch?.startedAt === link.watch?.startedAt,
+          ),
+      );
+      if (ended || (command.type === "thread.pull-request.watch" && !command.watching)) {
+        const projection = yield* projectionStore
+          .getThreadRecords(command.threadId, ["runs", "nodes", "attempts"])
+          .pipe(mapDispatchError(command));
+        const queued = projection.runs.filter((run) => run.status === "queued");
+        const messages = yield* projectionStore
+          .getMessagesById(
+            command.threadId,
+            queued.map((run) => run.userMessageId),
+          )
+          .pipe(mapDispatchError(command));
+        for (const run of queued) {
+          const message = messages.get(run.userMessageId);
+          const source = message?.notification?.source;
+          if (source?.kind !== "monitor") continue;
+          const origin = source.pullRequestWatch;
+          // Old releases stored only the server-owned message id, so retire those after every watch ends.
+          const stale = origin
+            ? !watches.some(
+                (link) =>
+                  threadPullRequestKeysEqual(link, origin) &&
+                  link.watch?.startedAt === origin.startedAt,
+              )
+            : watches.length === 0 &&
+              message?.createdBy === "agent" &&
+              message.creationSource === "server" &&
+              message.id.startsWith("message:pr-watch:");
+          if (!stale) continue;
+          yield* emitQueuedRunCancellation({ command, events, projection, run, now });
+        }
+      }
+    }
     if (
       command.type === "thread.pull-request-link.sync" ||
       command.type === "thread.pull-request-watch.sync"

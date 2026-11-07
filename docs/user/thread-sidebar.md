@@ -219,6 +219,9 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+When a pull request merges, is unlinked, or stops being watched, its queued agent updates
+are discarded. Your own queued messages and updates for other watched pull requests remain.
+
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
