@@ -168,28 +168,49 @@ function lineEditorReading(text: string, previous: boolean): boolean {
 
 type CompletionShell = "posix" | "fish" | "powershell";
 
+function shellName(shell: string): string {
+  return (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+}
+
+// Unobserved runs type the raw command for other shells, such as Nushell, that cannot parse the posix wrapper.
+const POSIX_SHELL_NAMES = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+
 function resolveCompletionShell(shell: string): CompletionShell | null {
-  const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+  const name = shellName(shell);
   if (name === "cmd") return null;
   if (name === "fish") return "fish";
   if (name === "pwsh" || name === "powershell") return "powershell";
   return "posix";
 }
 
+// Color probes in tools such as Vite+ wait for terminal replies no client can send before one attaches.
+// The opt-outs cover only the script, so the shell left open for the user keeps its colors.
 // A block with its own closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
-function wrapCommandForCompletion(
+function wrapScriptCommand(
   command: string,
-  shell: CompletionShell,
-  sentinel: string,
+  shell: CompletionShell | null,
+  sentinel: string | null,
 ): string {
   const body = command.replace(/\r?\n/g, "\r");
   switch (shell) {
-    case "powershell":
-      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
-    case "fish":
-      return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
-    case "posix":
-      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
+    case "powershell": {
+      const exitCode = sentinel
+        ? "; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }"
+        : "";
+      const report = sentinel ? `; Write-Host "${sentinel}$__t3c"` : "";
+      return `$__t3color = $env:NO_COLOR, $env:FORCE_COLOR, $env:COLORTERM; $env:NO_COLOR = '1'; $env:FORCE_COLOR = '0'; $env:COLORTERM = $null; $global:LASTEXITCODE = $null; & {\r${body}\r}${exitCode}; $env:NO_COLOR = $__t3color[0]; $env:FORCE_COLOR = $__t3color[1]; $env:COLORTERM = $__t3color[2]${report}`;
+    }
+    case "fish": {
+      const report = sentinel ? `; printf '\\n${sentinel}%s\\n' $status` : "";
+      return `begin\rset -lx NO_COLOR 1; set -lx FORCE_COLOR 0; set -lx COLORTERM ''\r${body}\rend${report}`;
+    }
+    case "posix": {
+      const report = sentinel ? `; printf '\\n${sentinel}%s\\n' "$?"` : "";
+      return `( export NO_COLOR=1 FORCE_COLOR=0 COLORTERM=\r${body}\r)${report}`;
+    }
+    case null:
+      // cmd has no block scope, so its opt-outs stay in the shell.
+      return `set "NO_COLOR=1" & set "FORCE_COLOR=0" & set "COLORTERM="\r${command}`;
   }
 }
 
@@ -433,14 +454,10 @@ export const make = Effect.gen(function* () {
         ? `settle-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`
         : `setup-${script.id}`;
     const cwd = input.worktreePath;
-    const env = {
-      ...projectScriptRuntimeEnv({
-        project: { cwd: project.workspaceRoot },
-        worktreePath: input.worktreePath,
-      }),
-      // Before client attachment, truecolor probes wait for terminal replies nobody can send.
-      COLORTERM: "",
-    };
+    const env = projectScriptRuntimeEnv({
+      project: { cwd: project.workspaceRoot },
+      worktreePath: input.worktreePath,
+    });
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;
     const echoedWrapperLines: string[] = [];
@@ -469,7 +486,7 @@ export const make = Effect.gen(function* () {
           stopOnSettle: script.stopOnSettle ?? false,
           cwd,
           worktreePath: input.worktreePath,
-          env: { ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
+          env,
         })
         .pipe(
           Effect.andThen(() =>
@@ -491,18 +508,15 @@ export const make = Effect.gen(function* () {
         return { completionShell: null, commandLine: null };
       }
       const completionShell = resolveCompletionShell(shell);
-      let commandLine = script.command;
-      if (observe && completionToken) {
-        if (completionShell === null) {
-          yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
-          return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
-        }
-        commandLine = wrapCommandForCompletion(
-          script.command,
-          completionShell,
-          completionSentinel(completionToken),
-        );
+      if (completionToken && completionShell === null) {
+        yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
+        return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
       }
+      const sentinel = completionToken ? completionSentinel(completionToken) : null;
+      const commandLine =
+        sentinel === null && completionShell === "posix" && !POSIX_SHELL_NAMES.has(shellName(shell))
+          ? script.command
+          : wrapScriptCommand(script.command, completionShell, sentinel);
       echoedWrapperLines.push(...commandLine.split("\r").filter((line) => line.length > 0));
       return { completionShell, commandLine };
     }).pipe(
