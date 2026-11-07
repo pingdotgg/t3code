@@ -24,6 +24,7 @@ function shell(
     latestUserMessageAt: null,
     opens: null,
     archivedAt: null,
+    settledOverride: null,
     lineage: { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null },
     ...overrides,
   };
@@ -48,6 +49,7 @@ it("ranks thread mentions like the palette and leaves out subagent threads", () 
     environmentId,
     linkedEnvironments: new Map(),
     excludeThreadId: null,
+    hideSettled: true,
     query: "model",
     now: Date.parse("2026-10-23T00:00:00.000Z"),
   });
@@ -65,6 +67,7 @@ it("also offers threads on linked machines, naming the machine, but no other mac
     environmentId,
     linkedEnvironments: new Map([[vps, "Hetzner VPS"]]),
     excludeThreadId: null,
+    hideSettled: true,
     query: "deploy",
     now: Date.parse("2026-10-23T00:00:00.000Z"),
   });
@@ -76,6 +79,26 @@ it("also offers threads on linked machines, naming the machine, but no other mac
       description: "Thread on Hetzner VPS",
     },
   ]);
+});
+
+it.each([true, false])("filters settled thread mentions when hideSettled is %s", (hideSettled) => {
+  const vps = EnvironmentId.make("env-vps");
+  const items = matchComposerThreadItems({
+    shells: [
+      shell("active", "Model picker", { settledOverride: "active" }),
+      shell("settled", "Model picker", { settledOverride: "settled" }),
+      shell("remote-settled", "Model picker", { environmentId: vps, settledOverride: "settled" }),
+    ],
+    environmentId,
+    linkedEnvironments: new Map([[vps, "VPS"]]),
+    excludeThreadId: null,
+    hideSettled,
+    query: "model",
+    now: Date.parse("2026-10-23T00:00:00.000Z"),
+  });
+  expect(items.map((item) => item.thread.threadId)).toEqual(
+    hideSettled ? ["active"] : ["active", "settled", "remote-settled"],
+  );
 });
 
 describe("matchComposerEnvironmentItems", () => {

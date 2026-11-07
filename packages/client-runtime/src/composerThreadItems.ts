@@ -13,7 +13,7 @@ import { threadSearchSubject, type ThreadSearchShell } from "./state/threadSearc
 const COMPOSER_THREAD_RESULT_LIMIT = 5;
 
 export type ComposerThreadCandidate = ThreadSearchShell &
-  Pick<EnvironmentThreadShell, "archivedAt" | "lineage">;
+  Pick<EnvironmentThreadShell, "archivedAt" | "lineage" | "settledOverride">;
 
 export interface ComposerThreadItem {
   readonly id: string;
@@ -35,6 +35,7 @@ export function matchComposerThreadItems(input: {
   /** The machines the composer's environment links to, by name. */
   linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   excludeThreadId: ThreadId | null;
+  hideSettled: boolean;
   query: string;
   /** Recency is measured against this time. */
   now: number;
@@ -47,6 +48,7 @@ export function matchComposerThreadItems(input: {
         input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
+      (!input.hideSettled || shell.settledOverride !== "settled") &&
       isListedThreadLineage(shell.lineage),
   );
   return rankSearchItems(candidates, (shell, options) =>

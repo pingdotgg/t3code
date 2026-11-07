@@ -690,6 +690,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["command menu dollar $ slash /"],
   },
   {
+    id: "hide-settled-thread-mentions",
+    title: "Hide settled threads from @ mentions",
+    to: "/settings/chat",
+    searchTerms: ["composer autocomplete suggestions settled threads mention @"],
+  },
+  {
     id: "composer-rich-text",
     title: "Rich text composer",
     to: "/settings/chat",
