@@ -215,6 +215,18 @@ describe("createInboxReturnTracker", () => {
     expect(notify).not.toHaveBeenCalled();
     expect(tracker.returnedAt(thread("a", false))).toBeUndefined();
   });
+
+  it("leaves Working immediately when graceMs is 0", () => {
+    const tracker = createInboxReturnTracker({ graceMs: 0 });
+    const notify = vi.fn();
+    tracker.subscribe(notify);
+    tracker.observe([thread("a", true)]);
+    tracker.observe([thread("a", false)]);
+    expect(tracker.isWorking(thread("a", false))).toBe(false);
+    expect(tracker.returnedAt(thread("a", false))).toBe(10_000);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(notify).not.toHaveBeenCalled();
+  });
 });
 
 describe("sortWorkingThreadsBySend", () => {

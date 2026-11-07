@@ -71,7 +71,6 @@ export function useThreadListV2(input: {
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
   );
-  // A thread can stop working when the threads change, or when its exit grace expires.
   const inboxVersion = useSyncExternalStore(
     threadListInboxReturns.subscribe,
     threadListInboxReturns.getSnapshot,
