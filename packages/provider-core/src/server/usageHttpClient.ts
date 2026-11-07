@@ -130,13 +130,15 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
               return response;
             }
             if (now < state.retryAt) {
-              return HttpClientResponse.fromWeb(
+              const response = HttpClientResponse.fromWeb(
                 request,
                 new Response(null, {
                   status: 429,
                   headers: { "retry-after": String(Math.ceil((state.retryAt - now) / 1000)) },
                 }),
               );
+              samples.set(response, { refreshAfter: state.retryAt });
+              return response;
             }
             const generation = state.generation;
             const result = yield* read.pipe(

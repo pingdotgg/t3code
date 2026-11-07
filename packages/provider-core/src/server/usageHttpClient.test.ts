@@ -10,6 +10,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import {
   makeUsageHttpClient,
   usageResponseCheckedAt,
+  usageReadRefreshAfter,
   UsageAccountIdentity,
 } from "./usageHttpClient.ts";
 
@@ -90,7 +91,11 @@ it.effect.each(["seconds", "date", "missing"] as const)(
       yield* client.execute(request("b"));
       assert.strictEqual(calls, 2);
       yield* TestClock.adjust(kind === "missing" ? "4 minutes" : "9 minutes");
-      yield* client.execute(request("a", "?manual=1"));
+      const synthesized = yield* client.execute(request("a", "?manual=1"));
+      assert.strictEqual(
+        usageReadRefreshAfter(synthesized),
+        now + (kind === "missing" ? 300_000 : 600_000),
+      );
       assert.strictEqual(calls, 2);
       yield* TestClock.adjust("1 minute");
       yield* client.execute(request("a", "?manual=2"));
