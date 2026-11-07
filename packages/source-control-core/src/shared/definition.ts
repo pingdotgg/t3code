@@ -415,7 +415,13 @@ export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeReq
 /** Reads a repository page from `url` with `route`, whose first group is the repository path. */
 export function repositoryUrlFromPagePath(url: URL, route: RegExp): string | null {
   const repository = route.exec(url.pathname)?.[1];
-  return repository ? `${url.origin}/${repository}` : null;
+  if (!repository) return null;
+  // Keeps the credentials and port a private clone relies on.
+  const repositoryUrl = new URL(url);
+  repositoryUrl.pathname = `/${repository}`;
+  repositoryUrl.search = "";
+  repositoryUrl.hash = "";
+  return repositoryUrl.href;
 }
 
 export function changeRequestUrlBelow(webUrl: string, route: string): string {
@@ -693,6 +699,14 @@ export function makeSourceControlDefinitionRegistry(
     }
     return undefined;
   };
+  const findByPublicDomain = (hostname: string) => {
+    const host = hostname.toLowerCase();
+    return definitions.find(
+      (definition) =>
+        definition.publicHost !== null &&
+        (host === definition.publicHost || host.endsWith(`.${definition.publicHost}`)),
+    );
+  };
   const parseChangeRequestUrl = (value: string): ParsedChangeRequest | null => {
     const url = httpUrl(value);
     if (url === null) return null;
@@ -711,14 +725,7 @@ export function makeSourceControlDefinitionRegistry(
       const host = hostname.toLowerCase();
       return definitions.find((definition) => definition.publicHost === host);
     },
-    findByPublicDomain: (hostname) => {
-      const host = hostname.toLowerCase();
-      return definitions.find(
-        (definition) =>
-          definition.publicHost !== null &&
-          (host === definition.publicHost || host.endsWith(`.${definition.publicHost}`)),
-      );
-    },
+    findByPublicDomain,
     parseChangeRequestUrl,
     parseCommitUrl: (value, kind) => {
       const url = httpUrl(value);
@@ -757,7 +764,9 @@ export function makeSourceControlDefinitionRegistry(
     repositoryUrlFromPage: (value) => {
       const url = httpUrl(value);
       if (url === null) return null;
-      for (const definition of claimOrder) {
+      // A known public host's paths are its own, so an any-host route never rewrites them.
+      const owner = findByPublicDomain(url.hostname);
+      for (const definition of owner ? [owner] : claimOrder) {
         const repositoryUrl = definition.repositoryUrlFromPage?.(url);
         if (repositoryUrl != null) return repositoryUrl;
       }

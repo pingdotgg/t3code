@@ -63,6 +63,12 @@ describe("add project shared logic", () => {
     );
     expect(normalizePastedCloneUrl("group/subgroup/project")).toBe("group/subgroup/project");
     expect(normalizePastedCloneUrl("/srv/git/repo.git")).toBe("/srv/git/repo.git");
+    for (const gitlabProject of [
+      "https://gitlab.com/acme/tools/src/branch/worker.git",
+      "https://gitlab.com/acme/tools/src/branch/worker",
+    ]) {
+      expect(normalizePastedCloneUrl(gitlabProject)).toBe(gitlabProject);
+    }
   });
 
   it("clones the repository when given a page URL copied from the browser", () => {
@@ -70,11 +76,15 @@ describe("add project shared logic", () => {
       ["https://github.com/pingdotgg/t3code/tree/main", "/tree/", "t3code"],
       ["https://github.com/pingdotgg/t3code/blob/main/README.md", "/blob/", "t3code"],
       ["https://gitlab.com/gitlab-org/gitlab-runner/-/tree/main", "/-/", "gitlab-runner"],
+      ["https://git.cafe/pingdotgg/t3code/tree/main", "/tree/", "t3code"],
     ] as const) {
       const cloneUrl = normalizePastedCloneUrl(pageUrl);
       expect(cloneUrl).not.toContain(pageRoute);
       expect(getCloneDirectoryName(cloneUrl)).toBe(repository);
     }
+    expect(
+      normalizePastedCloneUrl("https://alice:example@bitbucket.org/workspace/repo/src/master/"),
+    ).toBe("https://alice:example@bitbucket.org/workspace/repo");
   });
 
   it("uses HTTPS for repositories selected through a provider", () => {
