@@ -78,6 +78,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import {
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
+  acpContentBlockImage,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
   findModelConfigOption,
@@ -951,6 +952,15 @@ function makeProviderThread(input: {
   };
 }
 
+function acpToolCallContentOutput(content: unknown): unknown {
+  return Array.isArray(content)
+    ? content.map((entry: unknown) => {
+        const record = unknownRecord(entry);
+        return record?.type === "content" ? record.content : entry;
+      })
+    : content;
+}
+
 function acpMcpToolCallOutput(rawOutput: unknown): unknown {
   const record = unknownRecord(rawOutput);
   if (record === undefined) return rawOutput;
@@ -1342,6 +1352,7 @@ interface ActiveTextSegment {
   readonly startedAt: DateTime.Utc;
   sourceMessageId: string | null;
   text: string;
+  attachments: ReadonlyArray<ChatAttachment>;
   // The running node and first text have been emitted.
   emitted: boolean;
   // Text changed since the last emission; a delayed flush is scheduled.
@@ -1371,6 +1382,7 @@ interface ActiveAcpTurn {
   readonly user: ActiveTextStream;
   readonly assistant: ActiveTextStream;
   readonly reasoning: ActiveTextStream;
+  readonly assistantImageSegments: Map<string, number>;
   providerRetry?:
     | {
         readonly failure: OrchestrationV2ProviderFailure;
@@ -2746,7 +2758,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nodeId: messageNodeId,
               role: kind,
               text,
-              attachments: [],
+              attachments: segment.attachments,
               streaming: !completed,
               createdAt: segment.startedAt,
               updatedAt: now,
@@ -2778,7 +2790,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       messageId,
                       inputIntent: "turn_start",
                       text,
-                      attachments: [],
+                      attachments: segment.attachments,
                     },
                   }
                 : {
@@ -2802,6 +2814,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       type: "assistant_message",
                       messageId,
                       text,
+                      attachments: segment.attachments,
                       streaming: !completed,
                     },
                   },
@@ -2876,8 +2889,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           kind: "user" | "assistant" | "reasoning",
           text: string,
           messageId?: string | null,
+          attachments: ReadonlyArray<ChatAttachment> = [],
         ) {
-          if (text.length === 0) return;
+          if (text.length === 0 && attachments.length === 0) return;
           for (const other of ["user", "reasoning", "assistant"] as const) {
             if (other !== kind) yield* closeTextStream(context, other);
           }
@@ -2893,14 +2907,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (stream.current === null) {
             const now = yield* DateTime.now;
+            const messageItemId = `${context.nativeTurnId}:${kind}:message:${sourceMessageId}`;
+            const imageSegment =
+              kind === "assistant" && sourceMessageId !== null
+                ? (context.assistantImageSegments.get(sourceMessageId) ?? 0)
+                : 0;
             stream.current = {
               nativeItemId:
                 sourceMessageId === null
                   ? `${context.nativeTurnId}:${kind}:${stream.nextSegment}`
-                  : `${context.nativeTurnId}:${kind}:message:${sourceMessageId}`,
+                  : imageSegment > 0
+                    ? `${messageItemId}:${imageSegment}`
+                    : messageItemId,
               startedAt: now,
               sourceMessageId,
               text: "",
+              attachments,
               emitted: false,
               dirty: false,
             };
@@ -2931,6 +2953,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startedAt: now,
               sourceMessageId: messageId,
               text,
+              attachments: [],
               emitted: false,
               dirty: false,
             };
@@ -2939,6 +2962,66 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             stream.current.text = text;
           }
           yield* publishTextSegment(context, kind);
+        });
+
+        const appendAssistantContent = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          content: EffectAcpSchema.ContentBlock,
+          messageId?: string | null,
+        ) {
+          const image = acpContentBlockImage(content);
+          // V2 authoritative upserts cannot remove previously published image/text segments.
+          if (
+            image !== undefined &&
+            host.persistChatAttachments !== undefined &&
+            (yield* Ref.get(activeSessionSetup))?.initializeResult.protocolVersion === 1
+          ) {
+            const stored = yield* host
+              .persistChatAttachments({
+                threadId: input.threadId,
+                messageId: providerMessageId(
+                  `${context.nativeTurnId}:image:${context.assistant.nextSegment}`,
+                ),
+                attachments: [
+                  {
+                    type: "image",
+                    name: "ACP image",
+                    mimeType: image.mimeType,
+                    sizeBytes: image.sizeBytes,
+                    dataUrl: `data:${image.mimeType};base64,${image.data}`,
+                  },
+                ],
+              })
+              .pipe(Effect.result);
+            if (Result.isSuccess(stored)) {
+              const sourceMessageId =
+                messageId?.trim() || context.assistant.current?.sourceMessageId;
+              const imageSegment = sourceMessageId
+                ? (context.assistantImageSegments.get(sourceMessageId) ?? 0) + 1
+                : 0;
+              yield* closeTextStreams(context);
+              if (sourceMessageId)
+                context.assistantImageSegments.set(sourceMessageId, imageSegment);
+              yield* appendText(context, "assistant", "", sourceMessageId, stored.success);
+              yield* closeTextStream(context, "assistant");
+              if (sourceMessageId)
+                context.assistantImageSegments.set(sourceMessageId, imageSegment + 1);
+              return;
+            }
+            yield* appendText(
+              context,
+              "assistant",
+              `[Unsupported ACP image: ${stored.failure.message}]`,
+              messageId,
+            );
+            return;
+          }
+          yield* appendText(
+            context,
+            "assistant",
+            acpContentBlockDisplayText(content) ?? "",
+            messageId,
+          );
         });
 
         const emitSubagentAssistant = Effect.fnUntraced(function* (
@@ -3069,7 +3152,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ? (merged.title ?? merged.kind ?? "Tool")
                   : `${mcpIdentity.server}.${mcpIdentity.tool}`,
               input: merged.data.rawInput ?? null,
-              output: merged.data.rawOutput ?? merged.data.content ?? null,
+              output:
+                merged.data.rawOutput ?? acpToolCallContentOutput(merged.data.content) ?? null,
             },
           });
         });
@@ -4024,7 +4108,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             updatedAt: now,
           } as const;
           const rawInput = toolCall.data.rawInput;
-          const rawOutput = toolCall.data.rawOutput ?? toolCall.data.content;
+          const rawOutput =
+            toolCall.data.rawOutput ?? acpToolCallContentOutput(toolCall.data.content);
           const changes = structuredFileChanges(toolCall);
           const path = changes[0]?.path ?? pathFromToolCall(toolCall);
           const diffText =
@@ -5364,7 +5449,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ) {
                   context.earlyInjectedReportObserved = true;
                 }
-                yield* appendText(context, "assistant", text, update.messageId);
+                yield* appendAssistantContent(context, update.content, update.messageId);
               }
               break;
             }
@@ -8155,6 +8240,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               user: { current: null, nextSegment: 0 },
               assistant: { current: null, nextSegment: 0 },
               reasoning: { current: null, nextSegment: 0 },
+              assistantImageSegments: new Map(),
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
