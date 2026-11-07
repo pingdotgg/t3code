@@ -2,6 +2,7 @@ import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
+import type { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Atom } from "effect/reactivity";
 import {
   ProviderDriverKind,
@@ -204,6 +205,7 @@ export function UsagePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
+  const modalActionsRef = useRef<DialogPrimitive.Root.Actions | null>(null);
   const [priceDialog, setPriceDialog] = useState<{ readonly model?: string } | null>(null);
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
@@ -286,6 +288,12 @@ export function UsagePage() {
       return;
 
     const command = resolveUsageShortcut(event, keybindings);
+    if (command === "usage.open") {
+      event.preventDefault();
+      event.stopPropagation();
+      modalActionsRef.current?.close();
+      return;
+    }
     const metricOption = METRIC_OPTIONS.find((option) => option.command === command);
     const periodOption = WINDOW_OPTIONS.find((option) => option.command === command);
     if (!metricOption && !periodOption) return;
@@ -296,7 +304,7 @@ export function UsagePage() {
     if (periodOption && !showingLimits) selectWindow(periodOption.days);
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric and period shortcuts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric, period, and close shortcuts
   useEffect(() => {
     globalThis.window.addEventListener("keydown", onUsageKeyDown, true);
     return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
@@ -510,7 +518,7 @@ export function UsagePage() {
   );
 
   return (
-    <AppRouteModal label="Usage">
+    <AppRouteModal label="Usage" actionsRef={modalActionsRef}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
           {topbarContent}
