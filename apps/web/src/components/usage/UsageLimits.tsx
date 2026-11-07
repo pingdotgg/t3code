@@ -143,7 +143,7 @@ function WindowBar({
             role="img"
             aria-label={summary}
             tabIndex={0}
-            className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="relative h-6 w-full cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           />
         }
       >
@@ -188,17 +188,46 @@ function WindowBar({
 export function LimitWindows({
   driver,
   accentColor,
+  barColorOverride,
   windows,
   now,
   compact = false,
+  stacked = false,
 }: {
   readonly driver: ServerProvider["driver"];
   readonly accentColor?: string | undefined;
+  readonly barColorOverride?: string | undefined;
   readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
   readonly compact?: boolean;
+  readonly stacked?: boolean;
 }) {
-  const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
+  const color = barColorOverride ?? normalizeProviderAccentColor(accentColor) ?? barColor(driver);
+  if (stacked) {
+    return (
+      <div className="flex flex-col gap-3">
+        {windows.map((window) => {
+          const pace = paceOf(window, now);
+          const resetsIn = formatResetsIn(window, now);
+          return (
+            <div key={window.id} className="flex min-w-0 flex-col gap-1">
+              <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
+                <span className="truncate font-medium">{window.label}</span>
+                <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground tabular-nums">
+                  <span className="font-medium text-foreground">
+                    {remainingPercent(window)}% left
+                  </span>
+                  {pace ? <PaceIcon pace={pace} /> : null}
+                  {resetsIn ? <span>{resetsIn}</span> : null}
+                </span>
+              </div>
+              <WindowBar color={color} window={window} now={now} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div
       className={
