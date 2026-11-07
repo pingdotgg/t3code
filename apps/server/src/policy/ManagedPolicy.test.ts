@@ -332,26 +332,45 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       }),
   );
 
-  it.effect("refuses a default runtime mode above its own ceiling", () =>
-    Effect.gen(function* () {
-      const reasons = yield* Effect.forEach([false, true], (locked) =>
-        loadFrom(
+  it.effect.each([false, true])(
+    "allows inherited side-chat permissions under a ceiling, locked: %s",
+    (locked) =>
+      Effect.gen(function* () {
+        const policy = yield* loadFrom(
           JSON.stringify({
             schemaVersion: 1,
             organization: "Example Corp",
-            settings: { defaultRuntimeMode: { value: "auto", locked } },
+            settings: { sideChatRuntimeMode: { value: "inherit-parent", locked } },
             limits: { maxRuntimeMode: "auto-accept-edits" },
           }),
-        ).pipe(
-          Effect.flip,
-          Effect.map((error) => error.reason),
-        ),
-      );
-      assert.deepEqual(reasons, [
-        '"defaultRuntimeMode" is above "limits.maxRuntimeMode"',
-        '"defaultRuntimeMode" is above "limits.maxRuntimeMode"',
-      ]);
-    }),
+        );
+        const settings = policy.settings.applyLocks(policy.settings.defaults);
+        assert.equal(settings.sideChatRuntimeMode, "inherit-parent");
+      }),
+  );
+
+  it.effect.each(["defaultRuntimeMode", "sideChatRuntimeMode"])(
+    "refuses a default runtime mode above its own ceiling: %s",
+    (key) =>
+      Effect.gen(function* () {
+        const reasons = yield* Effect.forEach([false, true], (locked) =>
+          loadFrom(
+            JSON.stringify({
+              schemaVersion: 1,
+              organization: "Example Corp",
+              settings: { [key]: { value: "auto", locked } },
+              limits: { maxRuntimeMode: "auto-accept-edits" },
+            }),
+          ).pipe(
+            Effect.flip,
+            Effect.map((error) => error.reason),
+          ),
+        );
+        assert.deepEqual(reasons, [
+          `"${key}" is above "limits.maxRuntimeMode"`,
+          `"${key}" is above "limits.maxRuntimeMode"`,
+        ]);
+      }),
   );
 
   it.effect("tells clients which drivers run and which instance fields are locked", () =>

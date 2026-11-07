@@ -2492,48 +2492,80 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         ),
     );
 
-    it.effect("lowers default runtime modes above the ceiling without rewriting them", () =>
-      Effect.gen(function* () {
-        const service = yield* ServerSettingsModule.ServerSettingsService;
-        const config = yield* ServerConfig.ServerConfig;
-        const fs = yield* FileSystem.FileSystem;
-        const raised = ProjectId.make("project-raised");
-        const supervised = ProjectId.make("project-supervised");
-        yield* fs.writeFileString(
-          config.settingsPath,
-          JSON.stringify({
-            defaultRuntimeMode: "auto",
-            projectSettingsOverrides: {
-              [raised]: { defaultRuntimeMode: "full-access" },
-              [supervised]: { defaultRuntimeMode: "approval-required" },
-            },
-          }),
-        );
+    it.effect.each(["full-access", "inherit-parent"] as const)(
+      "lowers default runtime modes above the ceiling without rewriting them: %s",
+      (sideChatRuntimeMode) =>
+        Effect.gen(function* () {
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const raised = ProjectId.make("project-raised");
+          const supervised = ProjectId.make("project-supervised");
+          yield* fs.writeFileString(
+            config.settingsPath,
+            JSON.stringify({
+              defaultRuntimeMode: "auto",
+              sideChatRuntimeMode,
+              projectSettingsOverrides: {
+                [raised]: { defaultRuntimeMode: "full-access", sideChatRuntimeMode },
+                [supervised]: {
+                  defaultRuntimeMode: "approval-required",
+                  sideChatRuntimeMode: "approval-required",
+                },
+              },
+            }),
+          );
 
-        const settings = yield* service.getSettings;
-        assert.equal(settings.defaultRuntimeMode, "auto-accept-edits");
-        assert.equal(
-          settings.projectSettingsOverrides[raised]?.defaultRuntimeMode,
-          "auto-accept-edits",
-        );
-        assert.equal(
-          settings.projectSettingsOverrides[supervised]?.defaultRuntimeMode,
-          "approval-required",
-        );
+          const settings = yield* service.getSettings;
+          assert.equal(settings.defaultRuntimeMode, "auto-accept-edits");
+          const effective =
+            sideChatRuntimeMode === "inherit-parent" ? "inherit-parent" : "auto-accept-edits";
+          assert.equal(settings.sideChatRuntimeMode, effective);
+          assert.equal(settings.projectSettingsOverrides[raised]?.sideChatRuntimeMode, effective);
+          assert.equal(
+            settings.projectSettingsOverrides[supervised]?.sideChatRuntimeMode,
+            "approval-required",
+          );
+          assert.equal(
+            settings.projectSettingsOverrides[raised]?.defaultRuntimeMode,
+            "auto-accept-edits",
+          );
+          assert.equal(
+            settings.projectSettingsOverrides[supervised]?.defaultRuntimeMode,
+            "approval-required",
+          );
 
-        yield* service.updateSettings({ defaultAutoPull: true });
-        const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
-        assert.equal(stored.defaultRuntimeMode, "auto");
-        assert.equal(stored.projectSettingsOverrides[raised].defaultRuntimeMode, "full-access");
-      }).pipe(
-        Effect.provide(
-          layerServerSettings({
-            schemaVersion: 1,
-            organization: "Example Corp",
-            limits: { maxRuntimeMode: "auto-accept-edits" },
-          }),
+          yield* service.updateSettings({ defaultAutoPull: true });
+          const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+          assert.equal(stored.defaultRuntimeMode, "auto");
+          // Top-level defaults are pruned when stored; inherit-parent is the default.
+          assert.equal(
+            stored.sideChatRuntimeMode,
+            sideChatRuntimeMode === "inherit-parent" ? undefined : sideChatRuntimeMode,
+          );
+          assert.equal(stored.projectSettingsOverrides[raised].defaultRuntimeMode, "full-access");
+          assert.equal(
+            stored.projectSettingsOverrides[raised].sideChatRuntimeMode,
+            sideChatRuntimeMode,
+          );
+          yield* service.updateSettings(
+            yield* decodeServerSettingsPatch({
+              sideChatRuntimeMode,
+              projectSettingsOverrides: { [raised]: { sideChatRuntimeMode } },
+            }),
+          );
+          const reloaded = yield* service.getSettings;
+          assert.equal(reloaded.sideChatRuntimeMode, effective);
+          assert.equal(reloaded.projectSettingsOverrides[raised]?.sideChatRuntimeMode, effective);
+        }).pipe(
+          Effect.provide(
+            layerServerSettings({
+              schemaVersion: 1,
+              organization: "Example Corp",
+              limits: { maxRuntimeMode: "auto-accept-edits" },
+            }),
+          ),
         ),
-      ),
     );
   },
 );
