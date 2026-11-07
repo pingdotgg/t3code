@@ -13,7 +13,7 @@ export function isGitCafeHost(host: string): boolean {
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const REMOTE_PATTERNS = [
   /^https?:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+)$/iu,
-  /^ssh:\/\/[^@/]+@([^/:]+)(?::\d+)?\/(.+)$/iu,
+  /^ssh:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+)$/iu,
   /^(?:[^@/:]+@)?([^/:]+):(.+)$/u,
 ];
 
