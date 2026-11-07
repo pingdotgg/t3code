@@ -154,8 +154,10 @@ it.each([
     const input = page.getByRole("combobox");
     await input.fill("/workspace/zzz");
     await userEvent.keyboard("{Tab}");
-    if (leavesInput) await expect.element(input).not.toHaveFocus();
-    else await expect.element(input).toHaveFocus();
+    if (leavesInput) {
+      await expect.element(input).not.toHaveFocus();
+      expect(page.getByRole("dialog").element().contains(document.activeElement)).toBe(true);
+    } else await expect.element(input).toHaveFocus();
     await expect.element(input).toHaveValue("/workspace/zzz");
   },
 );
