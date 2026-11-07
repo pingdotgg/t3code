@@ -13,7 +13,7 @@ import {
   resolveBrowserLinkTargetPreference,
   resolveLinkTarget,
 } from "./browserLinkTarget";
-import { BrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
+import { isBrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
 
 const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
 
@@ -46,7 +46,7 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
         return;
       }
       const failure = squashAtomCommandFailure(result);
-      if (failure instanceof BrowserSettingsReadError) throw failure;
+      if (isBrowserSettingsReadError(failure)) throw failure;
       console.error(result.cause);
     }
     const api = readLocalApi();
