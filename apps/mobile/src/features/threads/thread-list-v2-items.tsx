@@ -188,8 +188,8 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
 
 function ThreadListV2Section(props: {
   readonly label: string;
+  readonly count?: number;
   readonly pane?: "screen" | "sidebar";
-  readonly tone?: "default" | "snoozed";
   readonly disclosure?: {
     readonly expanded: boolean;
     readonly disabled?: boolean;
@@ -198,43 +198,31 @@ function ThreadListV2Section(props: {
     readonly accessibilityHint: string;
   };
 }) {
-  const snoozed = props.tone === "snoozed";
   const sidebarPane = props.pane === "sidebar";
+  const showCount = props.count !== undefined && props.disclosure?.expanded !== true;
+  const labelClassName = cn(
+    "text-[15px] font-t3-semibold",
+    sidebarPane ? "text-drawer-foreground" : "text-foreground",
+  );
+  const mutedClassName = sidebarPane ? "text-drawer-foreground-muted" : "text-foreground-tertiary";
+  const chevronTint = sidebarPane ? "accent-drawer-foreground-muted" : "accent-foreground-muted";
   const className = cn(
-    "mb-1.5 mt-4 flex-row items-center gap-2.5",
+    "mb-1 mt-5 flex-row items-center gap-2",
     props.pane === "sidebar" ? "px-3" : "px-5",
   );
   const content = (
     <>
-      <Text
-        className={cn(
-          "text-xs font-t3-medium",
-          sidebarPane
-            ? "text-drawer-foreground-muted"
-            : snoozed
-              ? "text-foreground-secondary"
-              : "text-foreground-tertiary",
-        )}
-      >
+      <Text className={cn("min-w-0 flex-1", labelClassName)} numberOfLines={1}>
         {props.label}
       </Text>
-      <View
-        className={cn(
-          "h-px flex-1",
-          snoozed ? "bg-primary/20" : sidebarPane ? "bg-drawer-border" : "bg-border",
-        )}
-      />
+      {showCount ? (
+        <Text className={cn("text-[13px] tabular-nums", mutedClassName)}>{props.count}</Text>
+      ) : null}
       {props.disclosure ? (
         <SymbolView
           name="chevron.down"
-          size={10}
-          tintColorClassName={
-            sidebarPane
-              ? "accent-drawer-foreground-muted"
-              : snoozed
-                ? "accent-icon-muted"
-                : "accent-foreground-muted"
-          }
+          size={12}
+          tintColorClassName={chevronTint}
           type="monochrome"
           style={{ transform: [{ rotate: props.disclosure.expanded ? "180deg" : "0deg" }] }}
         />
@@ -286,9 +274,9 @@ function ThreadListV2ShelfHeader(
   const label = SHELF_LABEL[props.kind];
   return (
     <ThreadListV2Section
-      label={props.expanded ? label : `${label} (${props.count})`}
+      label={label}
+      count={props.count}
       pane={props.pane}
-      tone={props.kind === "snoozed" ? "snoozed" : "default"}
       disclosure={{
         expanded: props.expanded,
         disabled: props.disabled,
