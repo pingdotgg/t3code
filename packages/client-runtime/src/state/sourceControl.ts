@@ -1,5 +1,11 @@
-import { WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import {
+  repositoryGroupingKeyOf,
+  WS_METHODS,
+  type EnvironmentId,
+  type SourceControlDiscoveryResult,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -9,18 +15,63 @@ import {
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as Persistence from "../platform/persistence.ts";
+import type { EnvironmentProject } from "./models.ts";
+import type {
+  SourceControlAccount,
+  SourceControlAccountsByEnvironment,
+} from "./projectGrouping.ts";
+import { reuseUnchanged } from "./serverConfigProjection.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
+
+/** CLI accounts can remain listed when a token or Settings selects another login. */
+export function verifiedSourceControlAccounts(
+  discovery: SourceControlDiscoveryResult,
+): SourceControlAccount[] {
+  return discovery.sourceControlProviders.flatMap(({ auth }) =>
+    auth.status === "authenticated" && Option.isSome(auth.host) && Option.isSome(auth.account)
+      ? [{ host: auth.host.value, account: auth.account.value }]
+      : [],
+  );
+}
 
 export function createSourceControlEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore | R, E>,
 ) {
   const commandScheduler = createAtomCommandScheduler();
+  const discovery = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:source-control-discovery",
+    tag: WS_METHODS.serverDiscoverSourceControl,
+  });
+  const accountsFamily = Atom.family((environmentIdsKey: string) =>
+    Atom.make((get): SourceControlAccountsByEnvironment => {
+      const accounts: Record<string, SourceControlAccount[]> = {};
+      for (const environmentId of JSON.parse(environmentIdsKey) as EnvironmentId[]) {
+        const result = AsyncResult.value(get(discovery({ environmentId, input: {} })));
+        if (Option.isSome(result))
+          accounts[environmentId] = verifiedSourceControlAccounts(result.value);
+      }
+      return reuseUnchanged(Option.getOrUndefined(get.self()), accounts);
+    }).pipe(Atom.withLabel(`environment-data:source-control:accounts:${environmentIdsKey}`)),
+  );
   return {
-    discovery: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:source-control-discovery",
-      tag: WS_METHODS.serverDiscoverSourceControl,
-    }),
+    discovery,
+    /** Verified logins where a repository has several checkouts, for labelling ones the user owns. */
+    accounts: (
+      projects: ReadonlyArray<Pick<EnvironmentProject, "environmentId" | "repositoryIdentity">>,
+    ) => {
+      // A lone checkout keeps its title, so only shared repositories need the discovery probe.
+      const checkouts = new Map<string, EnvironmentId[]>();
+      for (const { environmentId, repositoryIdentity } of projects) {
+        if (!repositoryIdentity) continue;
+        const key = repositoryGroupingKeyOf(repositoryIdentity);
+        const environmentIds = checkouts.get(key);
+        if (environmentIds) environmentIds.push(environmentId);
+        else checkouts.set(key, [environmentId]);
+      }
+      const environmentIds = [...checkouts.values()].filter((ids) => ids.length > 1).flat();
+      return accountsFamily(JSON.stringify([...new Set(environmentIds)].sort()));
+    },
     appAccess: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:source-control:app-access",
       tag: WS_METHODS.sourceControlAppAccess,
