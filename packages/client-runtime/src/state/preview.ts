@@ -72,6 +72,11 @@ export function createPreviewEnvironmentAtoms<R, E>(
       tag: WS_METHODS.previewReportProfiles,
       concurrency: { mode: "latest", key: ({ environmentId }) => environmentId },
     }),
+    issueProxyGrant: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:issue-proxy-grant",
+      tag: WS_METHODS.previewIssueProxyGrant,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     stopLocalServer: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:stop-local-server",
       tag: WS_METHODS.previewStopLocalServer,
