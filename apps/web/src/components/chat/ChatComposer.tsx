@@ -74,7 +74,7 @@ import {
   composerRequiresModifier,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
-  detectComposerTrigger,
+  detectComposerTrigger as detectComposerTriggerForProvider,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
@@ -1013,6 +1013,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : null,
   });
 
+  const detectComposerTrigger = (text: string, cursor: number) =>
+    detectComposerTriggerForProvider(
+      text,
+      cursor,
+      selectedProvider === "codex" || selectedProvider === "claudeAgent",
+    );
+
   const [composerCursor, setComposerCursor] = useState(() => {
     const value = isLiteralPendingAnswer ? (activePendingProgress?.customAnswer ?? prompt) : prompt;
     return collapseExpandedComposerCursor(value, value.length, isLiteralPendingAnswer);
@@ -1151,6 +1158,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isLoading: isComposerMenuLoading,
     emptyState: composerMenuEmptyState,
   } = useComposerMenuItems({
+    goalObjective: props.activeThreadShell?.goal?.objective ?? null,
     composerTrigger,
     environmentId,
     linkedEnvironments,
@@ -1983,7 +1991,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
-      const replacement = `/${item.command.name} `;
+      const replacement = item.replacementText ?? `/${item.command.name} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
         trigger.rangeEnd,
@@ -1994,6 +2002,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (applied) {
         setComposerHighlightedItemId(null);
+        if (
+          item.command.name.startsWith("goal ") ||
+          (item.command.name === "goal" && /^goal[\t ]/i.test(trigger.query))
+        ) {
+          dismissComposerTrigger(trigger);
+        }
       }
       return;
     }
