@@ -513,6 +513,7 @@ function OpenCommandPaletteDialog(props: {
     null,
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
+  const pickingProjectFolderRef = useRef(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [newProjectFlow, setNewProjectFlow] = useState<{
     readonly environmentId: EnvironmentId;
@@ -612,21 +613,20 @@ function OpenCommandPaletteDialog(props: {
   const canCreateProject = useEnvironmentScope(browseEnvironmentId, AuthOrchestrationOperateScope);
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
-  const browseEnvironmentIsDesktopLocal =
-    browseEnvironment !== null && isDesktopLocalConnectionTarget(browseEnvironment.entry.target);
-  // pickFolder routes desktop-local environments by pool id, not catalog environmentId.
-  const browseDesktopInstanceId = (() => {
-    if (!browseEnvironmentIsDesktopLocal || browseEnvironment === null) {
-      return null;
-    }
-    const displayUrl = browseEnvironment.displayUrl;
-    if (displayUrl === null) {
+  const getDesktopInstanceId = (environmentId: EnvironmentId): string | null => {
+    const environment = environments.find((candidate) => candidate.environmentId === environmentId);
+    if (!environment || !isDesktopLocalConnectionTarget(environment.entry.target)) {
       return null;
     }
     return (
-      desktopLocalBootstraps.find((bootstrap) => bootstrap.httpBaseUrl === displayUrl)?.id ?? null
+      desktopLocalBootstraps.find((bootstrap) => bootstrap.httpBaseUrl === environment.displayUrl)
+        ?.id ?? null
     );
-  })();
+  };
+  const canUseNativeProjectPicker = (environmentId: EnvironmentId): boolean =>
+    typeof window !== "undefined" &&
+    window.desktopBridge !== undefined &&
+    (environmentId === primaryEnvironmentId || getDesktopInstanceId(environmentId) !== null);
   const sourceControlDiscovery = useEnvironmentQuery(
     browseEnvironmentId === null
       ? null
@@ -1024,7 +1024,18 @@ function OpenCommandPaletteDialog(props: {
         icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
         keepOpen: true,
         run: async () => {
-          await startAddProjectBrowse(environmentId);
+          if (
+            clientSettings.preferNativeProjectFolderPicker &&
+            canUseNativeProjectPicker(environmentId)
+          ) {
+            const initialPath = resolveProjectPathForDispatch(
+              getAddProjectInitialQueryForEnvironment(environmentId),
+              getBrowseCwdForEnvironment(environmentId),
+            );
+            await openProjectFromFileManager(environmentId, initialPath || undefined);
+          } else {
+            await startAddProjectBrowse(environmentId);
+          }
         },
       },
     ];
@@ -2431,12 +2442,7 @@ function OpenCommandPaletteDialog(props: {
     !isRemoteProjectPending;
   const fileManagerName = getLocalFileManagerName(navigator.platform);
   const canOpenProjectFromFileManager =
-    isBrowsing &&
-    browseEnvironmentId !== null &&
-    (browseEnvironmentId === primaryEnvironmentId ||
-      (browseEnvironmentIsDesktopLocal && browseDesktopInstanceId !== null)) &&
-    typeof window !== "undefined" &&
-    window.desktopBridge !== undefined;
+    isBrowsing && browseEnvironmentId !== null && canUseNativeProjectPicker(browseEnvironmentId);
   const fileManagerInitialPath = (() => {
     if (!canOpenProjectFromFileManager) {
       return undefined;
@@ -2654,98 +2660,118 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  const handleOpenProjectFromFileManager = async () => {
-    if (!canOpenProjectFromFileManager || isPickingProjectFolder) {
-      return;
-    }
-    const api = readLocalApi();
-    if (!api) {
-      return;
-    }
-
-    setIsPickingProjectFolder(true);
-    let pickedPath: string | null = null;
-    let desktopWslState: DesktopWslState | null = null;
-    try {
-      desktopWslState =
-        browseEnvironmentId === primaryEnvironmentId && browseEnvironmentPlatform === "Linux"
-          ? ((await window.desktopBridge?.getWslState().catch(() => null)) ?? null)
-          : null;
-      // WSL-only primaries need their pool id from desktop settings; the native picker converts WSL UNC
-      // paths.
-      const pickerTargetEnvironmentId = resolveProjectPickerTarget({
-        browseEnvironmentId,
-        primaryEnvironmentId,
-        desktopInstanceId: browseDesktopInstanceId,
-        wslConfiguration: desktopWslState,
-      });
-      const pickerOptions = {
-        ...(fileManagerInitialPath ? { initialPath: fileManagerInitialPath } : {}),
-        ...(pickerTargetEnvironmentId ? { targetEnvironmentId: pickerTargetEnvironmentId } : {}),
-      };
-      pickedPath = await api.dialogs.pickFolder(
-        Object.keys(pickerOptions).length > 0 ? pickerOptions : undefined,
-      );
-    } catch {
-      setIsPickingProjectFolder(false);
-      return;
-    }
-    setIsPickingProjectFolder(false);
-    if (!pickedPath) {
-      return;
-    }
-    if (parseWslUncPath(pickedPath)) {
-      if (desktopWslState === null) {
-        desktopWslState = (await window.desktopBridge?.getWslState().catch(() => null)) ?? null;
-      }
-      let primaryRunningDistro: string | null = null;
-      try {
-        primaryRunningDistro =
-          window.desktopBridge
-            ?.getLocalEnvironmentBootstraps()
-            .find((bootstrap) => bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID)?.runningDistro ??
-          null;
-      } catch {}
-      const selection = resolveWslProjectSelection(
-        pickedPath,
-        applyWslEnvironmentConfiguration(
-          environments.flatMap((environment) => {
-            const backendId = desktopLocalBackendId(environment.entry.target);
-            if (!backendId) {
-              return [];
-            }
-
-            const bootstrap = desktopLocalBootstraps.find(
-              (candidate) => candidate.httpBaseUrl === environment.displayUrl,
-            );
-            const runningDistro = bootstrap?.runningDistro ?? null;
-            return [{ environmentId: environment.environmentId, backendId, runningDistro }];
-          }),
-          primaryEnvironmentId,
-          desktopWslState ?? null,
-          primaryRunningDistro,
-        ),
-      );
-      if (!selection) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not add WSL project",
-            description: "Start the matching WSL backend, then choose the folder again.",
-          }),
-        );
+  const openProjectFromFileManager = useStableCallback(
+    async (environmentId: EnvironmentId, initialPath?: string) => {
+      if (!canUseNativeProjectPicker(environmentId) || pickingProjectFolderRef.current) {
         return;
       }
-      await handleAddProjectForEnvironment({
-        environmentId: selection.environmentId,
-        rawCwd: selection.linuxPath,
-        platform: "Linux",
-        currentProjectCwd: null,
+      const api = readLocalApi();
+      if (!api) {
+        return;
+      }
+
+      const environment = environments.find(
+        (candidate) => candidate.environmentId === environmentId,
+      );
+      const platform = getEnvironmentBrowsePlatform(
+        environment?.serverConfig?.environment.platform.os,
+      );
+      pickingProjectFolderRef.current = true;
+      setIsPickingProjectFolder(true);
+      const pickProject = async () => {
+        let pickedPath: string | null = null;
+        let desktopWslState: DesktopWslState | null = null;
+        try {
+          desktopWslState =
+            environmentId === primaryEnvironmentId && platform === "Linux"
+              ? ((await window.desktopBridge?.getWslState().catch(() => null)) ?? null)
+              : null;
+          // WSL-only primaries need their pool id from desktop settings; the native picker converts WSL UNC
+          // paths.
+          const pickerTargetEnvironmentId = resolveProjectPickerTarget({
+            browseEnvironmentId: environmentId,
+            primaryEnvironmentId,
+            desktopInstanceId: getDesktopInstanceId(environmentId),
+            wslConfiguration: desktopWslState,
+          });
+          const pickerOptions = {
+            ...(initialPath ? { initialPath } : {}),
+            ...(pickerTargetEnvironmentId
+              ? { targetEnvironmentId: pickerTargetEnvironmentId }
+              : {}),
+          };
+          pickedPath = await api.dialogs.pickFolder(
+            Object.keys(pickerOptions).length > 0 ? pickerOptions : undefined,
+          );
+        } catch {
+          return;
+        }
+        if (!pickedPath) {
+          return;
+        }
+        if (parseWslUncPath(pickedPath)) {
+          if (desktopWslState === null) {
+            desktopWslState = (await window.desktopBridge?.getWslState().catch(() => null)) ?? null;
+          }
+          let primaryRunningDistro: string | null = null;
+          try {
+            primaryRunningDistro =
+              window.desktopBridge
+                ?.getLocalEnvironmentBootstraps()
+                .find((bootstrap) => bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID)
+                ?.runningDistro ?? null;
+          } catch {}
+          const selection = resolveWslProjectSelection(
+            pickedPath,
+            applyWslEnvironmentConfiguration(
+              environments.flatMap((environment) => {
+                const backendId = desktopLocalBackendId(environment.entry.target);
+                if (!backendId) {
+                  return [];
+                }
+
+                const bootstrap = desktopLocalBootstraps.find(
+                  (candidate) => candidate.httpBaseUrl === environment.displayUrl,
+                );
+                const runningDistro = bootstrap?.runningDistro ?? null;
+                return [{ environmentId: environment.environmentId, backendId, runningDistro }];
+              }),
+              primaryEnvironmentId,
+              desktopWslState ?? null,
+              primaryRunningDistro,
+            ),
+          );
+          if (!selection) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not add WSL project",
+                description: "Start the matching WSL backend, then choose the folder again.",
+              }),
+            );
+            return;
+          }
+          await handleAddProjectForEnvironment({
+            environmentId: selection.environmentId,
+            rawCwd: selection.linuxPath,
+            platform: "Linux",
+            currentProjectCwd: null,
+          });
+          return;
+        }
+        await handleAddProjectForEnvironment({
+          environmentId,
+          rawCwd: pickedPath,
+          platform,
+          currentProjectCwd: getBrowseCwdForEnvironment(environmentId),
+        });
+      };
+      await pickProject().finally(() => {
+        pickingProjectFolderRef.current = false;
+        setIsPickingProjectFolder(false);
       });
-      return;
-    }
-    await handleAddProject(pickedPath);
-  };
+    },
+  );
 
   const inputAccessory =
     newProjectFlow !== null ? (
@@ -2818,7 +2844,9 @@ function OpenCommandPaletteDialog(props: {
     <CommandFooterAction
       disabled={isPickingProjectFolder}
       onClick={() => {
-        void handleOpenProjectFromFileManager();
+        if (browseEnvironmentId !== null) {
+          void openProjectFromFileManager(browseEnvironmentId, fileManagerInitialPath);
+        }
       }}
     >
       {`Open in ${fileManagerName}`}

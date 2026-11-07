@@ -113,13 +113,17 @@ describe("client settings hydration", () => {
     });
 
     const hydration = ensureClientSettingsHydrated();
-    persistClientSettingsPatch({ wordWrap: false });
+    persistClientSettingsPatch({ wordWrap: false, preferNativeProjectFolderPicker: true });
     expect(getClientSettings()).toBe(DEFAULT_CLIENT_SETTINGS);
     expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
 
     finishRead(savedSettings);
     await hydration;
-    await expect(persisted).resolves.toEqual({ ...savedSettings, wordWrap: false });
+    await expect(persisted).resolves.toEqual({
+      ...savedSettings,
+      wordWrap: false,
+      preferNativeProjectFolderPicker: true,
+    });
     expect(persistenceMocks.getClientSettings).toHaveBeenCalledOnce();
   });
 
