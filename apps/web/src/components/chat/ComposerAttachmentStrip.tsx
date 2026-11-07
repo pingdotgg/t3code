@@ -1,5 +1,4 @@
 import type {
-  ChatAttachment,
   ChatFileAttachment,
   EnvironmentId,
   ScopedThreadRef,
@@ -624,46 +623,6 @@ export function ComposerRestingImagePreviews({
           +{counts.overflowCount}
         </button>
       ) : null}
-    </div>
-  );
-}
-
-/** Attachments of the queued message being edited; they are already uploaded. */
-export function ComposerQueuedAttachmentRow({
-  attachments,
-  onRemove,
-}: {
-  readonly attachments: ReadonlyArray<{
-    readonly attachment: ChatAttachment;
-    readonly url: string | null;
-  }>;
-  readonly onRemove: (attachmentId: string) => void;
-}) {
-  return (
-    <div className="mb-3 flex flex-wrap gap-2">
-      {attachments.map(({ attachment, url }) => (
-        <div
-          key={attachment.id}
-          className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-        >
-          {attachment.type === "image" && url ? (
-            <img src={url} alt={attachment.name} className="h-full w-full object-cover" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
-              {attachment.name}
-            </div>
-          )}
-          <Button
-            variant="media-close"
-            size="icon-xs"
-            className="absolute right-1 top-1"
-            onClick={() => onRemove(attachment.id)}
-            aria-label={`Remove ${attachment.name}`}
-          >
-            <XIcon />
-          </Button>
-        </div>
-      ))}
     </div>
   );
 }

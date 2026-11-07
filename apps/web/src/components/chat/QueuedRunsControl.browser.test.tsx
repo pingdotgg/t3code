@@ -65,6 +65,30 @@ async function renderQueue(props: Partial<ComponentProps<typeof QueuedRunsContro
   return renderUi(<QueuedRunsControl {...baseProps} {...props} />);
 }
 
+it("keeps held messages editable without offering Send now", async () => {
+  setup();
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: null,
+    canSendNow: true,
+    queuedRuns: [
+      {
+        run: { id: "run:held", userMessageId: "message:held", queueEditId: "edit:other-device" },
+        text: "Wait for my edit",
+        attachments: [],
+      },
+    ],
+  };
+  const onEditQueuedRun = vi.fn();
+  await using _screen = await renderQueue({ onEditQueuedRun });
+  await expect.element(page.getByText("Editing elsewhere")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Send now" })).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Edit queued message", exact: true }).click();
+  expect(onEditQueuedRun).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ runId: "run:held" }),
+  );
+});
+
 it("previews assistant quotes as readable text and preserves the citation when editing", async () => {
   setup();
   const quotedText = "Cache the parsed config per worktree.";

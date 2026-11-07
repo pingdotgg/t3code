@@ -83,6 +83,18 @@ Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at t
 start of the composer to edit the most recently queued message. Change
 `thread.editQueuedMessage` to use another shortcut.
 
+Editing holds that message and the messages behind it until you Save or Cancel;
+the active turn continues. The hold survives disconnects, restarts, and resuming
+the queue. Return to the thread after navigating away or restarting the client to
+continue your edit. To edit a message held on another device, choose Edit and
+confirm takeover.
+If another editor takes over or the message is removed, unsaved changes stay in
+the composer or remain available as a saved queued edit above it. If another device
+saves a newer version, reopening Edit starts from that version and keeps the older
+draft under Saved queued edit. Failure and workspace pauses remain separate: finish
+the edit, then resume a paused queue. Older servers allow local editing but cannot
+hold the queue while you edit.
+
 Mobile has the same choice under **Settings → Chat**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
 other action for a single message, or hold `Cmd` while sending from a hardware
@@ -254,9 +266,9 @@ The pencil on a queued message opens it in the composer for editing. The origina
 stays in the queue until you save, and it is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
 The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. Whatever
-you had typed in the composer before starting the edit is restored afterwards. If the queued
-message starts or is removed while you are editing, the edit ends: changed content moves into the
-composer when it is empty, and is discarded otherwise.
+you had typed in the composer before starting the edit is restored afterwards. If another editor
+takes over or the message leaves the queue, your changes return to an empty composer or remain
+available under **Saved queued edit**. They do not overwrite an existing draft.
 
 ## Commands and skills
 

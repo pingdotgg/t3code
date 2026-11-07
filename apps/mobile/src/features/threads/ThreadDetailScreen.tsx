@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
@@ -264,12 +265,14 @@ export interface ThreadDetailScreenProps {
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
   readonly queuedRunEdit: QueuedRunEdit | null;
+  readonly savedQueuedEditDrafts: ReadonlyArray<string>;
+  readonly recoveryDraftKey: string | null;
+  readonly onSelectRecoveryDraft: (key: string | null) => void;
   readonly composerDraftKey: string | null;
   readonly followUpBehavior: FollowUpBehavior;
   readonly canSteerActiveTurn: boolean;
   readonly isSavingQueuedEdit: boolean;
   readonly onCancelQueuedRunEdit: () => void;
-  readonly onRemoveQueuedEditAttachment: (attachmentId: string) => void;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
@@ -1611,6 +1614,29 @@ function ThreadDetailBody(
                 className="w-full"
               >
                 <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                  {props.savedQueuedEditDrafts.length > 0 ? (
+                    <View className="flex-row flex-wrap gap-2 py-1">
+                      {props.recoveryDraftKey !== null ? (
+                        <Button
+                          label="Main draft"
+                          tone="text"
+                          onPress={() => props.onSelectRecoveryDraft(null)}
+                        />
+                      ) : null}
+                      {props.savedQueuedEditDrafts.map((key, index) => (
+                        <Button
+                          key={key}
+                          label={
+                            props.recoveryDraftKey === key
+                              ? "Recovered queued edit"
+                              : `Saved queued edit ${index + 1}`
+                          }
+                          tone="text"
+                          onPress={() => props.onSelectRecoveryDraft(key)}
+                        />
+                      ))}
+                    </View>
+                  ) : null}
                   <FloatingWorkingControl
                     colorScheme={isDarkMode ? "dark" : "light"}
                     status={floatingStatus}
@@ -1916,9 +1942,7 @@ function ThreadDetailBody(
                           props.queuedRunEdit === null
                             ? null
                             : {
-                                existingAttachments: props.queuedRunEdit.existingAttachments,
                                 saving: props.isSavingQueuedEdit,
-                                onRemoveExistingAttachment: props.onRemoveQueuedEditAttachment,
                               }
                         }
                         bottomInset={composerBottomInset}

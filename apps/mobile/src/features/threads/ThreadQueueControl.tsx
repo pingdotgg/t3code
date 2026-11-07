@@ -6,7 +6,15 @@ import {
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  type ChatAttachment,
+  type ChatImageAttachment,
+  type ChatFileAttachment,
+  type EnvironmentId,
+  type RunId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -31,7 +39,16 @@ import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { assetImageSource } from "../../lib/assetImageSource";
-import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
+import {
+  prepareQueuedRunEditDraft,
+  queuedEditDraftKey,
+  recoverQueuedRunEdit,
+  watchQueuedRunEdit,
+  useQueuedRunEdit,
+} from "../../state/queued-run-edit";
+import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
+import { importAttachment } from "../../lib/composerContextClipboard";
+import * as Dialog from "../../components/ui/Dialog";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -128,6 +145,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     openQuestionCount: pendingRequests?.userInputs.length ?? 0,
   });
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
+  const acquireEdit = useAtomCommand(threadEnvironment.beginQueuedRunEdit, "edit queued message");
+  const releaseEdit = useAtomCommand(threadEnvironment.cancelQueuedRunEdit, "finish queued edit");
+  const releaseFailedPreparation = useAtomCommand(threadEnvironment.cancelQueuedRunEdit, {
+    reportFailure: false,
+  });
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
   const [resuming, setResuming] = useState(false);
@@ -152,26 +174,143 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     if (action === "edit") {
       if (editBlockedReason !== null) return;
       const entry = queuedRuns[index]!;
-      void Haptics.selectionAsync();
-      beginQueuedRunEdit(
-        threadKey,
-        {
-          runId,
-          messageId: entry.messageId,
-          originalText: entry.text,
-          existingAttachments: entry.attachments,
-          ...(entry.context ? { context: entry.context } : {}),
-        },
-        makeQueuedRunsAtom({
-          threadId: target.threadId,
-          snapshot: threadEnvironment.snapshotAtom(target.environmentId),
-          detailStatus: environmentThreadDetails.statusAtom(target),
-          runs: Atom.make(
-            (get) => get(environmentThreadDetails.quietThreadAtom(target))?.projection.runs ?? null,
-          ),
-        }),
-      );
-      navigation.goBack();
+      const previousEditId = entry.run.queueEditId ?? null;
+      if (editing?.runId === runId && editing.editId === previousEditId) {
+        navigation.goBack();
+        return;
+      }
+      if (previousEditId !== null) {
+        const confirmed = await new Promise<boolean>((resolve) =>
+          Dialog.confirm({
+            title: "Take over editing?",
+            message:
+              "This message is being edited elsewhere. The other editor will keep their unsaved changes.",
+            confirmText: "Take over",
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false),
+          }),
+        );
+        if (!confirmed) return;
+      }
+      busyRef.current = true;
+      setBusyRunId(runId);
+      const openEdit = async () => {
+        if (editing !== null) {
+          const released = await releaseEdit({
+            environmentId: target.environmentId,
+            input: { threadId: target.threadId, runId: editing.runId, editId: editing.editId },
+          });
+          if (released._tag !== "Success") return;
+          recoverQueuedRunEdit(threadKey);
+        }
+        const acquired = await acquireEdit({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId, runId, previousEditId },
+        });
+        if (acquired._tag !== "Success") return;
+        const preparation = prepareQueuedRunEditDraft(
+          threadKey,
+          {
+            ...acquired.value,
+            runId,
+            messageId: entry.messageId,
+            originalText: entry.text,
+            originalAttachmentIds: entry.attachments.map((attachment) => attachment.id),
+            ...(entry.context ? { context: entry.context } : {}),
+          },
+          async () => {
+            if (
+              entry.attachments.some(
+                (attachment) => attachment.type !== "image" && attachment.type !== "file",
+              )
+            )
+              throw new Error("This attachment cannot be edited.");
+            return await Promise.all(
+              entry.attachments
+                .filter(
+                  (attachment): attachment is ChatImageAttachment | ChatFileAttachment =>
+                    attachment.type === "image" || attachment.type === "file",
+                )
+                .map(async (attachment) => {
+                  const local = await importAttachment(
+                    {
+                      version: 1,
+                      kind: attachment.type,
+                      contextId: ComposerContextId.make(attachment.id),
+                      label: attachment.name,
+                      attachmentId: attachment.id,
+                      name: attachment.name,
+                      mimeType: attachment.mimeType,
+                      sizeBytes: attachment.sizeBytes,
+                    },
+                    target.environmentId,
+                    new AbortController().signal,
+                  );
+                  const restored = {
+                    ...local,
+                    id: attachment.id,
+                    uploadedAttachmentId: attachment.id,
+                    uploadEnvironmentId: target.environmentId,
+                  };
+                  if (restored.type === "image" && attachment.type === "image")
+                    return {
+                      ...restored,
+                      ...(attachment.source ? { source: attachment.source } : {}),
+                    };
+                  if (restored.type === "file" && attachment.type === "file")
+                    return {
+                      ...restored,
+                      ...(attachment.source ? { source: attachment.source } : {}),
+                    };
+                  return restored;
+                }),
+            );
+          },
+        );
+        const preparedEdit = getComposerDraftSnapshot(
+          queuedEditDraftKey(threadKey, runId),
+        ).queuedEdit;
+        try {
+          await preparation;
+          watchQueuedRunEdit(
+            threadKey,
+            makeQueuedRunsAtom({
+              threadId: target.threadId,
+              snapshot: threadEnvironment.snapshotAtom(target.environmentId),
+              detailStatus: environmentThreadDetails.statusAtom(target),
+              runs: Atom.make(
+                (get) =>
+                  get(environmentThreadDetails.quietThreadAtom(target))?.projection.runs ?? null,
+              ),
+            }),
+          );
+        } catch (error) {
+          const released = await releaseFailedPreparation({
+            environmentId: target.environmentId,
+            input: { threadId: target.threadId, runId, editId: acquired.value.editId },
+          });
+          if (released._tag === "Success" && preparedEdit?.ownership)
+            recoverQueuedRunEdit(threadKey, preparedEdit);
+          Dialog.alert(
+            "Could not open queued edit",
+            error instanceof Error ? error.message : "Could not restore attachments.",
+          );
+          return;
+        }
+        void Haptics.selectionAsync();
+        navigation.goBack();
+      };
+      await openEdit()
+        .catch((error: unknown) => {
+          Dialog.alert(
+            "Could not open queued edit",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        })
+        .finally(() => {
+          busyRef.current = false;
+          setBusyRunId(null);
+        });
       return;
     }
     if (action !== "steer" && action !== "remove") return;
@@ -180,9 +319,13 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     void Haptics.selectionAsync();
     if (action === "remove") {
       await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
-    } else if (workflow?.canSendNow) {
+    } else if (workflow?.canSendNow && queuedRuns[index]?.run.queueEditId == null) {
       await resume({ ...target, input: { threadId: target.threadId, runId } });
-    } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
+    } else if (
+      workflow?.activeRun &&
+      workflow.canPromoteToSteer &&
+      queuedRuns[index]?.run.queueEditId == null
+    ) {
       await promote({
         ...target,
         input: {
@@ -236,8 +379,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
           canPromoteToSteer:
             (workflow?.canPromoteToSteer ?? false) &&
+            run.queueEditId == null &&
             (run.freshContext !== true || workflow?.promoteSkipsCompaction === true),
-          canSendNow: workflow?.canSendNow ?? false,
+          canSendNow: (workflow?.canSendNow ?? false) && run.queueEditId == null,
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
@@ -320,9 +464,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         {title}
                       </Text>
                     </View>
-                    {controls.isEditing ? (
+                    {controls.isEditing || run.queueEditId != null ? (
                       <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
-                        Editing
+                        {controls.isEditing ? "Editing" : "Editing elsewhere"}
                       </Text>
                     ) : null}
                   </Pressable>

@@ -20,7 +20,6 @@ import {
 import type {
   KeybindingCommand,
   AssistantCitation,
-  ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
   EnvironmentId,
   ModelSelection,
@@ -204,7 +203,6 @@ import {
   ComposerAttachmentFileList,
   ComposerAttachmentMediaRow,
   ComposerFilePreviewDialog,
-  ComposerQueuedAttachmentRow,
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
@@ -463,11 +461,7 @@ export interface ChatComposerProps {
   onPageScrollKeyUp: (key: string) => void;
   onPageScrollRelease: () => void;
 
-  editingQueuedAttachments: ReadonlyArray<{
-    readonly attachment: ContractChatAttachment;
-    readonly url: string | null;
-  }> | null;
-  onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
+  isEditingQueuedMessage: boolean;
 
   onCompactContext: () => void;
   onSend: (
@@ -606,8 +600,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setThreadError,
     onExpandImage,
     onFileOpen,
-    editingQueuedAttachments,
-    onRemoveEditingQueuedAttachment,
+    isEditingQueuedMessage,
   } = props;
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     contextWindowEntries,
@@ -642,7 +635,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activePendingProgress = holdingUserInput ? null : incomingPendingProgress;
   const activePendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
-  const isEditingQueuedMessage = editingQueuedAttachments !== null;
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
   const composerDraftTargetKeyRef = useRef("");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target key to a ref read by async handlers
@@ -1130,7 +1122,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerSendState = deriveComposerSendState({
     prompt,
     imageCount: composerImages.length + composerFiles.length,
-    existingAttachmentCount: editingQueuedAttachments?.length ?? 0,
     terminalContexts: composerTerminalContexts,
     elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
   });
@@ -3465,16 +3456,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   />
                 </ComposerCommandMenuLayer>
               )}
-
-              {!isComposerCollapsedMobile &&
-                pendingUserInputs.length === 0 &&
-                editingQueuedAttachments !== null &&
-                editingQueuedAttachments.length > 0 && (
-                  <ComposerQueuedAttachmentRow
-                    attachments={editingQueuedAttachments}
-                    onRemove={onRemoveEditingQueuedAttachment}
-                  />
-                )}
 
               {composerAttachmentMediaRow}
 

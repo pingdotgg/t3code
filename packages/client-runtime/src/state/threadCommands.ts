@@ -18,6 +18,8 @@ import {
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
 import {
+  type BeginQueuedRunEditInput,
+  type CancelQueuedRunEditInput,
   type InterruptThreadTurnInput,
   archiveThread,
   closeGuestShare,
@@ -26,6 +28,8 @@ import {
   createThread,
   deleteThread,
   editQueuedRun,
+  beginQueuedRunEdit,
+  cancelQueuedRunEdit,
   interruptThreadTurn,
   forkSideChat,
   forkThreadFromRun,
@@ -348,6 +352,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     retryWorkspacePreparation: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:retry-workspace-preparation",
       execute: retryWorkspacePreparation,
+      scheduler,
+      concurrency,
+    }),
+    beginQueuedRunEdit: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:begin-queued-run-edit",
+      execute: (input: BeginQueuedRunEditInput) => beginQueuedRunEdit(input),
+      scheduler,
+      concurrency,
+    }),
+    cancelQueuedRunEdit: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:cancel-queued-run-edit",
+      execute: (input: CancelQueuedRunEditInput) => cancelQueuedRunEdit(input),
       scheduler,
       concurrency,
     }),

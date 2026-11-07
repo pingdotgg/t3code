@@ -85,7 +85,11 @@ vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 vi.mock("./queued-run-edit", () => ({
   useQueuedRunEdit: () => null,
+  useQueuedRunEditSaving: () => false,
   getQueuedRunEdit: () => null,
+  useSavedQueuedEditDrafts: () => [],
+  useQueuedEditRecovery: () => null,
+  getQueuedEditRecovery: () => null,
 }));
 vi.mock("./preferences", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
@@ -121,6 +125,7 @@ vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => comman
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
+    useEnvironmentThread: () => null,
     environmentThreadDetails: {
       queueWorkflowAtom: () => Atom.make(null),
       checkpointSummariesAtom: () => Atom.make([]),

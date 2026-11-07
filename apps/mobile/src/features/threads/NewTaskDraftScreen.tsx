@@ -945,12 +945,14 @@ export function NewTaskDraftScreen(props: {
         activeThreadBusy={false}
         canStopThread={false}
         queuedRunEdit={null}
+        savedQueuedEditDrafts={[]}
+        recoveryDraftKey={null}
+        onSelectRecoveryDraft={() => {}}
         composerDraftKey={flow.draftKey}
         followUpBehavior="queue"
         canSteerActiveTurn={false}
         isSavingQueuedEdit={false}
         onCancelQueuedRunEdit={() => {}}
-        onRemoveQueuedEditAttachment={() => {}}
         projectWorkspaceRoot={selectedProject.workspaceRoot}
         threadCwd={composerWorkspaceCwd}
         selectedThreadQueueCount={0}

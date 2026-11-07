@@ -154,6 +154,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { PopoverCreateHandle } from "./ui/popover";
+import { Button } from "./ui/button";
 import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
@@ -504,7 +505,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     routeThreadRef,
     threadDraftTarget: baseComposerDraftTarget,
-    activeThreadId: serverThread !== null || draftThread !== null ? threadId : null,
+    activeThreadId: routeThreadDetailRef?.threadId ?? null,
     serverProjection,
     promptRef,
     composerRef,
@@ -3580,6 +3581,31 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
+                    {queuedRunEdit.savedEditDrafts.length > 0 ? (
+                      <div className="flex flex-wrap gap-2 py-1">
+                        {queuedRunEdit.recoveryTarget !== null ? (
+                          <Button
+                            size="xs"
+                            variant="ghost-muted"
+                            onClick={() => queuedRunEdit.selectRecoveryTarget(null)}
+                          >
+                            Main draft
+                          </Button>
+                        ) : null}
+                        {queuedRunEdit.savedEditDrafts.map((target, index) => (
+                          <Button
+                            key={target}
+                            size="xs"
+                            variant="ghost-muted"
+                            onClick={() => queuedRunEdit.selectRecoveryTarget(target)}
+                          >
+                            {queuedRunEdit.recoveryTarget === target
+                              ? "Recovered queued edit"
+                              : `Saved queued edit ${index + 1}`}
+                          </Button>
+                        ))}
+                      </div>
+                    ) : null}
                     <ChildThreadApprovals threadRef={activeThreadRef} />
                     <div className="relative">
                       <ComposerSurface.Shell contextRow={showComposerContextStrip}>
@@ -3778,10 +3804,7 @@ export default function ChatView(props: ChatViewProps) {
                                 setThreadError={setThreadError}
                                 onExpandImage={onExpandTimelineImageStable}
                                 onFileOpen={openFileAttachmentStable}
-                                editingQueuedAttachments={queuedRunEdit.editingAttachments}
-                                onRemoveEditingQueuedAttachment={
-                                  queuedRunEdit.removeEditingAttachment
-                                }
+                                isEditingQueuedMessage={queuedRunEdit.isEditing}
                               />
                             )}
                           </div>

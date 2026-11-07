@@ -1,6 +1,8 @@
 import {
   isOrchestrationV2WorkActive,
   ORCHESTRATION_V2_WS_METHODS,
+  type CommandId,
+  type RunId,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ThreadProjection,
@@ -54,6 +56,19 @@ import {
   type EnvironmentThreadState,
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
+
+export function queuedRunEditOwnership(
+  state: EnvironmentThreadState,
+  edit: { readonly runId: RunId; readonly editId: CommandId | null; readonly sequence: number },
+): "pending" | "owned" | "lost" {
+  if (
+    (state.status !== "live" && state.status !== "deleted") ||
+    (state.sequence ?? 0) < edit.sequence
+  )
+    return "pending";
+  const run = Option.getOrNull(state.data)?.runs.find((run) => run.id === edit.runId);
+  return run?.status === "queued" && (run.queueEditId ?? null) === edit.editId ? "owned" : "lost";
+}
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -524,7 +539,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
     if (sequence === appliedSequence) return;
     yield* SubscriptionRef.set(lastSequence, sequence);
-    if (fresh.length === 0) return;
+    if (fresh.length === 0) {
+      yield* SubscriptionRef.update(state, (current) => ({ ...current, sequence }));
+      return;
+    }
 
     const waiting = yield* Ref.get(awaitingCompletion);
     // Apply against the latest projection/history in one update so a concurrent
@@ -581,6 +599,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
       const updated: EnvironmentThreadState = {
         ...current,
+        sequence,
         data: Option.some(next),
         status: waiting ? "synchronizing" : "live",
         error: Option.none(),

@@ -1,54 +1,77 @@
+import {
+  queuedEditDraftMatchesSource,
+  queuedEditDraftHasMissingAttachments,
+  type QueuedRunEditDraft,
+} from "@t3tools/client-runtime/state/queued-run-edit-draft";
+import { uuidv4 } from "../lib/uuid";
+import { useMemo } from "react";
 import type {
   ChatAttachment,
+  CommandId,
   MessageId,
   OrchestrationMessageContext,
   RunId,
   UploadChatAttachment,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import { stripAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import {
   makeQueuedRunEditStore,
-  resolveQueuedEditExit,
   type QueuedRunsAtom,
 } from "@t3tools/client-runtime/queued-run-edit";
 
 import { uploadedComposerContext } from "../lib/composerContext";
+import type { DraftComposerAttachment } from "../lib/composerImages";
 import { appAtomRegistry } from "./atom-registry";
 import { abortComposerDraftOperations } from "./composerDraftOperations";
 import { queuedEditDraftKey } from "./queued-edit-draft-key";
 import { setThreadComposerError } from "./thread-composer-error";
 import {
   clearComposerDraft,
-  getComposerDraftSnapshot,
-  mergeComposerDraftContent,
+  updateComposerDrafts,
   setComposerDraftContext,
   setComposerDraftText,
+  getComposerDraftSnapshot,
+  composerDraftsAtom,
+  isComposerDraftEmpty,
+  appendComposerDraftAttachments,
 } from "./use-composer-drafts";
 
 export interface QueuedRunEdit {
+  readonly editId: CommandId | null;
+  readonly sequence: number;
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
-  readonly existingAttachments: ReadonlyArray<ChatAttachment>;
+  readonly originalAttachmentIds: ReadonlyArray<string>;
   readonly context?: OrchestrationMessageContext;
-  /** Removing a server attachment changes the message even when the draft looks untouched. */
-  readonly removedExistingAttachment?: true;
 }
 
-const queuedRunEdits = makeQueuedRunEditStore<QueuedRunEdit>({
+export { queuedEditDraftKey } from "./queued-edit-draft-key";
+
+const queuedRunEdits = makeQueuedRunEditStore<QueuedRunEditDraft & { readonly runId: RunId }>({
   registry: appAtomRegistry,
   label: "mobile-queued-run-edits",
 });
 
-export { queuedEditDraftKey } from "./queued-edit-draft-key";
+export function watchQueuedRunEdit(threadKey: string, runs: QueuedRunsAtom): void {
+  const draft = activeEditDraft(appAtomRegistry.get(composerDraftsAtom), threadKey);
+  if (!draft?.ownership || queuedRunEdits.get(threadKey)?.ownership === draft.ownership) return;
+  queuedRunEdits.begin(threadKey, draft, {
+    runs,
+    onRunLeftQueue: (_, endedEdit) => {
+      const dirty = recoverQueuedRunEdit(threadKey, endedEdit);
+      setThreadComposerError(
+        threadKey,
+        dirty
+          ? "Editing ended. Open Saved queued edit above the composer to recover your changes."
+          : "The message left the queue or another editor took over.",
+      );
+    },
+  });
+}
 
-export const getQueuedRunEdit = queuedRunEdits.get;
-
-/**
- * The draft a sheet opened for `requestedKey` should edit now: a queued edit's
- * draft only while that edit is still open, else the thread's own draft.
- */
 export function activeComposerDraftKey(
   threadKey: string,
   requestedKey: string,
@@ -57,87 +80,218 @@ export function activeComposerDraftKey(
   if (requestedKey === threadKey) return threadKey;
   return edit !== null && queuedEditDraftKey(threadKey, edit.runId) === requestedKey
     ? requestedKey
-    : threadKey;
+    : getQueuedEditRecovery(threadKey) === requestedKey
+      ? requestedKey
+      : threadKey;
 }
 
-export function useQueuedRunEdit(threadKey: string | null): QueuedRunEdit | null {
-  const edits = useAtomValue(queuedRunEdits.atom);
-  return threadKey === null ? null : (edits[threadKey] ?? null);
+const queuedEditRecoverySelectionAtom = Atom.make<Readonly<Record<string, string>>>({}).pipe(
+  Atom.keepAlive,
+);
+
+export function selectQueuedEditRecovery(threadKey: string, draftKey: string | null): void {
+  const next = { ...appAtomRegistry.get(queuedEditRecoverySelectionAtom) };
+  if (draftKey === null) delete next[threadKey];
+  else next[threadKey] = draftKey;
+  appAtomRegistry.set(queuedEditRecoverySelectionAtom, next);
 }
 
-/**
- * The run started or was cancelled elsewhere. A changed edit goes back into
- * the thread's composer when that is empty; otherwise it is dropped. Either
- * way the thread says so, wherever the user is when it happens.
- */
-function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
-  const editDraftKey = queuedEditDraftKey(threadKey, edit.runId);
-  const editDraft = getComposerDraftSnapshot(editDraftKey);
-  const threadDraft = getComposerDraftSnapshot(threadKey);
-  const editRestorable = editDraft.text.trim().length > 0 || editDraft.attachments.length > 0;
-  const recovery = resolveQueuedEditExit({
-    editChanged:
-      editDraft.text !== edit.originalText ||
-      editDraft.attachments.length > 0 ||
-      edit.removedExistingAttachment === true,
-    // A cleared edit has nothing to put back, so it can only be discarded.
-    threadDraftEmpty:
-      editRestorable &&
-      threadDraft.text.trim().length === 0 &&
-      threadDraft.attachments.length === 0,
-  });
-  if (recovery === "kept") {
-    // The merge publishes the draft before writing it, so a failed write only delays persistence to the next one.
-    mergeComposerDraftContent(threadKey, {
-      text: editDraft.text,
-      attachments: editDraft.attachments,
-      ...(editDraft.context ? { context: editDraft.context } : {}),
-    }).catch((error: unknown) => {
-      console.warn("[queued-run-edit] could not persist the recovered edit", error);
-    });
-  }
-  clearComposerDraft(editDraftKey, { deferAttachmentCleanup: recovery === "kept" });
-  if (recovery === "clean") return;
-  setThreadComposerError(
-    threadKey,
-    recovery === "kept"
-      ? "That message already started. Your edit is back in the composer."
-      : "That message already started, so the edit was discarded.",
+export function getQueuedEditRecovery(threadKey: string): string | null {
+  const key = appAtomRegistry.get(queuedEditRecoverySelectionAtom)[threadKey];
+  return key !== undefined && appAtomRegistry.get(composerDraftsAtom)[key] !== undefined
+    ? key
+    : null;
+}
+
+export function useQueuedEditRecovery(threadKey: string | null): string | null {
+  const selections = useAtomValue(queuedEditRecoverySelectionAtom);
+  const drafts = useSavedQueuedEditDrafts(threadKey);
+  const selected = threadKey === null ? undefined : selections[threadKey];
+  return selected !== undefined && drafts.includes(selected) ? selected : null;
+}
+
+const savedEditDraftsAtom = Atom.family((threadKey: string) =>
+  Atom.make((get) =>
+    Object.keys(get(composerDraftsAtom)).filter((key) =>
+      key.startsWith(`${threadKey}~queued-edit~`),
+    ),
+  ).pipe(
+    Atom.withEquality<ReadonlyArray<string>>(
+      (left, right) =>
+        left.length === right.length && left.every((key, index) => key === right[index]),
+    ),
+  ),
+);
+
+export function useSavedQueuedEditDrafts(threadKey: string | null) {
+  return useAtomValue(savedEditDraftsAtom(threadKey ?? ""));
+}
+
+function activeEditDraft(
+  drafts: Readonly<Record<string, { readonly queuedEdit?: QueuedRunEditDraft }>>,
+  threadKey: string,
+) {
+  return (
+    Object.entries(drafts).find(
+      ([key, draft]) =>
+        key.startsWith(`${threadKey}~queued-edit~`) && draft.queuedEdit?.ownership !== undefined,
+    )?.[1].queuedEdit ?? null
   );
 }
 
-/** `runs` is the thread's runs; the edit ends when its run leaves the queue. */
+function editFromDraft(draft: QueuedRunEditDraft | null): QueuedRunEdit | null {
+  return draft?.ownership ? { ...draft, ...draft.ownership } : null;
+}
+
+export function getQueuedRunEdit(threadKey: string | null): QueuedRunEdit | null {
+  return threadKey === null
+    ? null
+    : editFromDraft(activeEditDraft(appAtomRegistry.get(composerDraftsAtom), threadKey));
+}
+
+const activeEditDraftAtom = Atom.family((threadKey: string) =>
+  Atom.make((get) => activeEditDraft(get(composerDraftsAtom), threadKey)),
+);
+
+export function useQueuedRunEdit(threadKey: string | null): QueuedRunEdit | null {
+  const draft = useAtomValue(activeEditDraftAtom(threadKey ?? ""));
+  return useMemo(() => editFromDraft(draft), [draft]);
+}
+
+export function useQueuedRunEditSaving(threadKey: string | null): boolean {
+  const saving = useAtomValue(queuedRunEdits.savingAtom);
+  return threadKey !== null && saving[threadKey] === true;
+}
+
+export function forgetQueuedRunEdit(threadKey: string): void {
+  queuedRunEdits.end(threadKey);
+  updateComposerDrafts((current) => {
+    const next = { ...current };
+    for (const [key, draft] of Object.entries(current)) {
+      if (!key.startsWith(threadKey + "~queued-edit~") || !draft.queuedEdit?.ownership) continue;
+      const retained = { ...draft, queuedEdit: { ...draft.queuedEdit, ownership: undefined } };
+      if (isComposerDraftEmpty(retained)) delete next[key];
+      else next[key] = retained;
+    }
+    return next;
+  });
+}
+
+export function canReuseQueuedRunEditDraft(
+  threadKey: string,
+  runId: RunId,
+  text: string,
+  attachments: ReadonlyArray<{ readonly id: string }>,
+) {
+  const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, runId));
+  return (
+    queuedEditDraftMatchesSource(draft.queuedEdit, text, attachments) &&
+    draft.queuedEdit !== undefined &&
+    !queuedEditDraftHasMissingAttachments(draft.queuedEdit, draft.attachments)
+  );
+}
+
 export function beginQueuedRunEdit(
   threadKey: string,
   edit: QueuedRunEdit,
-  runs: QueuedRunsAtom,
+  attachments: ReadonlyArray<DraftComposerAttachment>,
 ): void {
+  abortComposerDraftOperations(threadKey);
   const previous = getQueuedRunEdit(threadKey);
   if (previous !== null && previous.runId !== edit.runId) {
-    clearComposerDraft(queuedEditDraftKey(threadKey, previous.runId));
+    forgetQueuedRunEdit(threadKey);
   }
-  // The composer moves off the thread draft, so a paste or pick still running for it is dropped.
-  abortComposerDraftOperations(threadKey);
+  selectQueuedEditRecovery(threadKey, null);
   const draftKey = queuedEditDraftKey(threadKey, edit.runId);
-  const originalText = stripAttachmentOnlyBootstrapPrompt(edit.originalText);
-  clearComposerDraft(draftKey);
-  setComposerDraftText(draftKey, originalText);
-  setComposerDraftContext(draftKey, edit.context);
-  queuedRunEdits.begin(
+  const existing = appAtomRegistry.get(composerDraftsAtom)[draftKey];
+  const reuse = canReuseQueuedRunEditDraft(
     threadKey,
-    { ...edit, originalText },
-    { runs, onRunLeftQueue: exitQueuedRunEdit },
+    edit.runId,
+    edit.originalText,
+    edit.originalAttachmentIds.map((id) => ({ id })),
   );
+  if (existing && !reuse) {
+    updateComposerDrafts((current) => {
+      const retained = existing.queuedEdit
+        ? { ...existing, queuedEdit: { ...existing.queuedEdit, ownership: undefined } }
+        : existing;
+      const next = { ...current };
+      if (!isComposerDraftEmpty(retained)) next[`${draftKey}~saved~${uuidv4()}`] = retained;
+      delete next[draftKey];
+      return next;
+    });
+  }
+  if (!reuse) {
+    setComposerDraftText(draftKey, stripAttachmentOnlyBootstrapPrompt(edit.originalText));
+    setComposerDraftContext(draftKey, edit.context);
+    appendComposerDraftAttachments(draftKey, attachments);
+  }
+  updateComposerDrafts((current) => {
+    const draft = current[draftKey] ?? { text: "", attachments: [] };
+    return {
+      ...current,
+      [draftKey]: {
+        ...draft,
+        queuedEdit: {
+          runId: edit.runId,
+          messageId: edit.messageId,
+          sourceText: edit.originalText,
+          originalText: reuse ? (existing?.queuedEdit?.originalText ?? draft.text) : draft.text,
+          originalAttachmentIds: edit.originalAttachmentIds,
+          ...(reuse && existing?.queuedEdit?.removedAttachmentIds
+            ? { removedAttachmentIds: existing.queuedEdit.removedAttachmentIds }
+            : {}),
+          ...(edit.context ? { context: edit.context } : {}),
+          ownership: { editId: edit.editId, sequence: edit.sequence },
+        },
+      },
+    };
+  });
 }
 
-export function removeQueuedRunEditAttachment(threadKey: string, attachmentId: string): void {
-  queuedRunEdits.update(threadKey, (edit) => ({
-    ...edit,
-    removedExistingAttachment: true,
-    existingAttachments: edit.existingAttachments.filter(
-      (attachment) => attachment.id !== attachmentId,
-    ),
-  }));
+export async function prepareQueuedRunEditDraft(
+  threadKey: string,
+  edit: QueuedRunEdit,
+  readAttachments: () => Promise<ReadonlyArray<DraftComposerAttachment>>,
+): Promise<void> {
+  const reuse = canReuseQueuedRunEditDraft(
+    threadKey,
+    edit.runId,
+    edit.originalText,
+    edit.originalAttachmentIds.map((id) => ({ id })),
+  );
+  beginQueuedRunEdit(threadKey, edit, []);
+  if (reuse) return;
+  const draftKey = queuedEditDraftKey(threadKey, edit.runId);
+  const ownership = getComposerDraftSnapshot(draftKey).queuedEdit?.ownership;
+  const attachments = await readAttachments();
+  if (getComposerDraftSnapshot(draftKey).queuedEdit?.ownership !== ownership) return;
+  appendComposerDraftAttachments(draftKey, attachments, {
+    allowOverflow: true,
+  });
+}
+
+export function recoverQueuedRunEdit(
+  threadKey: string,
+  expectedEdit?: Pick<QueuedRunEditDraft, "runId" | "ownership">,
+): boolean {
+  const currentEdit = activeEditDraft(appAtomRegistry.get(composerDraftsAtom), threadKey);
+  if (
+    expectedEdit &&
+    (currentEdit?.runId !== expectedEdit.runId || currentEdit?.ownership !== expectedEdit.ownership)
+  )
+    return false;
+  const edit = editFromDraft(currentEdit);
+  if (edit === null) return false;
+  const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, edit.runId));
+  const ids = edit.originalAttachmentIds ?? [];
+  const dirty =
+    draft.text !== edit.originalText ||
+    (draft.queuedEdit?.removedAttachmentIds?.length ?? 0) > 0 ||
+    draft.attachments.some((attachment) => !ids.includes(attachment.id));
+  if (dirty) forgetQueuedRunEdit(threadKey);
+  else endQueuedRunEdit(threadKey);
+  return dirty;
 }
 
 export function endQueuedRunEdit(
@@ -158,7 +312,6 @@ export const startQueuedRunEditSave = queuedRunEdits.startSave;
 
 /** Attachments replace wholesale; resend kept server attachments with uploads in composer order. */
 export function resolveQueuedEditPayload(input: {
-  readonly edit: QueuedRunEdit;
   readonly draftContext: OrchestrationMessageContext | undefined;
   readonly draftAttachments: ReadonlyArray<{ readonly id: string }>;
   readonly uploaded: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
@@ -166,7 +319,7 @@ export function resolveQueuedEditPayload(input: {
   readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
   readonly context: OrchestrationMessageContext | undefined;
 } {
-  const attachments = [...input.edit.existingAttachments, ...input.uploaded];
+  const attachments = input.uploaded;
   const rebound = uploadedComposerContext(
     input.draftContext,
     input.draftAttachments,

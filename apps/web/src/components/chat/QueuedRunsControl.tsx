@@ -147,6 +147,7 @@ export function QueuedRunsControl({
           url: queuedImageUrlById.get(attachment.id) ?? null,
         })),
       pending: false,
+      held: run.queueEditId != null,
     })),
     ...optimisticQueued.map((message) => ({
       key: message.id,
@@ -166,14 +167,19 @@ export function QueuedRunsControl({
           url: attachment.previewUrl ?? null,
         })),
       pending: true,
+      held: false,
     })),
   ];
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
-    const freshContext = queued.some(
-      ({ run }) => run.id === queuedRunId && run.freshContext === true,
-    );
-    if (!canSendRun(freshContext) || steerInFlightRef.current) return;
+    const item = queued.find(({ run }) => run.id === queuedRunId);
+    if (
+      !item ||
+      item.run.queueEditId != null ||
+      !canSendRun(item.run.freshContext === true) ||
+      steerInFlightRef.current
+    )
+      return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     if (workflow?.canSendNow) {
@@ -194,7 +200,8 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !canSendRun(next.run.freshContext === true)) return false;
+      if (!next || next.run.queueEditId != null || !canSendRun(next.run.freshContext === true))
+        return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
@@ -275,7 +282,7 @@ export function QueuedRunsControl({
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
               >
-                {canSendRun(item.freshContext) && !isEditing ? (
+                {canSendRun(item.freshContext) && !isEditing && !item.held ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
@@ -304,6 +311,9 @@ export function QueuedRunsControl({
                     <Clock3Icon aria-hidden className="size-3" />
                     Saving
                   </span>
+                ) : null}
+                {item.held && !isEditing ? (
+                  <span className="px-1 text-foreground">Editing elsewhere</span>
                 ) : null}
                 {isEditing ? (
                   <>

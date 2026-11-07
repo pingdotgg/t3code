@@ -1,3 +1,5 @@
+import { QueuedRunEditDraft } from "@t3tools/client-runtime/state/queued-run-edit-draft";
+import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
 import { useAtomValue } from "@effect/atom-react";
 import {
   EnvironmentId as EnvironmentIdSchema,
@@ -33,7 +35,6 @@ import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
-import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   collectComposerContextReferences,
   formatComposerContextReference,
@@ -351,7 +352,7 @@ export function insertComposerDraftContext(
     if (!nextDraft) return current;
     inserted = true;
     removed = draft.attachments.filter((attachment) => !nextDraft.attachments.includes(attachment));
-    return { ...current, [draftKey]: nextDraft };
+    return withComposerDraft(current, draftKey, nextDraft);
   });
   scheduleUnusedComposerAttachmentCleanup(inserted ? removed : (content.attachments ?? []));
   return inserted;
@@ -396,6 +397,7 @@ export class ComposerDraftPersistenceError extends Schema.TaggedError<ComposerDr
 const isComposerDraftPersistenceError = Schema.is(ComposerDraftPersistenceError);
 
 export interface ComposerDraft {
+  readonly queuedEdit?: QueuedRunEditDraft;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -468,6 +470,7 @@ const PersistedComposerContextSchema = Schema.Struct({
 });
 
 const ComposerDraftSchema = Schema.Struct({
+  queuedEdit: Schema.optional(QueuedRunEditDraft),
   text: Schema.String,
   context: Schema.optional(PersistedComposerContextSchema),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
@@ -656,7 +659,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
     draft.freshContext !== true &&
-    draft.workspaceSelection === undefined
+    draft.workspaceSelection === undefined &&
+    draft.queuedEdit?.ownership === undefined
   );
 }
 
@@ -665,6 +669,25 @@ function withComposerDraft(
   draftKey: string,
   draft: ComposerDraft,
 ): Record<string, ComposerDraft> {
+  const removedOriginalIds =
+    current[draftKey]?.attachments
+      .filter(
+        (attachment) =>
+          draft.queuedEdit?.originalAttachmentIds.includes(attachment.id) &&
+          !draft.attachments.some((retained) => retained.id === attachment.id),
+      )
+      .map((attachment) => attachment.id) ?? [];
+  if (draft.queuedEdit && removedOriginalIds.length > 0) {
+    draft = {
+      ...draft,
+      queuedEdit: {
+        ...draft.queuedEdit,
+        removedAttachmentIds: [
+          ...new Set([...(draft.queuedEdit.removedAttachmentIds ?? []), ...removedOriginalIds]),
+        ],
+      },
+    };
+  }
   if (isEmptyDraft(draft) && draft.project === undefined) {
     const next = { ...current };
     delete next[draftKey];
@@ -722,16 +745,16 @@ export function decodePersistedComposerState(value: unknown): {
               draft.attachments.length === 0 &&
               draft.runtimeMode === undefined &&
               draft.interactionMode === undefined &&
-              draft.workspaceSelection === undefined
+              draft.workspaceSelection === undefined &&
+              draft.queuedEdit?.ownership === undefined
               ? { ...draft, modelSelection: undefined }
               : draft,
             now,
           ),
         )
-        // Retain contentless drafts with import receipts to prevent re-importing native shares after restart.
+        // Keep import receipts and durable queued edits across restarts.
         .filter(([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0)
-        // Queued-edit sessions are memory-only; persisted drafts would outlive their run association and become unreachable.
-        .filter(([key]) => !isQueuedEditDraftKey(key)),
+        .filter(([key, draft]) => !isQueuedEditDraftKey(key) || draft.queuedEdit !== undefined),
     ),
     stickyModelSelection: parsed.stickyModelSelection ?? null,
     modelOptionMemory: parsed.modelOptionMemory ?? {},
@@ -1315,7 +1338,7 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
   await flushComposerDrafts();
 }
 
-function updateComposerDrafts(
+export function updateComposerDrafts(
   update: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
 ): void {
   const current = appAtomRegistry.get(composerDraftsAtom);
@@ -1431,10 +1454,7 @@ export function appendComposerDraftAttachments(
         (attachment) => !draft.attachments.includes(attachment),
       );
     }
-    return {
-      ...current,
-      [draftKey]: draft,
-    };
+    return withComposerDraft(current, draftKey, draft);
   });
   scheduleUnusedComposerAttachmentCleanup([...rejected, ...removed]);
   return rejected.length;
@@ -1626,6 +1646,7 @@ export function clearComposerDraftContentState(
     return current;
   }
   const {
+    queuedEdit: _queuedEdit,
     importedShareIds: _importedShareIds,
     context: _context,
     modelSelection,

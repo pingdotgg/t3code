@@ -1,3 +1,4 @@
+import { QueuedRunEditDraft } from "@t3tools/client-runtime/state/queued-run-edit-draft";
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
@@ -101,6 +102,7 @@ import {
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 
 const isElementContextDetails = Schema.is(ElementContextDetails);
+const isQueuedRunEditDraft = Schema.is(QueuedRunEditDraft);
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
 const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
@@ -240,6 +242,7 @@ const PersistedTerminalContextDraft = Schema.Struct({
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
 const PersistedComposerThreadDraftState = Schema.Struct({
+  queuedEdit: Schema.optionalKey(QueuedRunEditDraft),
   prompt: Schema.String,
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerDraftFileAttachment)),
@@ -362,6 +365,7 @@ export type ComposerContextInsertionHandler = (
 const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler>();
 
 export interface ComposerThreadDraftState {
+  queuedEdit?: QueuedRunEditDraft | undefined;
   prompt: string;
   images: ComposerImageAttachment[];
   files: ComposerFileAttachment[];
@@ -761,7 +765,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   interactionMode: null,
 });
 
-function createEmptyThreadDraft(): ComposerThreadDraftState {
+export function createEmptyThreadDraft(): ComposerThreadDraftState {
   return {
     prompt: "",
     images: [],
@@ -882,7 +886,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.queuedEdit?.ownership === undefined
   );
 }
 
@@ -1983,7 +1988,9 @@ function normalizePersistedDraftsByThreadId(
       environmentContexts.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      (!isQueuedRunEditDraft(draftCandidate.queuedEdit) ||
+        draftCandidate.queuedEdit.ownership === undefined)
     ) {
       continue;
     }
@@ -2000,6 +2007,13 @@ function normalizePersistedDraftsByThreadId(
                 : threadKeyOrId;
             })();
     nextDraftsByThreadKey[normalizedThreadKey] = {
+      ...(isQueuedRunEditDraft(draftCandidate.queuedEdit)
+        ? {
+            queuedEdit: structuredClone(
+              draftCandidate.queuedEdit,
+            ) as DeepMutable<QueuedRunEditDraft>,
+          }
+        : {}),
       prompt,
       attachments,
       ...(files.length > 0 ? { files } : {}),
@@ -2114,11 +2128,15 @@ export function partializeComposerDraftStoreState(
       draft.environmentContexts.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.queuedEdit?.ownership === undefined
     ) {
       continue;
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
+      ...(draft.queuedEdit
+        ? { queuedEdit: structuredClone(draft.queuedEdit) as DeepMutable<QueuedRunEditDraft> }
+        : {}),
       prompt: draft.prompt,
       attachments: draft.persistedAttachments,
       ...(draft.files.length > 0
@@ -2424,6 +2442,7 @@ function toHydratedThreadDraft(
     })) ?? [];
 
   return {
+    ...(persistedDraft.queuedEdit ? { queuedEdit: persistedDraft.queuedEdit } : {}),
     prompt: ensureInlineContextReferences(persistedDraft.prompt, [
       ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
       ...(persistedDraft.previewAnnotations ?? []).map(previewAnnotationContextReference),
@@ -3314,6 +3333,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextDraft: ComposerThreadDraftState = {
               ...current,
+              ...(current.queuedEdit && current.queuedEdit.originalAttachmentIds.includes(imageId)
+                ? {
+                    queuedEdit: {
+                      ...current.queuedEdit,
+                      removedAttachmentIds: [
+                        ...new Set([...(current.queuedEdit.removedAttachmentIds ?? []), imageId]),
+                      ],
+                    },
+                  }
+                : {}),
               prompt: removeInlineContextReference(
                 current.prompt,
                 toKindScopedComposerContextId("image", imageId),
@@ -3426,6 +3455,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextDraft = {
               ...current,
+              ...(current.queuedEdit && current.queuedEdit.originalAttachmentIds.includes(fileId)
+                ? {
+                    queuedEdit: {
+                      ...current.queuedEdit,
+                      removedAttachmentIds: [
+                        ...new Set([...(current.queuedEdit.removedAttachmentIds ?? []), fileId]),
+                      ],
+                    },
+                  }
+                : {}),
               prompt: removeInlineContextReference(
                 current.prompt,
                 toKindScopedComposerContextId("file", fileId),
@@ -4047,6 +4086,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextDraft: ComposerThreadDraftState = {
               ...current,
+              queuedEdit: undefined,
               prompt: "",
               images: [],
               files: [],

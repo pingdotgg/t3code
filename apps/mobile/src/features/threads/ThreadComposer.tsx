@@ -17,7 +17,6 @@ import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-run
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  type ChatAttachment,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -101,7 +100,6 @@ import {
 import { compactEditorInsets } from "./compactEditorInsets";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
-import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import type { ComposerEnvironmentCandidate } from "@t3tools/client-runtime/composerThreadItems";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
@@ -229,9 +227,7 @@ export interface ThreadComposerProps {
   readonly interactionLocked?: boolean;
   readonly draftKey?: string;
   readonly queuedEdit?: {
-    readonly existingAttachments: ReadonlyArray<ChatAttachment>;
     readonly saving: boolean;
-    readonly onRemoveExistingAttachment: (attachmentId: string) => void;
   } | null;
   readonly followUpBehavior: FollowUpBehavior;
   readonly canSteerActiveTurn: boolean;
@@ -454,10 +450,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
   const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
-  const hasContent =
-    draftMessage.trim().length > 0 ||
-    draftAttachments.length > 0 ||
-    (queuedEdit?.existingAttachments.length ?? 0) > 0;
+  const hasContent = draftMessage.trim().length > 0 || draftAttachments.length > 0;
   const stripAttachments = composerStripAttachments(draftAttachments);
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
   const onResumeQueue = props.onResumeQueue;
@@ -596,9 +589,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
-  const hasEditingAttachments =
-    (queuedEdit !== null && queuedEdit.existingAttachments.length > 0) ||
-    stripAttachments.length > 0;
+  const hasEditingAttachments = stripAttachments.length > 0;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
     environmentId: props.environmentId,
     attachments: draftAttachments,
@@ -754,20 +745,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   // Removable attachments: inside the card, or above the focused one-row composer.
   const editingAttachments = hasEditingAttachments ? (
     <>
-      {queuedEdit !== null && queuedEdit.existingAttachments.length > 0 ? (
-        <Animated.View
-          className="px-[14px] pb-2.5 pt-2"
-          entering={COMPOSER_ATTACHMENT_ENTERING}
-          exiting={FadeOut.duration(120)}
-        >
-          <ComposerQueuedEditAttachments
-            environmentId={props.environmentId}
-            attachments={queuedEdit.existingAttachments}
-            disabled={isSubmissionLocked}
-            onRemove={queuedEdit.onRemoveExistingAttachment}
-          />
-        </Animated.View>
-      ) : null}
       {stripAttachments.length > 0 ? (
         <Animated.View
           className="px-[14px] pb-2.5 pt-2"

@@ -37,6 +37,9 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
+  editQueuedRun,
+  beginQueuedRunEdit,
+  cancelQueuedRunEdit,
   interruptThreadTurn,
   revertThreadCheckpoint,
   resumeThreadQueue,
@@ -61,6 +64,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
+  readonly queuedRunEditHold?: boolean;
   readonly advertiseThreadStop?: boolean;
 }) {
   const client = {
@@ -109,6 +113,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       environment: {
         capabilities: {
           repositoryIdentity: true,
+          ...(input.queuedRunEditHold === undefined
+            ? {}
+            : { queuedRunEditHold: input.queuedRunEditHold }),
           ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
         },
       },
@@ -131,6 +138,41 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect.each([false, true])(
+    "negotiates queued edit holds with advertised capability %s",
+    (supported) =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          ...(supported ? { queuedRunEditHold: true } : {}),
+        });
+        const provide = Effect.provideService(
+          EnvironmentSupervisor.EnvironmentSupervisor,
+          supervisor,
+        );
+        const target = { threadId: v2ThreadId, runId: RunId.make("queued-run") };
+        const acquired = yield* beginQueuedRunEdit({
+          ...target,
+          commandId: CommandId.make("acquire"),
+          previousEditId: null,
+        }).pipe(provide);
+        expect(acquired).toEqual(
+          supported ? { editId: "acquire", sequence: 1 } : { editId: null, sequence: 0 },
+        );
+        yield* editQueuedRun({ ...target, editId: acquired.editId, text: "Saved" }).pipe(provide);
+        yield* cancelQueuedRunEdit({ ...target, editId: acquired.editId }).pipe(provide);
+        expect(commands.map((command) => command.type)).toEqual(
+          supported
+            ? ["queued-run.edit.begin", "queued-run.edit", "queued-run.edit.cancel"]
+            : ["queued-run.edit"],
+        );
+        const saved = commands.find((command) => command.type === "queued-run.edit");
+        if (supported) expect(saved).toHaveProperty("editId", acquired.editId);
+        else expect(saved).not.toHaveProperty("editId");
+      }).pipe(Effect.provide(layerTestRandom)),
+  );
   it.effect("distinguishes sending a selected queued message from resuming queue order", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
