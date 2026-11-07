@@ -512,6 +512,7 @@ export const make = Effect.gen(function* () {
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     const previous = options?.localOnly ? yield* getCachedStatus(cwd) : null;
+    const refsBeforeLocalRead = options?.localOnly ? null : yield* workflow.readRefSnapshot(cwd);
     const local = yield* refreshLocalStatusCore(cwd);
     if (options?.localOnly) {
       return yield* withRemoteWriteLock(
@@ -537,12 +538,17 @@ export const make = Effect.gen(function* () {
         // Bump the PR lookup epoch after earlier remote writers have finished.
         yield* workflow.invalidateStatus(cwd);
         const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
-        // Fetch can move the base used for local Changes totals.
-        yield* refreshLocalStatusCore(cwd);
         // Without a fetch, the cached behind count cannot justify an automatic pull.
         const pulled = refreshUpstream ? yield* maybeAutoPull(cwd, remoteRead, [rawCwd]) : null;
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
         yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
+        // A fetch, ours or not, can move the base used for local Changes totals.
+        if (
+          refsBeforeLocalRead === null ||
+          (yield* workflow.readRefSnapshot(cwd)) !== refsBeforeLocalRead
+        ) {
+          yield* refreshLocalStatusCore(cwd);
+        }
         const parts = yield* getStatusParts(cwd);
         return mergeGitStatusParts(parts.local, parts.remote);
       }),
