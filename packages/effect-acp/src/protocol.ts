@@ -192,10 +192,38 @@ const makeStrictNdJsonRpcParser = () => {
     },
     encode: (response: Parameters<typeof codec.encode>[0]) => {
       const encoded = codec.encode(response);
-      return encoded === undefined ? undefined : `${encoded}\n`;
+      if (encoded === undefined) return undefined;
+      const json = typeof encoded === "string" ? encoded : new TextDecoder().decode(encoded);
+      return `${JSON.stringify(normalizeOutgoingFrame(JSON.parse(json)))}\n`;
     },
   };
 };
+const isCauseResponse = Schema.is(
+  Schema.Struct({
+    error: Schema.TaggedStruct("Cause", { data: Schema.Array(Schema.Unknown) }),
+  }),
+);
+const isProtocolFailure = Schema.is(Schema.TaggedStruct("Fail", { error: AcpSchema.Error }));
+
+// Normalize only Effect's error envelope after the codec has completed batch tracking.
+function normalizeOutgoingFrame(frame: unknown): unknown {
+  if (Array.isArray(frame)) return frame.map(normalizeOutgoingFrame);
+  if (!isCauseResponse(frame)) return frame;
+  const [failure] = frame.error.data;
+  const error =
+    frame.error.data.length === 1 && isProtocolFailure(failure)
+      ? failure.error
+      : AcpError.AcpRequestError.internalError().toProtocolError();
+  return {
+    ...frame,
+    error: {
+      code: error.code,
+      message: error.message,
+      ...(error.data === undefined ? {} : { data: error.data }),
+    },
+  };
+}
+
 const MAX_BUFFERED_RAW_NOTIFICATIONS = 32;
 
 const decodeFailureDiagnostics = (error: AcpError.AcpProtocolParseError) => ({
@@ -314,28 +342,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
           : undefined;
     const requestId = encodedRequestId === "" ? undefined : encodedRequestId;
     const encoded = yield* Effect.try({
-      try: () => {
-        // ACP peers consume JSON-RPC errors, not Effect's private Cause envelope.
-        if (message._tag === "Exit" && message.exit._tag === "Failure") {
-          const [failure] = message.exit.cause;
-          const error =
-            message.exit.cause.length === 1 &&
-            failure?._tag === "Fail" &&
-            isProtocolError(failure.error)
-              ? failure.error
-              : AcpError.AcpRequestError.internalError().toProtocolError();
-          return `${JSON.stringify({
-            jsonrpc: "2.0",
-            id: message.requestId,
-            error: {
-              code: error.code,
-              message: error.message,
-              ...(error.data === undefined ? {} : { data: error.data }),
-            },
-          })}\n`;
-        }
-        return parser.encode(message);
-      },
+      try: () => parser.encode(message),
       catch: (cause) => AcpError.AcpProtocolParseError.fromEncodingError(method, requestId, cause),
     });
 

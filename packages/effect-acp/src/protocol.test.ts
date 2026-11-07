@@ -510,6 +510,42 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("completes a batch with successful and failed extension responses", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acknowledgements = yield* Queue.unbounded<string>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onExtRequest: (method) =>
+          method === "x/success"
+            ? Effect.succeed({ ok: true })
+            : Effect.fail(AcpError.AcpRequestError.invalidParams("bad input", { field: "name" })),
+        onOutgoingResponse: (requestId) => Queue.offer(acknowledgements, requestId),
+      });
+
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          encodeUnknownJsonString([
+            { jsonrpc: "2.0", id: 0, method: "x/success", params: {} },
+            { jsonrpc: "2.0", id: "peer-1", method: "x/failure", params: {} },
+          ]) + "\n",
+        ),
+      );
+
+      assert.deepEqual(JSON.parse(yield* Queue.take(output)), [
+        { jsonrpc: "2.0", id: 0, result: { ok: true } },
+        {
+          jsonrpc: "2.0",
+          id: "peer-1",
+          error: { code: -32602, message: "bad input", data: { field: "name" } },
+        },
+      ]);
+      assert.equal(yield* Queue.take(acknowledgements), "peer-1");
+    }),
+  );
+
   it.effect.each([
     {
       name: "typed failure",
