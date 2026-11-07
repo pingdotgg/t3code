@@ -3618,6 +3618,7 @@ describe("AcpAdapterV2", () => {
       stateOnlyWake: false,
       queuedWake: false,
       stillRunning: false,
+      steered: false,
     },
     {
       name: "image-only input",
@@ -3626,6 +3627,7 @@ describe("AcpAdapterV2", () => {
       stateOnlyWake: false,
       queuedWake: false,
       stillRunning: false,
+      steered: false,
     },
     {
       name: "an unmatched message",
@@ -3634,6 +3636,7 @@ describe("AcpAdapterV2", () => {
       stateOnlyWake: false,
       queuedWake: false,
       stillRunning: false,
+      steered: false,
     },
     {
       name: "a state-only pre-acceptance wake",
@@ -3642,6 +3645,7 @@ describe("AcpAdapterV2", () => {
       stateOnlyWake: true,
       queuedWake: false,
       stillRunning: false,
+      steered: false,
     },
     {
       name: "an unmatched echo overtaking a queued wake",
@@ -3650,6 +3654,7 @@ describe("AcpAdapterV2", () => {
       stateOnlyWake: false,
       queuedWake: true,
       stillRunning: false,
+      steered: false,
     },
     {
       name: "a queued wake followed by newer running work",
@@ -3658,10 +3663,20 @@ describe("AcpAdapterV2", () => {
       stateOnlyWake: false,
       queuedWake: true,
       stillRunning: true,
+      steered: false,
+    },
+    {
+      name: "a queued wake with steering acceptance",
+      imageOnly: false,
+      matches: true,
+      stateOnlyWake: false,
+      queuedWake: true,
+      stillRunning: false,
+      steered: true,
     },
   ])(
     "handles Copilot acceptance for $name without a spurious continuation",
-    ({ imageOnly, matches, stateOnlyWake, queuedWake, stillRunning }) =>
+    ({ imageOnly, matches, stateOnlyWake, queuedWake, stillRunning, steered }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const path = yield* Path.Path;
@@ -3803,7 +3818,8 @@ describe("AcpAdapterV2", () => {
           },
         });
         yield* Queue.take(dispatched);
-        if (queuedWake) yield* event!({ sessionId: "mock-session-1", type: "assistant.idle" });
+        if (queuedWake && !steered)
+          yield* event!({ sessionId: "mock-session-1", type: "assistant.idle" });
         if (stateOnlyWake) {
           yield* event!({ sessionId: "mock-session-1", type: "assistant.turn_start" });
           yield* event!({ sessionId: "mock-session-1", type: "assistant.idle" });
@@ -3836,16 +3852,15 @@ describe("AcpAdapterV2", () => {
             Stream.runCollect,
           ),
         );
-        if (!queuedWake)
-          assert.isTrue(
-            observed.some(
-              (value) =>
-                value.type === "message.updated" &&
-                value.message.role === "assistant" &&
-                value.message.runId === input.runId &&
-                value.message.text === "answer",
-            ),
-          );
+        assert.isTrue(
+          observed.some(
+            (value) =>
+              value.type === "message.updated" &&
+              value.message.role === "assistant" &&
+              value.message.runId === input.runId &&
+              value.message.text === "answer",
+          ),
+        );
         assert.deepEqual(
           offered,
           queuedWake ? [String(threadId)] : [],
@@ -3893,6 +3908,15 @@ describe("AcpAdapterV2", () => {
                 message.role === "assistant" &&
                 message.text.includes("queued wake output"),
             ),
+          );
+          assert.isFalse(
+            completed.messages.some(
+              (message) =>
+                message.runId === continuation.runId &&
+                message.role === "assistant" &&
+                message.text.includes("answer"),
+            ),
+            "the user's answer must not appear in the background continuation",
           );
           if (stillRunning)
             assert.isTrue(

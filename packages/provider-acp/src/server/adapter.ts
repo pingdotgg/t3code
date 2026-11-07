@@ -1408,6 +1408,7 @@ interface ActiveAcpTurn {
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   workAccepted: boolean;
   readonly promptAcceptanceText: string | null;
+  readonly continuationBufferLength: number;
   readonly promptWireSettled: Deferred.Deferred<void, never>;
   /** Completed once `session/prompt` is the runtime's active prompt. */
   readonly promptDispatched: Deferred.Deferred<void, never>;
@@ -1906,6 +1907,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           EffectAcpSchema.SessionUpdate,
           { sessionUpdate: "state_update" }
         > | null = null;
+        // Replay mutates agentWork; retain the newest native foreground state separately.
+        let foregroundWork: Extract<
+          EffectAcpSchema.SessionUpdate,
+          { sessionUpdate: "state_update" }
+        > | null = null;
         const agentRequests = new Set<object>();
         const nativeChildren = new Map<string, AcpNativeChildSession>();
         const extractSubagentUpdate = (tool: AcpToolCallState) =>
@@ -1942,6 +1948,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.followAgentWorkState === true &&
             setup.initializeResult.protocolVersion === 2;
           agentWork = null;
+          foregroundWork = null;
           agentRequests.clear();
           nativeChildren.clear();
           yield* Ref.set(activeSessionSetup, setup);
@@ -6846,6 +6853,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ) {
                         context.workAccepted = true;
                         agentWork = { sessionUpdate: "state_update", state: "running" };
+                        foregroundWork = agentWork;
                         const continuationAlreadyRequested = yield* Ref.get(continuationRequested);
                         yield* Ref.update(wakeBuffer, (buffer) =>
                           !continuationAlreadyRequested &&
@@ -6859,15 +6867,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       }
                       return;
                     }
+                    const update = {
+                      sessionUpdate: "state_update" as const,
+                      state: notice.state,
+                      ...(notice.state === "idle" && notice.stopReason !== undefined
+                        ? { stopReason: notice.stopReason }
+                        : {}),
+                    };
+                    foregroundWork = update;
                     yield* handleSessionUpdate({
                       sessionId: notice.sessionId,
-                      update: {
-                        sessionUpdate: "state_update",
-                        state: notice.state,
-                        ...(notice.state === "idle" && notice.stopReason !== undefined
-                          ? { stopReason: notice.stopReason }
-                          : {}),
-                      },
+                      update,
                     });
                   }),
                 ).pipe(
@@ -8297,6 +8307,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSettled: false,
               promptSettledStatus: null,
               workAccepted: false,
+              continuationBufferLength: continuationWasRequested
+                ? (yield* Ref.get(wakeBuffer)).length
+                : 0,
               promptAcceptanceText:
                 promptParts?.prompt.find((block) => block.type === "text")?.text ?? null,
               promptWireSettled,
@@ -8400,14 +8413,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* runtimeCallbackPermit.withPermit(
                   Effect.gen(function* () {
                     const liveWork = agentWork;
+                    const latestWork = canFollowForegroundEvents ? foregroundWork : liveWork;
                     const buffered = yield* takeWakeBuffer;
                     yield* Effect.forEach(buffered, handleSessionUpdate, { discard: true });
                     const bufferedWork = canFollowForegroundEvents
                       ? buffered.findLast((item) => item.update.sessionUpdate === "state_update")
                           ?.update
                       : undefined;
+                    // A later user's cancelled idle cannot cancel a wake that already ended.
                     agentWork =
-                      bufferedWork?.sessionUpdate === "state_update" ? bufferedWork : liveWork;
+                      latestWork?.state === "idle" &&
+                      bufferedWork?.sessionUpdate === "state_update" &&
+                      bufferedWork.state === "idle"
+                        ? bufferedWork
+                        : latestWork;
                     context.workAccepted = true;
                     yield* settleIdleWork(context);
                     agentWork = liveWork;
@@ -8523,12 +8542,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       return;
                     if (canFollowForegroundEvents && !context.workAccepted) {
                       context.workAccepted = true;
-                      if (!(yield* Ref.get(continuationRequested))) {
-                        const buffered = yield* Ref.getAndSet(wakeBuffer, []);
-                        for (const notification of buffered) {
+                      const preservedLength = (yield* Ref.get(continuationRequested))
+                        ? context.continuationBufferLength
+                        : 0;
+                      const buffered = yield* Ref.modify(wakeBuffer, (current) => [
+                        current.slice(preservedLength),
+                        current.slice(0, preservedLength),
+                      ]);
+                      for (const notification of buffered) {
+                        if (notification.update.sessionUpdate !== "state_update")
                           yield* handleSessionUpdate(notification);
-                        }
                       }
+                      const latestState = buffered.findLast(
+                        (notification) => notification.update.sessionUpdate === "state_update",
+                      );
+                      if (latestState !== undefined) yield* handleSessionUpdate(latestState);
                       if (context.finalized) return;
                     }
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
