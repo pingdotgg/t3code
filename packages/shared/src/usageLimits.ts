@@ -754,8 +754,19 @@ export function withUsageLimitsCommands(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
 ): ServerProvider[] {
+  const supportedScopes = new Set(providersWithLimits(providers).map(limitsGroupKey));
+  const sourceDrivers = new Set<string>(
+    sources.flatMap((source) => source.accounts.map((account) => account.driver)),
+  );
+  const unreadableSource = sources.some(
+    (source) => source.error !== undefined && source.accounts.length === 0,
+  );
   return providers.map((provider) => {
-    if (!hasProviderUsageLimits(provider, providers, sources)) return provider;
+    const supported =
+      supportedScopes.has(limitsGroupKey(provider)) ||
+      (provider.usageLimits?.group === undefined &&
+        (unreadableSource || sourceDrivers.has(provider.driver)));
+    if (!supported) return provider;
     const commands = (items: readonly ServerProviderSlashCommand[]) => [
       ...items.filter((command) => command.name !== USAGE_LIMITS_COMMAND.name),
       USAGE_LIMITS_COMMAND,
