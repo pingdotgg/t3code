@@ -790,7 +790,11 @@ function SidebarInset({
 }: React.ComponentProps<"main"> & { variant?: "pane" | "split" }) {
   return (
     <>
-      <div aria-hidden data-slot="sidebar-slide-surface" />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-y-0 hidden opacity-0 md:peer-data-[variant=inset]:block"
+        data-slot="sidebar-slide-surface"
+      />
       <main
         className={cn(
           "relative flex min-w-0 w-full flex-1 flex-col",
@@ -805,7 +809,11 @@ function SidebarInset({
         data-slot="sidebar-inset"
         {...props}
       />
-      <div aria-hidden data-slot="sidebar-slide-frame" />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-y-0 hidden bg-(--app-chrome-background) opacity-0 surface-grain md:peer-data-[variant=inset]:block"
+        data-slot="sidebar-slide-frame"
+      />
     </>
   );
 }

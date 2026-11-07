@@ -1706,14 +1706,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 
 [data-slot="sidebar-slide-frame"] {
   --sidebar-slide-corner: 14px;
-  position: fixed;
-  inset-block: 0;
-  display: none;
-  opacity: 0;
-  pointer-events: none;
-  background-color: var(--app-chrome-background);
-  background-image: var(--surface-grain);
-  background-size: var(--surface-grain-size);
 
   & > [data-corner] {
     position: absolute;
@@ -1735,12 +1727,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   & > [data-corner="bottom"] {
     --sidebar-slide-corner-center: 0 0;
     translate: 0 -100%;
-  }
-}
-
-@media (width >= 48rem) {
-  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-slide-frame"] {
-    display: block;
   }
 }
 
