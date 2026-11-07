@@ -117,26 +117,23 @@ export function attachTimelineViewport(
   };
   // Input inside an embedded frame reaches none of the listeners above, but
   // its scroll still chains out to the timeline.
+  const scrollPosition = () => ({
+    offset: scrollNode.scrollTop,
+    maxOffset: scrollNode.scrollHeight - scrollNode.clientHeight,
+  });
   const scrolledUp = createUpwardScrollDetector(scrollNode.scrollTop);
-  // The list scrolls itself to keep rows in place as rows above resize; the scroll event
-  // after that is not the reader's. Its public listen types omit this signal.
-  let listAdjusted = false;
+  // The list scrolls itself to keep rows in place as rows above resize; that is not the reader.
+  // Its public listen types omit this signal, and the list's own listener may run after this.
   const listen = list.getState().listen as unknown as (
     signal: "scrollAdjust",
     callback: () => void,
   ) => () => void;
-  const stopListeningToListAdjust = listen("scrollAdjust", () => {
-    listAdjusted = true;
-  });
+  const stopListeningToListAdjust = listen("scrollAdjust", () =>
+    queueMicrotask(() => scrolledUp({ ...scrollPosition(), programmatic: true })),
+  );
   const handleScroll = () => {
-    const programmatic = programmaticHolds > 0 || listAdjusted;
-    listAdjusted = false;
     if (
-      scrolledUp({
-        offset: scrollNode.scrollTop,
-        maxOffset: scrollNode.scrollHeight - scrollNode.clientHeight,
-        programmatic,
-      }) &&
+      scrolledUp({ ...scrollPosition(), programmatic: programmaticHolds > 0 }) &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
         contentLength: scrollNode.scrollHeight,

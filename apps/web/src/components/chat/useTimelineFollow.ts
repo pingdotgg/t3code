@@ -334,7 +334,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     // list lands short of the real end.
     requestAnimationFrame(() => {
       const list = legendListRef.current;
-      if (!list) return;
+      if (!list || readCurrentFollow().mode !== "following") return;
       void Promise.resolve(
         list.scrollToEnd?.({
           animated: animated && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,

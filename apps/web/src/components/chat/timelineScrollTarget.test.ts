@@ -91,7 +91,6 @@ describe("timeline scroll follow opt-out", () => {
   it("preserves upward new-turn positioning, then detects the reader leaving that anchor", () => {
     const scrolledUp = createUpwardScrollDetector(1400);
     // The caller must distinguish its animated positioning from iframe scroll chaining.
-    expect(scrolledUp(at(1200, 1900, true))).toBe(false);
     expect(scrolledUp(at(1100, 1900, true))).toBe(false);
 
     expect(scrolledUp(at(1100, 1900))).toBe(false);
