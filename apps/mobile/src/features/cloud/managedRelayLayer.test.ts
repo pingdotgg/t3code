@@ -12,6 +12,8 @@ import { FetchHttpClient } from "effect/http";
 import * as Dpop from "./dpop";
 import * as ManagedRelayLayer from "./managedRelayLayer";
 
+vi.mock("expo", () => ({ requireOptionalNativeModule: () => null }));
+
 vi.mock("expo-crypto", () => ({
   CryptoDigestAlgorithm: { SHA256: "SHA-256" },
   getRandomBytes: (byteCount: number) => new Uint8Array(NodeCrypto.randomBytes(byteCount)),
