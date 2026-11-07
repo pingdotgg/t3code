@@ -62,18 +62,13 @@ describe("AcpClientTerminals", () => {
         kill: () => Effect.void,
         stdin: Sink.drain,
         stdout: Stream.make(new Uint8Array([0xe2])).pipe(
-          Stream.concat(
-            Stream.fromEffect(Deferred.succeed(stdoutStarted, undefined)).pipe(Stream.drain),
-          ),
-          Stream.concat(Stream.fromEffect(Deferred.await(stderrWritten)).pipe(Stream.drain)),
+          Stream.concat(Stream.fromEffectDrain(Deferred.succeed(stdoutStarted, undefined))),
+          Stream.concat(Stream.fromEffectDrain(Deferred.await(stderrWritten))),
           Stream.concat(Stream.make(new Uint8Array([0x82, 0xac]))),
         ),
-        stderr: Stream.fromEffect(Deferred.await(stdoutStarted)).pipe(
-          Stream.drain,
+        stderr: Stream.fromEffectDrain(Deferred.await(stdoutStarted)).pipe(
           Stream.concat(Stream.make(new Uint8Array([0x58]))),
-          Stream.concat(
-            Stream.fromEffect(Deferred.succeed(stderrWritten, undefined)).pipe(Stream.drain),
-          ),
+          Stream.concat(Stream.fromEffectDrain(Deferred.succeed(stderrWritten, undefined))),
         ),
         all: Stream.empty,
         getInputFd: () => Sink.drain,
@@ -92,9 +87,7 @@ describe("AcpClientTerminals", () => {
       yield* terminals.waitForExit(request);
 
       const output = yield* terminals.output(request);
-      expect(output.output).toContain("€");
-      expect(output.output).toContain("X");
-      expect(output.output).not.toContain("\uFFFD");
+      expect(output.output).toBe("X€");
       expect(output.truncated).toBe(false);
       expect(terminals.readOutputSnapshot("session", terminal.terminalId)?.output).toBe(
         output.output,
