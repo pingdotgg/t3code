@@ -4775,6 +4775,71 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  it.effect("asks before an Auto-mode command Claude forwards for approval", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto",
+        interactionMode: "default",
+        cwd: "/workspace",
+      });
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-auto-ask"),
+        text: "Run python3 auth_probe.py --dry-run.",
+        attachments: [],
+        runtimePolicy,
+      });
+      yield* harness.runtime.startTurn({
+        ...input,
+        appThread: { ...input.appThread, runtimeMode: "auto", interactionMode: "default" },
+      });
+      assert.equal(harness.getOpenedOptions()?.permissionMode, "auto");
+      const canUseTool = harness.getOpenedOptions()?.canUseTool;
+      assert.isDefined(canUseTool);
+      const toolInput = { command: "python3 auth_probe.py --dry-run" };
+      const decision = yield* Effect.promise(() =>
+        canUseTool!("Bash", toolInput, {
+          signal: new AbortController().signal,
+          toolUseID: "tool-auto-ask",
+          requestId: "request-auto-ask",
+          decisionReason: "Permission rule 'Bash(python3 auth_probe.py:*)' requires approval",
+          matchedAskRule: {
+            source: "projectSettings",
+            toolName: "Bash",
+            ruleContent: "python3 auth_probe.py:*",
+          },
+        }),
+      ).pipe(Effect.forkScoped);
+      const first = yield* Effect.raceFirst(
+        Queue.take(harness.runtimeRequestReceipts).pipe(
+          Effect.map((event) => ({ type: "request", event }) as const),
+        ),
+        Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
+      );
+      assert.equal(
+        first.type,
+        "request",
+        "Auto mode allowed a command Claude asked the user to approve",
+      );
+      if (first.type !== "request") return;
+      assert.equal(first.event.runtimeRequest.status, "pending");
+      assert.equal(first.event.runtimeRequest.kind, "command");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect(
     "carries earlier user-only skill instructions on sends and steering with attachments",
     () =>
