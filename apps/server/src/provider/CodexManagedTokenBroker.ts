@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import * as Protocol from "./CodexManagedTokenProtocol.ts";
+import * as CodexManagedResponses from "./CodexManagedResponses.ts";
 
 const MAX_CONNECTIONS = 32;
 const MAX_JOBS = 16;
@@ -37,6 +38,10 @@ export class CodexManagedTokenBroker extends Context.Service<
   {
     readonly endpoint: Effect.Effect<string, BrokerStartError>;
     readonly awaitIdle: Effect.Effect<void>;
+    readonly responses: Effect.Effect<
+      Effect.Success<ReturnType<typeof CodexManagedResponses.make>>,
+      BrokerStartError
+    >;
   }
 >()("t3/provider/CodexManagedTokenBroker") {}
 
@@ -205,7 +210,10 @@ const acquireListener = Effect.gen(function* () {
     return Effect.sync(() => server.off("error", onError));
   });
   if (platform !== "win32") yield* io(() => NodeFSP.chmod(owned.endpoint, 0o600));
-  return { endpoint: owned.endpoint, awaitIdle: FiberSet.awaitEmpty(jobs) };
+  const responses = yield* CodexManagedResponses.make().pipe(
+    Effect.mapError((cause) => new BrokerStartError({ cause })),
+  );
+  return { endpoint: owned.endpoint, awaitIdle: FiberSet.awaitEmpty(jobs), responses };
 });
 const make = Effect.gen(function* () {
   const scope = yield* Scope.fork(yield* Effect.scope);
@@ -215,11 +223,13 @@ const make = Effect.gen(function* () {
     return CodexManagedTokenBroker.of({
       endpoint: Effect.fail(acquired.failure),
       awaitIdle: Effect.void,
+      responses: Effect.fail(acquired.failure),
     });
   }
   return CodexManagedTokenBroker.of({
     endpoint: Effect.succeed(acquired.success.endpoint),
     awaitIdle: acquired.success.awaitIdle,
+    responses: Effect.succeed(acquired.success.responses),
   });
 });
 export const layer = Layer.effect(CodexManagedTokenBroker, make);

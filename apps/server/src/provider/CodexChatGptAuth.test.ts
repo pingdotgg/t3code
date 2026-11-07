@@ -1697,6 +1697,29 @@ it.effect("a running session renews its bound profile but refuses a replacement 
   ),
 );
 
+// regression: #29927 the API can reject a token before its locally stated expiry.
+it.effect("renews a locally unexpired rejected token once across bound sessions", () =>
+  provision(
+    Effect.gen(function* () {
+      const h = yield* makeHarness;
+      yield* h.signIn;
+      yield* h.phase("succeeded");
+      const saved = Option.getOrThrow(yield* h.auth.read);
+      const profileKey = yield* h.auth.profileKey(saved);
+      const first = yield* h.bindProfile(profileKey);
+      const second = yield* h.bindProfile(profileKey);
+      const renewed = yield* Effect.all(
+        [first.renew(saved.accessToken), second.renew(saved.accessToken)],
+        { concurrency: "unbounded" },
+      );
+      assert.equal(h.refreshes(), 1);
+      assert.equal(renewed[0].accessToken, "access-1");
+      assert.deepEqual(renewed[0], renewed[1]);
+      assert.equal(yield* h.auth.profileKey(renewed[0]), profileKey);
+    }),
+  ),
+);
+
 const makeRenewalBroker = Effect.gen(function* () {
   const oauthEntered = yield* Deferred.make<void>();
   const oauthRelease = yield* Deferred.make<void>();

@@ -63,6 +63,10 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(
     Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
       endpoint: Effect.succeed("unused-private-pipe"),
+      responses: Effect.succeed({
+        baseUrl: "http://127.0.0.1:1234/v1",
+        register: () => Effect.succeed("dummy-local-capability"),
+      }),
       awaitIdle: Effect.void,
     }),
   ),
@@ -283,7 +287,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         expect(launch.settings.binaryPath).toBe(executable.executablePath);
         expect(launch.settings.launchArgs).toContain("openai_token_sharing");
         expect(launch.environment.ACCESS_TOKEN).toBeUndefined();
-        expect(launch.settings.launchArgs).toContain("__managed-chatgpt-token");
+        expect(launch.settings.launchArgs).toContain("T3_CODEX_MANAGED_TOKEN");
         expect(launch.settings.launchArgs).not.toContain("dummy-owned-access");
         expect(launch.environment.OPENAI_API_KEY).toBeUndefined();
         expect(launch.environment.CODEX_HOME).toBe(launch.settings.homePath);
