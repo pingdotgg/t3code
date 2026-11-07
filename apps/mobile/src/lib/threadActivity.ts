@@ -17,6 +17,10 @@ import {
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  disclosureOpen,
+  transcriptFoldsStartOpen,
+} from "@t3tools/client-runtime/work-log/disclosure";
+import {
   contextCompactionLabel,
   liveThoughtLine,
   toolItemForDisplay,
@@ -52,6 +56,7 @@ import type {
   OrchestrationV2UserMessageInputIntent,
   RunAttemptId,
   ScheduledTaskId,
+  TranscriptView,
   TurnItemId,
 } from "@t3tools/contracts";
 import { idleCompactionOf, isCompactionCommandMessage, RunId, ThreadId } from "@t3tools/contracts";
@@ -1336,6 +1341,7 @@ function presentationRestart(
     previous.runlessWorkActive !== runlessWorkActive ||
     previous.display.toolCallVisibility !== display.toolCallVisibility ||
     previous.display.revealedMessageId !== display.revealedMessageId ||
+    previous.display.transcriptView !== display.transcriptView ||
     !setsEqual(previous.expandedRunIds, expandedRunIds) ||
     !setsEqual(previous.expandedWorkGroupIds, expandedWorkGroupIds)
   ) {
@@ -1484,11 +1490,14 @@ function liveAnswerPreview(feed: ReadonlyArray<ThreadFeedEntry>): string | null 
 export interface ThreadFeedDisplay {
   readonly toolCallVisibility: ToolCallVisibility;
   readonly revealedMessageId: MessageId | null;
+  /** Above "normal" every fold starts open, and the expanded-id sets name the ones closed. */
+  readonly transcriptView: TranscriptView;
 }
 
 const DEFAULT_THREAD_FEED_DISPLAY: ThreadFeedDisplay = {
   toolCallVisibility: "showAll",
   revealedMessageId: null,
+  transcriptView: "normal",
 };
 
 export function deriveThreadFeedPresentation(
@@ -1501,6 +1510,7 @@ export function deriveThreadFeedPresentation(
   cache?: ThreadFeedCache,
   display: ThreadFeedDisplay = DEFAULT_THREAD_FEED_DISPLAY,
 ): ThreadFeedEntry[] {
+  const startsOpen = transcriptFoldsStartOpen(display.transcriptView);
   const previous = cache?.presentation ?? null;
   const restart = presentationRestart(
     previous,
@@ -1592,7 +1602,7 @@ export function deriveThreadFeedPresentation(
     : deriveThreadFeedRunFolds(sourceFeed, latestRun, isWorking && runlessWorkActive, failedRunIds);
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
-    if (!expandedRunIds.has(fold.runId)) {
+    if (!disclosureOpen(expandedRunIds, fold.runId, startsOpen)) {
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
@@ -1611,7 +1621,7 @@ export function deriveThreadFeedPresentation(
       entry.runId === activeRunId;
     const fold = foldsByAnchorId.get(entry.id);
     if (fold) {
-      const expanded = expandedRunIds.has(fold.runId);
+      const expanded = disclosureOpen(expandedRunIds, fold.runId, startsOpen);
       let row = runFoldRowsCache.get(entry);
       if (
         !row ||
@@ -1673,6 +1683,7 @@ export function deriveThreadFeedPresentation(
         result,
         entry,
         expandedWorkGroupIds,
+        startsOpen,
         activeRunId,
         isWorking,
         isActiveTailGroup,
@@ -1820,6 +1831,7 @@ function appendPresentedFeedEntry(
   result: ThreadFeedEntry[],
   entry: Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "thinking" }>,
   expandedWorkGroupIds: ReadonlySet<string>,
+  startsOpen: boolean,
   activeRunId: RunId | null,
   isWorking: boolean,
   activeTail: boolean,
@@ -1845,11 +1857,21 @@ function appendPresentedFeedEntry(
     cached.isWorking !== isWorking ||
     cached.activeTail !== activeTail ||
     cached.rows.some(
-      (row) => row.type === "work-toggle" && expandedWorkGroupIds.has(row.groupId) !== row.expanded,
+      (row) =>
+        row.type === "work-toggle" &&
+        disclosureOpen(expandedWorkGroupIds, row.groupId, startsOpen) !== row.expanded,
     )
   ) {
     const rows: ThreadFeedEntry[] = [];
-    appendActivityGroupRows(rows, entry, expandedWorkGroupIds, activeRunId, isWorking, activeTail);
+    appendActivityGroupRows(
+      rows,
+      entry,
+      expandedWorkGroupIds,
+      startsOpen,
+      activeRunId,
+      isWorking,
+      activeTail,
+    );
     cached = { activeRunId, isWorking, activeTail, rows };
     presentedActivityGroupsCache.set(entry, cached);
   }
@@ -1862,6 +1884,7 @@ function appendActivityGroupRows(
   result: ThreadFeedEntry[],
   entry: ThreadFeedActivityGroup,
   expandedWorkGroupIds: ReadonlySet<string>,
+  startsOpen: boolean,
   activeRunId: RunId | null,
   isWorking: boolean,
   activeTail: boolean,
@@ -1895,6 +1918,7 @@ function appendActivityGroupRows(
       groupableRun,
       `work-group:${groupAnchorIdByActivityId.get(groupableRun[0]!.id) ?? groupableRun[0]!.id}`,
       expandedWorkGroupIds,
+      startsOpen,
       activeRunId,
       isWorking,
       activeTail && isTrailingRun,
@@ -1926,11 +1950,12 @@ function appendToolGroupRows(
   activities: ReadonlyArray<ThreadFeedActivity>,
   groupId: string,
   expandedWorkGroupIds: ReadonlySet<string>,
+  startsOpen: boolean,
   activeRunId: RunId | null,
   isWorking: boolean,
   activeTail: boolean,
 ): void {
-  const expanded = expandedWorkGroupIds.has(groupId);
+  const expanded = disclosureOpen(expandedWorkGroupIds, groupId, startsOpen);
   const latestActiveActivity = activities.findLast(
     (activity) =>
       isWorking && activity.lifecycleStatus === "inProgress" && activity.runId === activeRunId,

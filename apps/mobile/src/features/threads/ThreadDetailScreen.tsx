@@ -484,6 +484,9 @@ function ThreadDetailBody(
   });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
   const preferences = useAtomValue(mobilePreferencesAtom);
+  const transcriptView = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.transcriptView ?? "normal")
+    : "normal";
   const toolCallVisibility = AsyncResult.isSuccess(preferences)
     ? (preferences.value.toolCallVisibility ?? "showAll")
     : "showAll";
@@ -1508,6 +1511,7 @@ function ThreadDetailBody(
                   isProviderSubagent || pendingMessageEditBlocked ? null : handleEditPendingMessage
                 }
                 contentPresentation={props.contentPresentation}
+                transcriptView={transcriptView}
                 threadTitle={props.selectedThread.title}
                 latestRun={props.activityRun}
                 activeWorkStartedAt={props.activeWorkStartedAt}

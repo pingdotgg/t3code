@@ -1,5 +1,7 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import { TranscriptView, type ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import { TRANSCRIPT_VIEW_LABELS } from "@t3tools/client-runtime/work-log/disclosure";
+import * as Schema from "effect/Schema";
 
 export type ThreadActionMenuId =
   | "find"
@@ -14,6 +16,8 @@ export type ThreadActionMenuId =
   | "auto-settle"
   | "auto-settle:enabled"
   | "auto-settle:disabled"
+  | "transcript-view"
+  | `transcript-view:${TranscriptView}`
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -78,6 +82,8 @@ export interface ThreadActionMenuState {
   readonly isPinned: boolean;
   readonly isSettled: boolean;
   readonly autoSettleEnabled: boolean;
+  /** The device's Transcript view setting; the menu changes it for every thread. */
+  readonly transcriptView: TranscriptView;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
@@ -97,20 +103,32 @@ export interface ThreadActionMenuState {
   readonly canTurnIntoProject?: boolean;
 }
 
-/** Local navigation, read markers, and copying remain available to read-only clients. */
+/** Local navigation, read markers, copying, and display choices remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
-  return ![
-    "find",
-    "new-thread-on-branch",
-    "project-settings",
-    "mark-unread",
-    "share-guest",
-    "copy",
-    "copy-path",
-    "copy-branch",
-    "copy-thread",
-    "copy-thread-id",
-  ].includes(action);
+  return (
+    !action.startsWith("transcript-view") &&
+    ![
+      "find",
+      "new-thread-on-branch",
+      "project-settings",
+      "mark-unread",
+      "share-guest",
+      "copy",
+      "copy-path",
+      "copy-branch",
+      "copy-thread",
+      "copy-thread-id",
+    ].includes(action)
+  );
+}
+
+const isTranscriptView = Schema.is(TranscriptView);
+
+export function transcriptViewFromMenuAction(action: ThreadActionMenuId): TranscriptView | null {
+  const view = action.startsWith("transcript-view:")
+    ? action.slice("transcript-view:".length)
+    : null;
+  return isTranscriptView(view) ? view : null;
 }
 
 export function buildThreadActionMenuItems(
@@ -223,6 +241,16 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    {
+      id: "transcript-view",
+      label: "Transcript view",
+      icon: "list-collapse",
+      children: TranscriptView.literals.map((view) => ({
+        id: `transcript-view:${view}` as const,
+        label: TRANSCRIPT_VIEW_LABELS[view],
+        checked: state.transcriptView === view,
+      })),
+    },
     {
       id: "copy",
       label: "Copy",

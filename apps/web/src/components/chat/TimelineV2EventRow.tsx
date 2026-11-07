@@ -1,5 +1,9 @@
 import { WorkLogBlock } from "./WorkLog";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  disclosureOpen,
+  transcriptFoldsStartOpen,
+} from "@t3tools/client-runtime/work-log/disclosure";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
 import {
@@ -20,7 +24,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const ctx = use(TimelineRowCtx);
   const { item, visibility } = row.projectedItem;
   if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
-    return <V2SubagentGroup key={row.id} row={row} />;
+    return <V2SubagentGroup key={`${row.id}:${ctx.transcriptView}`} row={row} />;
   }
   if (item.type === "secret_request") {
     return (
@@ -58,8 +62,9 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
 }) {
   const ctx = use(TimelineRowCtx);
   const groupId = `subagent-group:${row.id}`;
+  const foldsStartOpen = transcriptFoldsStartOpen(ctx.transcriptView);
   const [expanded, setExpanded] = useState(() =>
-    ctx.workGroupViewState.expandedEntries.has(groupId),
+    disclosureOpen(ctx.workGroupViewState.expandedEntries, groupId, foldsStartOpen),
   );
   const members = (row.subagents ?? [row.projectedItem]).flatMap(({ item }) =>
     item.type === "subagent" ? [item] : [],
@@ -84,7 +89,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
   const statusSummary = summarizeSubagentStatuses(agents.map(({ status }) => status));
   const toggleExpanded = (open: boolean) => {
     ctx.onToggleWorkEntry(row.id, expanded);
-    if (open) ctx.workGroupViewState.expandedEntries.add(groupId);
+    if (open !== foldsStartOpen) ctx.workGroupViewState.expandedEntries.add(groupId);
     else ctx.workGroupViewState.expandedEntries.delete(groupId);
     setExpanded(open);
   };

@@ -1,13 +1,15 @@
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { TERMINAL_PALETTES, terminalOutputSpans } from "@t3tools/shared/terminalOutput";
-import type React from "react";
 import { useMemo, useRef } from "react";
-import { ScrollView, View } from "react-native";
+import { View } from "react-native";
+import type Animated from "react-native-reanimated";
+import { useAnimatedRef } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
+import { WorkLogScrollView } from "./thread-work-log-scroll";
 
 const FOLLOW_SLACK = 8;
 
@@ -23,6 +25,7 @@ export function ThreadCommandOutput(props: {
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
   readonly themeAppearance: "light" | "dark";
+  readonly fadeColor: string;
 }) {
   const { data, error } = useEnvironmentQuery(
     orchestrationEnvironment.v2.commandOutput({
@@ -30,7 +33,7 @@ export function ThreadCommandOutput(props: {
       input: { threadId: props.threadId, itemId: props.itemId },
     }),
   );
-  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const followRef = useRef(true);
   const text = data?.output.text ?? "";
   const spans = useMemo(
@@ -56,8 +59,9 @@ export function ThreadCommandOutput(props: {
       {data?.output.truncated ? (
         <Text className="pb-0.5 text-3xs text-foreground-subtle">Earlier output not shown</Text>
       ) : null}
-      <ScrollView
-        ref={scrollRef}
+      <WorkLogScrollView
+        scrollRef={scrollRef}
+        fadeColor={props.fadeColor}
         nestedScrollEnabled
         directionalLockEnabled
         showsVerticalScrollIndicator
@@ -86,7 +90,7 @@ export function ThreadCommandOutput(props: {
             ),
           )}
         </Text>
-      </ScrollView>
+      </WorkLogScrollView>
     </View>
   );
 }

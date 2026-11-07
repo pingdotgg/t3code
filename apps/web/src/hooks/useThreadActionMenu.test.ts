@@ -116,7 +116,10 @@ vi.mock("./useSettings", () => ({
       confirmThreadDelete: true,
       confirmThreadArchive: true,
       timestampFormat: "12-hour",
+      transcriptView: "normal",
     }),
+  updateClientSettings: async (patch: { transcriptView?: string }) =>
+    recordEffect(`transcript-view:${patch.transcriptView}`),
 }));
 vi.mock("./useThreadActions", () => ({
   canTurnThreadIntoProject: () => false,
@@ -163,6 +166,20 @@ beforeEach(() => {
   state.effects = [];
   state.completed = deferred<void>();
   state.show.mockReset().mockResolvedValue(null);
+});
+
+describe("thread menu transcript view", () => {
+  it("changes the device's view from a connection that cannot change threads", async () => {
+    state.show.mockResolvedValue("transcript-view:verbose");
+    createMenu().openMenu(position);
+    await state.completed.promise;
+    expect(state.effects).toEqual(["transcript-view:verbose"]);
+    const [items] = state.show.mock.calls[0]!;
+    const levels = items.find((item) => item.id === "transcript-view")?.children ?? [];
+    expect(levels.filter((level) => level.checked).map((level) => level.id)).toEqual([
+      "transcript-view:normal",
+    ]);
+  });
 });
 
 describe("thread menu permissions", () => {

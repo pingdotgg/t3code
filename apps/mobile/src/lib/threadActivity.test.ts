@@ -16,6 +16,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
+  type TranscriptView,
 } from "@t3tools/contracts";
 import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { summarizeToolGroup } from "@t3tools/client-runtime/work-log/presentation";
@@ -907,6 +908,59 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("opens every fold and tool group in a Thinking transcript until the user closes one", () => {
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected({ ...command(), id: TurnItemId.make("second-command") }, 2),
+      projected(assistantMessage(), 3),
+    ]);
+    const latestRun = {
+      runId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:03.000Z",
+    };
+    const present = (
+      expandedRunIds: ReadonlySet<RunId>,
+      expandedWorkGroupIds: ReadonlySet<string>,
+      transcriptView: TranscriptView = "normal",
+    ) =>
+      deriveThreadFeedPresentation(
+        feed,
+        latestRun,
+        expandedRunIds,
+        expandedWorkGroupIds,
+        null,
+        false,
+        undefined,
+        { toolCallVisibility: "showAll", revealedMessageId: null, transcriptView },
+      ).map((entry) =>
+        "expanded" in entry ? `${entry.id} ${entry.expanded ? "open" : "closed"}` : entry.id,
+      );
+
+    const folded = present(new Set(), new Set());
+    expect(folded).toEqual(["message-user", "run-fold:run-1 closed", "message-assistant"]);
+    const groupId = "work-group:local:thread-1:item-command";
+    expect(present(new Set(), new Set(), "thinking")).toEqual([
+      "message-user",
+      "run-fold:run-1 open",
+      `work-toggle:${groupId} open`,
+      `work-details:${groupId}`,
+      "message-assistant",
+    ]);
+    expect(present(new Set(), new Set([groupId]), "thinking")).toEqual([
+      "message-user",
+      "run-fold:run-1 open",
+      `work-toggle:${groupId} closed`,
+      "message-assistant",
+    ]);
+    expect(present(new Set([runId]), new Set(), "thinking")).toEqual(folded);
+    expect(present(new Set(), new Set(), "verbose")).toEqual(
+      present(new Set(), new Set(), "thinking"),
+    );
+  });
+
   // regression: #21393 show plans and fold settled progress notes
   it("folds progress even when a response has no tool calls", () => {
     const feed = buildThreadFeed([
@@ -1292,7 +1346,7 @@ describe("buildThreadFeed", () => {
         latestRun ? at(1) : null,
         false,
         undefined,
-        { toolCallVisibility, revealedMessageId: null },
+        { toolCallVisibility, revealedMessageId: null, transcriptView: "normal" },
       ).map((row) =>
         row.type === "activity-group"
           ? row.activities.map((activity) => activity.projectedItem.item.id).join("+")
