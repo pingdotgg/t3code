@@ -11,6 +11,7 @@ const {
   activateWindowsForegroundMock,
   appFocusMock,
   browserWindowMock,
+  dipToScreenRectMock,
   foregroundWindowMock,
   getAllWindowsMock,
   getFocusedWindowMock,
@@ -24,6 +25,12 @@ const {
   activateWindowsForegroundMock: vi.fn(),
   appFocusMock: vi.fn(),
   browserWindowMock: vi.fn(function BrowserWindowMock() {}),
+  dipToScreenRectMock: vi.fn((_window: unknown, bounds: Electron.Rectangle) => ({
+    x: bounds.x * 1.5,
+    y: bounds.y * 1.5,
+    width: bounds.width * 1.5,
+    height: bounds.height * 1.5,
+  })),
   foregroundWindowMock: vi.fn<() => bigint>(),
   getAllWindowsMock: vi.fn(),
   getFocusedWindowMock: vi.fn(),
@@ -49,6 +56,7 @@ vi.mock("electron", () => ({
   app: {
     focus: appFocusMock,
   },
+  screen: { dipToScreenRect: dipToScreenRectMock },
   BrowserWindow: Object.assign(browserWindowMock, {
     getAllWindows: getAllWindowsMock,
     getFocusedWindow: getFocusedWindowMock,
@@ -116,6 +124,10 @@ describe("ElectronWindow", () => {
       });
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       yield* electronWindow.prepareReveal(window as unknown as Electron.BrowserWindow);
+      assert.deepInclude(windowsForegroundPrepareMock.mock.calls[0]?.[0], {
+        bounds: { x: 150, y: 75, width: 1800, height: 1200 },
+        contentBounds: { x: 162, y: 75, width: 1776, height: 1188 },
+      });
       window.getTitle.mockClear();
 
       const revealFiber = yield* electronWindow

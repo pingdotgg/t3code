@@ -1931,13 +1931,20 @@ export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild"
   ).pipe(Config.withDefault(false));
   const needsRust = !reuseResourceMonitor || !reuseCaptureHelpers;
   const rustTarget = resolveResourceMonitorRustTargets("linux", arch)[0]!;
+  const rustTargets = reuseCaptureHelpers
+    ? [rustTarget]
+    : [rustTarget, rustTarget.replace(/gnu$/, "musl")];
 
   const checks = yield* Effect.all(
     {
       cargo: needsRust
         ? desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo")
         : Effect.succeed(true),
-      "rust-target": needsRust ? rustTargetIsInstalled(rustTarget) : Effect.succeed(true),
+      "rust-target": needsRust
+        ? Effect.forEach(rustTargets, rustTargetIsInstalled).pipe(
+            Effect.map((installed) => installed.every(Boolean)),
+          )
+        : Effect.succeed(true),
       cc: desktopBuildProbeSucceeds(ChildProcess.make("cc", ["--version"]), "cc"),
       make: desktopBuildProbeSucceeds(ChildProcess.make("make", ["--version"]), "make"),
       libsecret: desktopBuildProbeSucceeds(
@@ -1956,7 +1963,10 @@ export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild"
   ).map((requirement) => requirement.id);
 
   if (missing.length > 0) {
-    return yield* new LinuxDesktopBuildPrerequisitesMissingError({ missing, rustTarget });
+    return yield* new LinuxDesktopBuildPrerequisitesMissingError({
+      missing,
+      rustTarget: rustTargets.join(" "),
+    });
   }
 });
 
@@ -2294,7 +2304,9 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const [rustTarget] = resolveResourceMonitorRustTargets("linux", input.arch);
+  const [gnuTarget] = resolveResourceMonitorRustTargets("linux", input.arch);
+  // KDE only needs Rust libraries; musl avoids inheriting the build host's glibc through process::Command.
+  const rustTarget = input.backend === "kde" ? gnuTarget!.replace(/gnu$/, "musl") : gnuTarget!;
   // CI skips Rust on helper-cache hits; allow reuse without rebuilding.
   const reuseHelpers = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS").pipe(
     Config.withDefault(false),
@@ -2302,18 +2314,19 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   const binaryPath = path.join(
     input.repoRoot,
     `native/${input.backend}-snap-shot/target`,
-    rustTarget!,
+    rustTarget,
     `release/t3-${input.backend}-snap-shot`,
   );
   if (!reuseHelpers) {
     const spawnCommand = yield* resolveSpawnCommand("cargo", [
-      "build",
+      input.backend === "kde" ? "rustc" : "build",
       "--locked",
       "--release",
       "--manifest-path",
       path.join(input.repoRoot, `native/${input.backend}-snap-shot/Cargo.toml`),
       "--target",
-      rustTarget!,
+      rustTarget,
+      ...(input.backend === "kde" ? ["--", "-C", "linker=rust-lld"] : []),
     ]);
     yield* runCommand(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -2328,7 +2341,7 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   } else if (!(yield* fs.exists(binaryPath))) {
     return yield* new ResourceMonitorBuildOutputMissingError({
       binaryPath,
-      rustTarget: rustTarget!,
+      rustTarget,
       platform: "linux",
       arch: input.arch,
     });

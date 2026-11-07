@@ -114,6 +114,7 @@ on:
 # electron-builder leaves the default arch (x64) out of the unpacked app's
 # directory name.
 env:
+  KDE_RUST_TARGET: ${{ inputs.arch == 'arm64' && 'aarch64-unknown-linux-musl' || 'x86_64-unknown-linux-musl' }}
   UNPACKED_DIR: ${{ inputs.platform }}-${{ inputs.arch != 'x64' && format('{0}-', inputs.arch) || '' }}unpacked
 
 permissions:
@@ -206,9 +207,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
-            native/kde-snap-shot/target/${{ inputs.rust_target }}/release/t3-kde-snap-shot
+            native/kde-snap-shot/target/${{ env.KDE_RUST_TARGET }}/release/t3-kde-snap-shot
             native/hyprland-snap-shot/target/${{ inputs.rust_target }}/release/t3-hyprland-snap-shot
-          key: linux-capture-helpers-${{ inputs.rust_target }}-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
+          key: linux-capture-helpers-musl-kde-v1-${{ inputs.rust_target }}-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
 
       - name: Ensure Rosetta for macOS x64 bytecode generation
         if: inputs.platform == 'mac' && inputs.arch == 'x64'
@@ -223,7 +224,7 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
-          targets: ${{ inputs.rust_target }}
+          targets: ${{ inputs.rust_target }}${{ inputs.platform == 'linux' && format(',{0}', env.KDE_RUST_TARGET) || '' }}
 
       - name: Download relay client tracing config
         if: inputs.relay_client_tracing
