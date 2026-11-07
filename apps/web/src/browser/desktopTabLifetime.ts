@@ -1,6 +1,6 @@
 import { previewBridge } from "~/components/preview/previewBridge";
 
-import { browserDefaultTabState, resolveBrowserDefaults } from "./browserDefaults";
+import { browserDefaultOpenRendering, resolveBrowserDefaults } from "./browserDefaults";
 import { stopBrowserRecording } from "./browserRecording";
 
 interface DesktopTabLease {
@@ -53,7 +53,7 @@ export function acquireDesktopTab(
       // Include defaults at creation to avoid painting a frame at 100%/system.
       ready: enqueueDesktopTabOperation(tabId, async () =>
         previewBridge?.createTab(tabId, {
-          ...browserDefaultTabState(await resolveBrowserDefaults()),
+          ...browserDefaultOpenRendering(await resolveBrowserDefaults()),
           ...(serverTab === undefined ? {} : { serverTab }),
         }),
       ),

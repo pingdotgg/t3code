@@ -2,9 +2,9 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   resolveBrowserProfiles,
   type BrowserProfile,
-  type DesktopPreviewTabDefaults,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  type PreviewZoomFactor,
 } from "@t3tools/contracts";
 
 import {
@@ -17,7 +17,7 @@ import { resolveResponsiveBrowserViewportSize } from "./browserViewportLayout";
 
 export interface BrowserDefaults {
   readonly viewport: PreviewViewportSetting;
-  readonly zoomFactor: number;
+  readonly zoomFactor: PreviewZoomFactor;
   readonly appearance: PreviewAppearancePreference;
   readonly autoShowFloatingPreview: boolean;
   readonly profiles: ReadonlyArray<BrowserProfile>;
@@ -26,7 +26,7 @@ export interface BrowserDefaults {
 
 const toBrowserDefaults = (settings: {
   readonly browserDefaultViewport: PreviewViewportSetting;
-  readonly browserDefaultZoomFactor: number;
+  readonly browserDefaultZoomFactor: PreviewZoomFactor;
   readonly browserDefaultAppearance: PreviewAppearancePreference;
   readonly browserAutoShowFloatingPreview: boolean;
   readonly browserProfiles: ReadonlyArray<BrowserProfile>;
@@ -61,7 +61,10 @@ export function useBrowserDefaults(): BrowserDefaults {
   return useClientSettings(toBrowserDefaults);
 }
 
-export function browserDefaultTabState(defaults: BrowserDefaults): DesktopPreviewTabDefaults {
+export function browserDefaultOpenRendering(defaults: BrowserDefaults): {
+  zoomFactor: PreviewZoomFactor;
+  colorScheme: PreviewAppearancePreference;
+} {
   return { zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance };
 }
 

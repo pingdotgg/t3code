@@ -209,6 +209,36 @@ it.layer(layer)("PreviewManager", (it) => {
       }),
   );
 
+  // regression: #24911 server tabs ignored the client's default zoom and appearance
+  it.effect("opens a server tab with the client's rendering defaults until adjusted", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+
+      const opened = yield* manager.open({
+        threadId,
+        runtime: "server",
+        colorScheme: "dark",
+        zoomFactor: 0.8,
+      });
+      expect(opened).toMatchObject({ colorScheme: "dark", zoomFactor: 0.8 });
+
+      yield* manager.adjust({ threadId, tabId: opened.tabId, zoomFactor: 1.25 });
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+        canGoBack: false,
+        canGoForward: false,
+        serverControlled: true,
+      });
+      expect((yield* manager.list({ threadId })).sessions[0]).toMatchObject({
+        colorScheme: "dark",
+        zoomFactor: 1.25,
+      });
+    }),
+  );
+
   it.effect("gives every tab in a batch close its own monotonic revision", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
