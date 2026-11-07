@@ -39,6 +39,10 @@
       "types": "./src/server/failure.ts",
       "import": "./src/server/failure.ts"
     },
+    "./server/turnItemOrdinals": {
+      "types": "./src/server/turnItemOrdinals.ts",
+      "import": "./src/server/turnItemOrdinals.ts"
+    },
     "./server/handoffBudget": {
       "types": "./src/server/handoffBudget.ts",
       "import": "./src/server/handoffBudget.ts"
