@@ -87,6 +87,7 @@ const withScratch = <A, E>(
   }) => Effect.Effect<
     A,
     E,
+    | ServerSettings.ServerSettingsService
     | ManagedProjectFolders.ManagedProjectFolders
     | ProjectService.ProjectService
     | NodeServices.NodeServices
@@ -338,8 +339,11 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         const projects = yield* ProjectService.ProjectService;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = path.resolve(baseDir, "projects");
-        assert.equal(folders.namedProjectsRoot, root);
+        assert.equal(folders.namedProjectsRoot, path.resolve(baseDir, "projects"));
+        const root = path.resolve(baseDir, "custom-projects");
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* settings.updateSettings({ newProjectDirectory: root });
+        assert.equal(yield* folders.resolveNamedProjectsRoot(root), root);
         const attributes = path.join(baseDir, "crlf.gitattributes");
         const crlfConfig = path.join(baseDir, "crlf.gitconfig");
         yield* fileSystem.writeFileString(attributes, "* text=auto eol=crlf\n");
@@ -352,6 +356,12 @@ it.effect("starts a named project as a committed repository, and suffixes a take
 
         assert.equal(first.workspaceRoot, path.join(root, "pinball-stats"));
         assert.equal(second.workspaceRoot, path.join(root, "pinball-stats-2"));
+        yield* settings.updateSettings({ newProjectDirectory: "" });
+        const restored = yield* folders.createNamedProject({ name: "Default location" });
+        assert.equal(
+          restored.workspaceRoot,
+          path.join(folders.namedProjectsRoot, "default-location"),
+        );
         assert.isUndefined(first.commitError);
         const project = Option.getOrThrow(yield* projects.getById(first.projectId));
         assert.equal(project.title, "Pinball Stats");
