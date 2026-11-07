@@ -1861,7 +1861,8 @@ code {
   border-radius: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover,
+[data-scrollbar-thumb-hover]::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb-hover);
 }
 
