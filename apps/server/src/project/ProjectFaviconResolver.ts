@@ -77,6 +77,88 @@ const LINK_ICON_HTML_RE =
 const ICON_REL_RE = /\brel\s*:\s*["'](?:icon|shortcut icon)["']/i;
 const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 
+// Projects without a web icon are probed on every cached miss, so the app icon search stays
+// shallow and bounded. Three levels below the root covers ios/App/App and apps/ios/<target>.
+const APP_ICON_SEARCH_DEPTH = 3;
+const APP_ICON_SEARCH_READ_LIMIT = 256;
+const APP_ICON_SEARCH_SKIPPED_DIRECTORIES = new Set([
+  "build",
+  "Carthage",
+  "DerivedData",
+  "dist",
+  "node_modules",
+  "Pods",
+  "vendor",
+]);
+const APP_EXTENSION_TARGET_RE = /(?:clip|extension|tests?|watch|widget)[^/\\]*[/\\]/i;
+// Asset catalogs list icons up to 1024px; the smallest sharp one keeps the transfer small.
+const APP_ICON_SHARP_PIXELS = 96;
+
+const ExpoConfig = Schema.Struct({
+  android: Schema.optional(Schema.Struct({ icon: Schema.optional(Schema.String) })),
+  icon: Schema.optional(Schema.String),
+  ios: Schema.optional(
+    Schema.Struct({
+      icon: Schema.optional(
+        Schema.Union([Schema.String, Schema.Struct({ light: Schema.optional(Schema.String) })]),
+      ),
+    }),
+  ),
+});
+
+// Expo also accepts its config at the root of app.json, without the `expo` wrapper.
+const decodeExpoAppConfig = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ ...ExpoConfig.fields, expo: Schema.optional(ExpoConfig) })),
+);
+
+// Densities run from the first at least 96px wide, matching APP_ICON_SHARP_PIXELS.
+// Adaptive icons are XML plus separate layers, so only flattened launcher images qualify.
+const ANDROID_ICON_CANDIDATES = ["android/app", "app"].flatMap((module) =>
+  ["xhdpi", "xxhdpi", "xxxhdpi", "hdpi", "mdpi"].flatMap((density) =>
+    ["png", "webp"].map(
+      (extension) => `${module}/src/main/res/mipmap-${density}/ic_launcher.${extension}`,
+    ),
+  ),
+);
+
+const decodeAppIconSetContents = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      images: Schema.Array(
+        Schema.Struct({
+          appearances: Schema.optional(Schema.Array(Schema.Unknown)),
+          filename: Schema.optional(Schema.String),
+          scale: Schema.optional(Schema.String),
+          size: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  ),
+);
+
+function appIconFilenames(contents: string): ReadonlyArray<string> {
+  const decoded = decodeAppIconSetContents(contents);
+  if (Option.isNone(decoded)) return [];
+  const icons = decoded.value.images.flatMap(({ appearances, filename, scale, size }) =>
+    filename === undefined || (appearances?.length ?? 0) > 0
+      ? []
+      : [{ filename, pixels: (parseFloat(size ?? "") || 0) * (parseFloat(scale ?? "") || 1) }],
+  );
+  const sharp = icons.filter((icon) => icon.pixels >= APP_ICON_SHARP_PIXELS);
+  const small = icons.filter((icon) => icon.pixels < APP_ICON_SHARP_PIXELS);
+  return [
+    ...sharp.toSorted((left, right) => left.pixels - right.pixels),
+    ...small.toSorted((left, right) => right.pixels - left.pixels),
+  ].map((icon) => icon.filename);
+}
+
+function appIconSetRank(relativePath: string, setName: string): number {
+  return (
+    (APP_EXTENSION_TARGET_RE.test(relativePath) ? 2 : 0) +
+    (setName === "AppIcon.appiconset" ? 0 : 1)
+  );
+}
+
 export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFaviconResolutionError>()(
   "ProjectFaviconResolutionError",
   {
@@ -233,6 +315,102 @@ export const make = Effect.gen(function* () {
     return yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
   });
 
+  const readFileIfReadable = (absolutePath: string) =>
+    fileSystem.readFileString(absolutePath).pipe(Effect.orElseSucceed(() => null));
+
+  const readDirectoryIfReadable = (absolutePath: string) =>
+    fileSystem.readDirectory(absolutePath).pipe(
+      Effect.map((entries) => entries.toSorted()),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
+
+  const findExpoIcon = Effect.fn("ProjectFaviconResolver.findExpoIcon")(function* (
+    projectCwd: string,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
+    const source = yield* readFileIfReadable(path.join(projectCwd, "app.json"));
+    if (source === null) return null;
+    const config = decodeExpoAppConfig(source);
+    if (Option.isNone(config)) return null;
+    const { android, icon, ios } = config.value.expo ?? config.value;
+    const iosIcon = typeof ios?.icon === "string" ? ios.icon : ios?.icon?.light;
+    return yield* findExistingFile(
+      projectCwd,
+      [iosIcon, icon, android?.icon].filter((candidate) => candidate !== undefined),
+      "workspace",
+    );
+  });
+
+  const findIconInAppIconSets = Effect.fn("ProjectFaviconResolver.findIconInAppIconSets")(
+    function* (
+      projectCwd: string,
+      catalogs: ReadonlyArray<string>,
+      takeReads: <A>(items: ReadonlyArray<A>) => ReadonlyArray<A>,
+    ) {
+      const sets: Array<{ readonly relativePath: string; readonly rank: number }> = [];
+      for (const catalog of takeReads(catalogs)) {
+        const entries = yield* readDirectoryIfReadable(path.join(projectCwd, catalog));
+        for (const entry of entries) {
+          if (entry.endsWith(".appiconset")) {
+            const relativePath = path.join(catalog, entry);
+            sets.push({ relativePath, rank: appIconSetRank(relativePath, entry) });
+          }
+        }
+      }
+      for (const { relativePath } of takeReads(
+        sets.toSorted((left, right) => left.rank - right.rank),
+      )) {
+        const contents = yield* readFileIfReadable(
+          path.join(projectCwd, relativePath, "Contents.json"),
+        );
+        const found = yield* findExistingFile(
+          projectCwd,
+          takeReads(appIconFilenames(contents ?? "")).map((filename) =>
+            path.join(relativePath, filename),
+          ),
+          "workspace",
+        );
+        if (found) return found;
+      }
+      return null;
+    },
+  );
+
+  // Breadth first, so the catalogs closest to the root win and deeper levels are never read.
+  const findAppIcon = Effect.fn("ProjectFaviconResolver.findAppIcon")(function* (
+    projectCwd: string,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
+    let directories: ReadonlyArray<string> = [""];
+    let remainingReads = APP_ICON_SEARCH_READ_LIMIT;
+    const takeReads = <A>(items: ReadonlyArray<A>) => {
+      const taken = items.slice(0, remainingReads);
+      remainingReads -= taken.length;
+      return taken;
+    };
+    for (let depth = 0; depth <= APP_ICON_SEARCH_DEPTH; depth += 1) {
+      const catalogs: Array<string> = [];
+      const nextDirectories: Array<string> = [];
+      for (const directory of takeReads(directories)) {
+        const entries = yield* readDirectoryIfReadable(path.join(projectCwd, directory));
+        for (const entry of entries) {
+          if (entry.endsWith(".xcassets")) {
+            catalogs.push(path.join(directory, entry));
+          } else if (
+            // Directory reads have no file types, and most entries with an extension are files.
+            path.extname(entry) === "" &&
+            !entry.startsWith(".") &&
+            !APP_ICON_SEARCH_SKIPPED_DIRECTORIES.has(entry)
+          ) {
+            nextDirectories.push(path.join(directory, entry));
+          }
+        }
+      }
+      const found = yield* findIconInAppIconSets(projectCwd, catalogs, takeReads);
+      if (found) return found;
+      directories = nextDirectories;
+    }
+    return null;
+  });
+
   // Probe concurrently but join in list order so lower-ranked probes cannot delay a hit.
   // A failure surfaces only if no earlier probe found a file; scope exit interrupts remaining probes.
   const firstInOrder = Effect.fn("ProjectFaviconResolver.firstInOrder")(function* <A>(
@@ -289,8 +467,19 @@ export const make = Effect.gen(function* () {
       return wellKnown;
     }
 
-    return yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
+    const fromSource = yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
       findIconFromSource(projectCwd, sourceFile),
+    );
+    if (fromSource) {
+      return fromSource;
+    }
+
+    return (
+      (yield* findExpoIcon(projectCwd)) ??
+      (yield* findAppIcon(projectCwd)) ??
+      (yield* firstInOrder(ANDROID_ICON_CANDIDATES, (candidate) =>
+        findExistingFile(projectCwd, [candidate], "workspace"),
+      ))
     );
   });
 
