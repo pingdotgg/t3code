@@ -308,12 +308,13 @@ function listedPullRequests(
   count: number,
   firstNumber: number,
   overrides?: (number: number) => Readonly<Record<string, unknown>>,
+  pageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null } = lastPage,
 ): string {
   return encodeJson({
     data: {
       repository: {
         pullRequests: {
-          pageInfo: lastPage,
+          pageInfo,
           nodes: rows(count, firstNumber, overrides),
         },
       },
@@ -2095,7 +2096,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
         avatarUrl: "https://avatars.example/u",
       };
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(listedPullRequests(11, 1, () => ({ author })))),
+        Effect.succeed(
+          output(
+            listedPullRequests(11, 1, () => ({ author }), {
+              hasNextPage: true,
+              endCursor: "listing-next",
+            }),
+          ),
+        ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -2113,10 +2121,60 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(batch.items).toHaveLength(10);
       assert.isTrue(batch.truncated);
       assert.isTrue(batch.continues);
+      expect(batch.resumeAfter).toBe("listing-next");
     }),
   );
 
-  it.effect("authored continuations page through search", () =>
+  it.effect("authored listing continuations stay on the creation-ordered listing", () =>
+    Effect.gen(function* () {
+      const author = {
+        __typename: "User",
+        login: "bilal",
+        name: null,
+        avatarUrl: "https://avatars.example/u",
+      };
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            listedPullRequests(11, 20, () => ({ author }), {
+              hasNextPage: true,
+              endCursor: "listing-later",
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+        cursor: {
+          updatedBefore: "2026-07-02T00:00:00Z",
+          delivered: 10,
+          resumeAfter: "listing-next",
+        },
+      });
+
+      expect(searchOfCall(0)).toBeUndefined();
+      expect(callAt(0)).toMatchObject({
+        kind: "graphql",
+        operationName: "PullRequestList",
+      });
+      expect(varsAt(0)["after"]).toBe("listing-next");
+      expect(batch.items.map((item) => item.number)).toEqual([
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+      ]);
+      assert.isTrue(batch.continues);
+      expect(batch.resumeAfter).toBe("listing-later");
+    }),
+  );
+
+  it.effect("authored continuations without a listing cursor page through search", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(

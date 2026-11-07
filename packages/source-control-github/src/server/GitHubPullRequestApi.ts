@@ -373,6 +373,8 @@ export interface GitHubPullRequestListBatch {
   readonly truncated: boolean;
   /** False for unsearchable pages returned in `gh` order. */
   readonly continues: boolean;
+  /** GraphQL `after` for the next authored listing page; survives across Load more. */
+  readonly resumeAfter?: string;
 }
 
 export interface GitHubPullRequestStat {
@@ -1804,21 +1806,28 @@ export const make = Effect.gen(function* () {
           after: string | null,
           rows: number,
         ) => Effect.Effect<GitHubPullRequestListPage, GitHubPullRequestApiError>,
+        startAfter: string | null = null,
       ) {
         const countRows = (pages: ReadonlyArray<GitHubPullRequestListPage>) =>
           pages.reduce((total, read) => total + read.rawCount, 0);
         const pages: GitHubPullRequestListPage[] = [];
         const seen = new Set<string>();
-        let after: string | null = null;
+        let after: string | null = startAfter;
         let truncated = false;
+        let endCursor: string | null = null;
         while (true) {
           const read: GitHubPullRequestListPage = yield* page(after, rows - countRows(pages));
           pages.push(read);
           const next = read.endCursor;
           if (next === null) break;
           // `truncated` also covers a cursor GitHub repeated before `rows` arrived.
-          if (seen.has(next) || countRows(pages) >= rows) {
+          if (seen.has(next)) {
             truncated = true;
+            break;
+          }
+          if (countRows(pages) >= rows) {
+            truncated = true;
+            endCursor = next;
             break;
           }
           seen.add(next);
@@ -1828,43 +1837,48 @@ export const make = Effect.gen(function* () {
           items: pages.flatMap((read) => read.items),
           rawCount: countRows(pages),
           truncated,
+          endCursor,
         };
       });
       const stacks = input.host.toLowerCase() === "github.com";
       const read = (
         continues: boolean,
         requestedRows = input.limit + 1,
+        startAfter: string | null = null,
       ): Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestApiError> =>
-        collect(requestedRows, (after, rows) =>
-          (continues
-            ? client
-                .PullRequestSearch({
-                  q: query,
-                  first: pageRows(rows),
-                  after,
-                  // Stack badges come from their own batched read below, for the rows that stay.
-                  stacks: false,
-                  stats: true,
-                })
-                .pipe(Effect.map((result) => toPage(toPullRequestRows(result.search))))
-            : client
-                .PullRequestList({
-                  owner,
-                  name,
-                  states: LIST_STATES[input.state],
-                  first: pageRows(rows),
-                  after,
-                  stacks: false,
-                  stats: true,
-                })
-                .pipe(
-                  Effect.map((result) =>
-                    toPage(toPullRequestRows(result.repository?.pullRequests)),
-                  ),
-                )
-          ).pipe(graphql(target)),
+        collect(
+          requestedRows,
+          (after, rows) =>
+            (continues
+              ? client
+                  .PullRequestSearch({
+                    q: query,
+                    first: pageRows(rows),
+                    after,
+                    // Stack badges come from their own batched read below, for the rows that stay.
+                    stacks: false,
+                    stats: true,
+                  })
+                  .pipe(Effect.map((result) => toPage(toPullRequestRows(result.search))))
+              : client
+                  .PullRequestList({
+                    owner,
+                    name,
+                    states: LIST_STATES[input.state],
+                    first: pageRows(rows),
+                    after,
+                    stacks: false,
+                    stats: true,
+                  })
+                  .pipe(
+                    Effect.map((result) =>
+                      toPage(toPullRequestRows(result.repository?.pullRequests)),
+                    ),
+                  )
+            ).pipe(graphql(target)),
+          startAfter,
         ).pipe(
-          Effect.flatMap(({ items: rawItems, rawCount, truncated: cutShort }) => {
+          Effect.flatMap(({ items: rawItems, rawCount, truncated: cutShort, endCursor }) => {
             const items = continues
               ? rawItems
               : rawItems.filter((item) => matchesUnsortedListing(item, input));
@@ -1875,27 +1889,30 @@ export const make = Effect.gen(function* () {
               requestedRows < fallbackMaxRows
             ) {
               const nextRows = Math.min(requestedRows * 2, fallbackMaxRows);
-              if (nextRows > requestedRows) return read(false, nextRows);
+              if (nextRows > requestedRows) return read(false, nextRows, startAfter);
             }
+            const truncated =
+              cutShort ||
+              (continues
+                ? rawCount > input.limit
+                : items.length > input.limit || rawCount >= requestedRows);
             return Effect.succeed({
               items: items.slice(0, input.limit),
               // Probe one raw row past the limit; malformed rows must not prematurely end paging.
-              truncated:
-                cutShort ||
-                (continues
-                  ? rawCount > input.limit
-                  : items.length > input.limit || rawCount >= requestedRows),
+              truncated,
               continues,
+              ...(!continues && truncated && endCursor !== null ? { resumeAfter: endCursor } : {}),
             });
           }),
         );
-      // Unindexed repositories silently return no search rows; fall back to the repository listing.
-      // Authored first pages skip search: the index lags merges and opens, so a refresh would
-      // otherwise keep closed rows and miss new ones. Continuations and text search still use
-      // search, whose updatedBefore cursor the shared pager understands.
+      // Unindexed repos fall back to listing. Authored pages stay on listing (creation order;
+      // search lags and pages by update time). Empty first windows and text search still search.
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
+      const listingAfter = input.cursor?.resumeAfter ?? null;
       const preferListing =
-        input.involvement === "authored" && !hasQuery && input.cursor === undefined;
+        input.involvement === "authored" &&
+        !hasQuery &&
+        (input.cursor === undefined || listingAfter !== null);
       const withStacks = (
         batch: GitHubPullRequestListBatch,
       ): Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestApiError> =>
@@ -1932,14 +1949,18 @@ export const make = Effect.gen(function* () {
               }),
               Effect.map((items) => ({ ...batch, items })),
             );
-      const authoredListing = read(false).pipe(
+      const authoredListing = read(false, input.limit + 1, listingAfter).pipe(
         Effect.flatMap((batch) =>
-          // An empty truncated window found no authored rows among the newest-created; search
-          // may still have them. A filled truncated page keeps the listing rows and marks
-          // continues so Load more can page through search.
-          batch.truncated && batch.items.length === 0
+          // An empty truncated first window found no authored rows among the newest-created;
+          // search may still have them. A filled truncated page keeps the listing rows and
+          // hands its GraphQL cursor back so Load more stays on creation order.
+          batch.truncated && batch.items.length === 0 && listingAfter === null
             ? read(true)
-            : Effect.succeed(batch.truncated ? { ...batch, continues: true } : batch),
+            : Effect.succeed(
+                batch.truncated && batch.resumeAfter !== undefined
+                  ? { ...batch, continues: true }
+                  : batch,
+              ),
         ),
       );
       const listed = (
