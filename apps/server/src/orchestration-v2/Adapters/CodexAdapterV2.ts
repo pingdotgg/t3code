@@ -5508,6 +5508,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               ),
             );
+            if (resolved === "cancel") {
+              // Codex accepts the interrupt before or after the reply; starting now usually sends it first.
+              yield* client
+                .request("turn/interrupt", { threadId: payload.threadId, turnId: payload.turnId })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration-v2.codex-permission-cancel-stop-failed", {
+                      cause,
+                    }),
+                  ),
+                  Effect.forkIn(scope, { startImmediately: true }),
+                );
+            }
             return permissionsResponseFromDecision({
               decision: resolved,
               permissions: payload.permissions,

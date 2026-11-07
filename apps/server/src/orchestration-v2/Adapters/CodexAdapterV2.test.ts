@@ -1320,7 +1320,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-      const firstTerminal = yield* Deferred.make<void>();
+      const firstTerminal = yield* Deferred.make<void, Stream.Error<typeof runtime.events>>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) =>
           Effect.sync(() => {
@@ -1335,6 +1335,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Effect.andThen(onEvent(event)),
           ),
         ),
+        Effect.catch((error) => Deferred.fail(firstTerminal, error)),
         Effect.forkScoped,
       );
       if (runtime.hasPendingBackgroundWork === undefined) {
@@ -9337,14 +9338,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
     ];
 
-    const turnCompleted = (turnId: string): CodexReplay.CodexAppServerReplayEntry => ({
+    const turnCompleted = (
+      turnId: string,
+      status: "completed" | "interrupted" = "completed",
+    ): CodexReplay.CodexAppServerReplayEntry => ({
       type: "emit_inbound",
       label: `complete ${turnId}`,
       frame: {
         method: "turn/completed",
         params: {
           threadId: nativeThreadId,
-          turn: makeCodexReplayTurn({ id: turnId, status: "completed" }),
+          turn: makeCodexReplayTurn({ id: turnId, status }),
         },
       },
     });
@@ -9374,17 +9378,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: prompt,
           }),
         );
-        return {
-          harness,
-          answerNext: Queue.take(pending).pipe(
+        const answerNextWith = (decision: ProviderApprovalDecision) =>
+          Queue.take(pending).pipe(
             Effect.tap((request) =>
-              harness.runtime.respondToRuntimeRequest({
-                requestId: request.id,
-                decision: "accept",
-              }),
+              harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision }),
             ),
-          ),
-        };
+          );
+        return { harness, answerNext: answerNextWith("accept"), answerNextWith };
       });
 
     const approvalItem = (
@@ -9571,6 +9571,82 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ["file-change", "file-change"],
             ["file-read", "file-read"],
           ],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("interrupts the turn when a permission request is cancelled", () =>
+      Effect.gen(function* () {
+        // Frames from a Codex 0.167.0 run, with the harness's thread and turn ids.
+        const { harness, answerNextWith } = yield* startApprovalTurn("permission-cancel", [
+          {
+            type: "emit_inbound",
+            label: "permissions request",
+            frame: {
+              method: "item/permissions/requestApproval",
+              id: 0,
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                itemId: "exec-5668b2fe-dca3-434c-9412-b963f28cb08a",
+                environmentId: "local",
+                startedAtMs: 1794096179626,
+                cwd: "/tmp/demo-project",
+                reason: "Need write access to /srv/demo-output as requested.",
+                permissions: {
+                  network: null,
+                  fileSystem: {
+                    read: null,
+                    write: ["/srv/demo-output"],
+                    entries: [
+                      { path: { type: "path", path: "/srv/demo-output" }, access: "write" },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 4,
+              method: "turn/interrupt",
+              params: { threadId: nativeThreadId, turnId: nativeTurnId },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "permissions reply",
+            frame: { id: 0, result: { permissions: {}, scope: "turn" } },
+          },
+          {
+            type: "emit_inbound",
+            label: "request resolved",
+            frame: {
+              method: "serverRequest/resolved",
+              params: { threadId: nativeThreadId, requestId: 0 },
+            },
+          },
+          { type: "emit_inbound", label: "turn/interrupt", frame: { id: 4, result: {} } },
+          turnCompleted(nativeTurnId, "interrupted"),
+        ]);
+        yield* answerNextWith("cancel");
+        yield* harness.firstTerminal;
+
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["interrupted"],
         );
       }).pipe(
         Effect.scoped,
