@@ -19,6 +19,7 @@ import type { SubscriptionUsageSnapshot as SubscriptionUsageProps } from "./subs
 export function SubscriptionUsage(props: SubscriptionUsageProps, environment: WidgetEnvironment) {
   "widget";
   // The widget runtime evaluates this function without the app's module scope.
+  const used = props.usageLimitDisplay === "used";
   const now = Date.now();
   const limit = 2;
   const mode = props.theme?.mode;
@@ -83,11 +84,11 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
                       maxLines={1}
                       style={{ fontSize: 11 }}
                     >
-                      {`${window.label} · ${window.remaining}% left`}
+                      {`${window.label} · ${used ? 100 - window.remaining : window.remaining}% ${used && window.blockedByWeekly ? "unavailable" : used ? "used" : "left"}`}
                     </Text>
                     <Column modifiers={[fillMaxWidth(), padding(0, 3, 0, 3)]}>
                       <LinearProgressIndicator
-                        progress={window.remaining / 100}
+                        progress={(used ? 100 - window.remaining : window.remaining) / 100}
                         color={low ? colors.error : colors.primary}
                         trackColor={colors.surfaceVariant}
                         modifiers={[fillMaxWidth(), height(6)]}

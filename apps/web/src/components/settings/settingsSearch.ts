@@ -647,6 +647,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
+    id: "usage-limit-display",
+    title: "Usage limit display",
+    to: "/settings/general",
+    searchTerms: ["quota usage limits used remaining fills empties bar progress"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",

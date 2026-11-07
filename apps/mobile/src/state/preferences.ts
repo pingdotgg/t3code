@@ -134,3 +134,10 @@ const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRun
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const updateMobilePreferencesAtom = mobilePreferencesState.updatePreferencesAtom;
+
+export const usageLimitDisplayAtom = Atom.make((get) => {
+  const preferences = get(mobilePreferencesAtom);
+  return AsyncResult.isSuccess(preferences)
+    ? (preferences.value.usageLimitDisplay ?? "remaining")
+    : "remaining";
+});

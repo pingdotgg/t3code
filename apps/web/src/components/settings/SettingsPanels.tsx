@@ -1,3 +1,4 @@
+import { UsageLimitDisplaySelect } from "../usage/UsageLimitDisplaySelect";
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
@@ -465,6 +466,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
       ? ["Environment identification"]
       : []),
+    ...(settings.usageLimitDisplay !== DEFAULT_UNIFIED_SETTINGS.usageLimitDisplay
+      ? ["Usage limit display"]
+      : []),
     ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
       ? ["Time format"]
       : []),
@@ -632,6 +636,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
+      usageLimitDisplay: DEFAULT_UNIFIED_SETTINGS.usageLimitDisplay,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -1030,6 +1035,21 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="display" title="Display">
+        <SettingsRow
+          {...searchableSetting("usage-limit-display")}
+          description="Show quota used or remaining in the Usage view and thread details card."
+          resetAction={
+            settings.usageLimitDisplay !== DEFAULT_UNIFIED_SETTINGS.usageLimitDisplay ? (
+              <SettingResetButton
+                label="usage limit display"
+                onClick={() =>
+                  updateSettings({ usageLimitDisplay: DEFAULT_UNIFIED_SETTINGS.usageLimitDisplay })
+                }
+              />
+            ) : null
+          }
+          control={<UsageLimitDisplaySelect />}
+        />
         <SettingsRow
           {...searchableSetting("time-format")}
           description="System default follows your browser or OS clock preference."

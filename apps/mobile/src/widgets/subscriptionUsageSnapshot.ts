@@ -1,3 +1,4 @@
+import type { UsageLimitDisplay } from "@t3tools/contracts/settings";
 import {
   collectLimitAccounts,
   collectLimitPools,
@@ -9,12 +10,19 @@ import type { WidgetTheme } from "./widgetTheme";
 
 export interface SubscriptionUsageSnapshot {
   theme?: WidgetTheme;
+  usageLimitDisplay?: UsageLimitDisplay;
   url?: string;
   checkedAt: number;
   providers: Array<{
     name: string;
     detail: string;
-    windows: Array<{ kind?: string; label: string; remaining: number; reset: string }>;
+    windows: Array<{
+      kind?: string;
+      label: string;
+      remaining: number;
+      blockedByWeekly?: boolean;
+      reset: string;
+    }>;
     expiresAt: number;
     totalWindows: number;
   }>;
@@ -105,6 +113,9 @@ function subscriptionUsageProps(
                 kind: window.kind,
                 label: window.label,
                 remaining: Math.round(window.remainingPercent),
+                ...(window.members.some((member) => member.window.blockedByWeekly)
+                  ? { blockedByWeekly: true }
+                  : {}),
                 reset: window.resets[0]
                   ? `Next reset ${new Date(window.resets[0].at).toLocaleString(undefined, {
                       month: "short",
@@ -124,6 +135,7 @@ export function buildSubscriptionUsageSnapshot(
   presentations: LimitPresentations,
   url: string,
   maxWindowsPerProvider = 6,
+  usageLimitDisplay: UsageLimitDisplay = "remaining",
 ): SubscriptionUsageSnapshot {
   const configuredDrivers = new Set(
     [...presentations.values()].flatMap((presentation) =>
@@ -146,6 +158,7 @@ export function buildSubscriptionUsageSnapshot(
       maxWindowsPerProvider,
     ),
     url,
+    usageLimitDisplay,
   };
 }
 

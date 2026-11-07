@@ -1,3 +1,4 @@
+import { usageLimitDisplayAtom } from "../../state/preferences";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -10,8 +11,7 @@ import {
   cursorUsageWindowDetails,
   displayLimitWindows,
   formatResetsIn,
-  paceRemainingPercent,
-  remainingPercent,
+  usageLimitDisplay,
   type LimitAccount,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
@@ -119,14 +119,17 @@ function PaceGap({
 }
 
 function AccountSegment({
-  remaining,
+  percent,
+  used,
   color,
   refillPercent,
 }: {
-  readonly remaining: number;
+  readonly percent: number;
+  readonly used: boolean;
   readonly color: string;
   readonly refillPercent: number;
 }) {
+  const refill = Math.min(used ? percent : 100 - percent, refillPercent);
   const patternId = useId().replace(/:/g, "");
   const [size, setSize] = useState({ width: 0, height: 0 });
   return (
@@ -150,13 +153,13 @@ function AccountSegment({
           </Defs>
           {refillPercent > 0 ? (
             <Rect
-              x={`${100 - Math.min(100 - remaining, refillPercent)}%`}
-              width={`${Math.min(100 - remaining, refillPercent)}%`}
+              x={`${used ? percent - refill : 100 - refill}%`}
+              width={`${refill}%`}
               height="100%"
               fill={`url(#${patternId})`}
             />
           ) : null}
-          <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
+          <Rect width={`${percent}%`} height="100%" fill={color} opacity={0.35} />
         </Svg>
       ) : null}
     </View>
@@ -180,6 +183,7 @@ function PoolWindowCard({
   readonly description?: string;
   readonly wide: boolean;
 }) {
+  const mode = useAtomValue(usageLimitDisplayAtom);
   const navigation = useNavigation();
   const [barWidth, setBarWidth] = useState(0);
   // Each segment needs room for its account, percent and reset to label itself.
@@ -187,6 +191,12 @@ function PoolWindowCard({
   const inlineLabels = wide && segmentWidth >= 96;
   const inlineReset = wide && segmentWidth >= 150;
   const inlineName = wide && segmentWidth >= 220;
+  const quotaLabel =
+    mode === "used"
+      ? pool.members.some((member) => member.window.blockedByWeekly)
+        ? "unavailable"
+        : "used"
+      : "left";
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsUsageAccount", {
@@ -203,9 +213,9 @@ function PoolWindowCard({
           <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
           <View className="flex-row items-baseline gap-1.5">
             <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
-              {pool.remainingPercent}%
+              {mode === "used" ? 100 - pool.remainingPercent : pool.remainingPercent}%
             </Text>
-            <Text className="text-sm text-foreground-muted">left</Text>
+            <Text className="text-sm text-foreground-muted">{quotaLabel}</Text>
           </View>
         </View>
         {pool.pace ? (
@@ -237,23 +247,25 @@ function PoolWindowCard({
             />
           );
         const { account, window } = member;
-        const timeLeft = paceRemainingPercent(window, now);
+        const display = usageLimitDisplay(window, now, mode);
+        const pacePercent = display.pacePercent;
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = formatResetsIn(window, now)?.replace("resets in ", "");
         return (
           <Pressable
             key={account.key}
             accessibilityRole="button"
-            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
+            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${display.percent}% ${display.label}${pacePercent === null ? "" : `, ${pacePercent}% of the window ${display.timeLabel}`}`}
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className={wide ? "h-9 min-w-0 flex-1 rounded-md" : "h-7 min-w-0 flex-1 rounded-md"}
           >
-            <PaceGap timeLeft={timeLeft}>
+            <PaceGap timeLeft={pacePercent}>
               <View className="absolute inset-0 rounded-md bg-subtle" />
               <View className="absolute inset-0 overflow-hidden rounded-md">
                 <AccountSegment
-                  remaining={remainingPercent(window)}
+                  percent={display.percent}
+                  used={mode === "used"}
                   color={normalizeProviderAccentColor(account.accentColor) ?? color}
                   refillPercent={window.resetsAt ? member.refillPercent : 0}
                 />
@@ -275,7 +287,7 @@ function PoolWindowCard({
                     </Text>
                   )}
                   <Text className="text-sm font-t3-bold tabular-nums text-foreground">
-                    {remainingPercent(window)}%
+                    {display.percent}%
                   </Text>
                 </View>
                 {inlineReset && (resetsIn || credits) ? (
@@ -325,6 +337,7 @@ function PoolWindowCard({
     <View>
       {pool.columns.map(({ account, window }, index) => {
         if (!window) return null;
+        const display = usageLimitDisplay(window, now, mode);
         const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = formatResetsIn(window, now);
@@ -332,7 +345,7 @@ function PoolWindowCard({
           <Pressable
             key={account.key}
             accessibilityRole="button"
-            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
+            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${display.percent}% ${display.label}${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
@@ -354,7 +367,7 @@ function PoolWindowCard({
               {accountName(account)}
             </Text>
             <Text className="text-sm font-t3-medium tabular-nums text-foreground">
-              {remainingPercent(window)}%
+              {display.percent}%
             </Text>
             <View className="flex-row items-center gap-1">
               {resetsIn ? (
@@ -539,7 +552,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     .find((candidate) => candidate.driver === account?.driver)
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
-  const evenPace = window ? paceRemainingPercent(window, now) : null;
+  const mode = useAtomValue(usageLimitDisplayAtom);
+  const display = window ? usageLimitDisplay(window, now, mode) : null;
+  const evenPace = display?.pacePercent ?? null;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
   return (
@@ -583,8 +598,11 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">{window.label}</Text>
               <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
-                {remainingPercent(window)}% left
+                {display?.percent}% {display?.label}
               </Text>
+              {window.blockedByWeekly ? (
+                <Text className="text-sm text-foreground-muted">Weekly limit exhausted</Text>
+              ) : null}
               {window.resetsAt ? (
                 <Text selectable className="text-sm text-foreground-muted">
                   Resets{" "}
@@ -596,7 +614,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               ) : null}
               {evenPace !== null ? (
                 <Text className="text-sm text-foreground-muted">
-                  Even pace: {evenPace}% left by now
+                  Even pace: {evenPace}% {display?.label} by now
                 </Text>
               ) : null}
               {reset && reset.restoresPercent > 0 ? (

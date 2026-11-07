@@ -15,13 +15,12 @@ import {
   formatResetsIn,
   type LimitPace,
   paceOf,
-  paceRemainingPercent,
-  remainingPercent,
+  usageLimitDisplay,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useLayoutEffect, useState } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { observeResize } from "../../lib/observeResize";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
@@ -78,9 +77,9 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
 // The tick sits in a transparent gap cut from the bar, clamped so it stays inside at 0% and 100%.
 // The gap is a clip-path slot rather than a mask: a mask composites its layer and re-antialiases
 // the bar's rounded ends, and the polygon reaches 1px past the box so only the slot edges clip.
-function paceMarkStyles(timeLeft: number | null) {
-  if (timeLeft === null) return null;
-  const at = `clamp(3px, ${timeLeft}%, calc(100% - 3px))`;
+function paceMarkStyles(pacePercent: number | null) {
+  if (pacePercent === null) return null;
+  const at = `clamp(3px, ${pacePercent}%, calc(100% - 3px))`;
   const [left, right] = [`calc(${at} - 3px)`, `calc(${at} + 3px)`];
   const [near, far] = ["-1px", "calc(100% + 1px)"];
   return {
@@ -100,7 +99,7 @@ function paceMarkStyles(timeLeft: number | null) {
  * Pace mark styles for the bar given the returned ref. Below 6px there is no room for the gap
  * and tick, so the bar draws neither, as the mobile bars do.
  */
-export function usePaceMark(timeLeft: number | null) {
+export function usePaceMark(pacePercent: number | null) {
   const [bar, setBar] = useState<HTMLElement | null>(null);
   const [roomy, setRoomy] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the bar DOM width before paint and remeasures through a ResizeObserver
@@ -110,7 +109,7 @@ export function usePaceMark(timeLeft: number | null) {
     measure();
     return observeResize(bar, measure);
   }, [bar]);
-  return [setBar, roomy ? paceMarkStyles(timeLeft) : null] as const;
+  return [setBar, roomy ? paceMarkStyles(pacePercent) : null] as const;
 }
 
 function WindowBar({
@@ -123,15 +122,17 @@ function WindowBar({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const remaining = remainingPercent(window);
-  const timeLeft = paceRemainingPercent(window, now);
-  const [barRef, paceMark] = usePaceMark(timeLeft);
+  const mode = useClientSettings((settings) => settings.usageLimitDisplay);
+  const display = usageLimitDisplay(window, now, mode);
+  const percent = display.percent;
+  const pacePercent = display.pacePercent;
+  const [barRef, paceMark] = usePaceMark(pacePercent);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
-  const summary = `${window.label}: ${remaining}% left${
-    timeLeft === null ? "" : `, ${timeLeft}% of the window left`
+  const summary = `${window.label}: ${percent}% ${display.label}${
+    pacePercent === null ? "" : `, ${pacePercent}% of the window ${display.timeLabel}`
   }${resetsIn ? `, ${resetsIn}` : ""}`;
 
   return (
@@ -150,16 +151,18 @@ function WindowBar({
         {/* Clip both layers so the gap exposes even a translucent composer surface. */}
         <div className="absolute inset-0" style={paceMark?.gap}>
           <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-          {remaining > 0 ? (
+          {percent > 0 ? (
             <div
+              data-slot="usage-limit-fill"
               className="absolute inset-y-1.5 left-0 rounded-full"
-              style={{ width: `${remaining}%`, backgroundColor: color }}
+              style={{ width: `${percent}%`, backgroundColor: color }}
             />
           ) : null}
         </div>
         {paceMark ? (
           <span
             aria-hidden
+            data-slot="usage-limit-pace"
             className="absolute inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
             style={paceMark.tick}
           />
@@ -168,9 +171,10 @@ function WindowBar({
       <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
+            {percent}% {display.label}
+            {pacePercent !== null ? ` · ${pacePercent}% of the window ${display.timeLabel}` : ""}
           </span>
-          {timeLeft !== null ? (
+          {pacePercent !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
           ) : null}
           {resetsAt ? (
@@ -198,6 +202,7 @@ export function LimitWindows({
   readonly now: number;
   readonly compact?: boolean;
 }) {
+  const mode = useClientSettings((settings) => settings.usageLimitDisplay);
   const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
   return (
     <div
@@ -215,7 +220,7 @@ export function LimitWindows({
             <span className="flex min-w-0 items-center gap-2 text-xs">
               <span className="truncate text-muted-foreground">{window.label}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
+                {usageLimitDisplay(window, now, mode).percent}% {mode === "used" ? "used" : "left"}
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />

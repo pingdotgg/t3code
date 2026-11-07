@@ -62,6 +62,9 @@ import {
   SpeechPostProcessingPromptSettings,
 } from "./speech.ts";
 
+export const UsageLimitDisplay = Schema.Literals(["remaining", "used"]);
+export type UsageLimitDisplay = typeof UsageLimitDisplay.Type;
+
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
@@ -542,6 +545,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  ),
+  usageLimitDisplay: UsageLimitDisplay.pipe(
+    Schema.withDecodingDefault(Effect.succeed("remaining")),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -1923,6 +1929,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  usageLimitDisplay: Schema.optionalKey(UsageLimitDisplay),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   voiceMicrophone: Schema.optionalKey(Schema.String),
   voiceShortcutMode: Schema.optionalKey(VoiceShortcutMode),

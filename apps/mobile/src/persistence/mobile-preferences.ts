@@ -1,3 +1,4 @@
+import type { UsageLimitDisplay } from "@t3tools/contracts/settings";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -105,6 +106,7 @@ export interface Preferences {
   readonly codeFontSize?: number | null;
   readonly codeWordBreak?: boolean;
   readonly mathRenderingEnabled?: boolean;
+  readonly usageLimitDisplay?: UsageLimitDisplay;
   /** Unset means on: crash reports are sent unless the user turns them off. */
   readonly crashReportsEnabled?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
@@ -192,6 +194,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     codeFontSize?: number | null;
     codeWordBreak?: boolean;
     mathRenderingEnabled?: boolean;
+    usageLimitDisplay?: UsageLimitDisplay;
     crashReportsEnabled?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
@@ -281,6 +284,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.codeFontSize = parsed.codeFontSize;
   }
   if (typeof parsed.codeWordBreak === "boolean") preferences.codeWordBreak = parsed.codeWordBreak;
+  if (parsed.usageLimitDisplay === "remaining" || parsed.usageLimitDisplay === "used") {
+    preferences.usageLimitDisplay = parsed.usageLimitDisplay;
+  }
   if (typeof parsed.mathRenderingEnabled === "boolean")
     preferences.mathRenderingEnabled = parsed.mathRenderingEnabled;
   if (typeof parsed.crashReportsEnabled === "boolean") {

@@ -1,3 +1,5 @@
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { usageLimitDisplayAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -132,6 +134,8 @@ function UsageScreen(props: {
   const [refreshingUsage, setRefreshingUsage] = useState(false);
   const refreshingRef = useRef(false);
   const showingLimits = view === "limits";
+  const limitDisplay = useAtomValue(usageLimitDisplayAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const metric: UsageChartMetric = view === "tokens" ? "tokens" : "cost";
   const progress = usageProgress(selectedEnvironments, {
     refreshing: refreshingUsage,
@@ -260,6 +264,19 @@ function UsageScreen(props: {
               role="tab"
             />
           )}
+          {showingLimits ? (
+            <View className="gap-2">
+              <Text className="text-xs text-foreground-muted">Usage limit display</Text>
+              <SegmentedControl
+                options={[
+                  { value: "remaining", label: "Remaining (empties)" },
+                  { value: "used", label: "Used (fills up)" },
+                ]}
+                selected={limitDisplay}
+                onSelect={(usageLimitDisplay) => savePreferences({ usageLimitDisplay })}
+              />
+            </View>
+          ) : null}
           <Animated.View
             key={showingLimits ? "limits" : "usage"}
             entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}

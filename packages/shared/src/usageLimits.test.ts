@@ -21,6 +21,7 @@ import {
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
+  usageLimitDisplay,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -157,6 +158,35 @@ describe("pace", () => {
   it("places the clock three fifths through a five-hour window with two hours left", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
     expect(paceRemainingPercent(window, now)).toBe(40);
+    expect(usageLimitDisplay(window, now, "remaining")).toEqual({
+      percent: 60,
+      label: "left",
+      pacePercent: 40,
+      timeLabel: "left",
+    });
+    expect(usageLimitDisplay(window, now, "used")).toEqual({
+      percent: 40,
+      label: "used",
+      pacePercent: 60,
+      timeLabel: "elapsed",
+    });
+    for (const [usedPercent, expected] of [
+      [-10, 0],
+      [0, 0],
+      [23.6, 24],
+      [100, 100],
+      [110, 100],
+    ] as const) {
+      const untimed = { ...window, usedPercent, resetsAt: undefined };
+      expect(usageLimitDisplay(untimed, now, "used")).toMatchObject({
+        percent: expected,
+        pacePercent: null,
+      });
+      expect(usageLimitDisplay(untimed, now, "remaining")).toMatchObject({
+        percent: 100 - expected,
+        pacePercent: null,
+      });
+    }
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
@@ -943,6 +973,16 @@ describe("pooled account columns", () => {
       };
       const [session] = collectLimitPools([a], now)[0]!.windows;
       expect.soft(session?.remainingPercent).toBe(0);
+      expect(usageLimitDisplay(session!.members[0]!.window, now, "used")).toMatchObject({
+        percent: 100,
+        label: "unavailable",
+        pacePercent: null,
+      });
+      expect(usageLimitDisplay(session!.members[0]!.window, now, "remaining")).toMatchObject({
+        percent: 0,
+        label: "left",
+        pacePercent: null,
+      });
       expect(session?.resets[0]).toMatchObject({
         at: Date.parse(at(usableAt)),
         restoresPercent,

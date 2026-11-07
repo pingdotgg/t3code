@@ -1,3 +1,4 @@
+import { usageLimitDisplayAtom } from "../../state/preferences";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -15,7 +16,7 @@ import {
   formatResetsIn,
   limitsNotice,
   paceOf,
-  paceRemainingPercent,
+  usageLimitDisplay,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useContext, useRef, useState } from "react";
@@ -54,14 +55,16 @@ function WindowRow(props: {
 }) {
   const { window, now } = props;
   const remaining = remainingPercent(window);
-  const timeLeft = paceRemainingPercent(window, now);
+  const mode = useAtomValue(usageLimitDisplayAtom);
+  const display = usageLimitDisplay(window, now, mode);
+  const pacePercent = display.pacePercent;
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
-    timeLeft === null || barWidth < 6
+    pacePercent === null || barWidth < 6
       ? null
-      : Math.min(Math.max((barWidth * timeLeft) / 100, 3), barWidth - 3);
+      : Math.min(Math.max((barWidth * pacePercent) / 100, 3), barWidth - 3);
   const bar = (
     <View
       className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle"
@@ -76,11 +79,11 @@ function WindowRow(props: {
               : "h-full rounded-full bg-foreground"
         }
         style={[
-          { flex: remaining },
+          { flex: display.percent },
           remaining > 30 && props.color ? { backgroundColor: props.color } : null,
         ]}
       />
-      <View style={{ flex: 100 - remaining }} />
+      <View style={{ flex: 100 - display.percent }} />
     </View>
   );
   return (
@@ -88,7 +91,7 @@ function WindowRow(props: {
       <View className="flex-row items-baseline justify-between gap-3">
         <Text className="text-sm text-foreground">{window.label}</Text>
         <Text className="text-sm font-t3-medium tabular-nums text-foreground">
-          {remaining}% left
+          {display.percent}% {display.label}
         </Text>
       </View>
       <View

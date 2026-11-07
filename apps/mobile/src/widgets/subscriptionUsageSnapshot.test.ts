@@ -55,6 +55,27 @@ describe("subscription widget snapshots", () => {
       presentations([provider({ displayName: "private@example.com" })]),
       deepLink,
     );
+    expect(snapshot.usageLimitDisplay).toBe("remaining");
+    const used = buildSubscriptionUsageSnapshot(presentations(), deepLink, 6, "used");
+    expect(used.usageLimitDisplay).toBe("used");
+    expect(used.providers[0]?.windows).toEqual(snapshot.providers[0]?.windows);
+    const blocked = buildSubscriptionUsageSnapshot(
+      presentations([
+        provider({
+          usageLimits: {
+            checkedAt,
+            windows: [window, { ...window, id: "week", kind: "weekly", usedPercent: 100 }],
+          },
+        }),
+      ]),
+      deepLink,
+      6,
+      "used",
+    );
+    expect(blocked.providers[0]?.windows.find((entry) => entry.kind === "session")).toMatchObject({
+      remaining: 0,
+      blockedByWeekly: true,
+    });
     expect(snapshot.checkedAt).toBe(now);
     expect(snapshot.providers[0]).toMatchObject({
       name: "Codex",

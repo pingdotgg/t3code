@@ -312,6 +312,16 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings usage limit display", () => {
+  it("preserves the remaining display for existing clients and round-trips the used preference", () => {
+    expect(decodeClientSettings({}).usageLimitDisplay).toBe("remaining");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("usageLimitDisplay");
+    const patch = decodeClientSettingsPatch({ usageLimitDisplay: "used" });
+    const saved = encodeClientSettings(decodeClientSettings(patch));
+    expect(decodeClientSettings(saved).usageLimitDisplay).toBe("used");
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

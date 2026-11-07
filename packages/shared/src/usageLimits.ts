@@ -1,3 +1,4 @@
+import type { UsageLimitDisplay } from "@t3tools/contracts/settings";
 import {
   type EnvironmentId,
   type ModelSelection,
@@ -412,9 +413,11 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
   return notices;
 }
 
+type PooledUsageWindow = ServerProviderUsageWindow & { readonly blockedByWeekly?: boolean };
+
 export interface LimitPoolMember {
   readonly account: LimitAccount;
-  readonly window: ServerProviderUsageWindow;
+  readonly window: PooledUsageWindow;
   readonly refillPercent: number;
 }
 
@@ -550,7 +553,13 @@ function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, 
   return {
     account,
     // Suppression is not session spending, so it has no session pace clock.
-    window: { ...reported, usedPercent: 100, resetsAt, windowDurationMins: undefined },
+    window: {
+      ...reported,
+      usedPercent: 100,
+      resetsAt,
+      windowDurationMins: undefined,
+      blockedByWeekly: true,
+    },
     refillPercent,
   };
 }
@@ -626,6 +635,17 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
 
 export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
+}
+
+export function usageLimitDisplay(window: PooledUsageWindow, now: number, mode: UsageLimitDisplay) {
+  const remaining = remainingPercent(window);
+  const timeLeft = paceRemainingPercent(window, now);
+  return {
+    percent: mode === "used" ? 100 - remaining : remaining,
+    label: mode === "used" ? (window.blockedByWeekly ? "unavailable" : "used") : "left",
+    pacePercent: timeLeft === null ? null : mode === "used" ? 100 - timeLeft : timeLeft,
+    timeLabel: mode === "used" ? "elapsed" : "left",
+  };
 }
 
 function resetMillis(window: ServerProviderUsageWindow): number | null {
