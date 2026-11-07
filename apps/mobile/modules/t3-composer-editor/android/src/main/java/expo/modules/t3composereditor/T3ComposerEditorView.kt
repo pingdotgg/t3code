@@ -1,5 +1,6 @@
 package expo.modules.t3composereditor
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -11,25 +12,30 @@ import android.os.Build
 import android.text.Editable
 import android.text.InputType
 import android.text.InputFilter
+import android.text.Layout
 import android.text.Spanned
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
+import android.view.DragEvent
 import android.view.Gravity
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import com.facebook.react.common.assets.ReactFontManager
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import org.json.JSONObject
+import kotlin.math.ceil
 import kotlin.math.max
 
 class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
@@ -39,7 +45,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   // React Native ignores the editor's requestLayout(), which makes TextView defer caret scrolls.
   override val shouldUseAndroidLayout = true
 
-  private val editor = SelectionAwareEditText(context)
+  private val editor = SelectionAwareEditText(context) { appContext.currentActivity }
   private val defaultHighlightColor = editor.highlightColor
   private val defaultSelectionColor = context.resolveThemeColor(
     android.R.attr.colorAccent,
@@ -271,8 +277,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.typeface = if (fontFamily.contains("Mono", ignoreCase = true)) {
       Typeface.MONOSPACE
     } else {
-      Typeface.DEFAULT
+      ReactFontManager.getInstance().getTypeface(fontFamily, Typeface.NORMAL, context.assets)
     }
+    applyLineHeight()
     editor.applyPlaceholder()
   }
 
@@ -433,7 +440,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     // wrapping it, so getLineMax leaves it out.
     val layout = editor.layout
     val contentHeight = layout?.height ?: editor.measuredHeight
-    val contentWidth = if (layout?.lineCount == 1) layout.getLineMax(0).toInt() else 0
+    val contentWidth = singleLineContentWidth(layout)
     if (contentHeight == lastContentHeight && contentWidth == lastContentWidth) return
     lastContentHeight = contentHeight
     lastContentWidth = contentWidth
@@ -494,6 +501,11 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       fallback
     }
 }
+
+// Round up: a truncated width can match a slot the line overflows, and the composer
+// then flips between its compact and expanded rows.
+internal fun singleLineContentWidth(layout: Layout?): Int =
+  if (layout?.lineCount == 1) ceil(layout.getLineMax(0)).toInt() else 0
 
 private fun Int.withAlpha(alpha: Int): Int = (this and 0x00FFFFFF) or (alpha shl 24)
 
@@ -574,7 +586,10 @@ private fun parseTokens(value: String): List<ComposerToken> = try {
   emptyList()
 }
 
-internal class SelectionAwareEditText(context: Context) : EditText(context) {
+internal class SelectionAwareEditText(
+  context: Context,
+  private val currentActivity: () -> Activity? = { context as? Activity }
+) : EditText(context) {
   var readOnly = false
   var selectionListener: ((Int, Int) -> Unit)? = null
   var pasteImagesListener: ((List<String>) -> Unit)? = null
@@ -583,6 +598,9 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
+
+  // Keeps autofill services such as SMS verification codes from writing into the draft.
+  override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
 
   /**
    * Editable TextView hints do not ellipsize, so long placeholders wrap and grow the composer.
@@ -669,6 +687,39 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     selectionListener?.invoke(selStart, selEnd)
   }
 
+  override fun onDragEvent(event: DragEvent): Boolean = when {
+    readOnly || !isEnabled -> false
+    event.action == DragEvent.ACTION_DROP && event.clipDescription?.hasMimeType(
+      "image/*"
+    ) == true ->
+      dropImages(event)
+    else -> super.onDragEvent(event)
+  }
+
+  private fun dropImages(event: DragEvent): Boolean {
+    val clip = event.clipData
+    val activity = currentActivity()
+    val listener = pasteImagesListener
+    if (clip == null || activity == null || listener == null) return false
+    val imageUris = try {
+      // Keep the activity-scoped grant while JavaScript asynchronously reads the dropped images.
+      activity.requestDragAndDropPermissions(event)
+      (0 until clip.itemCount).mapNotNull { index ->
+        clip.getItemAt(index).uri?.takeIf { uri ->
+          context.contentResolver.getType(uri)?.startsWith("image/") == true
+        }?.toString()
+      }
+    } catch (_: SecurityException) {
+      emptyList()
+    }
+    return if (imageUris.size == clip.itemCount) {
+      listener(imageUris)
+      true
+    } else {
+      false
+    }
+  }
+
   override fun onTextContextMenuItem(id: Int): Boolean {
     val pasting = id == android.R.id.paste || id == android.R.id.pasteAsPlainText
     if (readOnly && (id == android.R.id.cut || pasting)) {
@@ -697,11 +748,24 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
 
   private fun pasteContextOrImages(): Boolean {
     val payload = T3ComposerClipboard.read(context)
-    if (payload["html"]?.contains("data-t3-context-fragment=") == true) {
-      pasteContextListener?.invoke(payload)
-      return true
+    return when {
+      payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
+      pasteImagesOrInterceptedText() -> true
+      isSingleItemClip() && T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) ->
+        pasteContext(payload)
+      else -> false
     }
-    return pasteImagesOrInterceptedText()
+  }
+
+  // read() sees only the first item; native paste keeps every item of a longer clip.
+  private fun isSingleItemClip(): Boolean {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    return clipboard?.primaryClip?.itemCount == 1
+  }
+
+  private fun pasteContext(payload: Map<String, String>): Boolean {
+    pasteContextListener?.invoke(payload)
+    return true
   }
 
   private fun pasteImagesOrInterceptedText(): Boolean {

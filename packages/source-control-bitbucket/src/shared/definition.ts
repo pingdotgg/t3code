@@ -1,5 +1,6 @@
 import {
   makeProviderSettingsSchema,
+  SettingsSecretValue,
   SourceControlProviderKind,
   TrimmedString,
 } from "@t3tools/contracts";
@@ -40,26 +41,28 @@ const text = (annotations: Schema.Annotations.Key<string>) =>
     Schema.annotateKey(annotations),
   );
 
+const secret = (annotations: Schema.Annotations.Key<SettingsSecretValue>) =>
+  SettingsSecretValue.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({ ...annotations, providerSettingsForm: { control: "password" } }),
+  );
+
 export const settings = makeProviderSettingsSchema(
   {
-    accessToken: text({
+    accessToken: secret({
       title: "Access token",
       description:
         "Scoped to one repository, project, or workspace. Create it in that item's Bitbucket settings.",
-      settingsSecret: true,
-      providerSettingsForm: { control: "password" },
     }),
     email: text({
       title: "Atlassian account email",
       description: "With an API token instead of an access token.",
       providerSettingsForm: { placeholder: "you@example.com" },
     }),
-    apiToken: text({
+    apiToken: secret({
       title: "API token",
       description:
         "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, and read:user:bitbucket.",
-      settingsSecret: true,
-      providerSettingsForm: { control: "password" },
     }),
   },
   { order: ["accessToken", "email", "apiToken"] },
@@ -107,7 +110,14 @@ export const definition = defineSourceControl({
   authorProfileUrl: () => null,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: () => null,
-  isChangeRequestReference: () => false,
+  isChangeRequestReference: (reference) => {
+    const url = URL.parse(reference);
+    return (
+      url !== null &&
+      isBitbucketHost(url.hostname) &&
+      parseChangeRequestPath(url, CHANGE_REQUEST_PATH) !== null
+    );
+  },
   checkoutChangeRequestHost: () => null,
   recognizeRemote: ({ host, hostname }) =>
     hostname === "bitbucket.org" || hostname.split(".").includes("bitbucket")

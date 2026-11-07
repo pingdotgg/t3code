@@ -62,8 +62,8 @@ const make = Effect.gen(function* () {
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
   const attachedTabs = new Set<string>();
-  // Only attached tabs count: the desktop re-sends `shown` when a tab attaches again.
-  const shownTabs = new Set<string>();
+  // Missing reports protect desktop tabs until the renderer explicitly marks them hidden.
+  const shownTabs = new Map<string, boolean>();
   const inbound = new Map<string, Queue.Queue<string>>();
   const writeLock = yield* Semaphore.make(1);
 
@@ -135,8 +135,7 @@ const make = Effect.gen(function* () {
           );
         }
         case "shown":
-          if (event.shown) shownTabs.add(id);
-          else shownTabs.delete(id);
+          shownTabs.set(id, event.shown);
           return Effect.void;
       }
     }),
@@ -232,7 +231,7 @@ const make = Effect.gen(function* () {
     isAttached: Effect.fn("DesktopBrowserChannel.isAttached")(function (key) {
       return Effect.sync(() => attachedTabs.has(keyOf(key)));
     }),
-    isShown: (key) => shownTabs.has(keyOf(key)),
+    isShown: (key) => shownTabs.get(keyOf(key)) ?? true,
     endpoint,
     turn: Effect.fn("DesktopBrowserChannel.turn")(function (threadId, active) {
       return command({ type: "turn", threadId, active });

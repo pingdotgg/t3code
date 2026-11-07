@@ -1,3 +1,4 @@
+import * as Fly from "@alchemy.run/fly";
 /**
  * A Fly.io app that exercises the full module-scope graph:
  *
@@ -12,7 +13,6 @@
  * per replica, not a standalone Volume resource.
  */
 import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
 import Api from "./src/api.ts";
 import { Marker, PublicIp, Site } from "./src/shared.ts";
