@@ -198,6 +198,49 @@ describe("fleet drain", () => {
     }),
   );
 
+  it.effect("a timed-out generation still writing cannot corrupt the retry", () =>
+    Effect.gen(function* () {
+      const base = deps({
+        threads: ["thread:a"],
+        sequences: { "thread:a": 7 },
+        seeded: [
+          {
+            drainId: "drain:environment:worker:1",
+            threadId: "thread:a",
+            snapshotSequence: 3,
+          },
+        ],
+      });
+      const sinkWrite = base.sink.write;
+      // While generation 2 runs, the abandoned generation 1 finishes its own
+      // (newer) copy into generation 1's directory.
+      const lateWriter = {
+        ...base.sink,
+        write: (input: Parameters<typeof sinkWrite>[0]) =>
+          sinkWrite(input).pipe(
+            Effect.tap(() =>
+              sinkWrite({ ...input, drainId: "drain:environment:worker:1", body: '{"late":true}' }),
+            ),
+          ),
+      };
+      const outcome = yield* drain(
+        { ...base, sink: lateWriter },
+        {
+          drainId: "drain:environment:worker:2",
+        },
+      );
+
+      // The stale generation 1 copy was re-fetched, written under generation 2's
+      // own id, and verified against that copy — the late generation 1 write,
+      // which lands in a directory the retry never reads, cannot satisfy it.
+      expect(outcome.state).toBe("acked");
+      expect(base.written.map((entry) => [entry.drainId, entry.threadId])).toEqual([
+        ["drain:environment:worker:2", "thread:a"],
+        ["drain:environment:worker:1", "thread:a"],
+      ]);
+    }),
+  );
+
   it.effect("keeps the sandbox when a thread cannot be copied", () =>
     Effect.gen(function* () {
       const dependencies = deps({ threads: ["thread:a", "thread:b"], failThread: "thread:b" });

@@ -25,11 +25,13 @@ import {
 
 const encode = (value: string) => encodeURIComponent(value);
 
-/** Encoding keeps dots, so ".." could climb out of fleet-drain: keep only safe
- * characters and refuse segments that would be empty or a relative hop. */
+/** Percent-encoding is collision-free ("thread:a" keeps its %3A, so "threada"
+ * stays distinct, and "thread/b" cannot hop directories because its "/" becomes
+ * %2F), so the encoding survives whole: refuse only empty names and the relative
+ * hops "." and "..", which encode to themselves. */
 const segmentOf = (value: string): string | null => {
-  const stripped = value.replace(/[^A-Za-z0-9._-]/g, "");
-  return stripped === "" || stripped === "." || stripped === ".." ? null : stripped;
+  const encoded = encodeURIComponent(value);
+  return encoded === "" || encoded === "." || encoded === ".." ? null : encoded;
 };
 
 const decodeEnvelope = (raw: string): DrainSinkRecord | null => {
