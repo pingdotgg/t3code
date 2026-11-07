@@ -3709,9 +3709,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       step={speechInput.setup.step}
                       status={speechInput.status}
                       model={speechInput.setup.model}
+                      language={speechInput.setup.language}
                       downloading={speechInput.setup.downloading}
                       error={speechInput.setup.error}
                       onOpenChange={speechInput.setup.setOpen}
+                      onRetryCatalog={speechInput.setup.retryCatalog}
                       onDownload={() => void speechInput.setup.download()}
                       onCancelDownload={() => void speechInput.setup.cancelDownload()}
                       onStartRecording={() => void speechInput.setup.startRecording()}

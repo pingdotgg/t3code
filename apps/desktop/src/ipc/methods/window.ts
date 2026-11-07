@@ -106,6 +106,15 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
+export const getPreferredSystemLanguages = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_PREFERRED_SYSTEM_LANGUAGES_CHANNEL,
+  result: Schema.Array(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.getPreferredSystemLanguages")(function* () {
+    const electronApp = yield* ElectronApp.ElectronApp;
+    return yield* electronApp.preferredSystemLanguages;
+  }),
+});
+
 export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL,
   result: Schema.Boolean,

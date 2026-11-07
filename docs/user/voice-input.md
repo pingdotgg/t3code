@@ -52,6 +52,7 @@ until you choose another.
 In **Settings → Voice → Transcription**, download a model and choose **Use model** if it
 isn’t already selected. **Test model** lets you try it without sending a message.
 If you use the composer microphone before a model is installed, it offers to download one.
+The recommendation uses your Voice language, or your system’s preferred languages with **Auto-detect**.
 
 Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each

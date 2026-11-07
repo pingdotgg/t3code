@@ -4,6 +4,7 @@ import {
   getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
   postProcessEnvironmentTranscript,
+  selectEnvironmentSpeechModel,
   VoiceInputController,
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
@@ -22,7 +23,7 @@ import type {
   SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
+import { chooseSetupSpeechModel, resolveSpeechVocabulary } from "@t3tools/shared/speech";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
@@ -37,6 +38,7 @@ import {
 import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
 
@@ -46,7 +48,9 @@ const INITIAL_SETUP = {
   open: false,
   step: 0,
   model: null as EnvironmentSpeechModel | null,
+  language: null as string | null,
   downloading: false,
+  catalogFailed: false,
   error: null as string | null,
 };
 
@@ -387,11 +391,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     };
   }, [prepared, cloudProvider]);
   const currentStatus = !cloudProvider && status?.prepared === prepared ? status.value : null;
+  const setupModelId = setup.model?.id;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls download progress while the setup dialog owns an active model download
   useEffect(() => {
-    if (!setup.open || !setup.downloading || !prepared || !currentStatus?.supported) return;
-    const modelId = currentStatus.modelId;
+    if (!setup.open || !setup.downloading || !prepared || !setupModelId) return;
     let disposed = false;
     let refreshing = false;
     const timer = window.setInterval(() => {
@@ -400,8 +404,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       void runEnvironmentSpeech(getEnvironmentSpeechModels(prepared))
         .then((result) => {
           if (disposed) return;
-          const model = result.models.find((candidate) => candidate.id === modelId) ?? null;
-          setSetup((current) => ({ ...current, model }));
+          const model = result.models.find((candidate) => candidate.id === setupModelId) ?? null;
+          if (model) setSetup((current) => ({ ...current, model }));
         })
         .catch(() => undefined)
         .finally(() => {
@@ -412,7 +416,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [currentStatus, prepared, setup.downloading, setup.open]);
+  }, [prepared, setup.downloading, setup.open, setupModelId]);
 
   const previousOwnerRef = useRef(input.ownerKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons the recording and any queued submission when the draft's owner changes
@@ -445,8 +449,34 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (controller.currentState.phase === "recording") void controller.stop();
   });
 
+  const loadSetupCatalog = useStableCallback(
+    async (connection: PreparedConnection, selectedModelId: string, request: number) => {
+      setSetup({ ...INITIAL_SETUP, open: true });
+      const catalog = await runEnvironmentSpeech(getEnvironmentSpeechModels(connection)).catch(
+        () => null,
+      );
+      if (request !== startRequestRef.current) return;
+      const choice = chooseSetupSpeechModel(catalog?.models ?? [], {
+        selectedModelId,
+        intent: latestRef.current.clientSettings.speechLanguage,
+        preferred: preferredSpeechLanguages(),
+      });
+      setSetup((current) => ({
+        ...current,
+        model: choice?.model ?? null,
+        language: choice?.language ?? null,
+        catalogFailed: catalog === null,
+        error: choice
+          ? null
+          : catalog
+            ? "No model matches your language. Choose a model or change the language in Voice settings."
+            : "Could not load transcription models. Check the connection and try again.",
+      }));
+    },
+  );
+
   const start = useStableCallback(async () => {
-    if (latestRef.current.input.disabled) return;
+    if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
     if (!grantId) {
       if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
         await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
@@ -466,6 +496,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       controllerRef.current === controller &&
       latestRef.current.input.ownerKey === owner &&
       !latestRef.current.input.disabled;
+    setSetup(INITIAL_SETUP);
     setQueuedStart(prepared);
     let latestStatus: EnvironmentSpeechStatus;
     try {
@@ -481,8 +512,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       return;
     }
     if (!stillCurrent()) return;
-    setQueuedStart(null);
     setStatus({ prepared, value: latestStatus });
+    setQueuedStart(null);
+    if (latestStatus.supported && latestStatus.state === "missing-model") {
+      return loadSetupCatalog(prepared, latestStatus.modelId, request);
+    }
     if (!latestStatus.supported) {
       toastManager.add({
         type: "error",
@@ -491,32 +525,46 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       });
       return;
     }
-    if (latestStatus.state === "missing-model") {
-      setSetup({ ...INITIAL_SETUP, open: true });
-      return;
-    }
     setLevel(0);
     await controller.start();
   });
 
   const downloadSetupModel = useStableCallback(async () => {
-    if (!prepared || !currentStatus?.supported || setup.downloading) return;
+    if (!prepared || !currentStatus?.supported || !setupModelId || setup.downloading) return;
+    const modelId = setupModelId;
     const request = ++startRequestRef.current;
     setSetup((current) => ({ ...current, downloading: true, error: null }));
     try {
-      await runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, currentStatus.modelId));
+      const { models } = await runEnvironmentSpeech(
+        downloadEnvironmentSpeechModel(prepared, modelId),
+      );
+      if (request !== startRequestRef.current) return;
+      // A download cancelled from elsewhere still resolves, so select the model only once it landed.
+      const installed = models.some(({ id, state }) => id === modelId && state === "installed");
+      if (installed && modelId !== currentStatus.modelId) {
+        try {
+          await runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, modelId));
+        } catch {
+          if (request !== startRequestRef.current) return;
+          setSetup((current) => ({
+            ...current,
+            downloading: false,
+            error: "The model downloaded, but this environment could not select it. Try again.",
+          }));
+          return;
+        }
+      }
       if (request !== startRequestRef.current) return;
       const next = await probeSpeechStatus(prepared, true);
       if (request !== startRequestRef.current) return;
       setStatus({ prepared, value: next });
+      const ready =
+        installed && next.supported && next.modelId === modelId && next.state !== "missing-model";
       setSetup((current) => ({
         ...current,
         downloading: false,
-        step: next.supported && next.state !== "missing-model" ? 1 : current.step,
-        error:
-          next.supported && next.state !== "missing-model"
-            ? null
-            : "The model is not ready. Try downloading it again.",
+        step: ready ? 1 : current.step,
+        error: ready ? null : "The model is not ready. Try downloading it again.",
       }));
     } catch {
       if (request !== startRequestRef.current) return;
@@ -529,13 +577,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   });
 
   const cancelSetupDownload = useStableCallback(async () => {
-    if (!prepared || !currentStatus?.supported) return;
+    if (!prepared || !setupModelId) return;
     startRequestRef.current += 1;
     setSetup((current) => ({ ...current, open: false, downloading: false }));
     try {
-      await runEnvironmentSpeech(
-        cancelEnvironmentSpeechModelDownload(prepared, currentStatus.modelId),
-      );
+      await runEnvironmentSpeech(cancelEnvironmentSpeechModelDownload(prepared, setupModelId));
     } catch (error) {
       setSetup((current) => ({
         ...current,
@@ -562,6 +608,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setup: {
       ...setup,
       setOpen: (open: boolean) => setSetup((current) => ({ ...current, open })),
+      retryCatalog:
+        setup.open && setup.catalogFailed && prepared && currentStatus?.supported
+          ? () => loadSetupCatalog(prepared, currentStatus.modelId, ++startRequestRef.current)
+          : null,
       download: downloadSetupModel,
       cancelDownload: cancelSetupDownload,
       startRecording: async () => {
@@ -582,6 +632,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
+      setSetup(INITIAL_SETUP);
       controllerRef.current?.cancel();
     }),
     skipPostProcessing: useStableCallback(() => controllerRef.current?.skipPostProcessing()),
