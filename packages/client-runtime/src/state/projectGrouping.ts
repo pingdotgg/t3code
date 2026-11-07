@@ -228,8 +228,8 @@ function deriveCustomProjectTitle(members: ReadonlyArray<ProjectLabelSource>): s
     const repository = member.repositoryIdentity;
     return (
       repository &&
-      (repository.name.trim() === sharedTitle ||
-        repositoryGroupingDisplayNameOf(repository).trim() === sharedTitle)
+      (repository.name?.trim() === sharedTitle ||
+        repositoryGroupingDisplayNameOf(repository)?.trim() === sharedTitle)
     );
   });
   return isRepositoryName ? undefined : sharedTitle;
