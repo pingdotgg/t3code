@@ -78,6 +78,17 @@ describe("searchSettings", () => {
     expect(searchSettings("1password").map((item) => item.to)).not.toContain("/settings/secrets");
   });
 
+  it.each(["scheduled", "scheduled task", "scheduled tasks"])(
+    "finds the Scheduled tasks page for %s",
+    (query) => {
+      expect(searchSettings(query)[0]).toMatchObject({
+        id: "scheduled-tasks",
+        title: "Scheduled tasks",
+        to: "/settings/scheduled-tasks",
+      });
+    },
+  );
+
   it("matches normalized title substrings", () => {
     expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("glass").map((item) => item.id)).toEqual(["setting-glass-opacity"]);
