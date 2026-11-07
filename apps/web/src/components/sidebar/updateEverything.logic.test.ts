@@ -252,9 +252,10 @@ describe("localSwitchBlockReason", () => {
   it("checks every server this app hosts, and only while connected", () => {
     const stable = { channel: "latest" as const, version: "0.1.3", databaseMigration: 69 };
     const nightly = "0.1.4-nightly.20261027.3796";
+    const notConnected = "its server is not connected, so its database cannot be checked";
 
     const windows = { connected: true, databaseMigration: 69 };
-    expect(localSwitchBlockReason(nightly, stable, [windows], 1)).toBeNull();
+    expect(localSwitchBlockReason(nightly, stable, [windows], 1, true)).toBeNull();
     // A WSL server's newer migration blocks the reinstall that would restart it.
     expect(
       localSwitchBlockReason(
@@ -262,17 +263,45 @@ describe("localSwitchBlockReason", () => {
         stable,
         [windows, { connected: true, databaseMigration: 72 }],
         2,
+        true,
       ),
     ).toContain("does not support yet");
     // A WSL backend still starting has no client entry, so its database is unchecked.
-    expect(localSwitchBlockReason(nightly, stable, [windows], 2)).toBe(
-      "its server is not connected, so its database cannot be checked",
-    );
+    expect(localSwitchBlockReason(nightly, stable, [windows], 2, true)).toBe(notConnected);
     // A cached head from a disconnected server proves nothing.
     expect(
-      localSwitchBlockReason(nightly, stable, [{ connected: false, databaseMigration: 69 }], 1),
-    ).toBe("its server is not connected, so its database cannot be checked");
-    expect(localSwitchBlockReason("0.1.3", stable, [], 1)).toBeNull();
+      localSwitchBlockReason(
+        nightly,
+        stable,
+        [{ connected: false, databaseMigration: 69 }],
+        1,
+        true,
+      ),
+    ).toBe(notConnected);
+    expect(localSwitchBlockReason(nightly, stable, [], 1, true)).toBe(notConnected);
+    expect(localSwitchBlockReason("0.1.3", stable, [], 1, true)).toBeNull();
+  });
+
+  it("expects a server only while Local environment is enabled", () => {
+    const stable = { channel: "latest" as const, version: "0.1.3", databaseMigration: 69 };
+    const nightly = "0.1.4-nightly.20261027.3796";
+
+    // The desktop leaves its primary backend out of the inventory while a preflight retry is
+    // pending, so an enabled app can show no backend and no client entry yet still own a database.
+    expect(localSwitchBlockReason(nightly, stable, [], 0, true)).toBe(
+      "its server is not connected, so its database cannot be checked",
+    );
+    // Local environment off: the app hosts nothing, so the reinstall restarts no database.
+    expect(localSwitchBlockReason(nightly, stable, [], 0, false)).toBeNull();
+    expect(
+      localSwitchBlockReason(
+        "0.1.3",
+        { channel: "nightly", version: nightly, databaseMigration: 69 },
+        [],
+        0,
+        false,
+      ),
+    ).toBeNull();
   });
 });
 
