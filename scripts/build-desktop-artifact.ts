@@ -43,7 +43,6 @@ import {
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
-import { MAC_BACKEND_HELPER_ENTITLEMENTS_ENV } from "./sign-macos.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1413,8 +1412,8 @@ ${MAC_RUNTIME_ENTITLEMENTS}
 `;
 }
 
-/** The backend Helper is the TCC identity for terminals and agents; see scripts/sign-macos.ts. */
-export function renderMacHelperEntitlements(): string {
+// Nested code, including the Helper that runs the backend and is the TCC identity for its commands.
+export function renderMacInheritEntitlements(): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -2821,6 +2820,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   macPasskeySigning:
     | {
         readonly entitlementsPath: string;
+        readonly entitlementsInheritPath: string;
         readonly provisioningProfilePath: string;
       }
     | undefined,
@@ -2918,6 +2918,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
+            entitlementsInherit: macPasskeySigning.entitlementsInheritPath,
             provisioningProfile: macPasskeySigning.provisioningProfilePath,
           }
         : {}),
@@ -3881,9 +3882,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const macEntitlementsPath = macPasskeySigning
     ? path.join(stageAppDir, "entitlements.mac.plist")
     : undefined;
-  const macBackendHelperEntitlementsPath = macPasskeySigning
-    ? path.join(stageAppDir, "entitlements.mac.backend-helper.plist")
-    : undefined;
+  const macEntitlementsInheritPath = path.join(stageAppDir, "entitlements.mac.inherit.plist");
   let macWebAuthn: MacWebAuthnEntitlements | undefined;
   if (macPasskeySigning && macEntitlementsPath) {
     if (!(yield* fs.exists(macPasskeySigning.provisioningProfilePath))) {
@@ -3902,9 +3901,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       macEntitlementsPath,
       renderMacPasskeyEntitlements(macPasskeySigning, macWebAuthn),
     );
-    if (macBackendHelperEntitlementsPath) {
-      yield* fs.writeFileString(macBackendHelperEntitlementsPath, renderMacHelperEntitlements());
-    }
+    yield* fs.writeFileString(macEntitlementsInheritPath, renderMacInheritEntitlements());
   }
 
   const stageDependencies =
@@ -3950,6 +3947,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       macPasskeySigning && macEntitlementsPath
         ? {
             entitlementsPath: macEntitlementsPath,
+            entitlementsInheritPath: macEntitlementsInheritPath,
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
@@ -4036,10 +4034,6 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     if (value === "") {
       delete buildEnv[key];
     }
-  }
-  delete buildEnv[MAC_BACKEND_HELPER_ENTITLEMENTS_ENV];
-  if (macBackendHelperEntitlementsPath) {
-    buildEnv[MAC_BACKEND_HELPER_ENTITLEMENTS_ENV] = macBackendHelperEntitlementsPath;
   }
   if (options.platform === "linux") {
     // fpm uses system xz through tar; threading cuts compression time on many-core runners.

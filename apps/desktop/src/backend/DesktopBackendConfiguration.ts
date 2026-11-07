@@ -207,37 +207,25 @@ const resolveResourceMonitorPath = Effect.fn(
 const resolveBackendExecutable = Effect.fn("desktop.backendConfiguration.resolveBackendExecutable")(
   function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const fileSystem = yield* FileSystem.FileSystem;
     const executablePath = yield* HostProcess.ExecutablePath;
-    const direct = { executablePath, leadingArgs: [] as ReadonlyArray<string> };
-    if (environment.platform !== "darwin") return direct;
-
+    if (environment.platform !== "darwin") {
+      return { executablePath, leadingArgs: [] as ReadonlyArray<string> };
+    }
     const { path } = environment;
-    const launcherPath = environment.isPackaged
-      ? path.join(environment.resourcesPath, "backend-launcher", "t3-backend-launcher")
-      : path.join(
-          environment.rootDir,
-          "native/backend-launcher/build",
-          environment.processArch,
-          "t3-backend-launcher",
-        );
     // Electron and electron-builder name the generic helper after the main executable.
     const executableName = path.basename(executablePath);
-    const helperPath = path.join(
-      path.dirname(executablePath),
-      "../Frameworks",
-      `${executableName} Helper.app/Contents/MacOS/${executableName} Helper`,
-    );
-    const exists = (file: string) =>
-      fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false));
-    if ((yield* exists(launcherPath)) && (yield* exists(helperPath))) {
-      return { executablePath: launcherPath, leadingArgs: [helperPath] };
-    }
-    yield* Effect.logWarning(
-      "macOS backend launcher or Helper is missing; processes the backend starts will be attributed to T3 Code.",
-      { launcherPath, helperPath },
-    );
-    return direct;
+    return {
+      executablePath: environment.isPackaged
+        ? path.join(environment.resourcesPath, "backend-launcher", "t3-backend-launcher")
+        : path.join(environment.rootDir, "native/backend-launcher/build/t3-backend-launcher"),
+      leadingArgs: [
+        path.join(
+          path.dirname(executablePath),
+          "../Frameworks",
+          `${executableName} Helper.app/Contents/MacOS/${executableName} Helper`,
+        ),
+      ],
+    };
   },
 );
 
@@ -834,7 +822,6 @@ export const make = Effect.gen(function* () {
     );
     const shellEnvironmentPrepared = yield* shellEnvironment.installIntoProcess;
     const backendExecutable = yield* resolveBackendExecutable().pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
     return yield* resolvePrimaryStartConfig({

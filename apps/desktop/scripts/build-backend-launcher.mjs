@@ -4,16 +4,24 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
-// oxlint-disable-next-line t3code/no-global-process-runtime -- The native compiler targets the actual host; this script has no Effect runtime.
-const hostArch = process.arch;
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Native compilation only runs on the actual macOS host.
 const hostPlatform = process.platform;
 
+// Development builds are universal so the launcher matches whichever Electron arch runs it.
 const { values } = NodeUtil.parseArgs({
-  options: { output: { type: "string" }, arch: { type: "string", default: hostArch } },
+  options: { output: { type: "string" }, arch: { type: "string", default: "universal" } },
 });
 
-function compile(source, clangArchs, file) {
+if (hostPlatform === "darwin") {
+  const clangArchs = { x64: ["x86_64"], arm64: ["arm64"], universal: ["x86_64", "arm64"] }[
+    values.arch
+  ];
+  if (clangArchs === undefined) throw new Error(`Unsupported macOS architecture: ${values.arch}`);
+  const root = NodeURL.fileURLToPath(new URL("../../../native/backend-launcher/", import.meta.url));
+  const output = values.output ?? NodePath.resolve(root, "build", "t3-backend-launcher");
+  NodeFS.mkdirSync(NodePath.dirname(output), { recursive: true });
+  // A running backend may exec the old launcher while this rebuilds it.
+  const temporary = `${output}.${process.pid}.tmp`;
   try {
     NodeChildProcess.execFileSync(
       process.env.CC || "clang",
@@ -26,53 +34,19 @@ function compile(source, clangArchs, file) {
         // Match Electron's minimum supported macOS.
         "-mmacosx-version-min=12.0",
         ...clangArchs.flatMap((arch) => ["-arch", arch]),
-        source,
+        NodePath.resolve(root, "main.c"),
         "-o",
-        file,
+        temporary,
       ],
       { stdio: "inherit" },
     );
+    NodeFS.renameSync(temporary, output);
   } catch (cause) {
     throw new Error(
       "Building the macOS backend launcher requires Xcode Command Line Tools (xcode-select --install).",
       { cause },
     );
-  }
-}
-
-if (hostPlatform === "darwin") {
-  const clangArchs = { x64: ["x86_64"], arm64: ["arm64"], universal: ["x86_64", "arm64"] }[
-    values.arch
-  ];
-  if (clangArchs === undefined) throw new Error(`Unsupported macOS architecture: ${values.arch}`);
-  const root = NodeURL.fileURLToPath(new URL("../../../native/backend-launcher/", import.meta.url));
-  const source = NodePath.resolve(root, "main.c");
-  const output =
-    values.output ?? NodePath.resolve(root, "build", values.arch, "t3-backend-launcher");
-  const matchesArchitecture = (file) => {
-    const result = NodeChildProcess.spawnSync("lipo", ["-archs", file], { encoding: "utf8" });
-    const archs = result.status === 0 ? result.stdout.trim().split(/\s+/).toSorted() : [];
-    return archs.join(" ") === clangArchs.toSorted().join(" ");
-  };
-  let current = false;
-  try {
-    current =
-      NodeFS.statSync(output).mtimeMs >=
-        Math.max(
-          NodeFS.statSync(source).mtimeMs,
-          NodeFS.statSync(NodeURL.fileURLToPath(import.meta.url)).mtimeMs,
-        ) && matchesArchitecture(output);
-  } catch {}
-  if (!current) {
-    NodeFS.mkdirSync(NodePath.dirname(output), { recursive: true });
-    const temporary = `${output}.${process.pid}.tmp`;
-    try {
-      compile(source, clangArchs, temporary);
-      if (!matchesArchitecture(temporary))
-        throw new Error(`C compiler did not produce a macOS ${values.arch} executable.`);
-      NodeFS.renameSync(temporary, output);
-    } finally {
-      NodeFS.rmSync(temporary, { force: true });
-    }
+  } finally {
+    NodeFS.rmSync(temporary, { force: true });
   }
 }
