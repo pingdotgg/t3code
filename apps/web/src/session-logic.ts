@@ -24,13 +24,13 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
-import type { QuizCard } from "@t3tools/shared/quizCard";
+import type { LessonCard } from "@t3tools/shared/quizCard";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import {
   htmlRenderFromToolItem,
   mcpAppFromToolItem,
-  quizCardFromToolItem,
+  lessonCardFromToolItem,
 } from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
@@ -143,7 +143,7 @@ export type TimelineEntry = (
       readonly kind: "quiz-card";
       readonly createdAt: string;
       readonly runId: RunId | null;
-      readonly quizCard: QuizCard;
+      readonly quizCard: LessonCard;
     }
   | {
       readonly id: string;
@@ -725,7 +725,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
 
     const quizCard =
       item.type === "dynamic_tool" && item.status === "completed"
-        ? quizCardFromToolItem(item)
+        ? lessonCardFromToolItem(item)
         : undefined;
     if (quizCard !== undefined) {
       entries.push({

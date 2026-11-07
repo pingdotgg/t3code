@@ -4715,3 +4715,77 @@ it("turns a completed quiz card into an answered row after a later user message"
     }).find((row) => row.kind === "quiz-card"),
   ).toMatchObject({ answered: true });
 });
+
+it("turns a question card into an unanswered quiz-card row", () => {
+  const at = "2026-01-01T00:00:00Z";
+  const question: TimelineEntry = {
+    kind: "quiz-card",
+    id: "question-1",
+    createdAt: at,
+    runId: null,
+    quizCard: { question: "Explain it." },
+  };
+  const emptyReply: TimelineEntry = {
+    kind: "message",
+    id: "empty",
+    createdAt: at,
+    message: {
+      id: MessageId.make("empty"),
+      role: "assistant",
+      text: "",
+      runId: null,
+      streaming: false,
+      createdAt: at,
+      updatedAt: at,
+    },
+  };
+  const rows = deriveMessagesTimelineRows({
+    timelineEntries: [question, emptyReply],
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+  expect(rows.find((entry) => entry.kind === "quiz-card")).toMatchObject({
+    quizCard: { question: "Explain it." },
+    answered: false,
+  });
+  expect(rows.some((entry) => entry.kind === "message")).toBe(false);
+
+  const withChangedFiles = deriveMessagesTimelineRows({
+    timelineEntries: [question, emptyReply],
+    isWorking: false,
+    turnDiffSummaries: [
+      {
+        runId: "turn-1" as never,
+        completedAt: at,
+        assistantMessageId: MessageId.make("empty"),
+        checkpointTurnCount: 1,
+        checkpointRef: "checkpoint-1" as never,
+        status: "ready",
+        files: [{ path: "src/index.ts", kind: "modified", additions: 1, deletions: 0 }],
+      },
+    ],
+    supportsConversationRollback: false,
+  });
+  expect(withChangedFiles.find((entry) => entry.kind === "message")).toMatchObject({
+    assistantTurnDiffSummary: { checkpointTurnCount: 1 },
+  });
+
+  const withNoChanges = deriveMessagesTimelineRows({
+    timelineEntries: [question, emptyReply],
+    isWorking: false,
+    turnDiffSummaries: [
+      {
+        runId: "turn-1" as never,
+        completedAt: at,
+        assistantMessageId: MessageId.make("empty"),
+        checkpointTurnCount: 1,
+        checkpointRef: "checkpoint-1" as never,
+        status: "ready",
+        files: [],
+      },
+    ],
+    supportsConversationRollback: false,
+  });
+  expect(withNoChanges.some((entry) => entry.kind === "message")).toBe(false);
+});

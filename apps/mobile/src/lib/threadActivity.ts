@@ -68,12 +68,12 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { truncate } from "@t3tools/shared/String";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
-import type { QuizCard } from "@t3tools/shared/quizCard";
+import type { LessonCard } from "@t3tools/shared/quizCard";
 import {
   compactDynamicToolOutput,
   htmlRenderFromToolItem,
+  lessonCardFromToolItem,
   mcpAppFromToolItem,
-  quizCardFromToolItem,
 } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 import {
@@ -197,7 +197,7 @@ type RawThreadFeedEntry =
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId | null;
-      readonly quizCard: QuizCard;
+      readonly quizCard: LessonCard;
     };
 
 export type ThreadFeedEntry = ThreadFeedEntryContent & {
@@ -2272,7 +2272,7 @@ export function buildThreadFeed(
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
     const quizCard =
       item.type === "dynamic_tool" && item.status === "completed"
-        ? quizCardFromToolItem(item)
+        ? lessonCardFromToolItem(item)
         : undefined;
     if (quizCard !== undefined) {
       const entry: RawThreadFeedEntry = {

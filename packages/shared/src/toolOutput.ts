@@ -10,7 +10,15 @@ import {
   readHtmlRenderReference,
   type HtmlRenderReference,
 } from "./htmlRender.ts";
-import { QUIZ_CARD_TOOL_NAME, readQuizCard, type QuizCard } from "./quizCard.ts";
+import {
+  QUESTION_CARD_TOOL_NAME,
+  QUIZ_CARD_TOOL_NAME,
+  readQuestionCard,
+  readQuizCard,
+  type LessonCard,
+  type QuizCard,
+  type QuestionCard,
+} from "./quizCard.ts";
 import {
   claudeMcpToolName,
   MCP_APP_OUTPUT_KEY,
@@ -48,6 +56,7 @@ interface CompactToolOutput {
   status?: "rolled_back";
   htmlRender?: HtmlRenderReference;
   quizCard?: QuizCard;
+  questionCard?: QuestionCard;
   [MCP_APP_OUTPUT_KEY]?: McpAppReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
@@ -141,6 +150,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const quizCard = readQuizCard(data.quizCard);
     if (quizCard !== undefined) output.quizCard = quizCard;
+    const questionCard = readQuestionCard(data.questionCard);
+    if (questionCard !== undefined) output.questionCard = questionCard;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
     if (mcpApp !== undefined) output[MCP_APP_OUTPUT_KEY] = mcpApp;
     const nestedThreadId = Predicate.isObject(data.thread)
@@ -192,13 +203,15 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   return Object.keys(output).length === 0 ? undefined : output;
 }
 
-export function quizCardFromToolItem(item: {
+export function lessonCardFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
-}): QuizCard | undefined {
-  if (resolveT3McpToolId(item.toolName) !== QUIZ_CARD_TOOL_NAME) return undefined;
+}): LessonCard | undefined {
+  const toolName = resolveT3McpToolId(item.toolName);
+  if (toolName !== QUIZ_CARD_TOOL_NAME && toolName !== QUESTION_CARD_TOOL_NAME) return undefined;
   const output = compactDynamicToolOutput(item.output);
-  return output?.isError ? undefined : output?.quizCard;
+  if (output?.isError) return undefined;
+  return toolName === QUIZ_CARD_TOOL_NAME ? output?.quizCard : output?.questionCard;
 }
 
 export function htmlRenderFromToolItem(item: {

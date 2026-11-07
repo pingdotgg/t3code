@@ -325,6 +325,7 @@ export function QuizCardTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
         quizCard={row.quizCard}
         seed={row.id}
         answered={row.answered}
+        environmentId={ctx.threadRef?.environmentId}
         onSendMessage={ctx.onSendAppMessage}
       />
     </div>
