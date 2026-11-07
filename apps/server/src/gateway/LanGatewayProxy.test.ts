@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - live gzip peer exercises Node HTTP/zlib boundaries.
+import * as NodeHttp from "node:http";
+import * as NodeZlib from "node:zlib";
+
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
   AuthOrchestrationReadScope,
@@ -11,8 +15,6 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse, HttpRouter, type HttpServerRequest } from "effect/http";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as NodeHttp from "node:http";
-import * as NodeZlib from "node:zlib";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as LanGateway from "./LanGateway.ts";
 import * as LanGatewayProxy from "./LanGatewayProxy.ts";
@@ -205,7 +207,7 @@ describe("LAN gateway proxy", () => {
               remove: () => Effect.die("unused"),
               advertise: Effect.succeed([]),
               subscribeAdvertisementChanges: Effect.succeed(Stream.empty),
-              resolveUpstream: () => Effect.succeed(Option.some(origin)),
+              resolveUpstream: () => Effect.succeedSome(origin),
             } as LanGateway.LanGateway["Service"]),
           ),
           Layer.provideMerge(FetchHttpClient.layer),
