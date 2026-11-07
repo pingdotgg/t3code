@@ -178,6 +178,13 @@ const makeStrictNdJsonRpcParser = () => {
   const codec = RpcSerialization.jsonRpc().makeUnsafe();
   const decoder = new TextDecoder();
   let buffer = "";
+  const decodeLine = (line: string): ReadonlyArray<AcpDecodedWireMessage> =>
+    codec.decode(line).map((message) => ({
+      message: normalizeAcpJsonRpcError(
+        message as RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded,
+      ),
+      lineLength: line.length,
+    }));
   return {
     // Every message in a batch line is charged the whole line.
     decode: (bytes: Uint8Array | string): ReadonlyArray<AcpDecodedWireMessage> => {
@@ -190,21 +197,14 @@ const makeStrictNdJsonRpcParser = () => {
       }
       const lines = (buffer + chunk.slice(0, lastNewline)).split("\n");
       buffer = chunk.slice(lastNewline + 1);
-      return lines.flatMap((line) =>
-        codec.decode(line).map((message) => ({
-          message: normalizeAcpJsonRpcError(
-            message as RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded,
-          ),
-          lineLength: line.length,
-        })),
-      );
+      return lines.flatMap(decodeLine);
     },
     // A truncated final line is left to the exit status, which explains a crash better.
-    end: (): ReadonlyArray<unknown> => {
+    end: (): ReadonlyArray<AcpDecodedWireMessage> => {
       const line = buffer + decoder.decode();
       buffer = "";
       try {
-        return line.trim() === "" ? [] : codec.decode(line);
+        return line.trim() === "" ? [] : decodeLine(line);
       } catch {
         return [];
       }
@@ -807,17 +807,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       ),
     ),
     Effect.andThen(
-      Effect.suspend(() =>
-        Effect.forEach(
-          (
-            parser.end() as ReadonlyArray<
-              RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded
-            >
-          ).map(normalizeAcpJsonRpcError),
-          routeDecodedMessage,
-          { discard: true },
-        ),
-      ),
+      Effect.suspend(() => Effect.forEach(parser.end(), routeDecodedMessage, { discard: true })),
     ),
     // Anything that ends the reader, including a defect in a callback it runs,
     // terminates the connection so pending requests fail instead of hanging.
