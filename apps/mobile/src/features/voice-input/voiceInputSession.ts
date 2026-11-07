@@ -52,13 +52,11 @@ export function createVoiceInputTarget(
   commitDraft: VoiceInputTarget["commitDraft"],
   selection: VoiceDraftSnapshot["selection"],
 ): VoiceInputTarget {
-  const startText = readText();
   return {
     ownerKey,
     readDraft: () => {
       const text = readText();
-      // Mobile has no live caret off screen, so a draft changed elsewhere refuses the transcript.
-      return text === null || text !== startText ? null : { ownerKey, text, selection };
+      return text === null ? null : { ownerKey, text, selection };
     },
     commitDraft,
   };
@@ -72,6 +70,7 @@ export class VoiceInputSession {
   readonly controller: VoiceInputController;
   private readonly dependencies: VoiceInputSessionDependencies;
   private target: VoiceInputTarget | null = null;
+  private startText: string | null = null;
   private snapshot: VoiceInputSnapshot = {
     state: IDLE_STATE,
     ownerKey: null,
@@ -89,7 +88,11 @@ export class VoiceInputSession {
     this.controller = new VoiceInputController({
       ...dependencies,
       onStateChange: (state) => this.handleStateChange(state),
-      readDraft: () => this.target?.readDraft() ?? null,
+      // The target's selection is fixed at start, so a draft changed since refuses the transcript.
+      readDraft: () => {
+        const draft = this.target?.readDraft() ?? null;
+        return draft?.text === this.startText ? draft : null;
+      },
       commitDraft: (text, selection) => this.target?.commitDraft(text, selection),
     });
   }
@@ -128,6 +131,7 @@ export class VoiceInputSession {
   start(target: VoiceInputTarget): Promise<void> {
     if (voiceInputBlocksSubmission(this.controller.currentState)) return Promise.resolve();
     this.target = target;
+    this.startText = target.readDraft()?.text ?? null;
     return this.controller.start();
   }
 

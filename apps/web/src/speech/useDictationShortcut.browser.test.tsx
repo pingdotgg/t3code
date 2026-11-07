@@ -100,26 +100,33 @@ const recording = () => ({
 it("lets Escape in another dictation editor reach that editor instead of canceling the recording", async () => {
   const speech = recording();
   const commentRef = createRef<HTMLTextAreaElement>();
-  const fieldEscape = vi.fn();
+  const editorEscape = vi.fn();
   await using screen = await render(
     <>
       <Probe speech={speech} />
       <Probe speech={actions(true)} targetRef={commentRef} />
-      <textarea
-        aria-label="Comment"
-        ref={commentRef}
+      <div
+        role="dialog"
+        aria-label="Edit citation comment"
         onKeyDown={(event) => {
-          if (event.key === "Escape") fieldEscape();
+          if (event.key === "Escape") editorEscape();
         }}
-      />
+      >
+        <textarea aria-label="Comment" ref={commentRef} />
+        <button type="button">Cancel</button>
+      </div>
     </>,
   );
-  const field = screen.getByRole("textbox", { name: "Comment" }).element();
-  if (!(field instanceof HTMLTextAreaElement)) throw new Error("expected the comment textarea");
-  field.focus();
-  field.dispatchEvent(escape());
+  for (const control of [
+    screen.getByRole("textbox", { name: "Comment" }).element(),
+    screen.getByRole("button", { name: "Cancel" }).element(),
+  ]) {
+    if (!(control instanceof HTMLElement)) throw new Error("expected a comment editor control");
+    control.focus();
+    control.dispatchEvent(escape());
+  }
   expect(speech.cancel).not.toHaveBeenCalled();
-  expect(fieldEscape).toHaveBeenCalledOnce();
+  expect(editorEscape).toHaveBeenCalledTimes(2);
 });
 
 it("cancels the recording on Escape in a text field that does not dictate", async () => {

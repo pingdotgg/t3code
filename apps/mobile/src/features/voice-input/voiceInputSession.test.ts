@@ -246,6 +246,20 @@ describe("global voice input", () => {
     },
   );
 
+  it("retries a failed start against the draft as edited since", async () => {
+    const { session, prepare } = createSession();
+    prepare.mockRejectedValueOnce(new Error("model unavailable"));
+    let text = "first";
+    const commit = vi.fn();
+    await session.start(createVoiceInputTarget("first", () => text, commit, { start: 5, end: 5 }));
+    expect(session.controller.currentState.phase).toBe("error");
+    text = "first draft";
+    await session.retry();
+    await session.controller.stop();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(commit).toHaveBeenCalledWith("first spoken text draft", { start: 17, end: 17 });
+  });
+
   it("finishes the original draft at the recording limit while it is off screen", async () => {
     const { session, recorder } = createSession();
     const commit = vi.fn();

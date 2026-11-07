@@ -60,14 +60,14 @@ function ownsShortcut(id: symbol) {
   return entries.find(([, read]) => !read().targetRef && !read().ownsFocus)?.[0] === id;
 }
 
-// Escape typed in another dictation editor belongs to that editor, not to a recording elsewhere.
+// Escape inside another dictation editor, or the dialog hosting it, belongs to that editor.
 function inOtherShortcutTarget(id: symbol, target: EventTarget | null) {
-  return (
-    target instanceof Node &&
-    [...shortcutTargets].some(
-      ([other, read]) => other !== id && read().targetRef?.current?.contains(target),
-    )
-  );
+  if (!(target instanceof Node)) return false;
+  if (shortcutTargets.get(id)?.().targetRef?.current?.contains(target)) return false;
+  return [...shortcutTargets].some(([other, read]) => {
+    const field = read().targetRef?.current;
+    return other !== id && (field?.closest('[role="dialog"]') ?? field)?.contains(target);
+  });
 }
 
 export function useDictationShortcut(input: ShortcutInput) {
