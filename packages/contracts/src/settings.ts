@@ -247,7 +247,8 @@ export type CustomSidebarArtwork = typeof CustomSidebarArtwork.Type;
 export const APP_ICON_BUILT_IN_IDS = ["default", "light", "dark"] as const;
 export const AppIconSelection = TrimmedNonEmptyString.check(Schema.isMaxLength(80));
 export type AppIconSelection = typeof AppIconSelection.Type;
-export const DEFAULT_APP_ICON_SELECTION = "default";
+/** Matches the sidebar's sky; with no location yet it shows the shipped tile. */
+export const DEFAULT_APP_ICON_SELECTION = "local-weather";
 
 /** Same size ceiling as artwork: a settings file, not an asset store. */
 export const MAX_CUSTOM_APP_ICON_BYTES = 512 * 1024;
