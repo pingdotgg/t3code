@@ -25,6 +25,11 @@ import {
 
 const MAX_PULL_REQUEST_SNAPSHOTS = 500;
 
+const noEnvironmentConfigAtom = Atom.make(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("mobile:thread-pr-no-environment"),
+);
+
 // One bounded cache survives row virtualization (the summary query is dropped once idle) without
 // retaining one live atom for every pull request ever seen.
 const pullRequestSnapshotsAtom = Atom.make<ReadonlyMap<string, PullRequestSummary>>(new Map()).pipe(
@@ -77,31 +82,39 @@ export function withKnownPullRequestSummary<
   return initialSummary === undefined ? params : { ...params, initialSummary };
 }
 
-export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentation | null {
+export function useThreadPr(thread: EnvironmentThreadShell | null): ThreadPrPresentation | null {
   const demand = use(ThreadPrDemandContext);
+  const environmentId = thread?.environmentId ?? null;
   const supportsLinks = useAtomValue(
-    serverEnvironment.configValueAtom(thread.environmentId),
+    environmentId === null
+      ? noEnvironmentConfigAtom
+      : serverEnvironment.configValueAtom(environmentId),
     (config) => config !== null,
   );
   const { linkedPresentation, pullRequestRef } = useMemo(
     () =>
-      resolveThreadPrSource(
-        {
-          pullRequests: thread.pullRequests,
-          linkedPullRequest: thread.linkedPullRequest,
-          branchPullRequest: thread.branchPullRequest,
-        },
-        supportsLinks,
-      ),
-    [thread.pullRequests, thread.linkedPullRequest, thread.branchPullRequest, supportsLinks],
+      thread === null
+        ? { linkedPresentation: null, pullRequestRef: null }
+        : resolveThreadPrSource(
+            {
+              pullRequests: thread.pullRequests,
+              linkedPullRequest: thread.linkedPullRequest,
+              branchPullRequest: thread.branchPullRequest,
+            },
+            supportsLinks,
+          ),
+    [thread, supportsLinks],
   );
-  const key = pullRequestRef === null ? null : snapshotKey(thread.environmentId, pullRequestRef);
+  const key =
+    thread === null || pullRequestRef === null
+      ? null
+      : snapshotKey(thread.environmentId, pullRequestRef);
   // Select this row's entry so answers for other pull requests do not re-render it.
   const snapshot = useAtomValue(pullRequestSnapshotsAtom, (current) =>
     key === null ? undefined : current.get(key),
   );
   const pullRequestSummary = useEnvironmentQuery(
-    pullRequestRef === null || !demand
+    thread === null || pullRequestRef === null || !demand
       ? null
       : pullRequestSummaryAtom({
           environmentId: thread.environmentId,

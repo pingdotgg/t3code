@@ -56,6 +56,8 @@ export interface AppBarConfirm {
   /**
    * When true, shows `label` in the toolbar. Sheets keep the checkmark-only control by
    * leaving this unset. With `icon` and no label, both platforms use an icon button.
+   * With both `showLabel` and `icon`, platforms that support it show the glyph beside the label
+   * (e.g. PR glyph + linked count).
    */
   readonly showLabel?: boolean;
   /** Custom glyph; without `showLabel`, replaces the default checkmark (iOS) / text (Android). */

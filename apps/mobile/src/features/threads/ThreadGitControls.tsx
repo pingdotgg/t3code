@@ -19,6 +19,7 @@ import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 import { useEnvironmentScope } from "../../state/session";
+import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import {
   basename,
@@ -27,6 +28,7 @@ import {
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
 import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
+import { linkedPrBarConfirm, shortGitBarLabel } from "./threadGitBarPrimary";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -79,6 +81,9 @@ export type ThreadGitMenuProps = {
   readonly hasThread?: boolean;
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
+  /** Linked / branch PR badge for the thread bar — wins over the git quick-action pill. */
+  readonly linkedPr?: ThreadPrPresentation | null;
+  readonly onOpenLinkedPr?: () => void;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
@@ -368,42 +373,10 @@ function threadGitMenuFromModel(
   };
 }
 
-/** Short pill copy for the thread-bar CTA — full quick-action label stays in a11y. */
-function shortGitBarLabel(
-  quickAction: ReturnType<typeof useThreadGitControlModel>["quickAction"],
-  shortLabel: string,
-): { readonly label: string; readonly disabled: boolean } | null {
-  if (quickAction.kind === "open_pr") {
-    return { label: "View", disabled: quickAction.disabled };
-  }
-  if (quickAction.kind === "run_pull") {
-    return { label: "Pull", disabled: quickAction.disabled };
-  }
-  if (quickAction.kind === "run_action") {
-    switch (quickAction.action) {
-      case "create_pr":
-      case "commit_push_pr":
-        return { label: shortLabel, disabled: quickAction.disabled };
-      case "push":
-        return { label: "Push", disabled: quickAction.disabled };
-      case "commit":
-        return { label: "Commit", disabled: quickAction.disabled };
-      case "commit_push":
-        // Default-branch ahead uses action commit_push with label "Push".
-        return {
-          label: quickAction.label === "Push" ? "Push" : "Commit",
-          disabled: quickAction.disabled,
-        };
-      default:
-        return null;
-    }
-  }
-  return null;
-}
-
 /**
  * Thread-bar git controls: a compact one-tap pill for the next git step, plus the overflow
- * menu for everything else (review, more).
+ * menu for everything else (review, more). A linked PR wins the pill so tap opens it (or the
+ * multi-PR list) and long-press still reaches Push / Commit / … .
  */
 export function useThreadGitBar(props: ThreadGitMenuProps): {
   readonly primaryAction: AppBarConfirm | null;
@@ -413,8 +386,21 @@ export function useThreadGitBar(props: ThreadGitMenuProps): {
   const terminology = sourceControlClients.get(
     props.gitStatus?.sourceControlProvider?.kind,
   ).changeRequest;
-  const short = shortGitBarLabel(model.quickAction, terminology.shortLabel);
-  const primaryAction: AppBarConfirm | null = short
+  const linkedPr = props.linkedPr ?? null;
+  const linkedPrimary: AppBarConfirm | null =
+    linkedPr && props.onOpenLinkedPr
+      ? {
+          ...linkedPrBarConfirm(linkedPr),
+          disabled: false,
+          onPress: props.onOpenLinkedPr,
+        }
+      : null;
+  const short = shortGitBarLabel(
+    model.quickAction,
+    terminology.shortLabel,
+    props.gitStatus?.pr?.state === "open" ? props.gitStatus.pr.number : null,
+  );
+  const gitPrimary: AppBarConfirm | null = short
     ? {
         label: short.label,
         accessibilityLabel: model.quickAction.label,
@@ -425,10 +411,15 @@ export function useThreadGitBar(props: ThreadGitMenuProps): {
         },
       }
     : null;
+  const primaryAction = linkedPrimary ?? gitPrimary;
+  // Linked-PR pill must keep Push/Commit in the hold menu; only omit when the pill *is* that action.
+  const omitQuickAction =
+    primaryAction !== null &&
+    !primaryAction.disabled &&
+    (linkedPrimary !== null ? model.quickAction.kind === "open_pr" : true);
   return {
     primaryAction,
-    // Keep the menu quick-action (and its disabled hint) when the pill is disabled.
-    menu: threadGitMenuFromModel(props, model, primaryAction !== null && !primaryAction.disabled),
+    menu: threadGitMenuFromModel(props, model, omitQuickAction),
   };
 }
 

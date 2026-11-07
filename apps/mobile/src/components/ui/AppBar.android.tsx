@@ -171,6 +171,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
         <View className="self-center">
           <Button
             label={confirm.label}
+            icon={confirm.showLabel ? confirm.icon : undefined}
             accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
             tone="text"
             loading={confirm.loading}
@@ -193,6 +194,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       <View className="self-center">
         <Button
           label={confirm.label}
+          icon={confirm.showLabel ? confirm.icon : undefined}
           accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
           tone="text"
           loading={confirm.loading}

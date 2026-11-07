@@ -215,10 +215,10 @@ export function AppBar(props: AppBarProps) {
             // + menu, no chevron — the glass morphs into the menu on hold.
             <Toolbar.Button
               icon={
-                props.confirm.showLabel
-                  ? undefined
-                  : props.confirm.icon
-                    ? iosIcon(props.confirm.icon)
+                props.confirm.icon
+                  ? iosIcon(props.confirm.icon)
+                  : props.confirm.showLabel
+                    ? undefined
                     : iosIcon(props.confirm.menu.icon)
               }
               label={props.confirm.showLabel ? props.confirm.label : undefined}
