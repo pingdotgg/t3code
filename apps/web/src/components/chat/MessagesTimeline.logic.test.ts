@@ -20,6 +20,7 @@ import {
 } from "../../session-logic";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
+import { answeredCardIds, cardAnswerMessage } from "@t3tools/shared/quizCard";
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
@@ -4661,11 +4662,11 @@ it("anchors embeds to the closest finished assistant reply in the same run", () 
   );
 });
 
-it("turns a completed quiz card into an answered row after a later user message", () => {
+it("marks only the quiz card an answer names as answered", () => {
   const at = "2026-01-01T00:00:00Z";
-  const quiz: TimelineEntry = {
+  const quiz = (id: string): TimelineEntry => ({
     kind: "quiz-card",
-    id: "quiz-1",
+    id,
     createdAt: at,
     runId: null,
     quizCard: {
@@ -4678,42 +4679,36 @@ it("turns a completed quiz card into an answered row after a later user message"
         { option: "C", wrongIdea: "Another" },
       ],
     },
-  };
-  const input = {
-    timelineEntries: [quiz],
-    isWorking: false,
-    turnDiffSummaries: [],
-    supportsConversationRollback: false,
-  };
-  expect(deriveMessagesTimelineRows(input).find((row) => row.kind === "quiz-card")).toMatchObject({
-    answered: false,
   });
+  const answer = cardAnswerMessage('Quiz answer: "A", right.', "quiz-1");
   const user: TimelineEntry = {
     kind: "message",
     id: "answer",
-    createdAt: at,
+    createdAt: "2026-01-01T00:00:01Z",
     message: {
       id: MessageId.make("answer"),
       role: "user",
-      text: "Quiz answer",
+      text: answer,
       runId: null,
       streaming: false,
       createdAt: at,
       updatedAt: at,
     },
   };
-  expect(
-    deriveMessagesTimelineRows({ ...input, timelineEntries: [quiz, user] }).find(
-      (row) => row.kind === "quiz-card",
-    ),
-  ).toMatchObject({ answered: true });
-
-  expect(
-    deriveMessagesTimelineRows({
-      ...input,
-      latestQueuedUserMessageAt: "2026-01-01T00:00:01Z",
-    }).find((row) => row.kind === "quiz-card"),
-  ).toMatchObject({ answered: true });
+  const rows = deriveMessagesTimelineRows({
+    timelineEntries: [quiz("quiz-1"), quiz("quiz-2"), quiz("quiz-3"), user],
+    answeredCardIds: answeredCardIds([{ role: "user", text: answer }]),
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+  expect(rows.flatMap((row) => (row.kind === "quiz-card" ? [[row.id, row.answered]] : []))).toEqual(
+    [
+      ["quiz-1", true],
+      ["quiz-2", false],
+      ["quiz-3", false],
+    ],
+  );
 });
 
 it("turns a question card into an unanswered quiz-card row", () => {

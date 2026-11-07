@@ -143,3 +143,21 @@ export function quizAnswerGrade(text: string): "right" | "wrong" | "unknown" | u
   const graded = /^Quiz answer: ".*?", (right|wrong)\./s.exec(text)?.[1];
   return graded === "right" || graded === "wrong" ? graded : undefined;
 }
+
+// The card's item id rides in the answer text so every client, after reloads, knows which card it answered.
+const CARD_ANSWER_TAG = /\n\n\(card (\S+)\)$/;
+
+export function cardAnswerMessage(text: string, cardId: string) {
+  return `${text}\n\n(card ${cardId})`;
+}
+
+export function answeredCardIds(
+  messages: Iterable<{ readonly role: string; readonly text: string }>,
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    const id = message.role === "user" ? CARD_ANSWER_TAG.exec(message.text)?.[1] : undefined;
+    if (id !== undefined) ids.add(id);
+  }
+  return ids;
+}

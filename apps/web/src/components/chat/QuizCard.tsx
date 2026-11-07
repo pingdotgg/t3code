@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  cardAnswerMessage,
   quizAnswerMessage,
   shuffledQuizOptions,
   type LessonCard,
@@ -161,7 +162,7 @@ function OpenQuestionCard(props: {
     setSending(true);
     setError(null);
     try {
-      await props.onSendMessage(text);
+      await props.onSendMessage(cardAnswerMessage(text, props.seed));
       setSubmitted(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not send your answer.");
@@ -253,12 +254,15 @@ function MultipleChoiceCard(props: {
     setError(null);
     try {
       await props.onSendMessage(
-        quizAnswerMessage({
-          answer: selected === "__unknown__" ? null : selected,
-          correct: picked?.correct === true,
-          confidence,
-          thinking: text,
-        }),
+        cardAnswerMessage(
+          quizAnswerMessage({
+            answer: selected === "__unknown__" ? null : selected,
+            correct: picked?.correct === true,
+            confidence,
+            thinking: text,
+          }),
+          props.seed,
+        ),
       );
       setSubmitted(true);
     } catch (cause) {
