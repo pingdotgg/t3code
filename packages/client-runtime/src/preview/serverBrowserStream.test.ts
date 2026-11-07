@@ -132,6 +132,38 @@ describe("preview stream control", () => {
     restarted.stop();
     expect(onFileChooser).toHaveBeenLastCalledWith(null);
   });
+
+  it("withdraws an offered select menu when the page closes it or the stream drops", () => {
+    const onSelectMenu = vi.fn();
+    const client = createPreviewStreamClient(target, {
+      onFrame: vi.fn(),
+      onSelectMenu,
+      onViewport: vi.fn(),
+      onConnectedChange: vi.fn(),
+      onUnauthorized: vi.fn(),
+    });
+    const socket = FakeSocket.current;
+    socket.dispatchEvent(new Event("open"));
+    const menu = {
+      id: "m1",
+      options: [{ label: "One", disabled: false }],
+      selectedIndex: 0,
+      x: 1,
+      y: 2,
+      width: 3,
+      height: 4,
+    };
+    socket.message(JSON.stringify({ type: "selectMenu", ...menu }));
+    expect(onSelectMenu).toHaveBeenLastCalledWith(menu);
+    socket.message(JSON.stringify({ type: "selectMenuClosed", id: "older" }));
+    expect(onSelectMenu).toHaveBeenLastCalledWith(menu);
+    socket.message(JSON.stringify({ type: "selectMenuClosed", id: "m1" }));
+    expect(onSelectMenu).toHaveBeenLastCalledWith(null);
+    socket.message(JSON.stringify({ type: "selectMenu", ...menu, id: "m2" }));
+    socket.dispatchEvent(Object.assign(new Event("close"), { code: 1012 }));
+    expect(onSelectMenu).toHaveBeenLastCalledWith(null);
+    client.stop();
+  });
 });
 
 describe("preview stream downloads", () => {
