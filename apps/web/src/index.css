@@ -443,8 +443,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @utility dialog-backdrop {
   background: color-mix(in srgb, var(--background) 60%, transparent);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: var(--dialog-backdrop-filter, blur(4px));
+  backdrop-filter: var(--dialog-backdrop-filter, blur(4px));
 
   @variant dark {
     background: color-mix(in srgb, var(--background) 64%, transparent);
