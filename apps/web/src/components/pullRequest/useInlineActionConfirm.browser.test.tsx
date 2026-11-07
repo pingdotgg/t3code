@@ -89,7 +89,7 @@ it.each(["merge", "enable-auto-merge"] as const)(
         mergeBlockedReason={mergeBlockedReason}
         autoMergeArmed={false}
         armedAutoMergeLabel="Auto-merge enabled"
-        pendingAutoMergeLabel="Auto-merge (squash)"
+        pendingAutoMergeLabel="Enable auto-merge (squash)"
         selectedMergeMethod="squash"
         selectedMergeMethodLabel="Squash and merge"
         statePresentation={null}
