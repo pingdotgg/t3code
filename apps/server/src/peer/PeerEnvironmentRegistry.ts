@@ -43,6 +43,9 @@ const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
 const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
 
+/** The bootstrap exchange must not park a spawn on a silent verified peer. */
+const exchangeTimeout = Duration.seconds(15);
+
 /**
  * Scopes a delegation session asks for: the narrowest set that launches,
  * follows and steers threads on the peer; the peer may grant narrower.
@@ -99,6 +102,7 @@ export class PeerEnvironmentRegistryError extends Schema.TaggedError<PeerEnviron
       "unreachable",
       "not_paired",
       "exchange_rejected",
+      "exchange_timeout",
     ]),
     message: Schema.String,
     cause: Schema.optional(Schema.Defect()),
@@ -307,18 +311,22 @@ const make = Effect.gen(function* () {
       });
     }
     const urls = yield* Effect.forEach(input.urls, originOf);
+    const uniqueUrls = [...new Set(urls)];
     const previous = yield* readRow(input.environmentId);
     const previousUrls = Option.isSome(previous)
       ? yield* decodeUrls(previous.value.urls_json).pipe(Effect.catch(failStorage))
       : [];
-    // Pairing put the verified address first; the same addresses keep that order and the session.
+    // The same address SET (deduped) keeps the pairing: the session and its
+    // verified-first order stay. In the upsert below the keepSession branch
+    // leaves urls_json alone, so it cannot undo a bootstrap exchange that
+    // committed while this register ran.
+    const addressSet = new Set(uniqueUrls);
+    const previousSet = new Set(previousUrls);
     const keepSession =
       Option.isSome(previous) &&
-      previousUrls.length === urls.length &&
-      urls.every((url) => previousUrls.includes(url));
-    const urlsJson = keepSession
-      ? previous.value.urls_json
-      : yield* encodeUrls([...urls]).pipe(Effect.catch(failStorage));
+      addressSet.size === previousSet.size &&
+      [...addressSet].every((url) => previousSet.has(url));
+    const urlsJson = yield* encodeUrls(uniqueUrls).pipe(Effect.catch(failStorage));
     const now = yield* DateTime.now;
     yield* sql`
       INSERT INTO fleet_peer_environments (
@@ -332,7 +340,7 @@ const make = Effect.gen(function* () {
       ON CONFLICT (environment_id) DO UPDATE SET
         role = excluded.role,
         label = excluded.label,
-        urls_json = excluded.urls_json,
+        urls_json = CASE WHEN ${keepSession ? 1 : 0} = 1 THEN urls_json ELSE excluded.urls_json END,
         worker_class = excluded.worker_class,
         secret_name = CASE WHEN ${keepSession ? 1 : 0} = 1 THEN secret_name END,
         session_scopes_json = CASE WHEN ${keepSession ? 1 : 0} = 1 THEN session_scopes_json END,
@@ -435,6 +443,19 @@ const make = Effect.gen(function* () {
             requested_token_type: AuthAccessTokenType,
             scope: [...DelegationSessionScopes].join(" "),
           },
+        }),
+      ),
+      Effect.timeoutOption(exchangeTimeout),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new PeerEnvironmentRegistryError({
+                reason: "exchange_timeout",
+                message: `${input.environmentId} did not answer the bootstrap exchange in time. No session was stored.`,
+              }),
+            ),
+          onSome: Effect.succeed,
         }),
       ),
       Effect.mapError((cause) =>
