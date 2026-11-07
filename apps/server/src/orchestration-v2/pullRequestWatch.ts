@@ -74,8 +74,9 @@ export function evaluatePullRequestWatch(
     failedChecks = failed.map((check) => check.name);
 
     // GitHub lists runs awaiting approval in a separate read that can come back empty, so a run
-    // stays awaited through reads that miss it until all reported jobs finish. One known only by
-    // name needs a completed check with that name before its hold can clear.
+    // stays awaited through reads that miss it until reported GitHub jobs, and pending checks
+    // without a URL, finish. One known only by name needs a completed check with that name before
+    // its hold can clear.
     const awaitingNow = [...new Set(awaiting.map(approvalKey))];
     const nameUnfinished = (name: string) => {
       const matching = checks.filter((check) => check.name === name);
@@ -84,14 +85,18 @@ export function evaluatePullRequestWatch(
         matching.some((check) => check.status === "pending" || check.status === "action-required")
       );
     };
-    const pending = new Set(
-      checks.filter((check) => check.status === "pending").map((check) => workflowRunOf(check.url)),
+    // GitHub deduplicates jobs across runs, so a visible pending job may hide one in an awaited run.
+    // A pending check without a URL could be such a job; one with another host's URL cannot.
+    const jobsPending = checks.some(
+      (check) =>
+        check.status === "pending" && (check.url === null || workflowRunOf(check.url) !== null),
     );
     const finished = new Set(
-      checks
-        .filter((check) => check.status !== "action-required" && check.status !== "pending")
-        .map((check) => workflowRunOf(check.url))
-        .filter((run) => !pending.has(run)),
+      jobsPending
+        ? []
+        : checks
+            .filter((check) => check.status !== "action-required" && check.status !== "pending")
+            .map((check) => workflowRunOf(check.url)),
     );
     awaitingApproval = [
       ...awaitingNow,

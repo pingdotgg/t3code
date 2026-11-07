@@ -163,8 +163,31 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(running.changes, []);
     assert.isFalse(running.next.passed);
     assert.deepEqual(running.next.awaitingApproval, [run(1)]);
+    const overlap = evaluatePullRequestWatch(
+      running.next,
+      detail({ checks: [required, job, { ...pending, url: `${run(2)}/job/9` }] }),
+      noRemarks,
+    );
+    assert.deepEqual(overlap.changes, []);
+    assert.isFalse(overlap.next.passed);
+    assert.deepEqual(overlap.next.awaitingApproval, [run(1)]);
+    const unlinked = evaluatePullRequestWatch(
+      overlap.next,
+      detail({ checks: [required, job, { ...pending, url: null }] }),
+      noRemarks,
+    );
+    assert.deepEqual(unlinked.changes, []);
+    assert.isFalse(unlinked.next.passed);
+    assert.deepEqual(unlinked.next.awaitingApproval, [run(1)]);
+    const advisory = evaluatePullRequestWatch(
+      unlinked.next,
+      detail({ checks: [required, job, { ...pending, url: "https://ci.example/test" }] }),
+      noRemarks,
+    );
+    assert.deepEqual(advisory.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(advisory.next.awaitingApproval, []);
     const completed = detail({ checks: [required, job, { ...pending, status: "success" }] });
-    const finished = evaluatePullRequestWatch(running.next, completed, noRemarks);
+    const finished = evaluatePullRequestWatch(unlinked.next, completed, noRemarks);
     assert.deepEqual(finished.changes, [{ kind: "checks-passed", count: 1, required: true }]);
     assert.deepEqual(finished.next.awaitingApproval, []);
     assert.deepEqual(evaluatePullRequestWatch(finished.next, completed, noRemarks).changes, []);
