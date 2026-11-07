@@ -222,8 +222,8 @@ export function AssistantSelectionToolbar({
     <Button
       ref={toolbarRef}
       type="button"
-      size="sm"
-      variant="default"
+      size="xs"
+      variant="glass"
       disabled={tooLong}
       aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
       className="fixed z-50 max-w-[calc(100vw-1rem)]"
