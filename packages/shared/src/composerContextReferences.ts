@@ -10,6 +10,7 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
+import { expandAssistantCitationsForProvider } from "./assistantCitations.ts";
 import { replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
@@ -373,6 +374,13 @@ function formatEnvelopeEntry(
 }
 
 export function projectComposerContextForProvider(input: {
+  text: string;
+  records: ReadonlyArray<ComposerContextRecord>;
+}): string {
+  return expandAssistantCitationsForProvider(projectContextReferences(input));
+}
+
+function projectContextReferences(input: {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;
 }): string {
