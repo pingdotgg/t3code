@@ -258,8 +258,9 @@ export function serializeComposerMessageForServer(
   composerText: string,
   context: OrchestrationMessageContext | undefined,
 ): { text: string; context?: OrchestrationMessageContext } {
-  const text = isImageReferencesOnly(composerText)
-    ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
-    : composerText;
+  const text =
+    composerText.trim() === "" || isImageReferencesOnly(composerText)
+      ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
+      : composerText;
   return { text, ...(context ? { context } : {}) };
 }
