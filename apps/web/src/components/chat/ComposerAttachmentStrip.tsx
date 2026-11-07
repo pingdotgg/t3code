@@ -81,6 +81,7 @@ function SnapShotAttachmentFrame({
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the mounted tile into view and registers it as the SnapShot animation destination
   useLayoutEffect(() => {
     const frame = frameRef.current;
     if (!frame || (!animationId && !arrival)) return;
@@ -706,7 +707,8 @@ export function ComposerAttachButton({
             />
           }
         >
-          <PaperclipIcon />
+          {/* The clip's weight sits in its upper loop; 1px down reads as centered on the row. */}
+          <PaperclipIcon className="translate-y-px" />
         </TooltipTrigger>
         <TooltipPopup>Attach files</TooltipPopup>
       </Tooltip>

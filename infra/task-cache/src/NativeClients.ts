@@ -178,12 +178,12 @@ const make = Effect.gen(function* () {
       return new Response(null, { status: 204 });
     },
     Effect.catchTags({
-      NativeClientsError: (error) =>
-        Effect.gen(function* () {
-          if (error.status >= 500)
-            yield* Effect.logWarning("Native client request failed", { reason: error.reason });
-          return Response.json({ error: error.reason }, { status: error.status });
-        }),
+      // The enclosing operation owns the span for this inline handler.
+      NativeClientsError: Effect.fnUntraced(function* (error) {
+        if (error.status >= 500)
+          yield* Effect.logWarning("Native client request failed", { reason: error.reason });
+        return Response.json({ error: error.reason }, { status: error.status });
+      }),
     }),
   );
 

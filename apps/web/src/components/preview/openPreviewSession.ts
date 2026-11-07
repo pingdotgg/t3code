@@ -10,12 +10,8 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
-import {
-  browserDefaultOpenProfileId,
-  browserDefaultOpenViewport,
-  resolveBrowserDefaults,
-} from "~/browser/browserDefaults";
-import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
+import { resolveBrowserDefaults } from "~/browser/browserDefaults";
+import { BrowserSettingsReadError, isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { previewRuntimeFor } from "~/browser/previewRuntime";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
@@ -38,7 +34,7 @@ export async function openPreviewSession<E>(
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
-  if (defaults instanceof BrowserSettingsReadError) {
+  if (isBrowserSettingsReadError(defaults)) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
   const runtime = input.runtime ?? previewRuntimeFor(input.threadRef.environmentId);
@@ -47,8 +43,8 @@ export async function openPreviewSession<E>(
     input: {
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
-      viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
-      profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
+      viewport: input.viewport ?? defaults.viewport,
+      profileId: input.profileId ?? defaults.profileId,
       ...(runtime === undefined || runtime === "desktop" ? {} : { runtime }),
     },
   });

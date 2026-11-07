@@ -1,5 +1,6 @@
 import type * as AcpCompat from "./compat.ts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
@@ -168,10 +169,26 @@ const makeStrictNdJsonRpcParser = () => {
   let buffer = "";
   return {
     decode: (bytes: Uint8Array | string): ReadonlyArray<unknown> => {
-      buffer += typeof bytes === "string" ? bytes : decoder.decode(bytes, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
+      const chunk = typeof bytes === "string" ? bytes : decoder.decode(bytes, { stream: true });
+      const lastNewline = chunk.lastIndexOf("\n");
+      // Splitting the whole buffer per chunk is quadratic for multi-megabyte lines.
+      if (lastNewline === -1) {
+        buffer += chunk;
+        return [];
+      }
+      const lines = (buffer + chunk.slice(0, lastNewline)).split("\n");
+      buffer = chunk.slice(lastNewline + 1);
       return lines.flatMap((line) => codec.decode(line));
+    },
+    // A truncated final line is left to the exit status, which explains a crash better.
+    end: (): ReadonlyArray<unknown> => {
+      const line = buffer + decoder.decode();
+      buffer = "";
+      try {
+        return line.trim() === "" ? [] : codec.decode(line);
+      } catch {
+        return [];
+      }
     },
     encode: (response: Parameters<typeof codec.encode>[0]) => {
       const encoded = codec.encode(response);
@@ -741,6 +758,19 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         ),
       ),
     ),
+    Effect.andThen(
+      Effect.suspend(() =>
+        Effect.forEach(
+          (
+            parser.end() as ReadonlyArray<
+              RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded
+            >
+          ).map(normalizeAcpJsonRpcError),
+          routeDecodedMessage,
+          { discard: true },
+        ),
+      ),
+    ),
     // Anything that ends the reader, including a defect in a callback it runs,
     // terminates the connection so pending requests fail instead of hanging.
     Effect.matchCauseEffect({
@@ -756,10 +786,16 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         return handleTermination(() => Effect.succeed(normalized));
       },
       onSuccess: () =>
-        handleTermination(
-          () =>
-            options.terminationError ?? Effect.succeed(new AcpError.AcpInputStreamEndedError({})),
-        ),
+        handleTermination(() => {
+          const ended = new AcpError.AcpInputStreamEndedError({});
+          if (!options.terminationError) return Effect.succeed(ended);
+          // Stdout can close without process exit; use a live-clock diagnostic grace period.
+          return options.terminationError.pipe(
+            Effect.timeoutOption("250 millis"),
+            Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+            Effect.map(Option.getOrElse(() => ended)),
+          );
+        }),
     }),
     Effect.forkScoped,
   );
@@ -868,14 +904,16 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     Effect.forkScoped,
   );
 
+  // Protocol loops and per-message sends share the caller's operation span.
   const clientProtocol = RpcClient.Protocol.of({
-    run: (_clientId, f) =>
-      Stream.fromQueue(clientQueue).pipe(
+    run: Effect.fnUntraced(function* (_clientId, f) {
+      return yield* Stream.fromQueue(clientQueue).pipe(
         Stream.runForEach((message) => f(message)),
         Effect.forever,
-      ),
-    send: (_clientId, request) =>
-      offerOutgoing(request).pipe(
+      );
+    }),
+    send: Effect.fnUntraced(function* (_clientId, request) {
+      return yield* offerOutgoing(request).pipe(
         Effect.mapError(
           (error) =>
             new RpcClientError.RpcClientError({
@@ -885,32 +923,36 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               }),
             }),
         ),
-      ),
+      );
+    }),
     supportsAck: true,
     supportsTransferables: false,
     codecFor: parserFactory.codecFor,
   });
 
   const serverProtocol = RpcServer.Protocol.of({
-    run: (f) =>
-      Stream.fromQueue(serverQueue).pipe(
+    run: Effect.fnUntraced(function* (f) {
+      return yield* Stream.fromQueue(serverQueue).pipe(
         Stream.runForEach((message) => f(0, message)),
         Effect.forever,
-      ),
+      );
+    }),
     disconnects,
-    send: (_clientId, response) =>
-      offerOutgoing(response).pipe(
+    send: Effect.fnUntraced(function* (_clientId, response) {
+      return yield* offerOutgoing(response).pipe(
         Effect.tapError((error) =>
           response._tag === "Exit" && options.onOutgoingResponseFailure !== undefined
             ? options.onOutgoingResponseFailure(acpRequestIdentity(response.requestId), error)
             : Effect.void,
         ),
         Effect.orDie,
-      ),
-    end: (_clientId) =>
-      Ref.update(outgoingWriterState, (state) => ({ ...state, intentionalEnd: true })).pipe(
+      );
+    }),
+    end: Effect.fn("RpcServer.Protocol.end")(function (_clientId) {
+      return Ref.update(outgoingWriterState, (state) => ({ ...state, intentionalEnd: true })).pipe(
         Effect.andThen(Queue.end(outgoing)),
-      ),
+      );
+    }),
     clientIds: Effect.succeed(new Set([0])),
     initialMessage: Effect.succeedNone,
     supportsAck: true,

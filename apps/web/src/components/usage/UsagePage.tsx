@@ -56,6 +56,7 @@ import {
   formatUsageContractMismatch,
   formatUsd,
   makeWindow,
+  usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -99,7 +100,12 @@ import {
   resolveUsageShortcut,
   type UsageMetric,
 } from "./usageShortcuts";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  PROVIDER_ORDER,
+  PROVIDER_PRESENTATION,
+  providersWithUsage,
+  rankProvidersByMetric,
+} from "./usageProviders";
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -153,6 +159,7 @@ function UsageModelDialogHost({
   readonly onSetPrice: (model: string) => void;
 }) {
   const selectedKey = useAtomValue(selectedUsageModelKeyAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the shared selected-model atom on unmount
   useEffect(() => () => selectUsageModel(null), []);
   const model =
     selectedKey === null
@@ -289,6 +296,7 @@ export function UsagePage() {
     if (periodOption && !showingLimits) selectWindow(periodOption.days);
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric and period shortcuts
   useEffect(() => {
     globalThis.window.addEventListener("keydown", onUsageKeyDown, true);
     return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
@@ -335,6 +343,7 @@ export function UsagePage() {
   const autoRefreshLimits = useEffectEvent(() => {
     void refreshLimits(true);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes provider limits from the server when the connected environment set changes
   useEffect(() => {
     if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
   }, [showingLimits, connectedLimitsEnvironments]);
@@ -391,25 +400,25 @@ export function UsagePage() {
         </span>
       ) : null}
       <div className="ms-auto hidden shrink-0 items-center justify-end gap-2 @4xl/usage-header:flex">
-        <ToggleGroup
-          aria-label="Usage period"
-          variant="segmented"
-          value={[String(windowDays)]}
-          disabled={showingLimits}
-          // Limits are always current; the New design hides the period instead of greying it.
-          // It sits before the metric tabs so hiding it never moves them.
-          className={showingLimits ? "redesign:hidden" : undefined}
-          onValueChange={(next) => {
-            const value = next[0];
-            if (value) selectWindow(Number(value));
-          }}
-        >
-          {WINDOW_OPTIONS.map((option) => (
-            <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
-              {option.label}
-            </Toggle>
-          ))}
-        </ToggleGroup>
+        {/* Limits are always current, so they have no period. The period sits before the metric
+            tabs so dropping it never moves them. */}
+        {showingLimits ? null : (
+          <ToggleGroup
+            aria-label="Usage period"
+            variant="segmented"
+            value={[String(windowDays)]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value) selectWindow(Number(value));
+            }}
+          >
+            {WINDOW_OPTIONS.map((option) => (
+              <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
+                {option.label}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+        )}
         <ToggleGroup
           aria-label="Usage metric"
           variant="segmented"
@@ -437,33 +446,31 @@ export function UsagePage() {
         </Button>
       </div>
       <div className="ms-auto flex shrink-0 items-center justify-end gap-1 @4xl/usage-header:hidden">
-        <Select
-          value={String(windowDays)}
-          disabled={showingLimits}
-          onValueChange={(value) => selectWindow(Number(value))}
-        >
-          <SelectTrigger
-            aria-label="Usage period"
-            size="compact"
-            variant="ghost"
-            className={cn("w-auto min-w-0", showingLimits && "redesign:hidden")}
-          >
-            <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {WINDOW_OPTIONS.map((option) => (
-              <SelectItem
-                key={option.days}
-                value={String(option.days)}
-                title={shortcutTitle(option)}
-              >
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
+        {showingLimits ? null : (
+          <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+            <SelectTrigger
+              aria-label="Usage period"
+              size="compact"
+              variant="ghost"
+              className="w-auto min-w-0"
+            >
+              <SelectValue>
+                {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {WINDOW_OPTIONS.map((option) => (
+                <SelectItem
+                  key={option.days}
+                  value={String(option.days)}
+                  title={shortcutTitle(option)}
+                >
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        )}
         <Select
           value={metric}
           onValueChange={(value) => {
@@ -649,23 +656,14 @@ function UsageOverview({
   const chartLoadingProviders = new Set(
     activeProviders.filter((provider) => loadingProviders.has(provider)),
   );
-  const sourceMessages = [
-    ...new Set(
-      selectedEnvironments.flatMap(
-        (environment) =>
-          environment.summary?.sources.flatMap((source) =>
-            source.message &&
-            !source.action &&
-            !hiddenProviders.has(source.fingerprint.provider) &&
-            (source.status === "partial" ||
-              source.status === "failed" ||
-              source.fingerprint.provider === "cursor")
-              ? [source.message]
-              : [],
-          ) ?? [],
-      ),
+  const sourceMessages = usageSourceMessages(
+    selectedEnvironments.flatMap(
+      (environment) =>
+        environment.summary?.sources.filter(
+          (source) => !hiddenProviders.has(source.fingerprint.provider),
+        ) ?? [],
     ),
-  ];
+  );
   const breakdownPeriods: readonly (DailyTotals | HourlyTotals)[] = (
     shownHourly ? merged.hourly : merged.daily
   ).toReversed();
@@ -677,17 +675,18 @@ function UsageOverview({
     (peak, model) => Math.max(peak, metric === "tokens" ? model.totalTokens : model.costUsd),
     0,
   );
+  const rankedProviders = rankProvidersByMetric(activeProviders, merged.providers, metric);
   const cursorInsertAt =
-    Math.max(activeProviders.indexOf("codex"), activeProviders.indexOf("claude")) + 1;
+    Math.max(rankedProviders.indexOf("codex"), rankedProviders.indexOf("claude")) + 1;
   const summaryRows: ReadonlyArray<
     | { readonly kind: "usage"; readonly provider: UsageProviderKind }
     | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
   > = [
-    ...activeProviders
+    ...rankedProviders
       .slice(0, cursorInsertAt)
       .map((provider) => ({ kind: "usage" as const, provider })),
     ...cursorAccessEnvironments.map((environment) => ({ kind: "enable" as const, environment })),
-    ...activeProviders
+    ...rankedProviders
       .slice(cursorInsertAt)
       .map((provider) => ({ kind: "usage" as const, provider })),
   ];
@@ -927,11 +926,11 @@ function UsageOverview({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-right text-xs text-muted-foreground">
-                <th className="py-2 pr-3 text-left font-normal">#</th>
+                <th className="py-2 pr-3 pl-2 text-left font-normal">#</th>
                 <th className="w-full py-2 text-left font-normal">Model</th>
                 <th className="py-2 pl-6 font-normal">Cost</th>
                 <th className="hidden py-2 pl-6 font-normal sm:table-cell">Share</th>
-                <th className="py-2 pl-6 font-normal">Tokens</th>
+                <th className="py-2 pr-2 pl-6 font-normal">Tokens</th>
               </tr>
             </thead>
             <tbody>
@@ -953,7 +952,7 @@ function UsageOverview({
                       key={key}
                       className="relative border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50 has-focus-visible:bg-muted/50"
                     >
-                      <td className="py-2.5 pr-3 text-left text-xs">{index + 1}</td>
+                      <td className="py-2.5 pr-3 pl-2 text-left text-xs">{index + 1}</td>
                       <td className="py-2.5 text-left whitespace-normal">
                         <button
                           type="button"
@@ -988,7 +987,7 @@ function UsageOverview({
                       <td className={cn("hidden py-2.5 pl-6 sm:table-cell", rowFigures)}>
                         {share === null ? "" : formatPercent(share)}
                       </td>
-                      <td className={cn("py-2.5 pl-6", rowFigures)}>
+                      <td className={cn("py-2.5 pr-2 pl-6", rowFigures)}>
                         {formatTokens(model.totalTokens)}
                       </td>
                     </tr>
@@ -1010,14 +1009,14 @@ function UsageOverview({
               </colgroup>
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="py-2 font-normal">{shownHourly ? "Hour" : "Day"}</th>
+                  <th className="py-2 pl-2 font-normal">{shownHourly ? "Hour" : "Day"}</th>
                   {activeProviders.map((provider) => (
                     <th key={provider} className="py-2 pl-4 text-right font-normal">
                       {PROVIDER_PRESENTATION[provider].label}
                     </th>
                   ))}
                   <th className="py-2 pl-4 text-right font-normal">Total</th>
-                  <th className="py-2 pl-4 text-right font-normal">Tokens</th>
+                  <th className="py-2 pr-2 pl-4 text-right font-normal">Tokens</th>
                 </tr>
               </thead>
               <tbody>
@@ -1036,7 +1035,7 @@ function UsageOverview({
                       key={"hourStart" in period ? period.hourStart : period.day}
                       className="border-b border-border/50 transition-colors hover:bg-muted/50"
                     >
-                      <td className="py-2 text-foreground">
+                      <td className="py-2 pl-2 text-foreground">
                         {"hourStart" in period
                           ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12)
                           : formatDayShort(period.day)}
@@ -1062,7 +1061,7 @@ function UsageOverview({
                       </td>
                       <td
                         className={cn(
-                          "py-2 pl-4 text-right text-muted-foreground tabular-nums",
+                          "py-2 pr-2 pl-4 text-right text-muted-foreground tabular-nums",
                           figureClass(loadingPartial),
                         )}
                       >
@@ -1338,7 +1337,7 @@ function UsageEnvironmentFilter({
             />
           ) : (
             <ChevronDownIcon
-              className="size-3.5 opacity-0 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100 redesign:opacity-60 redesign:group-hover/usage-environment:opacity-100 redesign:group-focus-visible/usage-environment:opacity-100 redesign:group-data-popup-open/usage-environment:opacity-100"
+              className="size-3.5 opacity-60 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
               aria-hidden
             />
           )}
@@ -1451,7 +1450,7 @@ function UsageProviderFilter({
       <MenuTrigger render={<InlineButton />} className="group/usage-provider min-w-0 max-w-full">
         <span className="min-w-0 truncate">{label}</span>
         <ChevronDownIcon
-          className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100 redesign:opacity-60 redesign:group-hover/usage-provider:opacity-100 redesign:group-focus-visible/usage-provider:opacity-100 redesign:group-data-popup-open/usage-provider:opacity-100"
+          className="size-3.5 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100"
           aria-hidden
         />
       </MenuTrigger>
