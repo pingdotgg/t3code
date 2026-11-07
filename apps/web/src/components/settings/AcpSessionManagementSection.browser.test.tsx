@@ -224,3 +224,251 @@ it.each(["Save", "Disable"])("keeps other provider edits through a %s refetch", 
   expect(input("other base URL").value).toBe("https://api.example.test/v1");
   expect(input("other write-only headers JSON").value).toBe("");
 });
+
+it.each([true, false])(
+  "enables project actions after projects arrive (sessions: %s)",
+  async (canList) => {
+    setup();
+    const props = {
+      environmentId,
+      instanceId,
+      provider: { ...provider, nativeSessions: { ...provider.nativeSessions, canList } },
+      readOnly: false,
+    };
+    await using screen = await render(<AcpSessionManagementSection {...props} projects={[]} />);
+    await screen.rerender(
+      <AcpSessionManagementSection
+        {...props}
+        projects={[{ id: projectId, title: "Antigravity", workspaceRoot: session.cwd }]}
+      />,
+    );
+    const action = screen.getByRole("button", {
+      name: canList ? "List sessions" : "List providers",
+    });
+    await expect.element(action).toBeEnabled();
+    if (!canList) {
+      await expect.element(screen.getByRole("combobox")).not.toBeInTheDocument();
+    }
+    await action.click();
+    if (canList) {
+      await expect.element(screen.getByText(session.title)).toBeVisible();
+      expect(commands.list).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, projectId },
+      });
+    } else {
+      await expect
+        .element(screen.getByRole("textbox", { name: "google base URL" }))
+        .toHaveValue("https://api.example.test/v1");
+      expect(commands.listProviders).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, projectId },
+      });
+    }
+  },
+);
+
+it.each([true, false])(
+  "preserves valid selection and clears removed project data (sessions: %s)",
+  async (canList) => {
+    setup();
+    const first = { id: projectId, title: "Antigravity", workspaceRoot: session.cwd };
+    const second = { id: ProjectId.make("second"), title: "Second", workspaceRoot: "/second" };
+    const props = {
+      environmentId,
+      instanceId,
+      readOnly: false,
+      provider: { ...provider, nativeSessions: { ...provider.nativeSessions, canList } },
+    };
+    commands.list.mockResolvedValue({
+      _tag: "Success",
+      value: { sessions: [session], nextCursor: "page-2" },
+    });
+    await using screen = await render(
+      <AcpSessionManagementSection {...props} projects={[first, second]} />,
+    );
+    await screen.getByRole("combobox").click();
+    await screen.getByRole("option", { name: "Second", exact: true }).click();
+    if (canList) await screen.getByRole("button", { name: "List sessions" }).click();
+    await screen.getByRole("button", { name: "List providers" }).click();
+    await userEvent.fill(
+      screen.getByRole("textbox", { name: "google base URL" }),
+      "https://draft.test",
+    );
+    await userEvent.fill(
+      screen.getByLabelText("google write-only headers JSON"),
+      '{"Secret":"draft"}',
+    );
+
+    await screen.rerender(
+      <AcpSessionManagementSection
+        {...props}
+        projects={[
+          first,
+          { id: ProjectId.make("third"), title: "Third", workspaceRoot: "/third" },
+          second,
+        ]}
+      />,
+    );
+    await expect
+      .element(
+        screen.getByRole("combobox", {
+          name: canList ? "Project for ACP sessions" : "Project for ACP providers",
+        }),
+      )
+      .toHaveTextContent("Second");
+    await expect
+      .element(screen.getByRole("textbox", { name: "google base URL" }))
+      .toHaveValue("https://draft.test");
+    await screen.getByRole("button", { name: "Save", exact: true }).click();
+    expect(commands.setProvider).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        projectId: second.id,
+        providerId: "google",
+        apiType: "openai",
+        baseUrl: "https://draft.test",
+        headers: { Secret: "draft" },
+      },
+    });
+
+    await screen.rerender(<AcpSessionManagementSection {...props} projects={[first]} />);
+    await expect.element(screen.getByText(session.title)).not.toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("textbox", { name: "google base URL" }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: "List providers" })).toBeEnabled();
+    await screen.getByRole("button", { name: "List providers" }).click();
+    expect(commands.listProviders).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { instanceId, projectId },
+    });
+    await expect.element(screen.getByLabelText("google write-only headers JSON")).toHaveValue("");
+    await expect
+      .element(screen.getByRole("textbox", { name: "google base URL" }))
+      .toHaveValue("https://api.example.test/v1");
+    await screen.rerender(<AcpSessionManagementSection {...props} projects={[]} />);
+    await expect.element(screen.getByRole("button", { name: "List providers" })).toBeDisabled();
+    await expect
+      .element(screen.getByRole("textbox", { name: "google base URL" }))
+      .not.toBeInTheDocument();
+  },
+);
+
+it.each([true, false])(
+  "ignores late listing results after project replacement (sessions: %s)",
+  async (canList) => {
+    setup();
+    const response = canList
+      ? { _tag: "Success", value: { sessions: [session], nextCursor: "old-page" } }
+      : {
+          _tag: "Success",
+          value: {
+            providers: [
+              { providerId: "stale", supported: ["openai"], required: false, current: null },
+            ],
+          },
+        };
+    let finish!: (value: typeof response) => void;
+    const pending = new Promise<typeof response>((resolve) => {
+      finish = resolve;
+    });
+    (canList ? commands.list : commands.listProviders).mockReturnValueOnce(pending);
+    await using screen = await renderSection();
+    await screen.click(canList ? "List sessions" : "List providers");
+    await screen.rerender(
+      <AcpSessionManagementSection
+        environmentId={environmentId}
+        instanceId={instanceId}
+        provider={provider}
+        readOnly={false}
+        projects={[
+          {
+            id: ProjectId.make("replacement"),
+            title: "Replacement",
+            workspaceRoot: "/replacement",
+          },
+        ]}
+      />,
+    );
+    await act(async () => finish(response));
+    await expect.element(screen.getByText(session.title)).not.toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    await expect.element(screen.getByLabelText("stale base URL")).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("button", { name: canList ? "List sessions" : "List providers" }))
+      .toBeEnabled();
+    await screen.click(canList ? "List sessions" : "List providers");
+    expect(canList ? commands.list : commands.listProviders).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { instanceId, projectId: ProjectId.make("replacement") },
+    });
+  },
+);
+
+it.each(["Save", "Disable"])("does not refetch the old project after a late %s", async (action) => {
+  setup();
+  const command = action === "Save" ? commands.setProvider : commands.disableProvider;
+  let finish!: () => void;
+  command.mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      finish = resolve;
+    }).then(() => ({
+      _tag: "Success",
+      value: action === "Save" ? { configured: true } : { disabled: true },
+    })),
+  );
+  await using screen = await renderSection();
+  await screen.click("List providers");
+  await screen.click(action);
+  expect(command).toHaveBeenCalledOnce();
+  await screen.rerender(
+    <AcpSessionManagementSection
+      environmentId={environmentId}
+      instanceId={instanceId}
+      provider={provider}
+      readOnly={false}
+      projects={[
+        { id: ProjectId.make("replacement"), title: "Replacement", workspaceRoot: "/replacement" },
+      ]}
+    />,
+  );
+  await act(async () => finish());
+  expect(commands.listProviders).toHaveBeenCalledOnce();
+  await expect.element(screen.getByRole("button", { name: "List providers" })).toBeEnabled();
+});
+
+it.each(["Delete", "Disable"])(
+  "does not act on a replaced project after confirming %s",
+  async (action) => {
+    setup();
+    let finish!: (confirmed: boolean) => void;
+    dialogs.confirm.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await using screen = await renderSection();
+    await screen.click(action === "Delete" ? "List sessions" : "List providers");
+    await screen.click(action);
+    await screen.rerender(
+      <AcpSessionManagementSection
+        environmentId={environmentId}
+        instanceId={instanceId}
+        provider={provider}
+        readOnly={false}
+        projects={[
+          {
+            id: ProjectId.make("replacement"),
+            title: "Replacement",
+            workspaceRoot: "/replacement",
+          },
+        ]}
+      />,
+    );
+    await act(async () => finish(true));
+    expect(action === "Delete" ? commands.delete : commands.disableProvider).not.toHaveBeenCalled();
+  },
+);
