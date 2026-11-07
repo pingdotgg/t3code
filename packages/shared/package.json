@@ -323,6 +323,10 @@
       "types": "./src/filePreview.ts",
       "import": "./src/filePreview.ts"
     },
+    "./xcodeMarks": {
+      "types": "./src/xcodeMarks.ts",
+      "import": "./src/xcodeMarks.ts"
+    },
     "./imageDimensions": {
       "types": "./src/imageDimensions.ts",
       "import": "./src/imageDimensions.ts"
