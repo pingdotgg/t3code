@@ -21,6 +21,7 @@ import {
   useEffect,
   useImperativeHandle,
   useOptimistic,
+  useRef,
   useState,
   useTransition,
   type MouseEvent as ReactMouseEvent,
@@ -50,6 +51,7 @@ import {
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
+  confirmSelectedRef,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   sanitizeNewRefName,
@@ -67,7 +69,6 @@ import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
 }
@@ -123,6 +124,9 @@ export function BranchToolbarBranchSelector({
     reportFailure: false,
   });
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, {
+    reportFailure: false,
+  });
+  const readRefs = useAtomCommand(vcsEnvironment.readRefs, {
     reportFailure: false,
   });
   const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
@@ -383,16 +387,44 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const selectBranch = (refName: VcsRef) => {
+  // The picker's list can predate a checkout an agent ran itself, so confirm a worktree
+  // claim before skipping the switch. Unconfirmed claims fall back to a real checkout,
+  // which Git refuses if the branch is checked out elsewhere.
+  const latestSelectionIdRef = useRef(0);
+  const readSelectedRef = (cwd: string, listedRef: VcsRef): Promise<VcsRef> =>
+    confirmSelectedRef(listedRef, async (cursor) => {
+      const result = await readRefs({
+        environmentId,
+        input: {
+          cwd,
+          query: listedRef.name,
+          refKind: listedRef.isRemote ? "remote" : "local",
+          limit: 100,
+          ...(cursor === undefined ? { refresh: true } : { cursor }),
+        },
+      });
+      return result._tag === "Success" ? result.value : null;
+    });
+
+  const selectBranch = async (listedRef: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
+    const selectionId = ++latestSelectionIdRef.current;
 
     if (isSelectingWorktreeBase) {
-      setThreadBranch(refName.name, null);
+      setThreadBranch(listedRef.name, null);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;
     }
 
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
+
+    const refName = listedRef.worktreePath
+      ? await readSelectedRef(branchCwd, listedRef)
+      : listedRef;
+    // A later pick made while this one was confirming its worktree wins.
+    if (selectionId !== latestSelectionIdRef.current) return;
     const selectionTarget = resolveBranchSelectionTarget({
       activeProjectCwd,
       activeProjectCheckoutRoot,
@@ -402,17 +434,12 @@ export function BranchToolbarBranchSelector({
 
     if (selectionTarget.reuseExistingWorktree) {
       setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
-      setIsBranchMenuOpen(false);
-      onComposerFocusRequest?.();
       return;
     }
 
     const selectedBranchName = refName.isRemote
       ? deriveLocalBranchNameFromRemoteRef(refName.name)
       : refName.name;
-
-    setIsBranchMenuOpen(false);
-    onComposerFocusRequest?.();
 
     runBranchAction(async () => {
       const previousBranch = resolvedActiveBranch;
@@ -582,7 +609,7 @@ export function BranchToolbarBranchSelector({
       createRef(trimmedBranchQuery);
     } else {
       const refName = branchByName.get(itemValue);
-      if (refName) selectBranch(refName);
+      if (refName) void selectBranch(refName);
     }
   }
 

@@ -4148,15 +4148,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     yield* Cache.invalidate(repositoryPathsCache, repositoryPathsCacheKey);
   });
 
+  // Undefined when HEAD cannot be read; null when detached.
+  const readHeadBranch = (cwd: string) =>
+    executeGit("GitVcsDriver.listRefs.headBranch", cwd, ["symbolic-ref", "--quiet", "HEAD"], {
+      timeoutMs: 5_000,
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) =>
+        result.exitCode === 0
+          ? branchNameFromHeadRef(result.stdout)
+          : result.exitCode === 1
+            ? null
+            : undefined,
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
+
   const listRefs: GitVcsDriver.GitVcsDriver["Service"]["listRefs"] = Effect.fn("listRefs")(
     function* (input) {
-      const repositoryPaths = yield* resolveRepositoryPaths(input.cwd, input.refresh === true).pipe(
+      const cachedRepositoryPaths = yield* resolveRepositoryPaths(
+        input.cwd,
+        input.refresh === true,
+      ).pipe(
         Effect.catchTags({
           GitCommandError: (error) =>
             isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
         }),
       );
-      if (repositoryPaths === null) {
+      if (cachedRepositoryPaths === null) {
         return {
           refs: [],
           isRepo: false,
@@ -4166,10 +4185,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         };
       }
 
-      const snapshot = yield* resolveListRefsSnapshot(
-        repositoryPaths.gitCommonDir,
-        input.refresh === true,
+      // Providers run checkouts that skip invalidation, so check the cached HEAD before
+      // the picker treats a branch as already checked out here.
+      const [cachedSnapshot, headBranch] = yield* Effect.all(
+        [
+          resolveListRefsSnapshot(cachedRepositoryPaths.gitCommonDir, input.refresh === true),
+          readHeadBranch(input.cwd),
+        ],
+        { concurrency: 2 },
       );
+      const cachedWorktreeRoot = cachedRepositoryPaths.worktreeRoot;
+      const cachedHeadBranch =
+        (cachedWorktreeRoot === null
+          ? undefined
+          : cachedSnapshot.localBranches.find((ref) => ref.worktreePath === cachedWorktreeRoot)
+              ?.name) ?? cachedRepositoryPaths.currentBranch;
+      const isCachedHeadStale = headBranch !== undefined && headBranch !== cachedHeadBranch;
+      if (isCachedHeadStale) {
+        yield* invalidateListRefsSnapshot(input.cwd, cachedRepositoryPaths.gitCommonDir);
+      }
+      const repositoryPaths = isCachedHeadStale
+        ? { ...cachedRepositoryPaths, currentBranch: headBranch }
+        : cachedRepositoryPaths;
+      const snapshot = isCachedHeadStale
+        ? yield* resolveListRefsSnapshot(repositoryPaths.gitCommonDir, false)
+        : cachedSnapshot;
       const hasCurrentWorktreeBranch =
         repositoryPaths.worktreeRoot !== null &&
         snapshot.localBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);

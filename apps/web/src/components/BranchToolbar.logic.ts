@@ -246,6 +246,40 @@ export function resolveLocalCheckoutBranchMismatch(input: {
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
 }
 
+/** Confirms a picked ref's worktree claim against a fresh read, or `null` when the read failed. */
+export function resolveConfirmedSelectedRef(
+  listedRef: VcsRef,
+  freshRead: { readonly refs: ReadonlyArray<VcsRef>; readonly nextCursor: number | null } | null,
+): VcsRef {
+  if (freshRead === null) return { ...listedRef, worktreePath: null };
+  const freshRef = freshRead.refs.find(
+    (ref) => ref.name === listedRef.name && ref.isRemote === listedRef.isRemote,
+  );
+  if (freshRef) return freshRef;
+  // A truncated read can miss the ref without disproving its worktree, so keep the listed claim.
+  return freshRead.nextCursor === null ? { ...listedRef, worktreePath: null } : listedRef;
+}
+
+export const MAX_SELECTED_REF_CONFIRM_PAGES = 10;
+
+/** Pages through a fresh ref read until the picked ref is confirmed or ruled out. */
+export async function confirmSelectedRef(
+  listedRef: VcsRef,
+  readPage: (
+    cursor: number | undefined,
+  ) => Promise<{ readonly refs: ReadonlyArray<VcsRef>; readonly nextCursor: number | null } | null>,
+): Promise<VcsRef> {
+  let cursor: number | undefined;
+  for (let page = 0; page < MAX_SELECTED_REF_CONFIRM_PAGES; page++) {
+    const freshRead = await readPage(cursor);
+    const confirmed = resolveConfirmedSelectedRef(listedRef, freshRead);
+    // It returns `listedRef` itself only when this page was truncated without the ref.
+    if (confirmed !== listedRef || freshRead?.nextCursor == null) return confirmed;
+    cursor = freshRead.nextCursor;
+  }
+  return { ...listedRef, worktreePath: null };
+}
+
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
   activeProjectCheckoutRoot?: string | undefined;

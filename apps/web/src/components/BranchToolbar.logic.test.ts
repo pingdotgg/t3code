@@ -7,6 +7,9 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
+  confirmSelectedRef,
+  MAX_SELECTED_REF_CONFIRM_PAGES,
+  resolveConfirmedSelectedRef,
   resolveLocalCheckoutBranchMismatch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
@@ -275,5 +278,61 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveConfirmedSelectedRef", () => {
+  const listed: VcsRef = {
+    name: "main",
+    isRemote: false,
+    current: false,
+    isDefault: true,
+    worktreePath: "/repo",
+  };
+
+  it.each([
+    ["a complete read without the ref drops the claim", { refs: [], nextCursor: null }, null],
+    ["a truncated read without the ref keeps the claim", { refs: [], nextCursor: 100 }, "/repo"],
+    ["a failed read drops the claim", null, null],
+    [
+      "a read with the ref uses its fresh worktree",
+      { refs: [{ ...listed, worktreePath: "/other" }], nextCursor: 100 },
+      "/other",
+    ],
+  ] as const)("%s", (_label, freshRead, expected) => {
+    expect(resolveConfirmedSelectedRef(listed, freshRead).worktreePath).toBe(expected);
+  });
+});
+
+describe("confirmSelectedRef", () => {
+  const listed: VcsRef = {
+    name: "main",
+    isRemote: false,
+    current: false,
+    isDefault: true,
+    worktreePath: "/repo",
+  };
+  const pagesUntil = (foundOnPage: number | null) => {
+    const cursors: Array<number | undefined> = [];
+    const readPage = async (cursor: number | undefined) => {
+      cursors.push(cursor);
+      const page = cursors.length - 1;
+      return page === foundOnPage
+        ? { refs: [{ ...listed, worktreePath: "/other" }], nextCursor: (page + 1) * 100 }
+        : { refs: [], nextCursor: (page + 1) * 100 };
+    };
+    return { cursors, readPage };
+  };
+
+  it("follows pages until it finds the ref", async () => {
+    const { cursors, readPage } = pagesUntil(2);
+    expect((await confirmSelectedRef(listed, readPage)).worktreePath).toBe("/other");
+    expect(cursors).toEqual([undefined, 100, 200]);
+  });
+
+  it("drops the claim when the page limit runs out without the ref", async () => {
+    const { cursors, readPage } = pagesUntil(null);
+    expect((await confirmSelectedRef(listed, readPage)).worktreePath).toBeNull();
+    expect(cursors).toHaveLength(MAX_SELECTED_REF_CONFIRM_PAGES);
   });
 });
