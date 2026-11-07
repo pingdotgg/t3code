@@ -192,6 +192,24 @@ describe("scoped default model selections", () => {
     expect(
       defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [selected, { ...selected }]),
     ).toBe(false);
+    const remoteId = ProviderInstanceId.make("remote-pro");
+    const remote = {
+      ...selected,
+      providers: [{ ...providers[0]!, instanceId: remoteId, displayName: "ChatGPT - Pro" }],
+      settings: {
+        ...selected.settings,
+        defaultModelSelection: { ...selected.settings.defaultModelSelection, instanceId: remoteId },
+      },
+    };
+    const named = { ...selected, providers: [{ ...providers[0]!, displayName: "ChatGPT - Pro" }] };
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [named, remote])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [remote, named])).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        named,
+        { ...remote, providers: [{ ...remote.providers[0]!, displayName: "ChatGPT - Revotech" }] },
+      ]),
+    ).toBe(true);
     expect(
       defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
         selected,

@@ -1,4 +1,5 @@
 import { pipe } from "effect/Function";
+import * as Equal from "effect/Equal";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -41,6 +42,51 @@ export interface ProviderInstanceEntry {
   readonly isAvailable: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
+export function providerInstanceAccountsAreCompatible(
+  entries: readonly ProviderInstanceEntry[],
+): boolean {
+  // Managed Codex profileId identifies the local OAuth registration, not the account.
+  return (["email", "type", "workspaceId"] as const).every((key) => {
+    const known = entries.flatMap((entry) => {
+      const value = entry.snapshot.auth[key];
+      return value === undefined ? [] : [value];
+    });
+    return new Set(known).size <= 1;
+  });
+}
+
+export function resolveCorrespondingProviderInstance(
+  source: ProviderInstanceEntry,
+  entries: readonly ProviderInstanceEntry[],
+): ProviderInstanceEntry | null {
+  const local = entries.find((entry) => entry.snapshot === source.snapshot);
+  if (local) return local;
+  const matches = entries.filter(
+    (entry) =>
+      entry.driverKind === source.driverKind &&
+      entry.displayName === source.displayName &&
+      entry.acpRegistryAgentId === source.acpRegistryAgentId &&
+      providerInstanceAccountsAreCompatible([source, entry]),
+  );
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+export function modelSelectionsAreEquivalent(
+  left: ModelSelection | null | undefined,
+  leftEntries: readonly ProviderInstanceEntry[],
+  right: ModelSelection | null | undefined,
+  rightEntries: readonly ProviderInstanceEntry[],
+): boolean {
+  if (left == null || right == null) return left === right;
+  const source = leftEntries.find((entry) => entry.instanceId === left.instanceId);
+  if (!source) return Equal.equals(left, right);
+  const destination = resolveCorrespondingProviderInstance(source, rightEntries);
+  return (
+    destination?.instanceId === right.instanceId &&
+    Equal.equals({ ...left, instanceId: destination.instanceId }, right)
+  );
 }
 
 /** Disabled instances may retain ready status until reconciliation. */

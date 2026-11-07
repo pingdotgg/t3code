@@ -8,6 +8,8 @@ import {
   readsIdleCompactionModes,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectId,
+  type ProviderInstanceId,
+  type ModelSelection,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
   ServerSettings,
@@ -25,6 +27,12 @@ import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+import {
+  modelSelectionsAreEquivalent,
+  providerInstanceAccountsAreCompatible,
+  resolveCorrespondingProviderInstance,
+  type ProviderInstanceEntry,
+} from "../../providerInstances";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
@@ -40,6 +48,13 @@ interface ScopedSettingsEnvironment {
 const SERVER_KEYS = new Set<string>(Object.keys(ServerSettings.fields));
 const CLIENT_KEYS = new Set<string>(Object.keys(ClientSettingsSchema.fields));
 const PROJECT_SCOPED_KEYS = new Set<string>(PROJECT_SCOPED_SERVER_SETTING_KEYS);
+const MODEL_KEYS = new Set<string>([
+  "defaultModelSelection",
+  "fallbackModelSelection",
+  "textGenerationModelSelection",
+  "sourceControlWriterModelSelection",
+  "reviewGuideModelSelection",
+]);
 
 export function isProjectScopedSettingKey(key: string): key is ProjectScopedServerSettingKey {
   return PROJECT_SCOPED_KEYS.has(key);
@@ -128,12 +143,22 @@ export function resolveScopedSettingsTargets(
 export function scopedSettingsAreMixed(
   targets: readonly Pick<ScopedSettingsTarget, "settings">[],
   keys: readonly (keyof ServerSettings)[],
+  entries?: readonly (readonly ProviderInstanceEntry[])[],
 ): boolean {
   const first = targets[0];
   return (
     first !== undefined &&
-    targets.some((candidate) =>
-      keys.some((key) => !Equal.equals(first.settings[key], candidate.settings[key])),
+    targets.some((candidate, index) =>
+      keys.some((key) =>
+        MODEL_KEYS.has(key) && entries
+          ? !modelSelectionsAreEquivalent(
+              first.settings[key] as ModelSelection | null,
+              entries[0] ?? [],
+              candidate.settings[key] as ModelSelection | null,
+              entries[index] ?? [],
+            )
+          : !Equal.equals(first.settings[key], candidate.settings[key]),
+      ),
     )
   );
 }
@@ -221,6 +246,10 @@ export function planScopedSettingsPatch(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
   patch: ScopedSettingsPatch,
+  modelEntries?: {
+    readonly source: readonly ProviderInstanceEntry[];
+    readonly byEnvironment: ReadonlyMap<EnvironmentId, readonly ProviderInstanceEntry[]>;
+  },
 ) {
   const clientPatch = Object.fromEntries(
     Object.entries(patch).filter(([key]) => CLIENT_KEYS.has(key) && !SERVER_KEYS.has(key)),
@@ -234,7 +263,7 @@ export function planScopedSettingsPatch(
   const unscopableKeys = isProjectScope
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
     : [];
-  const serverWrites: ScopedServerWrite[] =
+  let serverWrites: ScopedServerWrite[] =
     serverKeys.length === 0
       ? []
       : isProjectScope
@@ -319,10 +348,77 @@ export function planScopedSettingsPatch(
               ];
             })
           : [];
-  const hasClientWrite = Object.keys(clientPatch).length > 0;
+  let modelUnavailable: string | null = null;
+  if (modelEntries) {
+    const resolvedAccounts = new Map<ProviderInstanceId, ProviderInstanceEntry[]>();
+    const changedModels = new Set(
+      Object.entries<unknown>(serverPatch).flatMap(([key, value]) =>
+        MODEL_KEYS.has(key) && isPlainObject(value) && typeof value.instanceId === "string"
+          ? [key]
+          : [],
+      ),
+    );
+    serverWrites = serverWrites.map((write) => {
+      const remap = <T extends object>(value: T): T => {
+        const next = Object.fromEntries(Object.entries(value));
+        for (const [key, selection] of Object.entries(value)) {
+          if (
+            !changedModels.has(key) ||
+            !isPlainObject(selection) ||
+            typeof selection.instanceId !== "string"
+          )
+            continue;
+          const source = modelEntries.source.find(
+            (entry) => entry.instanceId === selection.instanceId,
+          );
+          const destination = source
+            ? resolveCorrespondingProviderInstance(
+                source,
+                modelEntries.byEnvironment.get(write.environmentId) ?? [],
+              )
+            : null;
+          if (!source || !destination) {
+            modelUnavailable = `This model is unavailable on ${write.label}. Select that environment to choose its model separately.`;
+            continue;
+          }
+          const account = resolvedAccounts.get(source.instanceId) ?? [source];
+          account.push(destination);
+          resolvedAccounts.set(source.instanceId, account);
+          next[key] = { ...selection, instanceId: destination.instanceId };
+        }
+        return next as T;
+      };
+      const patch = remap(write.patch);
+      return {
+        ...write,
+        patch: patch.projectSettingsOverrides
+          ? {
+              ...patch,
+              projectSettingsOverrides: Object.fromEntries(
+                Object.entries(patch.projectSettingsOverrides).map(([id, entry]) => [
+                  id,
+                  entry === null ? null : remap(entry),
+                ]),
+              ),
+            }
+          : patch,
+      };
+    });
+    if (
+      [...resolvedAccounts.values()].some(
+        (entries) => !providerInstanceAccountsAreCompatible(entries),
+      )
+    ) {
+      modelUnavailable ??=
+        "The selected environments have conflicting accounts for this provider. Select one environment to choose its model separately.";
+    }
+    if (modelUnavailable) serverWrites = [];
+  }
+  const hasClientWrite = modelUnavailable === null && Object.keys(clientPatch).length > 0;
   const hasWrite = hasClientWrite || serverWrites.length > 0;
   const unavailableReason =
-    hasWrite || Object.keys(patch).length === 0
+    modelUnavailable ??
+    (hasWrite || Object.keys(patch).length === 0
       ? null
       : scope.kind === "unavailable"
         ? scope.message
@@ -330,7 +426,7 @@ export function planScopedSettingsPatch(
           ? "This setting is environment-wide and cannot be overridden by a project."
           : isProjectScope
             ? "Connect the selected checkouts, or update their environments, to save a project override."
-            : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
+            : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`);
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
 }
 

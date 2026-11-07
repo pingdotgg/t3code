@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -24,6 +25,7 @@ import {
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
+import { deriveProviderInstanceEntries } from "../../providerInstances";
 
 function environment(
   id: string,
@@ -142,6 +144,205 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
+  it("saves a shared model using each environment's named provider id", () => {
+    const entries = (id: string) =>
+      deriveProviderInstanceEntries([
+        {
+          instanceId: ProviderInstanceId.make(id),
+          driver: ProviderDriverKind.make("codex"),
+          displayName: "ChatGPT - Pro",
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ]);
+    const local = entries("local-pro");
+    const remote = entries("remote-pro");
+    const mapping = {
+      source: local,
+      byEnvironment: new Map([
+        [laptop.environmentId, local],
+        [server.environmentId, remote],
+      ]),
+    };
+    const selection = {
+      instanceId: local[0]!.instanceId,
+      model: "gpt-6.1-sol",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    };
+    expect(
+      scopedSettingsAreMixed(
+        [
+          { settings: { ...DEFAULT_SERVER_SETTINGS, fallbackModelSelection: selection } },
+          {
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              fallbackModelSelection: { ...selection, instanceId: remote[0]!.instanceId },
+            },
+          },
+        ],
+        ["fallbackModelSelection"],
+        [local, remote],
+      ),
+    ).toBe(false);
+    for (const scope of [all, project]) {
+      const plan = planScopedSettingsPatch(
+        scope,
+        environments,
+        { defaultModelSelection: selection },
+        mapping,
+      );
+      for (const write of plan.serverWrites) {
+        const saved =
+          scope.kind === "project"
+            ? write.patch.projectSettingsOverrides?.[
+                write.environmentId === laptop.environmentId ? laptopProjectId : projectId
+              ]?.defaultModelSelection
+            : write.patch.defaultModelSelection;
+        expect(saved).toEqual({
+          ...selection,
+          instanceId:
+            write.environmentId === laptop.environmentId
+              ? local[0]!.instanceId
+              : remote[0]!.instanceId,
+        });
+      }
+    }
+    const missing = planScopedSettingsPatch(
+      all,
+      environments,
+      { defaultModelSelection: selection },
+      { ...mapping, byEnvironment: new Map([[laptop.environmentId, local]]) },
+    );
+    expect(missing.serverWrites).toEqual([]);
+    expect(missing.unavailableReason).toContain("Server");
+    const customized = environment("Server", {
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: {
+            defaultModelSelection: {
+              instanceId: ProviderInstanceId.make("keep-existing"),
+              model: "existing",
+            },
+          },
+        },
+      },
+    });
+    const writerPlan = planScopedSettingsPatch(
+      project,
+      [laptop, customized],
+      { sourceControlWriterModelSelection: selection },
+      mapping,
+    );
+    expect(writerPlan.unavailableReason).toBeNull();
+    expect(
+      writerPlan.serverWrites.find((write) => write.environmentId === server.environmentId)?.patch
+        .projectSettingsOverrides?.[projectId]?.defaultModelSelection?.instanceId,
+    ).toBe("keep-existing");
+    const collidingAccount = {
+      ...remote[0]!,
+      instanceId: local[0]!.instanceId,
+      displayName: "ChatGPT - Revotech",
+      snapshot: {
+        ...remote[0]!.snapshot,
+        instanceId: local[0]!.instanceId,
+        displayName: "ChatGPT - Revotech",
+      },
+    };
+    const partialTarget = environment("Server", {
+      settings: {
+        providerInstances: {
+          [collidingAccount.instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+          },
+          [remote[0]!.instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        },
+        projectSettingsOverrides: {
+          [projectId]: {
+            textGenerationModelSelection: {
+              instanceId: collidingAccount.instanceId,
+              model: selection.model,
+            },
+          },
+        },
+      },
+    });
+    const partialPlan = planScopedSettingsPatch(
+      project,
+      [partialTarget],
+      { textGenerationModelSelection: { options: selection.options } },
+      {
+        ...mapping,
+        byEnvironment: new Map([[server.environmentId, [...remote, collidingAccount]]]),
+      },
+    );
+    expect(partialPlan.unavailableReason).toBeNull();
+    expect(
+      partialPlan.serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]
+        ?.textGenerationModelSelection,
+    ).toEqual({
+      instanceId: collidingAccount.instanceId,
+      model: selection.model,
+      options: selection.options,
+    });
+  });
+
+  it.each(["email", "type", "workspaceId"] as const)(
+    "rejects conflicting destination %s values even when the source is unidentified",
+    (key) => {
+      const third = environment("Third");
+      const selected = [laptop, server, third];
+      const scope = resolveSettingsScope({}, [], selected);
+      const entries = (id: string, identity?: string) =>
+        deriveProviderInstanceEntries([
+          {
+            instanceId: ProviderInstanceId.make(id),
+            driver: ProviderDriverKind.make("codex"),
+            displayName: "ChatGPT - Pro",
+            enabled: true,
+            installed: true,
+            version: null,
+            status: "ready",
+            auth: { status: "authenticated", ...(identity ? { [key]: identity } : {}) },
+            checkedAt: "2026-01-01T00:00:00.000Z",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          },
+        ]);
+      const source = entries("local-pro");
+      const patch = {
+        defaultModelSelection: { instanceId: source[0]!.instanceId, model: "gpt-6.1-sol" },
+        confirmThreadDelete: false,
+      };
+      const mapping = (thirdIdentity: string) => ({
+        source,
+        byEnvironment: new Map([
+          [laptop.environmentId, source],
+          [server.environmentId, entries("server-pro", "one")],
+          [third.environmentId, entries("third-pro", thirdIdentity)],
+        ]),
+      });
+      const consistent = planScopedSettingsPatch(scope, selected, patch, mapping("one"));
+      expect(consistent.unavailableReason).toBeNull();
+      expect(consistent.serverWrites).toHaveLength(3);
+      expect(consistent.hasClientWrite).toBe(true);
+      for (const targets of [selected, selected.toReversed()]) {
+        const conflicting = planScopedSettingsPatch(scope, targets, patch, mapping("two"));
+        expect(conflicting.serverWrites).toEqual([]);
+        expect(conflicting.hasClientWrite).toBe(false);
+        expect(conflicting.unavailableReason).toContain("account");
+      }
+    },
+  );
+
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {
