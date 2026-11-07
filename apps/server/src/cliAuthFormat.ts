@@ -123,6 +123,7 @@ export function formatIssuedSession(
         method: session.method,
         scopes: session.scopes,
         subject: session.subject,
+        ...(session.mcpAccess ? { mcpAccess: session.mcpAccess } : {}),
         client: session.client,
         expiresAt: toIsoString(session.expiresAt),
       },
@@ -137,6 +138,7 @@ export function formatIssuedSession(
       `Scopes: ${session.scopes.join(" ")}`,
       `Token: ${session.token}`,
       `Subject: ${session.subject}`,
+      ...(session.mcpAccess ? [`MCP access: ${session.mcpAccess}`] : []),
       `Client: ${formatClientMetadata(session.client)}`,
       `Expires at: ${toIsoString(session.expiresAt)}`,
     ].join(newline) + newline

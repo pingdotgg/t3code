@@ -390,6 +390,22 @@ A terminal or a full-access agent on the host can reach those as well, so a
 client that should not manage access also needs to go without `terminal:operate`
 and `orchestration:operate`.
 
+For an external MCP client, select its access ceiling instead of generic API
+scopes:
+
+```sh
+npx t3 auth session issue --mcp-access read-only --ttl 1h --label "External client" --token-only
+```
+
+Run this on the host that owns the environment. Capture the bearer token directly
+into the client's credential store or a private file; do not include it in logs.
+The session works only on `/mcp`. Choose `approval-required`, `auto-accept-edits`,
+`auto`, or `full-access` only when that execution ceiling is intended. It does
+not change the server's managed-policy limits. `--mcp-access` derives the scopes
+and subject together and cannot be combined with `--scope` or `--subject`.
+Without `--ttl`, the session lasts 30 days, as with interactive MCP sign-in.
+Use `t3 auth session list` and `t3 auth session revoke <session-id>` to manage it.
+
 To change an existing client's permissions, create a fresh pairing link with the
 scopes it needs. In a browser opened directly on the environment, open that link
 to replace the browser's current grant. For mobile or a saved remote environment
