@@ -228,6 +228,10 @@ microphone on iOS. Swipe a device left to forget it. Android may use another inp
 when the preferred microphone cannot be routed. Devices with the same name may share
 a saved preference, but simultaneous same-name inputs remain separately selectable.
 
+On iOS, to choose the language on-device dictation transcribes, such as Brazilian Portuguese,
+pick it under **Settings → Voice → Dictation language**. **Device language** is the default
+and uses your preferred languages as described above. Android always transcribes the device language.
+
 T3 Code deletes the temporary recording from your phone after transcription or
 cancellation. The transcript stays in your draft until you send the message to the agent.
 

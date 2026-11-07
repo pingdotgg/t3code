@@ -42,6 +42,7 @@ const SETTINGS_SEARCH_TERMS = {
     "preferred microphone",
     "microphone order",
     "bluetooth",
+    "language",
   ],
   SettingsScheduledTasks: ["automations", "schedule", "cron", "recurring", "webhook"],
   SettingsProjectOverview: ["project", "overview", "checkouts", "delete project"],
