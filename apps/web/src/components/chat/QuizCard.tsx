@@ -207,7 +207,8 @@ function OpenQuestionCard(props: {
     return (
       <p className="font-medium leading-9">
         {parts.map((part, index) => (
-          <span key={part || `blank-${props.card.blanks?.[index - 1]?.answers.join("|") ?? index}`}>
+          // oxlint-disable-next-line react/no-array-index-key -- fixed segments of an immutable card
+          <span key={index}>
             {part}
             {index < props.card.blanks!.length ? (
               <Input
@@ -311,7 +312,8 @@ function OpenQuestionCard(props: {
               <>
                 <p>Answered.</p>
                 {props.card.blanks.map((blank, index) => (
-                  <p key={blank.answers.join("|")}>
+                  // oxlint-disable-next-line react/no-array-index-key -- blanks of an immutable card
+                  <p key={index}>
                     Blank {index + 1}: {blank.answers.join(" / ")}
                   </p>
                 ))}
@@ -321,7 +323,8 @@ function OpenQuestionCard(props: {
                 const right = blankAnswerRight(blank, answers[index] ?? "");
                 return (
                   <p
-                    key={blank.answers.join("|")}
+                    // oxlint-disable-next-line react/no-array-index-key -- blanks of an immutable card
+                    key={index}
                     className={right ? "text-success" : "text-destructive"}
                   >
                     Blank {index + 1}: {right ? "Right." : "Wrong."} Accepted:{" "}

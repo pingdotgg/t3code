@@ -124,10 +124,7 @@ function WhatsNewDialog({
     if (primaryEnvironmentId !== null) {
       void reportFeatureUsed({
         environmentId: primaryEnvironmentId,
-        input: {
-          feature: "whats_new.action",
-          variant: guide.id === "answer-types" ? "question-cards" : guide.id,
-        },
+        input: { feature: "whats_new.action", variant: guide.id },
       });
     }
     onClose();
