@@ -37,6 +37,7 @@ import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
+  OrchestrationV2ProviderFailureClass,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
@@ -610,6 +611,19 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,
   constraints: Schema.Array(Schema.String),
+  /** Cleared by a later successful run on this instance, after a day, or once `resetAt` passes. */
+  lastFailure: Schema.optional(
+    Schema.Struct({
+      at: IsoDateTime,
+      model: Schema.String,
+      class: OrchestrationV2ProviderFailureClass,
+      summary: Schema.String,
+      resetAt: Schema.optional(IsoDateTime),
+    }).annotate({
+      description:
+        "This provider's latest run failed. Advisory: it may work now, and a limit may apply only to `model`.",
+    }),
+  ),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 

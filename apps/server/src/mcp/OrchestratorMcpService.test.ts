@@ -1451,6 +1451,65 @@ describe("OrchestratorMcpService provider resolution", () => {
           NodeCrypto.layer,
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: () => Effect.succeed(parentProjection([])),
+            getProviderInstanceFailures: () =>
+              Effect.succeed([
+                {
+                  providerInstanceId: codexInstanceId,
+                  failedAt: DateTime.makeUnsafe(0),
+                  model: "gpt-5.4",
+                  failure: {
+                    class: "provider_error",
+                    message: "API error (status 402 Payment Required): usage balance exhausted",
+                    code: null,
+                    retryable: null,
+                  },
+                },
+                {
+                  providerInstanceId: ProviderInstanceId.make("pi"),
+                  failedAt: DateTime.makeUnsafe(0),
+                  model: "pi-model",
+                  failure: {
+                    class: "provider_error",
+                    message: "ENOENT: /home/user/acme/app/.env could not be read",
+                    code: null,
+                    retryable: null,
+                  },
+                },
+                {
+                  providerInstanceId: ProviderInstanceId.make("acpRegistry"),
+                  failedAt: DateTime.makeUnsafe(0),
+                  model: "acp-model",
+                  failure: {
+                    class: "provider_error",
+                    message: "Request failed with status: 402",
+                    code: null,
+                    retryable: null,
+                  },
+                },
+                {
+                  providerInstanceId: antigravityInstanceId,
+                  failedAt: DateTime.makeUnsafe(0),
+                  model: "ant-model",
+                  failure: {
+                    class: "provider_error",
+                    message: "Request failed with status:429",
+                    code: null,
+                    retryable: null,
+                  },
+                },
+                {
+                  providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                  failedAt: DateTime.makeUnsafe(-60_000),
+                  model: "claude-sonnet-4-6",
+                  failure: {
+                    class: "usage_limit",
+                    message: "Plan limit reached.",
+                    code: null,
+                    retryable: null,
+                    resetAt: "1970-01-01T00:00:00.000Z",
+                  },
+                },
+              ]),
           }),
           ServerSettings.layerTest({
             providerInstances: {
@@ -1543,6 +1602,25 @@ describe("OrchestratorMcpService provider resolution", () => {
             assert.isTrue(entry!.canRunCrossProviderChildTask);
             assert.deepEqual(entry!.constraints, []);
           }
+          // Advisory, never blocking; only fixed summaries leave, and a passed reset clears it.
+          assert.deepEqual(byId.get(codexInstanceId)?.lastFailure, {
+            at: "1970-01-01T00:00:00.000Z",
+            model: "gpt-5.4",
+            class: "provider_error",
+            summary: "Billing or credit balance problem.",
+          });
+          assert.deepEqual(byId.get(ProviderInstanceId.make("pi"))?.lastFailure, {
+            at: "1970-01-01T00:00:00.000Z",
+            model: "pi-model",
+            class: "provider_error",
+            summary: "The provider reported an error.",
+          });
+          assert.equal(
+            byId.get(ProviderInstanceId.make("acpRegistry"))?.lastFailure?.summary,
+            "Billing or credit balance problem.",
+          );
+          assert.equal(byId.get(antigravityInstanceId)?.lastFailure?.summary, "Rate limited.");
+          assert.isUndefined(byId.get(ProviderInstanceId.make("claudeAgent"))?.lastFailure);
 
           const disabled = byId.get(disabledAntigravityInstanceId);
           assert.isDefined(disabled);
@@ -1658,6 +1736,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     Effect.succeed(
                       parentProjection([], { instanceId: codexInstanceId, model: "gpt-3" }),
                     ),
+                  getProviderInstanceFailures: () => Effect.succeed([]),
                 }),
                 ServerSettings.layerTest({
                   favorites: [
@@ -3159,6 +3238,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               hasReceipt: () => Effect.succeed(false),
               assertProviderInstanceEnabled: () => Effect.void,
+              getProviderInstanceFailures: () => Effect.succeed([]),
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
@@ -3266,6 +3346,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           hasReceipt: () => Effect.succeed(false),
           assertProviderInstanceEnabled: () => Effect.void,
+          getProviderInstanceFailures: () => Effect.succeed([]),
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
