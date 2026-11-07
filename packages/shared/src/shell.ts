@@ -251,7 +251,7 @@ export function buildEnvironmentCaptureCommand(
     .join("; ");
 
   // A DEBUG trap that echoes each command (e.g. into the terminal title) would print the markers.
-  return isNushell ? capture : `trap - DEBUG 2>/dev/null; ${capture}`;
+  return isNushell ? capture : `trap - DEBUG 2>/dev/null || true; ${capture}`;
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
