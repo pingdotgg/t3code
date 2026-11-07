@@ -31,6 +31,16 @@ method = source[start:end]
 fallback = "          self.contentView.tokensByRowId = [:]"
 assert method.count(fallback) == 1
 source = source[:start] + method.replace(fallback, fallback + "\n          tokenDecodeProbe.publish()") + source[end:]
+# Count the actual lookup's row visits only in the compiled test copy.
+needle = """  private func resolvedFileId(for row: ReviewDiffNativeRow) -> String {
+    row.resolvedFileId
+  }"""
+if source.count(needle) != 1:
+    raise RuntimeError("Header lookup instrumentation seam changed")
+source = source.replace(needle, """  private func resolvedFileId(for row: ReviewDiffNativeRow) -> String {
+    HeaderLookupReads.record(row)
+    return row.resolvedFileId
+  }""")
 stubs = """
 public final class AppContext {}
 open class ExpoView: UIView {
