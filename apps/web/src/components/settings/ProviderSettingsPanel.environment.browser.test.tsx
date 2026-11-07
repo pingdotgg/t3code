@@ -369,6 +369,21 @@ describe("EnvironmentProviderSettings routing", () => {
   });
 });
 
+describe("EnvironmentProviderSettings provider list", () => {
+  it("selects a provider when its row is clicked near the edge", async () => {
+    await setup();
+    await setProviders([provider()]);
+    await using _screen = await render(panel());
+    const select = page.getByRole("button", { name: "Select Claude" });
+    await expect.element(select).toHaveAttribute("aria-pressed", "false");
+    const row = page.elementLocator(select.element().closest('[data-slot="settings-row"]')!);
+
+    await userEvent.click(row, { position: { x: 3, y: 3 } });
+
+    await expect.element(select).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
 describe("EnvironmentProviderSettings instance removal", () => {
   it("resets a configured default instance only once the user confirms", async () => {
     await setup();
