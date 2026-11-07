@@ -544,6 +544,11 @@ export interface AcpAdapterV2Flavor {
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
   readonly enablePostSettleContinuation?: boolean;
+  /**
+   * The agent keeps a native turn running after `session/prompt` resolves: any post-settle
+   * output offers a continuation, and a continuation stays open while a foreground tool runs.
+   */
+  readonly ownsNativeTurnAfterPrompt?: boolean;
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
   /**
@@ -1915,6 +1920,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           flavor.extractSubagentSessionEvent !== undefined && !followsAgentWorkState
             ? undefined
             : flavor.extractSubagentUpdate?.(tool);
+        const foregroundToolFlavor = { ...flavor, extractSubagentUpdate };
         let turnAttached = yield* Deferred.make<boolean>();
         const activeSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
@@ -2332,7 +2338,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
-              if (!followsAgentWorkState) return;
+              if (!followsAgentWorkState) {
+                // A held native turn has no prompt fiber left to fail it.
+                if (flavor.ownsNativeTurnAfterPrompt !== true) return;
+                const context = yield* Ref.get(activeTurn);
+                if (context === null || context.finalized) return;
+                if (
+                  !context.promptSettled &&
+                  !acpIsProviderContinuationMessage(context.input.message)
+                )
+                  return;
+                yield* cancelPendingRuntimeRequests();
+                yield* terminalizeOpenForegroundTools(context, "failed");
+                yield* finalizeTurn(
+                  context,
+                  "failed",
+                  makeProviderFailure({ class: "transport_error" }),
+                );
+                return;
+              }
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
                 if (child.status !== "running") continue;
@@ -3786,14 +3810,43 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
           );
 
+        // Only consulted once the prompt settled, so a prompt response still ends its turn.
+        const holdsDeferredFinalize = (context: ActiveAcpTurn): boolean => {
+          if (hasDeferredBackgroundWork(context)) return true;
+          if (flavor.ownsNativeTurnAfterPrompt !== true) return false;
+          for (const tool of context.tools.values()) {
+            if (acpCompletedTurnShouldTerminalizeTool(tool, foregroundToolFlavor)) {
+              return true;
+            }
+          }
+          for (const request of Ref.getUnsafe(pendingRuntimeRequests).values()) {
+            if (request.runtimeRequest.providerTurnId === context.providerTurnId) return true;
+          }
+          return false;
+        };
+
         const rearmDeferredFinalize =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (context: ActiveAcpTurn) {
             if (!flavor.deferFinalizeForBackgroundWork) return;
             if (!context.promptSettled || context.finalized) return;
-            if (hasDeferredBackgroundWork(context)) return;
+            if (holdsDeferredFinalize(context)) return;
             yield* scheduleDeferredFinalize(context);
           });
+
+        const releasePendingRuntimeRequest = Effect.fn("AcpAdapterV2.releasePendingRuntimeRequest")(
+          function* (requestId: RuntimeRequestId) {
+            const released = yield* Ref.modify(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.delete(String(requestId));
+              return [current.get(String(requestId)), updated] as const;
+            });
+            if (flavor.ownsNativeTurnAfterPrompt !== true || released === undefined) return;
+            const context = yield* Ref.get(activeTurn);
+            if (context?.providerTurnId !== released.runtimeRequest.providerTurnId) return;
+            yield* rearmDeferredFinalize(context);
+          },
+        );
 
         // let breaks circular inference from monitor hydration re-entry.
         let emitTool: (
@@ -4796,7 +4849,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.update(wakeBuffer, (current) => [...current, notification]);
             buffered = true;
           }
-          if (!acpPostSettleContinuationOfferEvidence(notification, flavor)) {
+          if (
+            flavor.ownsNativeTurnAfterPrompt !== true &&
+            !acpPostSettleContinuationOfferEvidence(notification, flavor)
+          ) {
             return {
               buffered,
               offerContinuation: false,
@@ -5883,11 +5939,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.ensuring(
                     runRuntimeCallbackAtGeneration(
                       generation,
-                      Ref.update(pendingRuntimeRequests, (current) => {
-                        const updated = new Map(current);
-                        updated.delete(String(requestId));
-                        return updated;
-                      }),
+                      releasePendingRuntimeRequest(requestId),
                     ).pipe(Effect.asVoid),
                   ),
                 );
@@ -6624,11 +6676,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.ensuring(
                   runRuntimeCallbackAtGeneration(
                     handlerGeneration,
-                    Ref.update(pendingRuntimeRequests, (current) => {
-                      const updated = new Map(current);
-                      updated.delete(String(requestId));
-                      return updated;
-                    }),
+                    releasePendingRuntimeRequest(requestId),
                   ).pipe(Effect.asVoid),
                 ),
               );
@@ -7585,8 +7633,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status: "completed" | "failed" = "completed",
         ) {
           for (const tool of context.tools.values()) {
-            if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
-              continue;
+            if (!acpCompletedTurnShouldTerminalizeTool(tool, foregroundToolFlavor)) continue;
             yield* emitTool(context, tool, status);
           }
         });
@@ -7819,7 +7866,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         scheduleDeferredFinalize = Effect.fn("scheduleDeferredFinalize")(function* (context) {
           if (!flavor.deferFinalizeForBackgroundWork) return;
           if (!context.promptSettled || context.finalized || context.interrupted) return;
-          if (hasDeferredBackgroundWork(context)) return;
+          if (holdsDeferredFinalize(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
           yield* Effect.gen(function* () {
@@ -7831,7 +7878,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ) {
               return;
             }
-            if (hasDeferredBackgroundWork(context)) return;
+            if (holdsDeferredFinalize(context)) return;
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
@@ -8348,10 +8395,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               const drainedWakeCount = yield* takeWakeBuffer.pipe(
                 Effect.tap((drained) =>
-                  Effect.forEach(drained, handleSessionUpdate, {
-                    concurrency: 1,
-                    discard: true,
-                  }),
+                  Effect.forEach(
+                    drained,
+                    // A process exit can finalize the run mid-drain; its rest must not offer again.
+                    (notification) =>
+                      flavor.ownsNativeTurnAfterPrompt === true && context.finalized
+                        ? Effect.void
+                        : handleSessionUpdate(notification),
+                    { concurrency: 1, discard: true },
+                  ),
                 ),
                 Effect.map((drained) => drained.length),
               );

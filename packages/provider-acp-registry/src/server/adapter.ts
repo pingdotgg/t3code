@@ -228,6 +228,14 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
+    // MiniMax Code keeps working in a native turn after it resolves `session/prompt`.
+    ...(registryAgentId === "minimax-code"
+      ? {
+          deferFinalizeForBackgroundWork: true,
+          enablePostSettleContinuation: true,
+          ownsNativeTurnAfterPrompt: true,
+        }
+      : {}),
     ...(isClaude
       ? {
           followAgentWorkState: true,
