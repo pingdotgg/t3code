@@ -154,6 +154,7 @@ export function AssistantCitationChip({
       render={<Link {...sourceLinkProps} />}
       data-citation-comment-trigger={commentEditor ? "true" : undefined}
       onKeyDownCapture={(event) => {
+        if (event.key === "Enter") event.stopPropagation();
         if (
           (event.key !== " " && event.key !== "Enter") ||
           event.metaKey ||

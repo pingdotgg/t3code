@@ -121,6 +121,9 @@ it.each(["click", "Enter", " "])(
     expect(onCommandKeyDown).toHaveBeenCalledWith("Enter", expect.any(KeyboardEvent), false);
     onCommandKeyDown.mockClear();
     const chip = screen.getByRole("link", { name: "View cited assistant text: hello" });
+    chip.element().focus();
+    await userEvent.keyboard("{Control>}{Enter}{/Control}");
+    expect(onCommandKeyDown).not.toHaveBeenCalled();
     for (const init of [
       { ctrlKey: true },
       { metaKey: true },
