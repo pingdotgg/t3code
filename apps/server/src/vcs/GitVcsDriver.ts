@@ -1108,7 +1108,37 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        const workspaceIgnored = (yield* filterIgnoredPaths(input.cwd, ["."])).length === 0;
+        const ignoreMatch = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            ...WORKSPACE_GIT_HARDENED_CONFIG_ARGS,
+            "check-ignore",
+            "--no-index",
+            "--verbose",
+            "-z",
+            "--stdin",
+          ],
+          stdin: ".\0",
+          allowNonZeroExit: true,
+          timeoutMs: 20_000,
+          maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+          outputMode: "error",
+        });
+        if (ignoreMatch.exitCode !== 0 && ignoreMatch.exitCode !== 1) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git check-ignore",
+            cwd: input.cwd,
+            exitCode: ignoreMatch.exitCode,
+            detail: ignoreMatch.stderr.trim() || "git check-ignore failed",
+          });
+        }
+        // Blank CRLF or spaces-only ignore lines can match '.' as an empty pattern.
+        // Verbose NUL output preserves that pattern and distinguishes negated matches.
+        const pattern = ignoreMatch.stdout.split("\0")[2];
+        const workspaceIgnored =
+          pattern !== undefined && pattern.length > 0 && !pattern.startsWith("!");
         if (workspaceIgnored) {
           // HEAD omits staged-only paths. Seed just this workspace's additions, keeping
           // unrelated staged changes and the scratch index's sparse flags untouched.
