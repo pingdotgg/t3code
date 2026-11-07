@@ -33,6 +33,9 @@ export function CodeAppearanceSection() {
         label="Custom font size"
         onValueChange={handleToggleCustom}
         value={custom}
+        resetVisible
+        resetDisabled={!custom}
+        onReset={() => setCodeFontSize(null)}
       />
       {custom ? (
         <FontSizeSliderRow
@@ -53,6 +56,9 @@ export function CodeAppearanceSection() {
         label="Word break"
         onValueChange={setCodeWordBreak}
         value={appearance.codeWordBreak}
+        resetVisible
+        resetDisabled={!appearance.codeWordBreak}
+        onReset={() => setCodeWordBreak(false)}
       />
     </SettingsSection>
   );

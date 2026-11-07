@@ -185,6 +185,9 @@ export function WorkingSectionSettings() {
           label="Working section"
           value={workingShelfEnabled}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
+          resetVisible={AsyncResult.isSuccess(preferences) && !preferences.waiting}
+          resetDisabled={!workingShelfEnabled}
+          onReset={() => savePreferences({ workingShelfEnabled: true })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
@@ -210,6 +213,9 @@ export function NewThreadSettingsSection() {
         subtitle="Start new threads in the last project you used on this device."
         value={useLastProject}
         onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
+        resetVisible={AsyncResult.isSuccess(preferences) && !preferences.waiting}
+        resetDisabled={useLastProject}
+        onReset={() => savePreferences({ useLastProjectForNewThreads: true })}
       />
     </SettingsSection>
   );
@@ -270,6 +276,9 @@ function LegacySettingsSection() {
           label="Plan Mode"
           value={planModeEnabled}
           onValueChange={(value) => savePreferences({ planModeEnabled: value })}
+          resetVisible={AsyncResult.isSuccess(preferences) && !preferences.waiting}
+          resetDisabled={!planModeEnabled}
+          onReset={() => savePreferences({ planModeEnabled: false })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">

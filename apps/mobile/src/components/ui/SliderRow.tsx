@@ -12,6 +12,7 @@ import { View } from "react-native";
 import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 import { NativeThemeHost } from "./NativeThemeHost";
+import { SettingResetButton } from "./SettingResetButton";
 import type { SliderRowProps } from "./SliderRow.types";
 import { useControlTheme } from "./useControlTheme";
 
@@ -40,6 +41,12 @@ export function SliderRow(props: SliderRowProps) {
         <AppText className="text-base font-t3-medium text-foreground-muted">
           {props.valueLabel}
         </AppText>
+        {props.resetVisible === true &&
+        props.onReset !== undefined &&
+        props.disabled !== true &&
+        props.resetDisabled === false ? (
+          <SettingResetButton label={props.label} onPress={props.onReset} />
+        ) : null}
       </View>
       <View className="flex-row items-center gap-3">
         {props.minimumIcon ? (

@@ -15,4 +15,7 @@ export interface SliderRowProps {
   readonly step: number;
   readonly value: number;
   readonly onChange: (value: number) => void;
+  readonly resetVisible?: boolean;
+  readonly resetDisabled?: boolean;
+  readonly onReset?: () => void;
 }
