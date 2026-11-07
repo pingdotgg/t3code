@@ -31,6 +31,7 @@ import {
   parseWorkerPairingMaterial,
 } from "./gatewayClient.ts";
 import { sandboxPolicyForRuntimeMode } from "./sandboxPolicy.ts";
+import { seedEnvironment } from "./workerBaggage.ts";
 
 /**
  * The OpenShell fleet driver (spec section 12): sandbox lifecycle, template
@@ -407,6 +408,12 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     }
     const idempotencyKey = options.idempotencyKey ?? (await this.fallbackKey());
     const name = `t3-worker-${sandboxNameHash(this.managedBy, idempotencyKey)}`;
+    // Spec section 10: the seed travels in the sandbox environment so the
+    // worker's fetch stage can borrow objects from the shared mirror.
+    const seedEnv =
+      spec.seedFrom === undefined
+        ? undefined
+        : seedEnvironment(this.settings?.sharedCache, spec.seedFrom);
     const labels = {
       [FLEET_ROLE_LABEL]: "worker",
       [MANAGED_BY_LABEL]: this.managedBy,
@@ -427,6 +434,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
       name,
       labels,
       requestId: idempotencyKey,
+      ...(seedEnv === undefined ? {} : { environment: seedEnv }),
     });
 
     // Policy translation (spec section 5.2). A sandbox this attempt created
@@ -543,6 +551,11 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     await this.index.setState(environmentId, "ready");
 
     const warnings: string[] = [];
+    if (spec.seedFrom !== undefined && seedEnv === undefined) {
+      warnings.push(
+        "seed unavailable: no RWX git mirror is configured, so the worker clones from the remote (spec section 10)",
+      );
+    }
     if (
       this.settings?.sharedCache !== undefined &&
       this.settings.sharedCache.enabled &&
