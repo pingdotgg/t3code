@@ -213,6 +213,28 @@ type ProjectLabelSource = Pick<
   "environmentId" | "title" | "repositoryIdentity"
 >;
 
+export function deriveScopedProjectGroupLabel(
+  group: Pick<ProjectGroup, "label">,
+  members: ReadonlyArray<ProjectLabelSource>,
+): string {
+  return deriveCustomProjectTitle(members) ?? group.label;
+}
+
+function deriveCustomProjectTitle(members: ReadonlyArray<ProjectLabelSource>): string | undefined {
+  const sharedTitles = uniqueNonEmptyValues(members.map((member) => member.title));
+  const sharedTitle = sharedTitles[0];
+  if (sharedTitles.length !== 1 || sharedTitle === undefined) return undefined;
+  const isRepositoryName = members.some((member) => {
+    const repository = member.repositoryIdentity;
+    return (
+      repository &&
+      (repository.name.trim() === sharedTitle ||
+        repositoryGroupingDisplayNameOf(repository).trim() === sharedTitle)
+    );
+  });
+  return isRepositoryName ? undefined : sharedTitle;
+}
+
 /** Drops the owner only when every member's environment is signed in as it. */
 function deriveOwnRepositoryName(
   members: ReadonlyArray<ProjectLabelSource>,
@@ -249,7 +271,8 @@ function deriveProjectGroupLabel(input: {
   readonly members: ReadonlyArray<ProjectLabelSource>;
   readonly repositoryAccounts?: SourceControlAccountsByEnvironment;
 }): string {
-  const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
+  const customTitle = deriveCustomProjectTitle(input.members);
+  if (customTitle !== undefined) return customTitle;
   const sharedDisplayNames = uniqueNonEmptyValues(
     input.members.map((member) =>
       member.repositoryIdentity ? repositoryGroupingDisplayNameOf(member.repositoryIdentity) : null,
@@ -258,15 +281,6 @@ function deriveProjectGroupLabel(input: {
   const sharedRepositoryNames = uniqueNonEmptyValues(
     input.members.map((member) => member.repositoryIdentity?.name),
   );
-  const sharedTitle = sharedTitles[0];
-  if (
-    sharedTitles.length === 1 &&
-    sharedTitle !== undefined &&
-    !sharedDisplayNames.includes(sharedTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle)
-  ) {
-    return sharedTitle;
-  }
   if (sharedDisplayNames.length === 1) {
     return (
       deriveOwnRepositoryName(input.members, sharedDisplayNames[0]!, input.repositoryAccounts) ??

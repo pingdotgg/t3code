@@ -18,6 +18,7 @@ import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { use, type ComponentProps } from "react";
 import { Platform, View } from "react-native";
+import { deriveScopedProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -214,7 +215,15 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const noServerTargets = selectedTargets.length === 0;
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
-  const projectLabel = selectedProject?.label ?? "Unavailable project";
+  const scopedProjectMembers =
+    selectedProject?.members
+      .map((member) => member.project)
+      .filter((project) =>
+        selectedTargets.some((target) => target.environmentId === project.environmentId),
+      ) ?? [];
+  const projectLabel = selectedProject
+    ? deriveScopedProjectGroupLabel(selectedProject, scopedProjectMembers)
+    : "Unavailable project";
   const page = (
     target: SettingsPageTarget,
     icon: SettingsListRow["icon"],

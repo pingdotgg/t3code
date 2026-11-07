@@ -8,6 +8,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   pickableProjectGroups,
   derivePhysicalProjectKey,
+  deriveScopedProjectGroupLabel,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
   type ProjectGroupingSettings,
@@ -346,6 +347,7 @@ describe("buildProjectGroups", () => {
       });
       expect(unlabeled.map((group) => group.label)).toEqual(["EtanHey/orchestrator"]);
       expect(groups.map((group) => group.label)).toEqual([label]);
+      expect(deriveScopedProjectGroupLabel(groups[0]!, [projects[0]!])).toBe(label);
       expect(groups.map(({ key, memberProjectRefs }) => ({ key, memberProjectRefs }))).toEqual(
         unlabeled.map(({ key, memberProjectRefs }) => ({ key, memberProjectRefs })),
       );
@@ -356,17 +358,32 @@ describe("buildProjectGroups", () => {
         [environmentId]: account("EtanHey"),
         [macB]: account("EtanHey"),
       };
-      const labels = (projects: EnvironmentProject[]) =>
-        buildProjectGroups({ projects, settings: settings("repository"), repositoryAccounts }).map(
-          (group) => group.label,
-        );
-      expect(labels(linked("Orchestrator app"))).toEqual(["Orchestrator app"]);
-      expect(
-        labels([
-          ...linked(),
-          makeProject("other", "/a/other", { title: "Orchestrator", repositoryIdentity: null }),
-        ]),
-      ).toEqual(["EtanHey/orchestrator", "Orchestrator"]);
+      const groups = (projects: EnvironmentProject[]) =>
+        buildProjectGroups({ projects, settings: settings("repository"), repositoryAccounts });
+      expect(groups(linked("Orchestrator app")).map((group) => group.label)).toEqual([
+        "Orchestrator app",
+      ]);
+      const differentlyNamed = linked().map((project, index) => ({
+        ...project,
+        title: index === 0 ? "Local project" : "Remote project",
+      }));
+      const namedGroup = groups(differentlyNamed)[0]!;
+      expect(deriveScopedProjectGroupLabel(namedGroup, differentlyNamed)).toBe(namedGroup.label);
+      for (const project of differentlyNamed) {
+        expect(deriveScopedProjectGroupLabel(namedGroup, [project])).toBe(project.title);
+      }
+      const collisionProjects = linked();
+      const colliding = groups([
+        ...collisionProjects,
+        makeProject("other", "/a/other", { title: "Orchestrator", repositoryIdentity: null }),
+      ]);
+      expect(colliding.map((group) => group.label)).toEqual([
+        "EtanHey/orchestrator",
+        "Orchestrator",
+      ]);
+      expect(deriveScopedProjectGroupLabel(colliding[0]!, [collisionProjects[0]!])).toBe(
+        "EtanHey/orchestrator",
+      );
     });
 
     it.each([
