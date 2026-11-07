@@ -2129,17 +2129,6 @@ export default function ChatView(props: ChatViewProps) {
     setTimelineAnchor,
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
-  useEffect(() => {
-    if (embedded || !activeThread?.id || terminalUiState.terminalOpen) return;
-    const frame = window.requestAnimationFrame(() => {
-      focusComposerStable();
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [activeThread?.id, embedded, focusComposerStable, terminalUiState.terminalOpen]);
-
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
   useEffect(() => {
     if (embedded || !activeThread?.id || terminalUiState.terminalOpen || isMobileViewport) return;
@@ -2680,13 +2669,28 @@ export default function ChatView(props: ChatViewProps) {
     setTerminalUiLaunchContext(null);
   }
 
-  // Entering a thread with its drawer open focuses the drawer terminal; opening
-  // it from a handler requests focus there. A closed drawer leaves focus to the
-  // composer effect above.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the open drawer terminal when entering a thread
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores DOM focus on thread entry and after the drawer opens or closes
   useEffect(() => {
-    if (activeThreadRef && !embedded) return focusTerminalOnThreadEnter(activeThreadRef);
-  }, [activeThreadRef, embedded]);
+    if (!activeThreadRef || embedded || !workspaceLayoutElement) return;
+    let frame: number | undefined;
+    const leave = focusTerminalOnThreadEnter(activeThreadRef, {
+      root: workspaceLayoutElement,
+      focusComposer: () => {
+        frame = window.requestAnimationFrame(focusComposerStable);
+      },
+    });
+    return () => {
+      leave();
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, [
+    activeThreadRef,
+    embedded,
+    focusComposerStable,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Drawer visibility changes also restore focus after explicit open/close actions.
+    terminalUiState.terminalOpen,
+    workspaceLayoutElement,
+  ]);
 
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
     terminalFocus: getTerminalFocusOwner() !== null,

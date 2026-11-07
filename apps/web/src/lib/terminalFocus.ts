@@ -22,11 +22,13 @@ export function isTerminalFocused(): boolean {
 interface TerminalFocusTarget {
   readonly threadRef: ScopedThreadRef;
   readonly terminalId: string;
+  readonly element?: HTMLElement;
   /** Returns false when the target cannot take focus yet (hidden, or no operate grant). */
   readonly focus: () => boolean;
 }
 
 const focusTargets = new Set<TerminalFocusTarget>();
+const lastThreadFocus = new Map<string, "composer" | { terminalId: string }>();
 // One request at a time: the newest terminal the user asked for wins, so an
 // older request never fires later and steals focus.
 let pendingFocus: { readonly threadKey: string; readonly terminalId: string } | null = null;
@@ -35,6 +37,8 @@ let pendingFocus: { readonly threadKey: string; readonly terminalId: string } | 
 // thread's viewports mount and consume the handler's request in the commit's
 // layout phase, before ChatView's thread-enter effect runs.
 let enteredThreadKey: string | null = null;
+// Drawer visibility reruns reuse the root; a remounted chat must not inherit parked requests.
+const lastEnteredThreadByRoot = new WeakMap<HTMLElement, string>();
 let navigationRequestThreadKey: string | null = null;
 
 function isPending(threadKey: string, terminalId: string): boolean {
@@ -113,24 +117,66 @@ export function focusTerminalOnNavigation(threadRef: ScopedThreadRef, terminalId
   focusTerminal(threadRef, terminalId);
 }
 
-/**
- * Entering a thread with its drawer open focuses the drawer terminal, unless a
- * navigating handler already asked for a terminal there. Returns the leave
- * cleanup for ChatView's effect.
- */
-export function focusTerminalOnThreadEnter(threadRef: ScopedThreadRef): () => void {
+/** Restores composer or terminal focus; explicit terminal navigation takes precedence. */
+export function focusTerminalOnThreadEnter(
+  threadRef: ScopedThreadRef,
+  content?: { readonly root: HTMLElement; readonly focusComposer: () => void },
+): () => void {
   const threadKey = scopedThreadKey(threadRef);
-  const requestedByHandler = navigationRequestThreadKey === threadKey;
+  const requestedByHandler =
+    navigationRequestThreadKey === threadKey ||
+    (content !== undefined &&
+      lastEnteredThreadByRoot.get(content.root) === threadKey &&
+      pendingFocus?.threadKey === threadKey);
+  if (!requestedByHandler) pendingFocus = null;
+  if (content) lastEnteredThreadByRoot.set(content.root, threadKey);
   navigationRequestThreadKey = null;
   enteredThreadKey = threadKey;
+  const previous = lastThreadFocus.get(threadKey);
+  const remember = () => {
+    if (!content) return;
+    const element = document.activeElement;
+    if (!(element instanceof HTMLElement)) return;
+    const terminal = Array.from(focusTargets).find((target) => target.element?.contains(element));
+    if (terminal) {
+      if (scopedThreadKey(terminal.threadRef) === threadKey)
+        lastThreadFocus.set(threadKey, { terminalId: terminal.terminalId });
+    } else if (
+      content.root.contains(element) &&
+      element.closest('[data-workspace-area="composer"]')
+    ) {
+      lastThreadFocus.set(threadKey, "composer");
+    }
+  };
+  content?.root.ownerDocument.addEventListener("focusin", remember);
   if (!requestedByHandler) {
-    const { terminalOpen, activeTerminalId } = selectThreadTerminalUiState(
+    const drawer = selectThreadTerminalUiState(
       useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
       threadRef,
     );
-    if (terminalOpen && activeTerminalId) focusTerminal(threadRef, activeTerminalId);
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
+    const panelTerminal = panel.isOpen
+      ? panel.surfaces.find((surface) => surface.id === panel.activeSurfaceId)
+      : null;
+    if (previous === "composer") {
+      content?.focusComposer();
+    } else if (
+      previous &&
+      ((drawer.terminalOpen &&
+        drawer.terminalGroups
+          .find((group) => group.id === drawer.activeTerminalGroupId)
+          ?.terminalIds.includes(previous.terminalId)) ||
+        (panelTerminal?.kind === "terminal" &&
+          panelTerminal.terminalIds.includes(previous.terminalId)))
+    ) {
+      focusTerminal(threadRef, previous.terminalId);
+    } else if (drawer.terminalOpen && drawer.activeTerminalId) {
+      focusTerminal(threadRef, drawer.activeTerminalId);
+    } else content?.focusComposer();
   }
+  if (requestedByHandler) remember();
   return () => {
+    content?.root.ownerDocument.removeEventListener("focusin", remember);
     // A handler navigating elsewhere marks its target before this cleanup runs.
     if (enteredThreadKey === threadKey) enteredThreadKey = null;
   };
