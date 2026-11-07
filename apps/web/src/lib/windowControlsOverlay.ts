@@ -53,8 +53,13 @@ export function syncDocumentWindowControlsOverlayClass(): () => void {
   }
 
   const overlay = getWindowControlsOverlay();
+  // Windows empties the overlay while minimized, and dropping the class would flash on restore.
+  const keepsClass = isElectron && isWindowsPlatform(navigator.platform);
   const update = () => {
-    document.documentElement.classList.toggle(WCO_CLASS_NAME, overlay !== null && overlay.visible);
+    const visible = overlay !== null && overlay.visible;
+    if (visible || !keepsClass) {
+      document.documentElement.classList.toggle(WCO_CLASS_NAME, visible);
+    }
   };
 
   update();
