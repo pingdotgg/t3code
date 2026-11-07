@@ -74,6 +74,11 @@ import {
   CHILD_PULL_REQUEST_REPORT_NEXT,
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
+import {
+  QUESTION_CARD_SHOWN,
+  QUIZ_CARD_SHOWN,
+} from "../../apps/server/src/mcp/toolkits/quiz/handlers.ts";
+import { QuizToolkit } from "../../apps/server/src/mcp/toolkits/quiz/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
@@ -458,6 +463,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   AnimationToolkit,
   KnowledgeToolkit,
   CourseToolkit,
+  QuizToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -1345,6 +1351,10 @@ export const t3Default = (
         htmlRender: { attachmentId: "att-1", title: input.title ?? "Visual", height: 560 },
         message: HTML_RENDERED,
       };
+    case "quiz_card":
+      return { quizCard: input, message: QUIZ_CARD_SHOWN };
+    case "question_card":
+      return { questionCard: input, message: QUESTION_CARD_SHOWN };
     case "preview_status":
       return {
         available: false,
@@ -1866,15 +1876,23 @@ const SETTLED =
 export const failedEarly = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") =>
   gradeSample(expect, run, pasted).some((check) => !check.pass && SETTLED.test(check.check));
 
-const requestBody = ({ base, tools }: Sample, effort: string, messages: unknown) => ({
+const requestBody = (
+  { base, tools }: Sample,
+  effort: string,
+  messages: unknown,
+  proxied = false,
+) => ({
   model: base.model,
   max_tokens: 16_000,
   thinking: { type: "adaptive", display: "summarized" },
   output_config: { effort },
-  cache_control: { type: "ephemeral" },
-  // Like Claude Code, cache the shared system prompt so every sample reuses it.
+  // Like Claude Code, cache the shared system prompt so every sample reuses it. The pool's proxy
+  // places its own breakpoints, and the API allows four in all.
+  ...(proxied ? {} : { cache_control: { type: "ephemeral" } }),
   system: base.system.map((block, i) =>
-    i === base.system.length - 1 ? { ...block, cache_control: { type: "ephemeral" } } : block,
+    i === base.system.length - 1 && !proxied
+      ? { ...block, cache_control: { type: "ephemeral" } }
+      : block,
   ),
   tools,
   messages,
@@ -2109,7 +2127,11 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   for (let step = 0; step < maxSteps; step++) {
     const response = input
       ? yield* callCodex(config, codexRequest(base, input))
-      : yield* callModel(config.apiKey, requestBody(sample, config.effort, messages));
+      : yield* callModel(
+          config.apiKey,
+          requestBody(sample, config.effort, messages, !config.apiKey),
+          config.apiKey ? undefined : config.proxy,
+        );
     addUsage(usage, response.usage);
     if ("raw" in response) {
       input?.push(...response.raw);
@@ -2340,6 +2362,7 @@ const Flags = Schema.Struct({
     ...PROXY_SHELL_MODELS,
   ]),
   "user-instructions": Schema.Literals(["keep", "drop"]),
+  proxy: Schema.Literals(["vibeproxy", "pool"]),
   "dry-run": Schema.Boolean,
   "stop-on-regression": Schema.Boolean,
   "regression-budget": Schema.optional(PositiveIntOrZero),
@@ -2380,6 +2403,8 @@ const main = Effect.gen(function* () {
       "shell-model": { ...string, default: "claude-haiku-5-5" },
       // T3's text must work for every user, so the captured CLAUDE.md is dropped by default.
       "user-instructions": { ...string, default: "drop" },
+      // The CLIProxyAPI server for GPT models, and for Claude when ANTHROPIC_API_KEY is unset.
+      proxy: { ...string, default: "vibeproxy" },
       "dry-run": { type: "boolean", default: false },
       "stop-on-regression": { type: "boolean", default: false },
       "regression-budget": string,
@@ -2519,15 +2544,17 @@ const main = Effect.gen(function* () {
   }
   const apiKey = yield* Config.String("ANTHROPIC_API_KEY").pipe(Config.withDefault(""));
   const out = flags.out;
-  if ((!apiKey && !codex) || out === undefined) {
+  if (out === undefined) {
     const message =
-      "Set ANTHROPIC_API_KEY and pass --out <directory>. ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are never used.";
+      "Pass --out <directory>. Without ANTHROPIC_API_KEY, Claude goes through --proxy. ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are never used.";
     return yield* Effect.die(new Error(message));
   }
   const config: Config = {
     apiKey,
     model: flags.model,
-    ...(codex || !isPricedModel(flags["shell-model"]) ? { proxy: proxyConfig() } : {}),
+    ...(codex || !apiKey || !isPricedModel(flags["shell-model"])
+      ? { proxy: proxyConfig(flags.proxy) }
+      : {}),
     effort,
     maxSteps: flags["max-steps"] ?? (codex ? 10 : 6),
     shellModel: flags["shell-model"],

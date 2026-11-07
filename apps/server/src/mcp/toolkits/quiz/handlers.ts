@@ -46,3 +46,6 @@ const handlers = {
 } satisfies McpToolAccess.Handlers<typeof QuizToolkit.tools>;
 
 export const layer = McpToolAccess.toLayer(QuizToolkit, handlers);
+
+// The evals answer card calls with what T3 tells the agent.
+export { QUESTION_CARD_SHOWN, QUIZ_CARD_SHOWN };

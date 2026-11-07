@@ -12,7 +12,8 @@ pnpm mcp-tool-use --case review-round-uses-thread-send --samples 1 --out runs/ch
 pnpm mcp-tool-use --model claude-opus-5-5 --out runs/opus
 ```
 
-- `ANTHROPIC_API_KEY` in the repo root `.env` pays for Claude models and the Haiku shell simulator.
+- `ANTHROPIC_API_KEY` in the repo root `.env` pays for Claude models and the Haiku shell simulator. Without it, Claude goes through `--proxy`, which also serves the Codex models.
+- `--proxy pool` uses the provider-pool client in `~/.config/cliproxy-public-client`, the same CLIProxyAPI server T3's `claude-public-pool` and `codex-public-pool` instances use, so no key is needed: `pnpm mcp-tool-use --proxy pool --case <id> --samples 1 --out runs/check`. The pool adds Claude Code's own system prompt to each request, so compare pool runs only with pool runs. The summary's cost is an API-price estimate, not a charge.
 - Codex models (`gpt-*` in `MODELS` in `run.ts`) go through a CLIProxyAPI server, set up as the `vibeproxy` model provider in `~/.codex/config.toml`. Keep the proxy under about 12 samples in flight across all runs.
 - `--shell-model` picks the model that plays the shell: `claude-haiku-5-5` by default, or `gpt-6.1-terra` / `gpt-6-luna` through the same proxy, so Codex runs need no Anthropic key. Prefer Terra: Luna often contradicts the case's world (it calls named checkouts missing or files empty). Compare runs only when they used the same shell model.
 - Flags: `--case <ids>`, `--cases <file.ndjson>`, `--samples <n>` (default 2, and a 3rd when the first 2 disagree), `--concurrency <n>` (samples in flight, default 8), `--max-steps <n>`, `--effort <level>`, `--dry-run` (prints request bodies, no model calls), and `--context` (prints the size of T3's text and schemas, no key needed).
