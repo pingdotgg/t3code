@@ -72,6 +72,7 @@ import {
 } from "../../onboarding/targetEnvironment.logic";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { serverEnvironment } from "../../state/server";
 import {
   readEnvironmentScope,
@@ -917,33 +918,49 @@ function OnboardingCodexSetup({
     config: createdAccount ? { enabled: true, setupMode: "managed" } : {},
   };
   const mode = readCodexSetupMode(instance.config);
-  const existingChosen =
-    mode === "existing" &&
-    instance.config !== null &&
-    typeof instance.config === "object" &&
-    "setupMode" in instance.config &&
-    instance.config.setupMode === "existing";
-  const changeMode = (setupMode: "managed" | "existing") => {
+  const config: Record<string, unknown> =
+    instance.config !== null && typeof instance.config === "object" ? { ...instance.config } : {};
+  const existingChosen = config.setupMode === "existing";
+  // The server only signs in to its own runtime, so ChatGPT sign-in saves "managed" first.
+  // An attempt that ends without signing in puts back what was saved before it.
+  const modeBeforeSignIn = useRef<{ readonly setupMode: unknown } | null>(null);
+  // A restore runs once sign-in ends, so writes read the settings as they are then.
+  const saveInstance = (
+    edit: (current: typeof instance, config: Record<string, unknown>) => typeof instance,
+  ) => {
+    const latest =
+      appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.settings ?? settings;
+    const current = latest.providerInstances[instanceId] ?? instance;
+    const currentConfig: Record<string, unknown> =
+      current.config !== null && typeof current.config === "object" ? { ...current.config } : {};
     void update({
       environmentId,
       input: {
         patch: buildProviderInstanceUpdatePatch({
-          settings,
+          settings: latest,
           instanceId,
-          instance: {
-            ...instance,
-            enabled: true,
-            config: {
-              ...(instance.config !== null && typeof instance.config === "object"
-                ? instance.config
-                : {}),
-              enabled: true,
-              setupMode,
-            },
-          },
+          instance: edit(current, currentConfig),
         }),
       },
     });
+  };
+  const changeMode = (setupMode: "managed" | "existing") => {
+    modeBeforeSignIn.current =
+      setupMode === "managed" && mode !== "managed" ? { setupMode: config.setupMode } : null;
+    saveInstance((current, currentConfig) => ({
+      ...current,
+      enabled: true,
+      config: { ...currentConfig, enabled: true, setupMode },
+    }));
+  };
+  const restoreMode = () => {
+    const before = modeBeforeSignIn.current;
+    if (before === null) return;
+    modeBeforeSignIn.current = null;
+    saveInstance((current, { setupMode: _managed, ...rest }) => ({
+      ...current,
+      config: before.setupMode === undefined ? rest : { ...rest, setupMode: before.setupMode },
+    }));
   };
   return existingChosen ? (
     <AgentCard
@@ -965,6 +982,10 @@ function OnboardingCodexSetup({
       mode={mode}
       enabled={provider?.enabled ?? true}
       onModeChange={changeMode}
+      onSignInUnfinished={restoreMode}
+      onSignInFinished={() => {
+        modeBeforeSignIn.current = null;
+      }}
     />
   );
 }
