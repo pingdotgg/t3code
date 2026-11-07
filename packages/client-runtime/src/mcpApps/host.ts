@@ -474,7 +474,7 @@ function downloadName(uri: unknown, name: unknown): string {
     typeof name === "string" && name.trim() !== ""
       ? name
       : typeof uri === "string"
-        ? (uri.split(/[/?#]/).findLast(Boolean) ?? "download")
+        ? (uri.split(/[?#]/, 1)[0]?.split("/").findLast(Boolean) ?? "download")
         : "download";
   const safe = Array.from(raw, (char) =>
     /[\\/:*?"<>|]/.test(char) || char.charCodeAt(0) < 32 ? "-" : char,
