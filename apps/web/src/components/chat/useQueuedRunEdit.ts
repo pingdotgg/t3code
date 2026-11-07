@@ -54,7 +54,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
-import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
+import {
+  discardQueuedEditDraft,
+  prepareQueuedEditAttachments,
+  recoverQueuedMessageEdit,
+} from "./queuedMessageEdit";
 import type { EditQueuedRunRequest } from "./QueuedRunsControl";
 
 interface EditingQueuedRun {
@@ -221,10 +225,12 @@ export function useQueuedRunEdit(input: {
   const focusComposerSoon = () => {
     window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
   };
-  const clearEditDraft = (runId: RunId) =>
-    useComposerDraftStore
-      .getState()
-      .clearComposerContent(queuedEditDraftTarget(routeThreadRef, runId));
+  const clearEditDraft = (runId: RunId) => {
+    const target = queuedEditDraftTarget(routeThreadRef, runId);
+    // A save in flight still sends these uploads.
+    if (isSaving) useComposerDraftStore.getState().clearComposerContent(target);
+    else discardQueuedEditDraft(target);
+  };
 
   const beginEdit = useStableCallback((request: EditQueuedRunRequest) => {
     if (activeThreadId === null) return;
