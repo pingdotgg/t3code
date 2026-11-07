@@ -58,6 +58,7 @@ import {
   SpeechCorrectionCue,
   SpeechCustomWords,
   SpeechLanguage,
+  SpeechModelId,
   SpeechModelUnloadTimeout,
   SpeechPostProcessingPromptSettings,
 } from "./speech.ts";
@@ -369,6 +370,7 @@ export type VoiceShortcutMode = typeof VoiceShortcutMode.Type;
 /**
  * Where this device sends microphone audio. A cloud grant names the forwarding environment and
  * the provider; an OpenRouter grant also names the exact model, since OpenRouter has no default.
+ * A custom endpoint grant names the exact model too: OpenAI-compatible servers have no default.
  */
 export const VoiceTranscriptionDestination = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("environment"), environmentId: EnvironmentId }),
@@ -382,6 +384,12 @@ export const VoiceTranscriptionDestination = Schema.Union([
     environmentId: EnvironmentId,
     provider: Schema.Literal("openrouter"),
     model: CloudSpeechModelId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("cloud"),
+    environmentId: EnvironmentId,
+    provider: Schema.Literal("custom"),
+    model: SpeechModelId,
   }),
 ]);
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
@@ -1245,6 +1253,7 @@ export const CloudSpeechCredentials = Schema.Struct({
   openai: CloudSpeechCredential,
   xai: CloudSpeechCredential,
   openrouter: CloudSpeechCredential,
+  custom: CloudSpeechCredential,
 });
 
 export const ServerSettings = Schema.Struct({
@@ -1273,8 +1282,12 @@ export const ServerSettings = Schema.Struct({
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
-    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
+    Schema.withDecodingDefault(
+      Effect.succeed({ openai: "", xai: "", openrouter: "", custom: "" }),
+    ),
   ),
+  /** Base URL of the OpenAI-compatible transcription endpoint, including the version path (e.g. `https://host/v1`). */
+  cloudSpeechCustomBaseUrl: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
@@ -1696,8 +1709,10 @@ export const ServerSettingsPatch = Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),
       xai: Schema.optionalKey(SettingsSecretValue),
       openrouter: Schema.optionalKey(SettingsSecretValue),
+      custom: Schema.optionalKey(SettingsSecretValue),
     }),
   ),
+  cloudSpeechCustomBaseUrl: Schema.optionalKey(Schema.String),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),

@@ -53,6 +53,13 @@ applies the account's safety-retention policy when choosing an endpoint. The cat
 holds no credential or consent state, which is why it may be cached while key
 presence is read fresh on every request.
 
+The custom provider is the generic OpenAI-compatible multipart client: the base
+URL is a server setting, validated to https (or loopback http), with
+`/audio/transcriptions` appended and the grant's model sent in the form. The
+grant names the exact model for the same reason OpenRouter's does. The endpoint
+is disclosed by host in the consent dialog but is otherwise unvetted; the
+response must still decode as `{ text }`.
+
 ## Server side
 
 The [speech service](../../apps/server/src/speech/SpeechService.ts) runs

@@ -101,6 +101,32 @@ function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   });
 }
 
+/** The transcriptions URL for a configured custom base URL, or null when it is unusable. */
+function customTranscriptionsUrl(baseUrl: string) {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (url.search || url.hash) return null;
+  const hostname = url.hostname.toLowerCase();
+  const host = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  const local =
+    host === "localhost" || host === "::1" || host === "127.0.0.1" || host.endsWith(".localhost");
+  if (url.protocol === "http:" && !local) return null;
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}/audio/transcriptions`;
+}
+
+/** The generic multipart body every OpenAI-compatible transcription server accepts. */
+function customBody(model: string, audio: ArrayBuffer, language: string) {
+  const form = new FormData();
+  form.set("model", model);
+  if (language !== "auto") form.set("language", language);
+  form.set("file", new Blob([audio], { type: "audio/wav" }), "dictation.wav");
+  return HttpClientRequest.bodyFormData(form);
+}
+
 export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
@@ -129,11 +155,13 @@ export const layer = Layer.effect(
     const credentials = settings.getSettings.pipe(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
-    const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
-        openai: Boolean(openai),
-        xai: Boolean(xai),
-        openrouter: Boolean(openrouter),
+    const configured = settings.getSettings.pipe(
+      Effect.map((value) => ({
+        openai: Boolean(value.cloudSpeechCredentials.openai),
+        xai: Boolean(value.cloudSpeechCredentials.xai),
+        openrouter: Boolean(value.cloudSpeechCredentials.openrouter),
+        custom: Boolean(value.cloudSpeechCredentials.custom),
+        customEndpoint: value.cloudSpeechCustomBaseUrl,
       })),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -189,6 +217,10 @@ export const layer = Layer.effect(
         if (!source) return yield* new CloudSpeechError({ provider, reason: "missing-key" });
         if (provider === "openrouter" && (!model || !isModelId(model)))
           return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
+        const customUrl =
+          provider === "custom" ? customTranscriptionsUrl((yield* settings.getSettings).cloudSpeechCustomBaseUrl) : null;
+        if (provider === "custom" && (!model || !customUrl))
+          return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         const samples = yield* Effect.try({
           try: () => decodeSpeechPcm(pcm),
           catch: () =>
@@ -208,11 +240,15 @@ export const layer = Layer.effect(
         );
         if (!isApiKey(key)) return yield* unreadable();
         const audio = wave(samples);
-        const request = HttpClientRequest.post(endpoints[provider].url).pipe(
+        const request = HttpClientRequest.post(
+          provider === "custom" ? customUrl! : endpoints[provider].url,
+        ).pipe(
           HttpClientRequest.bearerToken(Redacted.make(key)),
           provider === "openrouter"
             ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
+            : provider === "custom"
+              ? customBody(model!, audio, language)
+              : audioBody(provider, audio, language, options),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.

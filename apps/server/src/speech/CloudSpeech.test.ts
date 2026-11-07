@@ -49,7 +49,13 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
     expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
     yield* service.setKey(provider, Redacted.make("chosen"));
-    expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
+    expect(yield* service.configured).toEqual({
+      openai: true,
+      xai: true,
+      openrouter: false,
+      custom: false,
+      customEndpoint: "",
+    });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
     expect(yield* transcribe()).toBe("hello");
@@ -196,5 +202,79 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     const exit = yield* Fiber.await(job);
     expect(uploads).toEqual([]);
     expect(exit._tag).toBe("Failure");
+  }),
+);
+
+it.effect("sends to a configured custom OpenAI-compatible endpoint as multipart", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
+    const stack = (baseUrl: string | undefined) =>
+      CloudSpeech.layer.pipe(
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(
+          ServerSettings.ServerSettingsService.layerTest(
+            baseUrl === undefined ? {} : { cloudSpeechCustomBaseUrl: baseUrl },
+          ),
+        ),
+        Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+      );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(yield* Layer.build(stack("http://localhost:8080/v1"))),
+    );
+    // Builds a separate stack for a different endpoint configuration.
+    const attempt = (baseUrl: string | undefined, model: string | undefined) =>
+      Effect.gen(function* () {
+        const context = yield* Layer.build(stack(baseUrl));
+        const scoped = yield* CloudSpeech.CloudSpeech.pipe(Effect.provide(context));
+        yield* scoped.setKey("custom", Redacted.make("custom-key"));
+        return yield* scoped
+          .transcribe(
+            "custom",
+            new Uint8Array(new Float32Array([0, 0.5]).buffer),
+            { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "en" },
+            model,
+          )
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+      });
+    yield* service.setKey("custom", Redacted.make("custom-key"));
+    const pcm = new Uint8Array(new Float32Array([0, 0.5]).buffer);
+    const transcribe = (model: string | undefined) =>
+      service
+        .transcribe(
+          "custom",
+          pcm,
+          { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "en" },
+          model,
+        )
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+    expect(yield* Effect.flip(attempt(undefined, "whisper-1"))).toMatchObject({
+      provider: "custom",
+      reason: "model-unavailable",
+    });
+    expect(upstream).not.toHaveBeenCalled();
+    expect(yield* Effect.flip(transcribe(undefined))).toMatchObject({
+      reason: "model-unavailable",
+    });
+    expect(upstream).not.toHaveBeenCalled();
+    expect(yield* transcribe("whisper-1")).toBe("hello");
+    const [url, init] = upstream.mock.calls[0]!;
+    expect(String(url)).toBe("http://localhost:8080/v1/audio/transcriptions");
+    expect(init?.redirect).toBe("error");
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer custom-key");
+    const form = init?.body as FormData;
+    expect(form.get("model")).toBe("whisper-1");
+    expect(form.get("language")).toBe("en");
+    expect([...form.keys()].at(-1)).toBe("file");
+    expect(yield* Effect.flip(attempt("http://example.com/v1", "whisper-1"))).toMatchObject({
+      reason: "model-unavailable",
+    });
+    expect(yield* Effect.flip(attempt(undefined, "whisper-1"))).toMatchObject({
+      reason: "model-unavailable",
+    });
+    expect(upstream).toHaveBeenCalledTimes(1);
+    yield* service.setKey("custom", null);
+    expect((yield* service.configured).custom).toBe(false);
+    expect(yield* Effect.flip(transcribe("whisper-1"))).toMatchObject({ reason: "missing-key" });
+    expect(upstream).toHaveBeenCalledTimes(1);
   }),
 );

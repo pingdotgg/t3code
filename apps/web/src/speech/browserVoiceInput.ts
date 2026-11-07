@@ -12,7 +12,7 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { SpeechTranscriptionOptions, SpeechStreamText } from "@t3tools/contracts";
-import type { CloudSpeechModelId, CloudSpeechProvider } from "@t3tools/contracts";
+import type { CloudSpeechProvider, SpeechModelId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { createBrowserPcmCapture } from "./browserPcmCapture";
@@ -23,8 +23,8 @@ const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 export function createBrowserVoiceInputPlatform(input: {
   readonly prepared: PreparedConnection;
   readonly cloudProvider?: CloudSpeechProvider | undefined;
-  /** The exact OpenRouter model the grant names; required with that provider. */
-  readonly cloudModel?: CloudSpeechModelId | undefined;
+  /** The exact model the grant names; required for OpenRouter and custom endpoints. */
+  readonly cloudModel?: SpeechModelId | undefined;
   readonly hasAudioConsent: () => boolean;
   readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
   readonly getMicrophoneId: () => string;
