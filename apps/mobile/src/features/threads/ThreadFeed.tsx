@@ -267,7 +267,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useV2ItemSupport } from "../../state/v2-item-support";
+import { useV2ItemCapabilities } from "../../state/v2-item-support";
 import {
   fileRoutePathSegments,
   resolveFileLinkPath,
@@ -423,7 +423,7 @@ function AssistantForkButton(props: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly sourceTitle: string;
 }) {
-  const support = useV2ItemSupport({
+  const capabilities = useV2ItemCapabilities({
     environmentId: props.environmentId,
     sourceThreadId: props.projectedItem.sourceThreadId,
     sourceItemId: props.projectedItem.sourceItemId,
@@ -433,7 +433,7 @@ function AssistantForkButton(props: {
   const [busy, setBusy] = useState(false);
   const canFork = canForkProjectedAssistantItem({
     projectedItem: props.projectedItem,
-    capabilities: support.providerSession?.capabilities,
+    capabilities,
   });
   const runId = props.projectedItem.item.runId;
 

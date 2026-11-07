@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EMPTY_V2_ITEM_SUPPORT,
+  createV2ItemCapabilitiesAtom,
   resolveV2ItemSupport,
   v2ItemSupportEqual,
   type V2ItemSupport,
@@ -46,6 +47,31 @@ export function useV2ItemSupport(target: {
 }): V2ItemSupport {
   return useAtomValue(
     itemSupportAtomFamily(
+      supportKey({
+        environmentId: target.environmentId,
+        threadId: target.sourceThreadId,
+        itemId: target.sourceItemId,
+      }),
+    ),
+  );
+}
+
+const itemCapabilitiesAtomFamily = Atom.family((key: string) => {
+  const target = parseSupportKey(key);
+  return createV2ItemCapabilitiesAtom(
+    environmentThreadDetails,
+    scopeThreadRef(target.environmentId, target.threadId),
+    target.itemId,
+  ).pipe(Atom.withLabel(`mobile-v2-item-capabilities:${key}`));
+});
+
+export function useV2ItemCapabilities(target: {
+  readonly environmentId: EnvironmentId;
+  readonly sourceThreadId: ThreadId;
+  readonly sourceItemId: TurnItemId;
+}) {
+  return useAtomValue(
+    itemCapabilitiesAtomFamily(
       supportKey({
         environmentId: target.environmentId,
         threadId: target.sourceThreadId,
