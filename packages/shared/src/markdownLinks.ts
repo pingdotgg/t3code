@@ -315,8 +315,7 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
   const position = splitFilePathPosition(path, hash);
-  return !ELIDED_PATH_SEGMENT_PATTERN.test(position.path) &&
-    looksLikeFilePath(position.path, path)
+  return !ELIDED_PATH_SEGMENT_PATTERN.test(position.path) && looksLikeFilePath(position.path, path)
     ? position
     : null;
 }
@@ -436,9 +435,23 @@ export function isWindowsDrivePathHref(href: string): boolean {
 
 export function absoluteFilePathMatches(text: string): Array<{ index: number; path: string }> {
   const paths: Array<{ index: number; path: string }> = [];
-  for (const match of text.matchAll(/(^|[\s("'])(\/[^\s<>"'`]+)/g)) {
-    if (/(?:^|\/)(?:\.{3,}|…)(?:\/|[.,;!?:)]*$)/.test(match[2]!)) continue;
-    const path = match[2]!.replace(/[.,;!?:)]+$/, "");
+  for (const match of text.matchAll(/(^|[\s(["'])(\/[^\s<>"'`]+)/g)) {
+    if (/(?:^|\/)(?:\.{3,}|…)(?:\/|[.,;!?:)\]]*$)/.test(match[2]!)) continue;
+    let path = match[2]!;
+    let parentheses = 0;
+    let brackets = 0;
+    for (const character of path) {
+      if (character === "(") parentheses += 1;
+      if (character === ")") parentheses -= 1;
+      if (character === "[") brackets += 1;
+      if (character === "]") brackets -= 1;
+    }
+    while (path.length > 0) {
+      if (path.endsWith(")") && parentheses < 0) parentheses += 1;
+      else if (path.endsWith("]") && brackets < 0) brackets += 1;
+      else if (!/[.,;!?:]$/.test(path)) break;
+      path = path.slice(0, -1);
+    }
     if (!parseMarkdownFileLink(path)) continue;
     paths.push({ index: match.index + match[1]!.length, path });
   }

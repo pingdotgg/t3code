@@ -309,6 +309,15 @@ it.each([
   };
   expect(links(`Saved to ${path}.`)).toEqual([path]);
   expect(links("See /tmp/app/[id]/page.tsx.")).toEqual(["/tmp/app/[id]/page.tsx"]);
+  expect(links("See /tmp/report(1). and (/tmp/report(1)).")).toEqual([
+    "/tmp/report(1)",
+    "/tmp/report(1)",
+  ]);
+  expect(links("[/tmp/notes.md] and /tmp/[draft]/notes.md.")).toEqual([
+    "/tmp/notes.md",
+    "/tmp/[draft]/notes.md",
+  ]);
+  expect(links("[/tmp/claude-1000/...] and /tmp/claude-1000/…].")).toEqual([]);
   expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
   expect(links(`**${path}**`)).toEqual([path]);
   expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);

@@ -80,6 +80,14 @@ describe("inline code that names a file", () => {
     ).toContain("[/tmp/notes.md](</tmp/notes.md>)");
     const escaped = String.raw`See /tmp/a\_b.md.`;
     expect(rewrite(escaped)).toBe(escaped);
+    expect(rewrite(String.raw`See \* and /tmp/notes.md.`)).toBe(
+      String.raw`See \* and [/tmp/notes.md](</tmp/notes.md>).`,
+    );
+    expect(rewrite("See &copy; and /tmp/notes.md.")).toBe(
+      "See &copy; and [/tmp/notes.md](</tmp/notes.md>).",
+    );
+    const entityPath = "See /tmp/a&copy;.md.";
+    expect(rewrite(entityPath)).toBe(entityPath);
     expect(rewrite("See `/tmp/claude-1000/...`.")).toBe("See `/tmp/claude-1000/...`.");
     expect(rewrite("See `src/math.ts:2` and `./README.md`.")).toBe(
       "See [src/math.ts:2](<src/math.ts:2>) and [./README.md](<./README.md>).",

@@ -341,8 +341,9 @@ function transformNativeMarkdown(
     ) {
       const start = node.position.start.offset;
       const raw = markdown.slice(start, node.position.end.offset);
-      if (raw !== node.value) return;
       for (const { index, path } of absoluteFilePathMatches(raw)) {
+        // Source offsets stay valid for paths whose own text needs no Markdown decoding.
+        if (raw !== node.value && /[\\&]/.test(path)) continue;
         const escaped = path.replace(/[\\[\]&]/g, "\\$&");
         const edit = {
           start: start + index,
