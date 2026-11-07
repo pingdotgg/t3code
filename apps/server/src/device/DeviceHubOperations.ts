@@ -8,6 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Result from "effect/Result";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost.ts";
@@ -35,6 +36,22 @@ const HubDeviceList = Schema.Struct({
     Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
   ),
 });
+const SimctlDeviceList = Schema.fromJsonString(
+  Schema.Struct({
+    devices: Schema.Record(
+      Schema.String,
+      Schema.Array(
+        Schema.Struct({
+          udid: Schema.String,
+          name: Schema.String,
+          state: Schema.String,
+          isAvailable: Schema.Boolean,
+        }),
+      ),
+    ),
+  }),
+);
+const decodeSimctlDeviceList = Schema.decodeUnknownEffect(SimctlDeviceList);
 const HubActionResult = Schema.Struct({
   ok: Schema.Boolean,
   id: Schema.optional(Schema.String),
@@ -69,8 +86,12 @@ export const makeDeviceHubOperations = (options: {
   readonly origin: string;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
-  /** Android gates listing AVDs, which the hub does not report until they boot. */
-  readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
+  /** Discover both platforms once per refresh, including devices the hub has never seen boot. */
+  readonly availablePlatforms: Effect.Effect<{
+    readonly ios: boolean;
+    readonly android: boolean;
+    readonly probeFailed?: boolean;
+  }>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
@@ -126,22 +147,22 @@ export const makeDeviceHubOperations = (options: {
       ),
       Effect.timeoutOption(Duration.seconds(LIST_TIMEOUT_SECONDS)),
     );
+    const available = yield* options.availablePlatforms;
     if (Option.isNone(listed)) {
       return {
         devices: [],
         detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
-        incompletePlatforms: yield* Effect.filter(["ios", "android"] as const, (platform) =>
-          options.platformAvailable(platform),
+        incompletePlatforms: (["ios", "android"] as const).filter(
+          (platform) => available.probeFailed || available[platform],
         ),
       };
     }
     const hubList = listed.value;
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
-    const androidAvailable = yield* options.platformAvailable("android");
     const warnings = hubList.errors?.filter(
       (error) =>
         // The host summary already explains a missing Android SDK; the hub's failed probes are noise.
-        !(!androidAvailable && error.message.startsWith("[android-utils] ")) &&
+        !(!available.android && error.message.startsWith("[android-utils] ")) &&
         // CoreSimulator can retain deleted devices; their optional usage timestamps are absent.
         !(
           error.message.startsWith("[apple-utils] Failed to read CoreSimulator plist at ") &&
@@ -154,8 +175,44 @@ export const makeDeviceHubOperations = (options: {
         const head = errorHead(error.error ?? "");
         return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
       }) ?? [];
+    if (available.probeFailed) {
+      details.push(
+        "Could not determine host platform availability. Device discovery may be incomplete.",
+      );
+    }
+    let iosDiscoveryIncomplete = available.probeFailed ?? false;
+    if (available.ios) {
+      const inventory = yield* run("xcrun", ["simctl", "list", "devices", "--json"]);
+      const decoded = yield* decodeSimctlDeviceList(inventory.stdout).pipe(Effect.result);
+      if (inventory.code !== 0 || Result.isFailure(decoded)) {
+        iosDiscoveryIncomplete = true;
+        details.push(
+          "Could not list all iOS simulators (xcrun simctl list devices --json). Discovered devices remain available.",
+        );
+      } else {
+        for (const [runtime, simulators] of Object.entries(decoded.success.devices)) {
+          const prefix = "com.apple.CoreSimulator.SimRuntime.iOS-";
+          if (!runtime.startsWith(prefix)) continue;
+          for (const simulator of simulators) {
+            if (
+              !simulator.isAvailable ||
+              devices.some((device) => device.platform === "ios" && device.id === simulator.udid)
+            )
+              continue;
+            devices.push({
+              id: simulator.udid,
+              name: simulator.name,
+              version: `iOS ${runtime.slice(prefix.length).replaceAll("-", ".")}`,
+              platform: "ios",
+              booted: simulator.state === "Booted",
+              physical: false,
+            });
+          }
+        }
+      }
+    }
     let androidDiscoveryIncomplete = false;
-    if (androidAvailable) {
+    if (available.android) {
       const avds = yield* run("emulator", ["-list-avds"]);
       // Discovered devices stay listed; the AVDs that could not be listed are a warning.
       if (avds.code !== 0) {
@@ -181,8 +238,9 @@ export const makeDeviceHubOperations = (options: {
       }
     }
     const simulatorsUnlisted =
-      hubList.simulators.length === 0 &&
-      (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message));
+      !devices.some((device) => device.platform === "ios") &&
+      (iosDiscoveryIncomplete ||
+        (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message)));
     return {
       devices,
       detail: details.join("\n") || undefined,

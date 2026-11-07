@@ -28,6 +28,8 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     let forwards = 0;
     let failForward = true;
     let rejectConfig = true;
+    let iosAvailable = true;
+    let failProbe = false;
     const releases: Array<string | undefined> = [];
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
@@ -74,13 +76,20 @@ it.effect("preserves installed status after probes and cleans failed agent activ
           owners.push(/const owner = "([^"]+)"/.exec(script)?.[1] ?? "");
           output = JSON.stringify({
             nodePath: "/node",
-            platforms: [{ platform: "ios", available: true }],
+            platforms: [
+              { platform: "ios", available: iosAvailable },
+              { platform: "android", available: false },
+            ],
             hubPort: 1234,
             helpers: { serveSimAxSettings: null, serveSimCli: null },
             ...(mode === "agent-start"
               ? { daemonPort: 1235, token: "fixture", entryPath: "/agent.mjs" }
               : {}),
           });
+          if (mode === "probe" && failProbe) {
+            output = "probe failed";
+            exitCode = 1;
+          }
           if (mode === "") {
             output = `${"verbose-prefix ".repeat(400)}PANIC: emulator SDK is broken\n`;
             exitCode = 1;
@@ -122,6 +131,11 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         HttpClient.HttpClient,
         HttpClient.make((request) =>
           Effect.sync(() => {
+            if (request.url.endsWith("/api/devices"))
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({ simulators: [], emulators: [] }),
+              );
             if (!request.url.endsWith("/rpc"))
               return HttpClientResponse.fromWeb(request, new Response("ok"));
             releases.push(request.headers.authorization);
@@ -147,6 +161,21 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     const ready = yield* host.current;
     expect(ready).not.toBeNull();
     if (ready) {
+      iosAvailable = false;
+      for (let refresh = 0; refresh < 2; refresh++) {
+        const before = modes.length;
+        expect((yield* ready.devices.list).devices).toEqual([]);
+        // One fresh probe for both platforms, not the startup snapshot or two SSH sessions.
+        expect(modes.slice(before)).toEqual(["probe"]);
+      }
+      failProbe = true;
+      const incomplete = yield* ready.devices.list;
+      expect(incomplete.devices).toEqual([]);
+      expect(incomplete.detail).toBe(
+        "Could not determine host platform availability. Device discovery may be incomplete.",
+      );
+      failProbe = false;
+      expect((yield* ready.devices.list).detail).toBeUndefined();
       const failed = yield* ready.run("emulator", ["-list-avds"]);
       expect(failed.code).toBe(1);
       expect(failed.stdout).toMatch(/^\[truncated\]/);
@@ -202,11 +231,14 @@ it.effect("lists Android devices without probing the host again once it reports 
     const home = yield* fs.makeTempDirectoryScoped();
     const modes: string[] = [];
     let androidInstalled = false;
+    let iosInstalled = true;
+    let failProbe = false;
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
         const forwarding = command.args.includes("-L");
         let output = "";
+        let exitCode = 0;
         if (!forwarding) {
           const stdin = command.options.stdin;
           const script =
@@ -220,26 +252,36 @@ it.effect("lists Android devices without probing the host again once it reports 
                 )
               : "";
           const mode = /const mode = "([^"]+)"/.exec(script)?.[1] ?? "";
-          modes.push(mode);
+          const listingIos =
+            mode === "" && command.args.some((arg) => String(arg).includes("xcrun"));
+          modes.push(listingIos ? "simctl" : mode);
           output =
             mode === ""
-              ? "Pixel_8\n"
+              ? listingIos
+                ? JSON.stringify({ devices: {} })
+                : "Pixel_8\n"
               : JSON.stringify({
                   nodePath: "/node",
                   platforms: [
-                    { platform: "ios", available: true },
+                    { platform: "ios", available: iosInstalled },
                     { platform: "android", available: androidInstalled },
                   ],
                   hubPort: 1234,
                   helpers: { serveSimAxSettings: null, serveSimCli: null },
                 });
+          if (mode === "probe" && failProbe) {
+            output = "probe unavailable";
+            exitCode = 1;
+          }
         }
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(123),
           stdout: Stream.make(new TextEncoder().encode(output)),
           stderr: Stream.empty,
           all: Stream.empty,
-          exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: forwarding
+            ? Effect.never
+            : Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
           isRunning: Effect.succeed(forwarding),
           kill: () => Effect.void,
           stdin: Sink.drain,
@@ -283,30 +325,43 @@ it.effect("lists Android devices without probing the host again once it reports 
     modes.splice(0);
 
     expect(yield* androidNames).toEqual([]);
-    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(modes.splice(0)).toEqual(["probe", "simctl"]);
     expect(yield* androidNames).toEqual([]);
-    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(modes.splice(0)).toEqual(["probe", "simctl"]);
 
     // The SDK appears after connecting, so the next listing still probes the host.
     androidInstalled = true;
     expect(yield* androidNames).toEqual(["Pixel_8"]);
-    expect(modes.splice(0)).toEqual(["probe", ""]);
+    expect(modes.splice(0)).toEqual(["probe", "simctl", ""]);
 
-    // Android is now known to be available, so listing only runs `emulator -list-avds`.
+    // Both platforms are known, so refresh only enumerates devices without another host probe.
     expect(yield* androidNames).toEqual(["Pixel_8"]);
-    expect(modes.splice(0)).toEqual([""]);
+    expect(modes.splice(0)).toEqual(["simctl", ""]);
 
     androidInstalled = false;
     expect((yield* host.platformAvailability("android")).available).toBe(false);
     expect(modes.splice(0)).toEqual(["probe"]);
     expect(yield* androidNames).toEqual([]);
-    expect(modes.splice(0)).toEqual(["probe"]);
+    expect(modes.splice(0)).toEqual(["probe", "simctl"]);
 
     androidInstalled = true;
     yield* host.inspect;
     expect(modes.splice(0)).toEqual(["probe"]);
     expect(yield* androidNames).toEqual(["Pixel_8"]);
-    expect(modes.splice(0)).toEqual([""]);
+    expect(modes.splice(0)).toEqual(["simctl", ""]);
+    // An Android-only host still needs probes for iOS; a failed probe must keep its known SDK.
+    iosInstalled = false;
+    yield* host.inspect;
+    expect(modes.splice(0)).toEqual(["probe"]);
+    failProbe = true;
+    const incomplete = yield* ready.devices.list;
+    expect(incomplete.devices.map((device) => device.name)).toEqual(["Pixel_8"]);
+    expect(incomplete.detail).toContain("Could not determine host platform availability.");
+    // Two Windows-host diagnostics precede AVD enumeration after the nonzero probe exit.
+    expect(modes.splice(0)).toEqual(["probe", "", "", ""]);
+    failProbe = false;
+    expect((yield* ready.devices.list).detail).toBeUndefined();
+    expect(modes.splice(0)).toEqual(["probe", ""]);
     yield* host.stop;
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
