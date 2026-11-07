@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useLayoutEffect, useState, type CSSProperties } from "react";
 
 import { Kbd } from "../components/ui/kbd";
+import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { trackBrowserSurfaceSlot } from "../browser/browserSurfaceTracking";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "../lib/utils";
@@ -109,32 +110,37 @@ function useHintPlacement() {
  */
 export function LayoutStripHint() {
   const hint = useLayoutStore((state) => state.hint);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
 
   // Any workspace switch (keys, sidebar, overview, wheel) names the workspace
   // it landed on for a second (pen qnrAZ), unless a move hint already says so.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to imperative workspace changes that should display a navigation hint.
   useEffect(
     () =>
-      useLayoutStore.subscribe((state, previous) => {
-        if (state.layout.focusedWorkspaceId === previous.layout.focusedWorkspaceId) return;
-        if (state.overviewOpen) return;
-        if (state.hint?.kind === "workspace" && state.hint.id !== previous.hint?.id) return;
-        const workspaces = countedLayoutWorkspaces(state.layout);
-        const workspace = selectFocusedWorkspace(state.layout);
-        // One workspace has nothing to tell apart.
-        if (workspaces.length < 2) return;
-        state.showHint({
-          kind: "workspace-name",
-          workspaceId: workspace.id,
-          index: workspaces.indexOf(workspace),
-          count: workspaces.length,
-        });
-      }),
-    [],
+      !scrollingWorkspaces
+        ? undefined
+        : useLayoutStore.subscribe((state, previous) => {
+            if (state.layout.focusedWorkspaceId === previous.layout.focusedWorkspaceId) return;
+            if (state.overviewOpen) return;
+            if (state.hint?.kind === "workspace" && state.hint.id !== previous.hint?.id) return;
+            const workspaces = countedLayoutWorkspaces(state.layout);
+            const workspace = selectFocusedWorkspace(state.layout);
+            // One workspace has nothing to tell apart.
+            if (workspaces.length < 2) return;
+            state.showHint({
+              kind: "workspace-name",
+              workspaceId: workspace.id,
+              index: workspaces.indexOf(workspace),
+              count: workspaces.length,
+            });
+          }),
+    [scrollingWorkspaces],
   );
 
   if (!hint) return null;
   if (hint.kind === "terminal") return <TerminalHintPill key={hint.id} hint={hint} />;
+  // Column and workspace hints coach the scrolling strip.
+  if (!scrollingWorkspaces) return null;
   if (hint.kind === "column") return <ColumnHintPill key={hint.id} hint={hint} />;
   return <WorkspaceHintPill key={hint.id} hint={hint} />;
 }
