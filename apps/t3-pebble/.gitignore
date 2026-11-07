@@ -1,8 +1,6 @@
 .mcp-token
-build/
-src/pkjs/config.json
 .pebble-token
-.tls/
-.lock-waf_*
-package.json
 .eleven-key
+.tls/
+build/
+.lock-waf_*

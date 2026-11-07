@@ -1,11 +1,14 @@
 {
   "name": "t3-pebble",
-  "author": "T3 Code",
   "version": "1.0.0",
+  "private": true,
   "keywords": [
     "pebble-app"
   ],
-  "private": true,
+  "author": "T3 Code",
+  "scripts": {
+    "generate:icons": "NODE_PATH=../scripts/node_modules bun scripts/generate-provider-icons.ts"
+  },
   "dependencies": {},
   "pebble": {
     "displayName": "T3 Code",
@@ -114,7 +117,10 @@
         }
       ]
     },
-    "usesPermissions": [],
+    "usesPermissions": [
+      "LocalNetwork",
+      "Internet"
+    ],
     "capabilities": [
       "configurable"
     ]
