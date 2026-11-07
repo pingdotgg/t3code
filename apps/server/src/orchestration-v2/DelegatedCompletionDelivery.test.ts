@@ -3418,7 +3418,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       }),
   );
 
-  it.effect("wakes the parent for a settled_only task once its spawning turn ended", () =>
+  it.effect("wakes an idle parent after an unobserved settled_only result", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -3449,14 +3449,6 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
             userMessageId: MessageId.make(`message:seed-user:${threadId}`),
             delegatedCompletion: { disposition: "open", nextGeneration: 2, delivery: null },
           }),
-          runEvent({
-            threadId,
-            runId: RunId.make("run:settled-only-restart:continuation"),
-            ordinal: 2,
-            status: "running",
-            now,
-            providerThreadId: parentProviderThreadId(threadId),
-          }),
         ],
       });
       const child = yield* seedRestartCancelledChild({
@@ -3470,6 +3462,13 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         now,
       });
 
+      yield* orchestrator.dispatch({
+        type: "delegated_task.completion-delivery.acknowledge",
+        commandId: CommandId.make("command:settled-only-late-read"),
+        parentThreadId: threadId,
+        taskId: child.taskId,
+        observedByRunId: null,
+      });
       yield* orchestrator.recoverDelegatedTasks;
 
       const projection = yield* orchestrator.getThreadProjection(threadId);
