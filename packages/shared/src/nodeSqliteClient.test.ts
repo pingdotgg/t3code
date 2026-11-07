@@ -3,12 +3,17 @@ import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Logger from "effect/Logger";
+import * as Metric from "effect/Metric";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Stream from "effect/Stream";
 import type * as Tracer from "effect/Tracer";
@@ -17,6 +22,7 @@ import { vi } from "vite-plus/test";
 import * as SqliteClient from "./nodeSqliteClient.ts";
 
 const startedWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
+const workerExits = vi.hoisted(() => new WeakMap<NodeWorkerThreads.Worker, Promise<void>>());
 const silentWorkers = vi.hoisted(() => ({ on: false, readyOnTerminate: false }));
 const failingWorkers = vi.hoisted(() => ({ message: undefined as string | undefined }));
 
@@ -32,6 +38,7 @@ vi.mock("node:worker_threads", async (importOriginal) => {
             : args) as ConstructorParameters<typeof actual.Worker>),
       );
       startedWorkers.push(this);
+      workerExits.set(this, new Promise((resolve) => this.once("exit", () => resolve())));
     }
     override terminate() {
       // A "ready" already queued when termination starts reaches the parent before "exit".
@@ -406,6 +413,209 @@ it.effect("uses the writer when the reader cannot open the database", () =>
       assert.equal(startedWorkers.length, startedBefore + 1);
     }),
   ),
+);
+
+const withLogLines = <A, E, R>(
+  use: (lines: Queue.Queue<ReadonlyArray<unknown>>) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const lines = yield* Queue.unbounded<ReadonlyArray<unknown>>();
+    const logger = Logger.make(({ logLevel, message }) => {
+      Queue.offerUnsafe(lines, [logLevel, ...(message as ReadonlyArray<unknown>)]);
+    });
+    return yield* use(lines).pipe(
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+    );
+  });
+
+const readConnection = (sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    const spans: Array<Tracer.Span> = [];
+    const observe: Statement.Transformer = (statement, _sql, _fiber, span) =>
+      Effect.sync(() => {
+        spans.push(span);
+        return statement;
+      });
+    const count = yield* countEntries(sql).pipe(
+      SqliteClient.readOnly,
+      Effect.provideService(Statement.CurrentTransformer, observe),
+      Effect.provideService(Statement.SpanPropagationEnabled, true),
+    );
+    return { count, connection: spans.map((span) => span.attributes.get("db.connection")) };
+  });
+
+const withWorkers = <A, E, R>(
+  mode: { readonly failWith?: string; readonly silent?: boolean },
+  effect: Effect.Effect<A, E, R>,
+) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      failingWorkers.message = mode.failWith;
+      silentWorkers.on = mode.silent ?? false;
+    }),
+    () => effect,
+    () =>
+      Effect.sync(() => {
+        failingWorkers.message = undefined;
+        silentWorkers.on = false;
+      }),
+  );
+
+const unavailableWarning = "SQLite reader worker unavailable; reads use the main connection";
+
+const notWal = "database uses journal_mode delete, not wal";
+
+const readerPoolAvailable = Effect.map(Metric.snapshot, (snapshots) =>
+  snapshots.flatMap((snapshot) =>
+    snapshot.id === "t3_sqlite_reader_pool_available" && snapshot.type === "Gauge"
+      ? [snapshot.state.value]
+      : [],
+  ),
+);
+
+it.effect.each([
+  {
+    failure: "a crash",
+    workers: { failWith: "reader start failed" },
+    startup: Duration.zero,
+    reason: "Database reader failed: reader start failed",
+  },
+  {
+    failure: "a startup timeout",
+    workers: { silent: true },
+    startup: Duration.seconds(10),
+    reason: "worker did not open the database within 10000 ms",
+  },
+])(
+  "reads on the writer after $failure until a retry starts the reader again",
+  ({ workers, startup, reason }) =>
+    withLogLines((lines) =>
+      withReaderClient((sql) =>
+        Effect.gen(function* () {
+          // The failed read's own metric attributes must not label the pool's gauge.
+          const failed = yield* withWorkers(
+            workers,
+            Effect.gen(function* () {
+              const read = yield* Effect.forkChild(readConnection(sql), {
+                startImmediately: true,
+              });
+              yield* TestClock.adjust(startup);
+              return yield* Fiber.join(read);
+            }).pipe(Effect.provideService(Metric.CurrentMetricAttributes, { read: "failed" })),
+          );
+          assert.deepEqual(failed, { count: 1, connection: ["writer"] });
+          const startedBefore = startedWorkers.length;
+          assert.deepEqual(yield* readConnection(sql), { count: 1, connection: ["writer"] });
+          assert.equal(startedWorkers.length, startedBefore);
+          assert.deepEqual(yield* Queue.take(lines), ["Warn", unavailableWarning, { reason }]);
+          assert.deepEqual(yield* readerPoolAvailable, [0]);
+
+          yield* TestClock.adjust("1 second");
+          assert.equal(startedWorkers.length, startedBefore + 1);
+          assert.deepEqual(yield* Queue.take(lines), [
+            "Info",
+            "SQLite reader worker available again; reads use the reader workers",
+          ]);
+          assert.deepEqual(yield* readerPoolAvailable, [1]);
+          assert.deepEqual(yield* readConnection(sql), { count: 1, connection: ["reader"] });
+          assert.equal(Queue.sizeUnsafe(lines), 0);
+        }),
+      ),
+    ).pipe(Effect.provideService(Metric.MetricRegistry, new Map())),
+);
+
+it.effect("backs off a reader that never starts without logging each retry", () =>
+  withLogLines((lines) =>
+    withReaderClient((sql) =>
+      withWorkers(
+        { silent: true },
+        Effect.gen(function* () {
+          const read = yield* Effect.forkChild(readConnection(sql), { startImmediately: true });
+          yield* TestClock.adjust("10 seconds");
+          assert.deepEqual(yield* Fiber.join(read), { count: 1, connection: ["writer"] });
+
+          const startedBefore = startedWorkers.length;
+          // Each retry waits 10 s for startup; the gaps between them double from 1 s up to a minute.
+          yield* TestClock.adjust("10 minutes");
+          assert.equal(startedWorkers.length - startedBefore, 12);
+          assert.equal(Queue.sizeUnsafe(lines), 1);
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect.each([
+  { phase: "the retry waits", beforeClose: Duration.zero, retries: 0 },
+  { phase: "a retried reader starts", beforeClose: Duration.seconds(1), retries: 1 },
+])("stops retrying the reader when the client closes while $phase", ({ beforeClose, retries }) =>
+  withWorkers(
+    { silent: true },
+    Effect.gen(function* () {
+      const startedAtClose = yield* withReaderClient((sql) =>
+        Effect.gen(function* () {
+          const read = yield* Effect.forkChild(readConnection(sql), { startImmediately: true });
+          yield* TestClock.adjust("10 seconds");
+          assert.deepEqual(yield* Fiber.join(read), { count: 1, connection: ["writer"] });
+
+          const startedBefore = startedWorkers.length;
+          yield* TestClock.adjust(beforeClose);
+          assert.equal(startedWorkers.length - startedBefore, retries);
+          return startedWorkers.length;
+        }),
+      );
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(startedWorkers.length, startedAtClose);
+    }),
+  ),
+);
+
+it.effect.each([
+  {
+    when: "the database is not in WAL mode",
+    journalMode: "DELETE",
+    workers: {},
+    starts: 1,
+    logged: [["Warn", unavailableWarning, { reason: notWal }]],
+  },
+  {
+    when: "a retry finds the database out of WAL mode",
+    journalMode: "WAL",
+    workers: { failWith: "reader start failed" },
+    starts: 2,
+    logged: [
+      ["Warn", unavailableWarning, { reason: "Database reader failed: reader start failed" }],
+      [
+        "Info",
+        "SQLite reader worker retries stopped permanently; reads use the main connection",
+        { reason: notWal },
+      ],
+    ],
+  },
+])(
+  "keeps readers off without further retries when $when",
+  ({ journalMode, workers, starts, logged }) =>
+    withLogLines((lines) =>
+      withFileClient((sql) =>
+        Effect.gen(function* () {
+          yield* sql.unsafe(`PRAGMA journal_mode = ${journalMode}`);
+          yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
+          yield* sql`INSERT INTO entries VALUES ('kept')`;
+          const startedBefore = startedWorkers.length;
+
+          const failed = yield* withWorkers(workers, readConnection(sql));
+          assert.deepEqual(failed, { count: 1, connection: ["writer"] });
+          yield* sql`PRAGMA journal_mode = DELETE`;
+          yield* TestClock.adjust("1 second");
+          yield* Effect.promise(() => workerExits.get(startedWorkers.at(-1)!)!);
+          yield* TestClock.adjust("1 hour");
+          assert.deepEqual(yield* readConnection(sql), { count: 1, connection: ["writer"] });
+          assert.equal(startedWorkers.length, startedBefore + starts);
+          assert.deepEqual(yield* Queue.clear(lines), logged);
+          assert.deepEqual(yield* readerPoolAvailable, [0]);
+        }),
+      ),
+    ).pipe(Effect.provideService(Metric.MetricRegistry, new Map())),
 );
 
 it.effect("finishes masked database cleanup after its caller is interrupted", () =>

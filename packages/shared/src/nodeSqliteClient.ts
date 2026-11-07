@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as References from "effect/References";
@@ -198,6 +199,7 @@ const readerWorkerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
 let db;
+let permanent = false;
 try {
   // A read-only open cannot be undone by SQL, unlike PRAGMA query_only.
   const next = new DatabaseSync(workerData.filename, {
@@ -207,11 +209,12 @@ try {
   next.exec("PRAGMA busy_timeout = 5000;");
   // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
   const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
-  if (mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
+  permanent = mode !== "wal";
+  if (permanent) throw new Error("database uses journal_mode " + mode + ", not wal");
   db = next;
   parentPort.postMessage({ type: "ready" });
 } catch (error) {
-  parentPort.postMessage({ type: "unavailable", message: String(error && error.message ? error.message : error) });
+  parentPort.postMessage({ type: "unavailable", message: String(error && error.message ? error.message : error), permanent });
 }
 const statements = new Map();
 const prepare = (sql, cached) => {
@@ -266,7 +269,7 @@ interface ReaderRequest {
 
 type ReaderStartup =
   | { readonly type: "ready" }
-  | { readonly type: "unavailable"; readonly message: string };
+  | { readonly type: "unavailable"; readonly message: string; readonly permanent?: boolean };
 
 type ReaderReply =
   | { readonly id: number; readonly rows: ReadonlyArray<any> }
@@ -295,19 +298,29 @@ const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test
 
 // WAL readers run concurrently; one worker serialized every read behind the slowest transaction.
 const READER_POOL_SIZE = 4;
+const READER_RETRY_DELAY = Duration.seconds(1);
+const READER_RETRY_MAX_DELAY = Duration.minutes(1);
+
+const readerPoolAvailable = Metric.gauge("t3_sqlite_reader_pool_available", {
+  description: "1 while SQLite reads can use reader workers, 0 while they use the main connection.",
+});
 
 // Bind transactions to one worker; fail after its exit instead of resuming outside the transaction on a replacement.
 const makeReader = Effect.fnUntraced(function* (
   options: SqliteClientConfig,
   pool: { unavailable: boolean },
 ) {
-  let current:
-    | {
-        readonly worker: NodeWorkerThreads.Worker;
-        readonly connection: Connection;
-        readonly started: Promise<ReaderStartup>;
-      }
-    | undefined;
+  type Reader = {
+    readonly worker: NodeWorkerThreads.Worker;
+    readonly connection: Connection;
+    readonly started: Promise<ReaderStartup>;
+  };
+  type StartFailure = {
+    readonly reader?: Reader;
+    readonly reason: string;
+    readonly retry: boolean;
+  };
+  let current: Reader | undefined;
   let nextRequestId = 0;
 
   const start = () => {
@@ -323,6 +336,7 @@ const makeReader = Effect.fnUntraced(function* (
     const started = new Promise<ReaderStartup>((resolve) => {
       announce = resolve;
     });
+    let ready = false;
     let stoppedMessage: string | undefined;
     const pending = new Map<
       number,
@@ -331,7 +345,8 @@ const makeReader = Effect.fnUntraced(function* (
     const stop = (message: string) => {
       stoppedMessage = message;
       announce({ type: "unavailable", message });
-      if (current?.worker === worker) current = undefined;
+      // A worker that stops while starting stays in place until whoever awaits its startup retires it.
+      if (ready && current?.worker === worker) current = undefined;
       for (const [id, request] of pending) {
         request.resume(
           request.endsTransaction
@@ -343,6 +358,7 @@ const makeReader = Effect.fnUntraced(function* (
     };
     worker.on("message", (reply: ReaderReply | ReaderStartup) => {
       if ("type" in reply) {
+        ready = reply.type === "ready";
         announce(reply);
         if (pending.size === 0) worker.unref();
         return;
@@ -435,51 +451,107 @@ const makeReader = Effect.fnUntraced(function* (
     }),
   );
 
+  const scope = yield* Effect.scope;
+  const context = yield* Effect.context<never>();
   const startupTimeout = Duration.seconds(10);
 
-  const turnOff = (reader: typeof current, reason: string) =>
+  const open = Effect.suspend((): Effect.Effect<Reader, StartFailure> => {
+    let reader: Reader;
+    try {
+      reader = current ?? start();
+    } catch (cause) {
+      return Effect.fail({ reason: String(cause), retry: true });
+    }
+    return Effect.flatMap(
+      Effect.timeoutOption(
+        Effect.promise(() => reader.started),
+        startupTimeout,
+      ),
+      (startup) =>
+        Option.isNone(startup)
+          ? Effect.fail({
+              reader,
+              reason: `worker did not open the database within ${Duration.toMillis(startupTimeout)} ms`,
+              retry: true,
+            })
+          : startup.value.type === "ready"
+            ? Effect.succeed(reader)
+            : Effect.fail({
+                reader,
+                reason: startup.value.message,
+                retry: startup.value.permanent !== true,
+              }),
+    );
+  });
+
+  // Only the slot's current reader may change the pool; a reader retired earlier was already reported.
+  const retire = (reader: Reader | undefined) => {
+    if (reader === undefined) return true;
+    void reader.worker.terminate();
+    if (current !== reader) return false;
+    current = undefined;
+    return true;
+  };
+
+  const recover = (delay: Duration.Duration): Effect.Effect<void> =>
+    Effect.sleep(delay).pipe(
+      Effect.andThen(open),
+      Effect.matchEffect({
+        onSuccess: () =>
+          Effect.suspend(() => {
+            pool.unavailable = false;
+            return Metric.update(readerPoolAvailable, 1).pipe(
+              Effect.andThen(
+                Effect.logInfo(
+                  "SQLite reader worker available again; reads use the reader workers",
+                ),
+              ),
+            );
+          }),
+        onFailure: (failure) =>
+          failure.retry
+            ? Effect.andThen(
+                Effect.sync(() => retire(failure.reader)),
+                recover(Duration.min(Duration.times(delay, 2), READER_RETRY_MAX_DELAY)),
+              )
+            : Effect.andThen(
+                Effect.logInfo(
+                  "SQLite reader worker retries stopped permanently; reads use the main connection",
+                  { reason: failure.reason },
+                ),
+                Effect.sync(() => retire(failure.reader)),
+              ),
+      }),
+    );
+
+  const turnOff = (failure: StartFailure) =>
     Effect.suspend(() => {
-      if (reader !== undefined) {
-        if (current === reader) current = undefined;
-        void reader.worker.terminate();
-      }
-      if (pool.unavailable) return Effect.undefined;
+      if (!retire(failure.reader) || pool.unavailable) return Effect.undefined;
       pool.unavailable = true;
+      // Pool state belongs to the client: never log, meter or retry with the failed read's services.
       return Effect.logWarning("SQLite reader worker unavailable; reads use the main connection", {
-        reason,
-      }).pipe(Effect.as(undefined));
+        reason: failure.reason,
+      }).pipe(
+        Effect.andThen(Metric.update(readerPoolAvailable, 0)),
+        Effect.andThen(
+          failure.retry ? Effect.forkIn(recover(READER_RETRY_DELAY), scope) : Effect.void,
+        ),
+        Effect.updateContext((_: Context.Context<never>) => context),
+        Effect.as(undefined),
+      );
     });
 
   return Effect.suspend((): Effect.Effect<Connection | undefined> => {
     if (pool.unavailable) return Effect.undefined;
-    let reader: NonNullable<typeof current>;
-    try {
-      reader = current ?? start();
-    } catch (cause) {
-      return turnOff(undefined, String(cause));
-    }
-    return Effect.flatMap(
-      Effect.withFiber((fiber) => {
-        const restore = Context.get(fiber.context, ReadOnly) ?? identity;
-        return restore(
-          Effect.timeoutOption(
-            Effect.promise(() => reader.started),
-            startupTimeout,
-          ),
-        );
+    return Effect.withFiber((fiber) =>
+      (Context.get(fiber.context, ReadOnly) ?? identity)(open),
+    ).pipe(
+      Effect.matchEffect({
+        onFailure: turnOff,
+        onSuccess: (reader) =>
+          // A late ready event must not hand out a worker retired by another acquire timeout.
+          Effect.succeed(pool.unavailable || current !== reader ? undefined : reader.connection),
       }),
-      (startup): Effect.Effect<Connection | undefined> =>
-        // A late ready event must not hand out a worker retired by another acquire timeout.
-        pool.unavailable || current !== reader
-          ? Effect.undefined
-          : Option.isSome(startup) && startup.value.type === "ready"
-            ? Effect.succeed(reader.connection)
-            : turnOff(
-                reader,
-                Option.isSome(startup) && startup.value.type === "unavailable"
-                  ? startup.value.message
-                  : `worker did not open the database within ${Duration.toMillis(startupTimeout)} ms`,
-              ),
     );
   });
 });
@@ -1077,7 +1149,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
 
   const semaphore = yield* Semaphore.make(1);
   const connection = yield* makeConnection;
-  // A reader that cannot start turns off the whole pool, so routing never picks a dead slot.
+  // A reader that cannot start turns off the whole pool until a retry starts it, so routing never picks a dead slot.
   const readerPool = { unavailable: false };
   const readers =
     options.readerWorker && isFileDatabase
@@ -1092,6 +1164,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
           ),
         )
       : [];
+  if (readers.length > 0) yield* Metric.update(readerPoolAvailable, 1);
 
   const writer = { name: "writer" as const, lock: semaphore, connection };
   let activeWriter: ConnectionOwner | undefined;
