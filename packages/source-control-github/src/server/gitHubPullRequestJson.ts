@@ -212,6 +212,7 @@ const RawWorkflowRunsSchema = Schema.Struct({
   workflow_runs: Schema.Array(
     Schema.Struct({
       id: Schema.Int,
+      pull_requests: Schema.optional(Schema.Array(Schema.Struct({ number: Schema.Int }))),
       name: Schema.optional(Schema.NullOr(Schema.String)),
       html_url: Schema.optional(Schema.NullOr(Schema.String)),
     }),
@@ -366,6 +367,7 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
 }
 
 export interface GitHubWorkflowRunApproval {
+  readonly pullRequestNumbers: ReadonlyArray<number>;
   readonly id: number;
   readonly name: string;
   readonly url: string | null;
@@ -1099,6 +1101,7 @@ export function decodeWorkflowRunsJson(
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   return Result.succeed({
     runs: decoded.success.workflow_runs.map((run) => ({
+      pullRequestNumbers: run.pull_requests?.map((pr) => pr.number) ?? [],
       id: run.id,
       name: trimmed(run.name) ?? `Workflow run ${run.id}`,
       url: trimmed(run.html_url),
