@@ -9,6 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
@@ -20,6 +21,7 @@ import {
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
+  launchModelSelection,
   readLatestMessages,
   threadCommand,
   type ThreadTools,
@@ -198,6 +200,61 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
       runId,
       status: "completed",
     });
+  }),
+);
+
+const runCli = (args: ReadonlyArray<string>) =>
+  Command.runWith(threadCommand, { version: "0.0.0" })(args).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+    ),
+  );
+
+it.effect("start sends each --option as a typed model option", () =>
+  Effect.gen(function* () {
+    const selection = yield* launchModelSelection({
+      provider: Option.some("codex"),
+      model: Option.some("gpt-6.1-sol"),
+      option: ["reasoningEffort=high", " fastMode = false ", "note=a=b"],
+    });
+
+    assert.deepStrictEqual(selection, {
+      instanceId: "codex",
+      model: "gpt-6.1-sol",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: false },
+        { id: "note", value: "a=b" },
+      ],
+    });
+  }),
+);
+
+it.effect("start rejects a repeated --option before reaching the server", () =>
+  Effect.gen(function* () {
+    const error = yield* runCli([
+      "start",
+      ".",
+      "hi",
+      "--provider",
+      "codex",
+      "--model",
+      "gpt-6.1-sol",
+      "--option",
+      "reasoningEffort=high",
+      "--option",
+      "reasoningEffort=low",
+    ]).pipe(Effect.flip);
+
+    assert.strictEqual(error.message, "--option reasoningEffort is given more than once.");
+  }),
+);
+
+it.effect("start rejects --option without an explicit model", () =>
+  Effect.gen(function* () {
+    const error = yield* runCli(["start", ".", "hi", "--option", "effort=high"]).pipe(Effect.flip);
+
+    assert.strictEqual(error.message, "--option needs --provider and --model.");
   }),
 );
 
