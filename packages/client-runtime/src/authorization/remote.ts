@@ -196,7 +196,7 @@ const webSocketTicketPath = (use: AuthWebSocketTicketUse | undefined) =>
  * Its tickets are the unbound kind it always issued, so the bare path is the
  * right request there, not an error.
  */
-const issueWebSocketTicketWithFallback = <E, R>(
+export const issueWebSocketTicketWithFallback = <E, R>(
   use: AuthWebSocketTicketUse | undefined,
   issue: (
     use: AuthWebSocketTicketUse | undefined,

@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import type { HttpClient } from "effect/http";
 
+import { issueWebSocketTicketWithFallback } from "../authorization/remote.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -34,17 +35,23 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
     const remoteAuthorization = yield* Effect.serviceOption(
       RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
     );
-    const ticket = yield* executeAuthenticatedEnvironmentHttpRequest({
-      prepared: input.prepared,
-      signer,
-      remoteAuthorization,
-      group: "auth",
-      method: "POST",
-      url: (urls) => urls.webSocketTicketFor({ params: { use: "media" } }),
-      timeoutMs: TICKET_TIMEOUT_MS,
-      request: ({ client, headers }) =>
-        client.webSocketTicketFor({ headers, params: { use: "media" } }),
-    });
+    // Each attempt signs its own URL, so the bare-path fallback carries a matching DPoP proof.
+    const ticket = yield* issueWebSocketTicketWithFallback("media", (use) =>
+      executeAuthenticatedEnvironmentHttpRequest({
+        prepared: input.prepared,
+        signer,
+        remoteAuthorization,
+        group: "auth",
+        method: "POST",
+        url: (urls) =>
+          use === undefined ? urls.webSocketTicket() : urls.webSocketTicketFor({ params: { use } }),
+        timeoutMs: TICKET_TIMEOUT_MS,
+        request: ({ client, headers }) =>
+          use === undefined
+            ? client.webSocketTicket({ headers })
+            : client.webSocketTicketFor({ headers, params: { use } }),
+      }),
+    );
     return {
       httpBase,
       wsBase,
