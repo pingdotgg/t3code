@@ -2,7 +2,6 @@ import * as FileSystem from "effect/FileSystem";
 
 import type { AgentOptions, RunResult } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { type ProviderSetupError, TextGenerationError } from "@t3tools/contracts";
@@ -176,37 +175,39 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }))
             : Effect.void,
         );
-        return yield* Effect.tryPromise({
+        const promptResult = yield* Effect.tryPromise({
           try: () => run.wait(),
           catch: sdkFailure("Cursor SDK run failed."),
         });
-      }).pipe(Effect.scoped);
-      const promptResult = yield* request.pipe(
-        Effect.timeoutOption(CURSOR_TIMEOUT_MS),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
-                new TextGenerationError({
-                  operation,
-                  detail: "Cursor SDK request timed out.",
-                }),
-              ),
-            onSome: (value) => Effect.succeed(value),
-          }),
-        ),
+        const rawResult = promptResult.result?.trim() ?? "";
+        if (promptResult.status !== "finished" || !rawResult) {
+          return yield* new TextGenerationError({
+            operation,
+            detail: cursorSdkResultDetail(promptResult),
+            ...(promptResult.error ? { cause: promptResult.error } : {}),
+          });
+        }
+
+        return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
+      }).pipe(
+        Effect.scoped,
+        Effect.retry({
+          times: 1,
+          while: (cause) => isTextGenerationError(cause) && Schema.isSchemaError(cause.cause),
+        }),
       );
-
-      const rawResult = promptResult.result?.trim() ?? "";
-      if (promptResult.status !== "finished" || !rawResult) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: cursorSdkResultDetail(promptResult),
-          ...(promptResult.error ? { cause: promptResult.error } : {}),
-        });
-      }
-
-      return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
+      return yield* request.pipe(
+        Effect.timeoutOrElse({
+          duration: CURSOR_TIMEOUT_MS,
+          orElse: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Cursor SDK request timed out.",
+              }),
+            ),
+        }),
+      );
     },
     (effect, input) => {
       const { operation } = input;
