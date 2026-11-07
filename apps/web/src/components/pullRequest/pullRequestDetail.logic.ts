@@ -46,6 +46,7 @@ export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, st
   merge: "Merge",
   squash: "Squash and merge",
   rebase: "Rebase and merge",
+  "fast-forward": "Fast-forward merge",
 };
 
 export function allowsSinglePullRequestMerge(input: {

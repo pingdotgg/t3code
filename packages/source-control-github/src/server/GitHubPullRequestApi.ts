@@ -887,11 +887,10 @@ const decodeMergeBase = Schema.decodeUnknownOption(
   ),
 );
 
-const GRAPHQL_MERGE_METHODS = {
-  merge: "MERGE",
-  squash: "SQUASH",
-  rebase: "REBASE",
-} as const satisfies Record<PullRequestMergeMethod, string>;
+// GitHub has no fast-forward-only merge; the service refuses methods a host does not advertise.
+const GRAPHQL_MERGE_METHODS: Partial<
+  Record<PullRequestMergeMethod, "MERGE" | "SQUASH" | "REBASE">
+> = { merge: "MERGE", squash: "SQUASH", rebase: "REBASE" };
 
 const PullRequestGraphQLGroup = GraphQLGroup.merge(
   PullRequestBatchesGraphQLGroup,
@@ -2684,7 +2683,7 @@ export const make = Effect.gen(function* () {
             !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? ""));
         const merge = {
           pullRequestId: state.id,
-          mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"],
+          mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"] ?? "MERGE",
           ...(expectedHead === undefined ? {} : { expectedHeadOid: expectedHead }),
           ...(body === undefined ? {} : { commitBody: body }),
         };
