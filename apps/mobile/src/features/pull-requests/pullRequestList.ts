@@ -1,6 +1,11 @@
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
+  buildProjectGroups,
+  type ProjectGroup,
+} from "@t3tools/client-runtime/state/project-grouping";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import {
   ProjectId,
   resolvePullRequestAuthorFilter,
   type EnvironmentId,
@@ -9,6 +14,7 @@ import {
   type PullRequestListInput,
   type PullRequestListResult,
   type PullRequestListStatsInput,
+  type ScopedProjectRef,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 
@@ -20,6 +26,37 @@ export const DEFAULT_PR_LIST_CONTROLS: PullRequestListControls = {
   filters: {},
   sort: "updated",
 };
+
+export function pullRequestProjectGroups(projects: readonly EnvironmentProject[]) {
+  const groups = buildProjectGroups({
+    projects: projects.filter((project) => !project.isScratch),
+    settings: {
+      sidebarProjectGroupingMode: "repository",
+      sidebarProjectGroupingOverrides: {},
+    },
+  });
+  const labelCounts = new Map<string, number>();
+  for (const group of groups) {
+    labelCounts.set(group.label, (labelCounts.get(group.label) ?? 0) + 1);
+  }
+  return groups.map((group) =>
+    labelCounts.get(group.label)! > 1
+      ? { ...group, label: `${group.label} · ${group.key}` }
+      : group,
+  );
+}
+
+export function findPullRequestProjectGroup(
+  groups: readonly ProjectGroup[],
+  controls: PullRequestListControls,
+) {
+  return groups.find((group) =>
+    group.memberProjectRefs.some(
+      (ref) =>
+        ref.projectId === controls.projectId && ref.environmentId === controls.projectEnvironmentId,
+    ),
+  );
+}
 
 export function withoutScratchProjectScope(
   controls: PullRequestListControls,
@@ -48,18 +85,34 @@ export function pullRequestProjectChoices<
     readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
   },
 ) {
-  const isSelected = (project: Project) =>
-    project.id === input.controls.projectId &&
-    project.environmentId === input.controls.projectEnvironmentId;
   return pullRequestFilterProjects(
-    projects.filter(
-      (project) =>
-        !project.isScratch &&
-        (input.environmentId === null || project.environmentId === input.environmentId) &&
-        (input.servesPullRequests(project.environmentId) || isSelected(project)),
-    ),
+    eligiblePullRequestProjects(projects, input),
     input.environmentLabels,
-    projects.find(isSelected),
+    projects.find(
+      (project) =>
+        project.id === input.controls.projectId &&
+        project.environmentId === input.controls.projectEnvironmentId,
+    ),
+  );
+}
+
+export function eligiblePullRequestProjects<
+  Project extends FilterProject & { readonly isScratch?: true },
+>(
+  projects: readonly Project[],
+  input: {
+    readonly environmentId: string | null;
+    readonly controls: PullRequestListControls;
+    readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
+  },
+) {
+  return projects.filter(
+    (project) =>
+      !project.isScratch &&
+      (input.environmentId === null || project.environmentId === input.environmentId) &&
+      (input.servesPullRequests(project.environmentId) ||
+        (project.id === input.controls.projectId &&
+          project.environmentId === input.controls.projectEnvironmentId)),
   );
 }
 
@@ -302,6 +355,10 @@ export function patchPullRequestListEntry(
 export function pullRequestListInput(
   controls: PullRequestListControls,
   query: string,
+  scope?: {
+    readonly environmentId: EnvironmentId;
+    readonly projectRefs: readonly ScopedProjectRef[];
+  },
 ): PullRequestListInput {
   const parsed = parsePullRequestQuery(query);
   return {
@@ -309,7 +366,15 @@ export function pullRequestListInput(
     involvement: controls.involvement,
     filters: { ...controls.filters, ...parsed.filters },
     limit: PR_LIST_PAGE_SIZE,
-    ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
+    ...(scope
+      ? {
+          projectIds: scope.projectRefs
+            .filter((ref) => ref.environmentId === scope.environmentId)
+            .map((ref) => ref.projectId),
+        }
+      : controls.projectId
+        ? { projectId: ProjectId.make(controls.projectId) }
+        : {}),
     ...(parsed.text ? { query: parsed.text } : {}),
   };
 }
@@ -405,6 +470,7 @@ export function filterPullRequestList<
   query: string,
   localSearchHosts: ReadonlySet<string>,
   connectedEnvironmentIds?: ReadonlySet<string>,
+  projectRefs?: readonly ScopedProjectRef[],
 ) {
   const normalize = (value: string) => value.toLowerCase();
   const parsed = parsePullRequestQuery(query);
@@ -412,9 +478,18 @@ export function filterPullRequestList<
   const filters = { ...controls.filters, ...parsed.filters };
   const filtered = entries.filter((entry) => {
     if (controls.state !== "all" && entry.state !== controls.state) return false;
-    if (controls.projectId && entry.projectId !== controls.projectId) return false;
-    if (controls.projectEnvironmentId && entry.environmentId !== controls.projectEnvironmentId)
-      return false;
+    if (projectRefs) {
+      if (
+        !projectRefs.some(
+          (ref) => ref.projectId === entry.projectId && ref.environmentId === entry.environmentId,
+        )
+      )
+        return false;
+    } else {
+      if (controls.projectId && entry.projectId !== controls.projectId) return false;
+      if (controls.projectEnvironmentId && entry.environmentId !== controls.projectEnvironmentId)
+        return false;
+    }
     const viewerKey = entry.environmentId ? `${entry.environmentId} ${entry.host}` : entry.host;
     const viewer = viewers[viewerKey];
     if (controls.involvement === "reviewing" && !entry.viewerReviewRequested) return false;
