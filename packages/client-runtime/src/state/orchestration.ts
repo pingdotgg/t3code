@@ -167,8 +167,8 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     threadSearch: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-search",
       tag: ORCHESTRATION_V2_WS_METHODS.searchThreads,
-      staleTimeMs: 30_000,
-      idleTtlMs: 60_000,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
     }),
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
