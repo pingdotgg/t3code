@@ -19,7 +19,7 @@ Write quizzes that are hard and fair. Hard: answering takes the thinking the les
 - No trick wording, no "which is NOT" unless it is the point, no trivia.
 
 **The wrong answers (distractors)**
-- Each comes from a named wrong idea: "someone who thinks X picks this". Use this learner's past misses, side-chat notes, lesson misconceptions, or known topic misconceptions. If you cannot name the wrong idea, drop the option.
+- Each comes from a named wrong idea: "someone who thinks X picks this". Sources, best first: this learner's past misses and side-chat notes, misconceptions from this lesson, well-known ones. If you cannot name the wrong idea, drop the option.
 - Each must be what that wrong idea really produces. Work it through, the way the correct answer is worked through.
 - Never absurd, never a joke, never "all of the above" or "none of the above". Two or three good distractors beat three with filler.
 
