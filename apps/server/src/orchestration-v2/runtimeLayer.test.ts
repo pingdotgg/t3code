@@ -15,6 +15,8 @@ import {
   CommandId,
   ContextTransferId,
   EventId,
+  type PullRequestActivity,
+  type ThreadPullRequestAgentMerge,
   MessageId,
   NodeId,
   RuntimeRequestId,
@@ -26,6 +28,8 @@ import {
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
+  type PullRequestStack,
+  type PullRequestSummary,
   PullRequestOperationError,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -192,6 +196,7 @@ const watchedPullRequestDetail = (input: {
     mergeMethods: [],
     search: false,
     checksAlwaysReport: true,
+    mergePinsHead: true,
     review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
     reviewers: { request: false, listCandidates: false },
   },
@@ -3090,6 +3095,671 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(messages, []);
     }),
+  );
+
+  it.effect("agent merge briefs the agent once per mode and never outlives its stop", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-agent-merge");
+      const projectId = ProjectId.make("agent-merge-project");
+      yield* seedProject({
+        projectId,
+        title: "Agent merge",
+        workspaceRoot: "/workspace/agent-merge",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("agent-merge-create"),
+        threadId,
+        projectId,
+        title: "Agent merge",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+      const url = "https://github.com/pingdotgg/t3code/pull/7";
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("agent-merge-link"),
+        threadId,
+        ...key,
+        url,
+        source: "manual",
+      });
+      const start = (id: string, agentMerge: "checks" | "merge" | undefined) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(id),
+          threadId,
+          ...key,
+          watching: true,
+          ...(agentMerge === undefined ? {} : { agentMerge }),
+        });
+      const watchOf = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch,
+      );
+      const briefs = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) =>
+          messages
+            .map((message) => message.text)
+            .filter((text) => text.startsWith("The user started agent merge")),
+      );
+
+      yield* start("agent-merge-start", "checks");
+      const started = yield* watchOf;
+      assert.equal(started?.agentMerge, "checks");
+      assert.lengthOf(yield* briefs, 1);
+      assert.include((yield* briefs)[0], url);
+
+      yield* start("agent-merge-repeat", "checks");
+      yield* start("agent-merge-agent-watch", undefined);
+      assert.deepEqual(yield* watchOf, started);
+      assert.lengthOf(yield* briefs, 1);
+
+      yield* TestClock.adjust("1 second");
+      yield* start("agent-merge-upgrade", "merge");
+      const upgraded = yield* watchOf;
+      assert.equal(upgraded?.agentMerge, "merge");
+      assert.notEqual(upgraded?.startedAt, started?.startedAt);
+      assert.lengthOf(yield* briefs, 2);
+      assert.include((yield* briefs)[1], "T3 Code merges it once it is ready");
+
+      const stale = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("agent-merge-stale-read"),
+          threadId,
+          ...key,
+          startedAt: started!.startedAt,
+          watch: started!,
+        })
+        .pipe(Effect.flip);
+      assert.equal(stale._tag, "OrchestratorDispatchError");
+      assert.equal((yield* watchOf)?.agentMerge, "merge");
+
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: () =>
+            Effect.succeed({
+              ...watchedPullRequestDetail({ projectId, number: 7, at: "2026-10-02T12:00:00.000Z" }),
+              checks: [
+                {
+                  name: "test",
+                  status: "success" as const,
+                  description: null,
+                  url: null,
+                  required: true,
+                },
+              ],
+            }),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      const wakeRun = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages", "runs"]),
+        ({ messages, runs }) => {
+          const wake = messages.find(
+            (message) => message.notification?.summary === "#7: checks passed",
+          );
+          return runs.find((run) => run.id === wake?.runId)?.status;
+        },
+      );
+      assert.equal(yield* wakeRun, "queued");
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("agent-merge-stop"),
+        threadId,
+        ...key,
+        watching: false,
+      });
+      assert.equal(yield* wakeRun, "cancelled");
+      yield* start("agent-merge-plain-watch", undefined);
+      assert.isUndefined((yield* watchOf)?.agentMerge);
+      assert.lengthOf(yield* briefs, 2);
+    }),
+  );
+
+  const agentMergeFixture = (id: string, mode: ThreadPullRequestAgentMerge) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make(`agent-merge-gate-${id}`);
+      const projectId = ProjectId.make(`agent-merge-gate-${id}-project`);
+      yield* seedProject({
+        projectId,
+        title: "Agent merge gate",
+        workspaceRoot: `/workspace/agent-merge-gate-${id}`,
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`agent-merge-gate-${id}-create`),
+        threadId,
+        projectId,
+        title: "Agent merge gate",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make(`agent-merge-gate-${id}-link`),
+        threadId,
+        ...key,
+        url: "https://github.com/pingdotgg/t3code/pull/7",
+        source: "manual",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make(`agent-merge-gate-${id}-start`),
+        threadId,
+        ...key,
+        watching: true,
+        agentMerge: mode,
+      });
+      const host = {
+        headSha: "aaaaaaa",
+        reviewThreads: [] as ReadonlyArray<PullRequestActivity["reviewThreads"][number]>,
+        refuse: false,
+        rateLimited: false,
+        pinsHead: true,
+        stackActions: true,
+        queued: false,
+        stack: null as PullRequestStack | null,
+        layerThreads: {} as Record<
+          number,
+          ReadonlyArray<PullRequestActivity["reviewThreads"][number]>
+        >,
+        reviewDecision: null as PullRequestSummary["reviewDecision"],
+        beforeRead: Effect.void as Effect.Effect<void>,
+        duringMerge: Effect.void as Effect.Effect<void>,
+        withdrawals: [] as Array<number>,
+        merges: [] as Array<{
+          readonly headSha: string;
+          readonly stack?: {
+            readonly number: number;
+            readonly heads: ReadonlyArray<{ readonly number: number; readonly headSha: string }>;
+          };
+        }>,
+      };
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              detail: () =>
+                Effect.suspend(() => host.beforeRead).pipe(
+                  Effect.as({
+                    ...watchedPullRequestDetail({
+                      projectId,
+                      number: 7,
+                      at: "2026-10-02T12:00:00.000Z",
+                    }),
+                    capabilities: {
+                      ...watchedPullRequestDetail({
+                        projectId,
+                        number: 7,
+                        at: "2026-10-02T12:00:00.000Z",
+                      }).capabilities,
+                      mergePinsHead: host.pinsHead,
+                      stackActions: host.stackActions,
+                    },
+                    isInMergeQueue: host.queued,
+                    viewerPermissions: {
+                      actions: ["merge" as const],
+                      comment: true,
+                      resolve: true,
+                      verdicts: [],
+                      requestReviewers: false,
+                    },
+                    mergeCapabilities: { merge: false, squash: true, rebase: true },
+                    headSha: host.headSha,
+                    mergeability: "mergeable" as const,
+                    checks: [
+                      {
+                        name: "test",
+                        status: "success" as const,
+                        description: null,
+                        url: null,
+                        required: true,
+                      },
+                    ],
+                  }),
+                ),
+              activity: (input) =>
+                Effect.sync(() => ({
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: host.layerThreads[input.number] ?? host.reviewThreads,
+                  commits: [],
+                })),
+              stack: () => Effect.sync(() => host.stack),
+              summary: () =>
+                Effect.sync(() => ({ reviewDecision: host.reviewDecision }) as PullRequestSummary),
+              invalidate: () => Effect.void,
+              withdrawMerge: (input) => Effect.sync(() => void host.withdrawals.push(input.number)),
+              mergeHead: (input) =>
+                Effect.suspend(() => host.duringMerge).pipe(
+                  Effect.andThen(
+                    Effect.suspend(() => {
+                      host.merges.push(input);
+                      if (host.rateLimited) {
+                        return Effect.fail(
+                          new PullRequestOperationError({
+                            operation: "runAction",
+                            detail: "Rate limited.",
+                            cause: new PullRequestProviderError({
+                              provider: SourceControlProviderKind.make("github"),
+                              operation: "runAction",
+                              reason: "rate-limited",
+                              detail: "Rate limited.",
+                            }),
+                          }),
+                        );
+                      }
+                      return host.refuse
+                        ? Effect.fail(
+                            new PullRequestOperationError({
+                              operation: "runAction",
+                              detail: "Required review is missing.",
+                            }),
+                          )
+                        : Effect.void;
+                    }),
+                  ),
+                ),
+            }),
+          ),
+        ),
+      );
+      const finishRuns = Effect.gen(function* () {
+        const { runs } = yield* orchestrator.getThreadProjection(threadId);
+        const now = yield* DateTime.now;
+        for (const run of runs) {
+          if (["completed", "cancelled", "interrupted"].includes(run.status)) continue;
+          yield* projections.apply({
+            id: EventId.make(`agent-merge-gate-finish:${run.id}`),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", queuePosition: null, completedAt: now },
+          });
+        }
+      });
+      const summaries = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+      );
+      const watched = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch,
+      );
+      // The first pass reports the green checks, and that wake is a turn of its own.
+      const settle = Effect.gen(function* () {
+        yield* finishRuns;
+        yield* reactor.sweep;
+        yield* finishRuns;
+      });
+      // The reactor reads every thread, so a watch left on would merge in the next test.
+      const stop = orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make(`agent-merge-gate-${id}-end`),
+        threadId,
+        ...key,
+        watching: false,
+      });
+      return { host, reactor, settle, finishRuns, summaries, watched, threadId, key, stop };
+    });
+
+  it.effect("agent merge waits for a quiet thread, merges the head it judged, and only once", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { host, reactor, settle, finishRuns, watched, threadId, stop } =
+        yield* agentMergeFixture("merges", "merge");
+
+      yield* settle;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("agent-merge-gate-merges-turn"),
+        threadId,
+        messageId: MessageId.make("agent-merge-gate-merges-turn"),
+        text: "One more thing",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* reactor.sweep;
+      assert.deepEqual(host.merges, []);
+
+      yield* finishRuns;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      assert.equal(host.merges[0]?.headSha, "aaaaaaa");
+      assert.equal((yield* watched)?.mergeHead, "aaaaaaa");
+
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      yield* stop;
+    }),
+  );
+
+  it.effect("a refused merge wakes the agent once and retries only on a new head", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, stop } = yield* agentMergeFixture(
+        "refused",
+        "merge",
+      );
+      host.refuse = true;
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      assert.lengthOf(
+        (yield* summaries).filter((summary) => summary === "#7: merge refused"),
+        1,
+      );
+
+      host.refuse = false;
+      host.headSha = "bbbbbbb";
+      yield* settle;
+      yield* reactor.sweep;
+      assert.equal(host.merges.at(-1)?.headSha, "bbbbbbb");
+      yield* stop;
+    }),
+  );
+
+  it.effect("a merge queue holds agent merge, and leaving it unmerged wakes the agent once", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, watched, stop } =
+        yield* agentMergeFixture("queue", "merge");
+
+      yield* settle;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      host.queued = true;
+      yield* reactor.sweep;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      assert.equal((yield* watched)?.queuedHead, "aaaaaaa");
+
+      host.queued = false;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      assert.lengthOf(
+        (yield* summaries).filter((summary) => summary === "#7: left the merge queue"),
+        1,
+      );
+
+      host.headSha = "bbbbbbb";
+      yield* settle;
+      yield* reactor.sweep;
+      assert.equal(host.merges.at(-1)?.headSha, "bbbbbbb");
+      yield* stop;
+    }),
+  );
+
+  it.effect("agent merge lands a stack only once every layer below it is ready", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { host, reactor, settle, finishRuns, summaries, threadId, key, stop } =
+        yield* agentMergeFixture("stack", "merge");
+      const layers = [
+        { number: 5, headBranch: "layer-5", state: "merged" as const, headSha: "fffffff" },
+        { number: 6, headBranch: "layer-6", state: "open" as const, headSha: "ccccccc" },
+        { number: 7, headBranch: "layer-7", state: "open" as const, headSha: "aaaaaaa" },
+      ];
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("agent-merge-gate-stack-sync"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "open",
+          title: "Layer 7",
+          headBranch: "layer-7",
+          baseBranch: "layer-6",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-02T12:00:00.000Z",
+        },
+        stack: {
+          kind: "native",
+          id: "stack-3",
+          number: 3,
+          url: "https://github.com/pingdotgg/t3code/stacks/3",
+          base: "main",
+          layers: layers.map(({ headSha: _headSha, ...layer }) => layer),
+        },
+      });
+      host.stack = { number: 3, base: "main", layers } as unknown as PullRequestStack;
+      host.layerThreads = {
+        6: [
+          {
+            id: "thread-6",
+            path: "src/index.ts",
+            line: 1,
+            side: "right",
+            isResolved: false,
+            isOutdated: false,
+            comments: [],
+          },
+        ],
+      };
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      assert.deepEqual(host.merges, []);
+      assert.include(yield* summaries, "#7: waiting on #6: 1 unresolved review thread");
+
+      host.layerThreads = { 6: [] };
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      assert.deepEqual(host.merges[0]?.stack, {
+        number: 3,
+        heads: [
+          { number: 6, headSha: "ccccccc" },
+          { number: 7, headSha: "aaaaaaa" },
+        ],
+      });
+      yield* stop;
+    }),
+  );
+
+  it.effect("a rate-limited merge tries the same head again without waking the agent", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, stop } = yield* agentMergeFixture(
+        "rate-limited",
+        "merge",
+      );
+      host.rateLimited = true;
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      assert.lengthOf(host.merges, 1);
+      assert.notInclude(yield* summaries, "#7: merge refused");
+
+      host.rateLimited = false;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 2);
+      assert.equal(host.merges[1]?.headSha, "aaaaaaa");
+      yield* stop;
+    }),
+  );
+
+  it.effect("a review the snapshot has not seen yet holds agent merge", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, stop } = yield* agentMergeFixture(
+        "fresh-review",
+        "merge",
+      );
+      host.reviewDecision = "changes-requested";
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      assert.deepEqual(host.merges, []);
+      assert.include(yield* summaries, "#7: waiting on a reviewer requested changes");
+
+      host.reviewDecision = "approved";
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      yield* stop;
+    }),
+  );
+
+  it.effect("a host that cannot pin the head reports ready instead of merging", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, watched } = yield* agentMergeFixture(
+        "unpinned",
+        "merge",
+      );
+      host.pinsHead = false;
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      assert.deepEqual(host.merges, []);
+      assert.include(yield* summaries, "#7: ready");
+      assert.isUndefined(yield* watched);
+    }),
+  );
+
+  it.effect("a stop landing during the read keeps agent merge from merging", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { host, reactor, settle, threadId, key, watched } = yield* agentMergeFixture(
+        "stopped",
+        "merge",
+      );
+      yield* settle;
+      host.beforeRead = orchestrator
+        .dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("agent-merge-gate-stopped-stop"),
+          threadId,
+          ...key,
+          watching: false,
+        })
+        .pipe(Effect.orDie, Effect.asVoid);
+
+      yield* reactor.sweep;
+
+      assert.deepEqual(host.merges, []);
+      assert.isUndefined(yield* watched);
+    }),
+  );
+
+  it.effect("a stop landing during the merge call takes the merge back", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { host, reactor, settle, threadId, key } = yield* agentMergeFixture(
+        "withdrawn-mid-merge",
+        "merge",
+      );
+      yield* settle;
+      host.duringMerge = orchestrator
+        .dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("agent-merge-gate-withdrawn-mid-merge-stop"),
+          threadId,
+          ...key,
+          watching: false,
+        })
+        .pipe(Effect.orDie, Effect.asVoid);
+
+      yield* reactor.sweep;
+
+      assert.lengthOf(host.merges, 1);
+      assert.deepEqual(host.withdrawals, [7]);
+    }),
+  );
+
+  it.effect("open review threads hold agent merge and wake the agent once per head", () =>
+    Effect.gen(function* () {
+      const { host, reactor, settle, finishRuns, summaries, stop } = yield* agentMergeFixture(
+        "blocked",
+        "merge",
+      );
+      const thread = {
+        id: "thread-1",
+        path: "src/index.ts",
+        line: 1,
+        side: "right" as const,
+        isResolved: false,
+        isOutdated: false,
+        comments: [],
+      };
+      host.reviewThreads = [thread];
+
+      yield* settle;
+      yield* reactor.sweep;
+      yield* finishRuns;
+      yield* reactor.sweep;
+      assert.deepEqual(host.merges, []);
+      const waiting = "#7: waiting on 1 unresolved review thread";
+      assert.lengthOf(
+        (yield* summaries).filter((summary) => summary === waiting),
+        1,
+      );
+
+      host.reviewThreads = [{ ...thread, isResolved: true }];
+      yield* finishRuns;
+      yield* reactor.sweep;
+      assert.lengthOf(host.merges, 1);
+      yield* stop;
+    }),
+  );
+
+  it.effect.each(["checks", "feedback"] as const)(
+    "%s mode hands back a ready pull request and never merges",
+    (mode) =>
+      Effect.gen(function* () {
+        const { host, reactor, settle, summaries, watched } = yield* agentMergeFixture(mode, mode);
+
+        yield* settle;
+        yield* reactor.sweep;
+
+        assert.deepEqual(host.merges, []);
+        assert.include(yield* summaries, "#7: ready");
+        assert.isUndefined(yield* watched);
+      }),
   );
 
   it.effect.each(["manual", "automatic"])("settling ends every pull request watch: %s", (mode) =>

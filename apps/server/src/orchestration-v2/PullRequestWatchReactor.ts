@@ -5,6 +5,7 @@ import {
   type PullRequestActivity,
   type PullRequestComment,
   type PullRequestRef,
+  type PullRequestReviewDecision,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
@@ -36,6 +37,12 @@ import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
+  agentMergeBlockedMessage,
+  agentMergeLeftQueueMessage,
+  agentMergeGate,
+  agentMergeMessagePrefix,
+  agentMergeReadyMessage,
+  agentMergeRefusedMessage,
   evaluatePullRequestWatch,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
   pullRequestWatchMessage,
@@ -60,6 +67,12 @@ const providerFailureReason = (cause: Cause.Cause<PullRequestService.PullRequest
       error._tag === "PullRequestOperationError" && isProviderError(error.cause)
         ? error.cause.reason
         : null,
+  });
+
+const refusalDetail = (cause: Cause.Cause<PullRequestService.PullRequestError>) =>
+  Option.match(Cause.findErrorOption(cause), {
+    onNone: () => "the merge failed.",
+    onSome: (error) => error.message,
   });
 
 const logFailure =
@@ -103,6 +116,7 @@ type WatchEndReason =
   | "closed"
   | "unreadable"
   | "comment-limit"
+  | "ready"
   | "settled"
   | "subagent"
   | "stopped";
@@ -182,7 +196,10 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
     left.wakes === right.wakes &&
-    left.checksAwaitedSince === right.checksAwaitedSince
+    left.checksAwaitedSince === right.checksAwaitedSince &&
+    left.blockedHead === right.blockedHead &&
+    left.mergeHead === right.mergeHead &&
+    left.queuedHead === right.queuedHead
   );
 }
 
@@ -290,13 +307,22 @@ export const make = Effect.gen(function* () {
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined
         ? {}
-        : { wake: { ...wake, messageId: MessageId.make(`message:pr-watch:${uuid}`) } }),
+        : {
+            wake: {
+              ...wake,
+              messageId: MessageId.make(
+                target.watch.agentMerge === undefined
+                  ? `message:pr-watch:${uuid}`
+                  : `${agentMergeMessagePrefix(threadPullRequestKeyOf(target.link))}${uuid}`,
+              ),
+            },
+          }),
     });
   });
 
   const giveUp = (target: WatchTarget) =>
     record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request to watch it again.`,
+      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. ${target.watch.agentMerge === undefined ? "Check it yourself, and call watch_pull_request to watch it again." : "Tell the user, who can start agent merge again."}`,
       notification: {
         source: { kind: "monitor" },
         outcome: "failed",
@@ -307,6 +333,17 @@ export const make = Effect.gen(function* () {
       Effect.catch(() => record(target, null)),
       Effect.tap(() => ended(target, "unreadable")),
     );
+
+  const threadBusy = (target: WatchTarget) =>
+    engine
+      .getThreadRecords(target.thread.id, ["runs"])
+      .pipe(
+        Effect.map(({ runs }) =>
+          runs.some((run) =>
+            ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+          ),
+        ),
+      );
 
   const readRemarks = Effect.fn("PullRequestWatchReactor.readRemarks")(
     function* (
@@ -399,7 +436,7 @@ export const make = Effect.gen(function* () {
 
   const closed = (target: WatchTarget) =>
     record(target, null, {
-      text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it. Call watch_pull_request if it reopens.`,
+      text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it. ${target.watch.agentMerge === undefined ? "Call watch_pull_request if it reopens." : "Tell the user."}`,
       notification: {
         source: { kind: "monitor" },
         outcome: "updated",
@@ -456,14 +493,65 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // Landing a layer lands every open layer below it, so each must pass the same gate. Null means
+  // a layer is undecided or the read failed, and the next sweep looks again.
+  const judgeStack = Effect.fn("PullRequestWatchReactor.judgeStack")(
+    function* (reference: PullRequestRef, head: string) {
+      const stack = yield* pullRequests.stack(reference);
+      const index = stack?.layers.findIndex((layer) => layer.number === reference.number) ?? -1;
+      if (stack == null || index < 0 || stack.layers[index]?.headSha !== head) return null;
+      const open = stack.layers.slice(0, index + 1).filter((layer) => layer.state !== "merged");
+      const lower = open.slice(0, -1);
+      const gates = yield* Effect.forEach(lower, (layer) =>
+        Effect.gen(function* () {
+          const ref = { ...reference, number: layer.number };
+          yield* pullRequests.invalidate({ reference: ref });
+          const [layerDetail, layerActivity, summary] = yield* Effect.all(
+            [
+              pullRequests.detail({ ...ref, allowStale: false }),
+              pullRequests.activity(ref),
+              pullRequests.summary(ref),
+            ],
+            { concurrency: "unbounded" },
+          );
+          const gate = agentMergeGate(
+            "merge",
+            layerDetail,
+            layerActivity.reviewThreads,
+            summary.reviewDecision,
+          );
+          return gate === null
+            ? null
+            : gate.blockers.map((blocker) => `#${layer.number}: ${blocker}`);
+        }),
+      );
+      const heads = open.flatMap(({ number, headSha }) =>
+        headSha === undefined ? [] : [{ number, headSha }],
+      );
+      if (gates.includes(null) || heads.length !== open.length) return null;
+      return { number: stack.number, heads, blockers: gates.flatMap((gate) => gate ?? []) };
+    },
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.interrupt
+        : Effect.logDebug("pull request stack read failed", { cause }).pipe(Effect.as(null)),
+    ),
+  );
+
   const readGroup = Effect.fn("PullRequestWatchReactor.readGroup")(function* (
     group: WatchGroup,
     fingerprint: ProviderChangeRequestWatchFingerprint | null,
   ) {
     const now = yield* Clock.currentTimeMillis;
     const last = lastReads.get(group.key);
-    const plan = planRead(group, last, fingerprint, now);
-    if (!plan.detail) return;
+    const planned = planRead(group, last, fingerprint, now);
+    if (!planned.detail) return;
+    // The gate counts open review threads, so it needs activity on every read.
+    const plan = {
+      ...planned,
+      activity:
+        planned.activity || group.targets.some(({ watch }) => watch.agentMerge !== undefined),
+    };
     if (
       last === undefined ||
       group.targets.some((target) => !last.watches.has(watchKey(target))) ||
@@ -557,28 +645,160 @@ export const make = Effect.gen(function* () {
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
     });
-    yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
-      if (report.changes.length > 0) {
-        const wake = pullRequestWatchMessage({
-          number: target.link.number,
-          url: target.link.url,
-          baseBranch: detail.baseBranch,
-          headSha: report.next.headSha,
-          report,
-        });
-        // An ending watch keeps what this pass saw, so watching again starts from it.
-        return (
-          report.exhausted
-            ? record(target, null, wake, report.next)
-            : record(target, report.next, wake)
-        ).pipe(
-          Effect.tap(() => woke(target)),
-          Effect.tap(() => (report.exhausted ? ended(target, "comment-limit") : Effect.void)),
+    yield* eachTarget(group, (target) =>
+      Effect.gen(function* () {
+        const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+        const mode = target.watch.agentMerge;
+        if (report.changes.length > 0) {
+          const wake = pullRequestWatchMessage({
+            number: target.link.number,
+            url: target.link.url,
+            baseBranch: detail.baseBranch,
+            headSha: report.next.headSha,
+            agentMerge: mode,
+            report,
+          });
+          // An ending watch keeps what this pass saw, so watching again starts from it.
+          yield* (
+            report.exhausted
+              ? record(target, null, wake, report.next)
+              : record(target, report.next, wake)
+          ).pipe(
+            Effect.tap(() => woke(target)),
+            Effect.tap(() => (report.exhausted ? ended(target, "comment-limit") : Effect.void)),
+          );
+          return;
+        }
+        const head = report.next.headSha;
+        // While the host holds the merge there is nothing to decide, and a retry would be refused.
+        if (mode === "merge" && head !== null) {
+          if (detail.isInMergeQueue === true || detail.autoMergeEnabled === true) {
+            const next = { ...report.next, queuedHead: head };
+            if (!watchesEqual(next, target.watch)) yield* record(target, next);
+            return;
+          }
+          if (target.watch.queuedHead === head) {
+            const { queuedHead: _queuedHead, ...next } = report.next;
+            yield* record(
+              target,
+              next,
+              agentMergeLeftQueueMessage({ number: target.link.number }),
+            ).pipe(Effect.tap(() => woke(target)));
+            return;
+          }
+        }
+        const judge = (reviewDecision: PullRequestReviewDecision | null | undefined) =>
+          mode === undefined || remarks === null || !Option.isSome(activity)
+            ? null
+            : agentMergeGate(mode, detail, activity.value.reviewThreads, reviewDecision);
+        const snapshotGate = judge(target.link.snapshot?.reviewDecision);
+        if (snapshotGate === null) {
+          if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
+          return;
+        }
+        // The agent may be about to push, so nothing is decided until the thread is quiet.
+        if (yield* threadBusy(target)) {
+          if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
+          return;
+        }
+        // The snapshot can predate a review, so a pass that would act on it reads the host first.
+        const gate =
+          snapshotGate.blockers.length > 0 || mode === "checks" || target.watch.mergeHead === head
+            ? snapshotGate
+            : yield* pullRequests.invalidate({ reference }).pipe(
+                Effect.andThen(Effect.exit(pullRequests.summary(reference))),
+                Effect.flatMap((summary) =>
+                  Exit.isSuccess(summary)
+                    ? Effect.succeed(judge(summary.value.reviewDecision))
+                    : Cause.hasInterruptsOnly(summary.cause)
+                      ? Effect.failCause(summary.cause)
+                      : Effect.succeed(null),
+                ),
+              );
+        if (gate === null) {
+          if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
+          return;
+        }
+        const hold = (blockers: ReadonlyArray<string>) =>
+          head === null || target.watch.blockedHead === head
+            ? watchesEqual(report.next, target.watch)
+              ? Effect.void
+              : record(target, report.next)
+            : record(
+                target,
+                { ...report.next, blockedHead: head },
+                agentMergeBlockedMessage({ number: target.link.number, blockers }),
+              ).pipe(Effect.tap(() => woke(target)));
+        if (gate.blockers.length > 0) return yield* hold(gate.blockers);
+        const merges =
+          mode === "merge" &&
+          head !== null &&
+          (target.link.stack === null || detail.capabilities.stackActions === true) &&
+          detail.capabilities.mergePinsHead === true &&
+          detail.viewerPermissions.actions.includes("merge");
+        if (!merges) {
+          yield* record(
+            target,
+            null,
+            agentMergeReadyMessage({ number: target.link.number, url: target.link.url }),
+            report.next,
+          ).pipe(
+            Effect.tap(() => woke(target)),
+            Effect.tap(() => ended(target, "ready")),
+          );
+          return;
+        }
+        if (target.watch.mergeHead === head) {
+          if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
+          return;
+        }
+        const stack = target.link.stack === null ? null : yield* judgeStack(reference, head);
+        if (target.link.stack !== null && stack === null) {
+          if (!watchesEqual(report.next, target.watch)) yield* record(target, report.next);
+          return;
+        }
+        if (stack !== null && stack.blockers.length > 0) return yield* hold(stack.blockers);
+        // Recording first fails if the user stopped the watch during this read.
+        yield* record(target, { ...report.next, mergeHead: head });
+        const merged = yield* Effect.exit(
+          pullRequests.mergeHead({
+            ...reference,
+            headSha: head,
+            mergeCapabilities: detail.mergeCapabilities,
+            ...(stack === null ? {} : { stack: { number: stack.number, heads: stack.heads } }),
+          }),
         );
-      }
-      return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
-    });
+        lastReads.delete(group.key);
+        if (Exit.isSuccess(merged)) {
+          // A withdrawal during the call looked before this landed, so it could not take it back.
+          const kept = yield* Effect.exit(record(target, { ...report.next, mergeHead: head }));
+          if (Exit.isFailure(kept)) {
+            if (Cause.hasInterruptsOnly(kept.cause)) return yield* Effect.failCause(kept.cause);
+            yield* pullRequests.withdrawMerge({ ...reference, stacked: stack !== null });
+          }
+          return;
+        }
+        if (Cause.hasInterruptsOnly(merged.cause)) return yield* Effect.failCause(merged.cause);
+        // Dropping mergeHead lets a later sweep try again, once the rate limit lifts.
+        if (providerFailureReason(merged.cause) === "rate-limited") {
+          yield* record(target, report.next);
+          return;
+        }
+        yield* record(
+          target,
+          { ...report.next, mergeHead: head },
+          agentMergeRefusedMessage({
+            number: target.link.number,
+            detail: refusalDetail(merged.cause),
+          }),
+        ).pipe(Effect.tap(() => woke(target)));
+      }),
+    );
+    // Neither a quiet agent nor a resolved thread changes what the host reports, so reread.
+    const latest = lastReads.get(group.key);
+    if (latest !== undefined && group.targets.some(({ watch }) => watch.agentMerge !== undefined)) {
+      lastReads.set(group.key, { ...latest, inFlight: true });
+    }
   });
 
   const sweep = Effect.gen(function* () {

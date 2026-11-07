@@ -78,6 +78,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         headRef: null,
         author: null,
         autoMergeRequest: null,
+        isInMergeQueue: false,
         headRefName: "feature",
         baseRefName: "main",
         headRefOid: "abc123",
@@ -2088,6 +2089,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           id: "PR_7",
           headRefOid: "abc123",
           isMergeQueueEnabled: false,
+          isInMergeQueue: false,
           mergeStateStatus: "BLOCKED",
           baseRef: { compare: { behindBy: 2 } },
           ...pullRequest,
@@ -2412,6 +2414,44 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(variablesOf("mergePullRequest(")).toEqual([]);
       expect(variablesOf("closePullRequest(")).toEqual([]);
     }),
+  );
+
+  it.effect("pins a merge to the head it was judged on", () =>
+    Effect.gen(function* () {
+      route(["query PullRequestActionState", actionState()]);
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "merge",
+        mergeMethod: "squash",
+        expectedHeadSha: "judged1",
+      });
+      expect(variablesOf("mergePullRequest(")).toEqual([
+        {
+          input: { pullRequestId: "PR_7", mergeMethod: "SQUASH", expectedHeadOid: "judged1" },
+        },
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    { isInMergeQueue: true, field: "dequeuePullRequest(", reply: { mergeQueueEntry: null } },
+    { isInMergeQueue: false, field: "disablePullRequestAutoMerge(", reply: { pullRequest: null } },
+  ] as const)(
+    "turning off auto-merge calls $field while in the queue is $isInMergeQueue",
+    ({ isInMergeQueue, field, reply }) =>
+      Effect.gen(function* () {
+        route(
+          ["query PullRequestActionState", actionState({ isInMergeQueue })],
+          [field, { data: { [field.slice(0, -1)]: reply } }],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        yield* cli.runPullRequestAction({ ...pullRequestInput, action: "disable-auto-merge" });
+        expect(variablesOf(field)).toHaveLength(1);
+      }),
   );
 
   it.effect.each(["merge", "enable-auto-merge"] as const)(

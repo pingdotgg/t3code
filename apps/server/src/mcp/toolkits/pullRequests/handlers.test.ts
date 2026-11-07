@@ -330,6 +330,36 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect.each(["watch_pull_request", "unwatch_pull_request"] as const)(
+    "%s leaves a pull request under agent merge alone",
+    (tool) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          thread: makeThread([
+            makeLink(1, {
+              headBranch: "feature",
+              watch: {
+                startedAt: "2026-08-20T00:00:00.000Z",
+                agentMerge: "merge",
+                headSha: null,
+                failedChecks: [],
+                passed: false,
+                passedChecks: [],
+                remarksThrough: "2026-08-20T00:00:00.000Z",
+                remarkIds: [],
+                conflicting: false,
+                wakes: 0,
+              },
+            }),
+          ]),
+        });
+        const result = yield* harness.call(tool, { repository: "t3tools/t3code", number: 1 });
+        expect(result).toMatchObject({ watching: true, wasWatching: true });
+        expect(result).toHaveProperty("next");
+        expect(yield* Ref.get(harness.commands)).toEqual([]);
+      }),
+  );
+
   it.effect("watches a pull request saved as closed, since it may have reopened", () =>
     Effect.gen(function* () {
       const closed = makeLink(1, { headBranch: "closed" });

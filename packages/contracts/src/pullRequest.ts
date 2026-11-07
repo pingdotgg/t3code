@@ -295,6 +295,8 @@ export const PullRequestCapabilities = Schema.Struct({
    * reported rather than that the repository runs none. Absent means an empty list says nothing.
    */
   checksAlwaysReport: Schema.optional(Schema.Boolean),
+  /** A merge given `expectedHeadSha` fails if the head moved. Absent means it merges regardless. */
+  mergePinsHead: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -632,6 +634,7 @@ export const PullRequestDetail = Schema.Struct({
   /** Absent means the host does not report auto-merge state, not that it is off. */
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
+  isInMergeQueue: Schema.optional(Schema.Boolean),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
   maintainerCanModify: Schema.optional(Schema.Boolean),
 });
@@ -775,6 +778,8 @@ export const PullRequestActionInput = Schema.Struct({
   action: PullRequestAction,
   mergeMethod: Schema.optional(PullRequestMergeMethod),
   updateMethod: Schema.optional(PullRequestUpdateMethod),
+  /** Refuses the merge if the head moved after it was judged ready. */
+  expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
   /** Opt-in, because older clients decode the action's success as void and reject a summary. */
   replyWithSummary: Schema.optional(Schema.Literal(true)),
 });

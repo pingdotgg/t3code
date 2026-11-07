@@ -5,12 +5,21 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestChangeBreakdownRows } from "../pullRequest/PullRequestChangeBreakdownStat";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import { AgentMergeMenuItems } from "../pullRequest/AgentMergeMenuItems";
+import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
+import { agentMergeLabel } from "@t3tools/client-runtime/thread-pull-requests";
+import type {
+  EnvironmentId,
+  ProjectId,
+  PullRequestRef,
+  ThreadPullRequestAgentMerge,
+} from "@t3tools/contracts";
 import {
   ArrowUpRightIcon,
+  BotIcon,
   EyeIcon,
   EyeOffIcon,
   FileDiffIcon,
@@ -93,6 +102,8 @@ export function ThreadDetailsPrRow({
   onOpen,
   onActed,
   onStopWatching,
+  agentMerge,
+  onStartAgentMerge,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -105,6 +116,8 @@ export function ThreadDetailsPrRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
+  agentMerge?: ThreadPullRequestAgentMerge | undefined;
+  onStartAgentMerge?: ((agentMerge: ThreadPullRequestAgentMerge) => void) | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
@@ -361,8 +374,10 @@ export function ThreadDetailsPrRow({
               }
             : null;
 
-  const watching =
-    onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";
+  const pullRequestOpen = (detail?.state ?? pr?.state ?? "open") === "open";
+  const watching = onStopWatching !== undefined && pullRequestOpen;
+  const offersAgentMerge =
+    onStartAgentMerge !== undefined && pullRequestOpen && agentMerge === undefined;
   const watchControl = (part: "secondary" | "icon") =>
     watching ? (
       <Tooltip>
@@ -374,15 +389,26 @@ export function ThreadDetailsPrRow({
               size="sm"
               part={part}
               className="group/watch"
-              aria-label={`Stop watching #${number}`}
+              aria-label={
+                agentMerge === undefined
+                  ? `Stop watching #${number}`
+                  : `Stop agent merge on #${number}`
+              }
               onClick={onStopWatching}
             />
           }
         >
-          <EyeIcon
-            aria-hidden
-            className={cn(part === "icon" ? "size-3.5" : "size-4", "group-hover/watch:hidden")}
-          />
+          {agentMerge === undefined ? (
+            <EyeIcon
+              aria-hidden
+              className={cn(part === "icon" ? "size-3.5" : "size-4", "group-hover/watch:hidden")}
+            />
+          ) : (
+            <BotIcon
+              aria-hidden
+              className={cn(part === "icon" ? "size-3.5" : "size-4", "group-hover/watch:hidden")}
+            />
+          )}
           <EyeOffIcon
             aria-hidden
             className={cn(
@@ -392,11 +418,43 @@ export function ThreadDetailsPrRow({
           />
         </TooltipTrigger>
         <TooltipPopup side="top">
-          Watching: the agent wakes when checks finish, someone comments, or the branch conflicts.
+          {agentMerge === undefined
+            ? "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts."
+            : `Agent merge: ${agentMergeLabel(agentMerge)}.`}{" "}
           Click to stop.
         </TooltipPopup>
       </Tooltip>
     ) : null;
+
+  const agentMergeControl = offersAgentMerge ? (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <ThreadDetailsControl
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  part="icon"
+                  aria-label={`Agent merge for #${number}`}
+                />
+              }
+            />
+          }
+        >
+          <BotIcon aria-hidden className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          Agent merge: the agent fixes this {terminology.singular} until it is ready
+        </TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="start" side="bottom">
+        <AgentMergeMenuItems active={undefined} onSelect={onStartAgentMerge} />
+      </MenuPopup>
+    </Menu>
+  ) : null;
 
   // The title row wraps to two lines; a conventional-commit prefix eats most of one line.
   const openRow = (text: string, part: "row" | "primary", wrap = false) => (
@@ -436,7 +494,8 @@ export function ThreadDetailsPrRow({
 
   return (
     <>
-      {detail !== null && (showChecks || trailingAction !== null || watching) ? (
+      {detail !== null &&
+      (showChecks || trailingAction !== null || watching || offersAgentMerge) ? (
         <div className="pb-1.5">
           {openRow(detail.title, "row", true)}
           <div className="mt-1.5 flex h-5 min-w-0 items-center gap-0.5 ps-9 pe-2.5 text-xs text-muted-foreground">
@@ -450,6 +509,7 @@ export function ThreadDetailsPrRow({
               />
             ) : null}
             {watchControl("icon")}
+            {agentMergeControl}
             <span className="flex-1" />
             {trailingAction ? (
               <Tooltip>

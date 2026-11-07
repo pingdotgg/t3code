@@ -208,6 +208,7 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly baseComparison?: PullRequestBaseComparison;
   readonly behindBy?: number;
   readonly autoMergeEnabled?: boolean;
+  readonly isInMergeQueue?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
   readonly workflowApprovalsRequired?: number;
 }
@@ -485,6 +486,7 @@ export interface PullRequestProviderApi {
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
+      readonly expectedHeadSha?: string;
       readonly updateMethod?: PullRequestUpdateMethod;
     },
   ) => Effect.Effect<ProviderChangeRequestSummary | void, PullRequestProviderError>;

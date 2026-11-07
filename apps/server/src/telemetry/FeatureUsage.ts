@@ -37,7 +37,7 @@ const COMMAND_FEATURES: {
   "thread.settle": () => ({ feature: "thread.settle" }),
   "thread.pull-request.link": () => ({ feature: "thread.pull_request.link" }),
   "thread.pull-request.watch": (command) =>
-    use("thread.pull_request.watch", command.watching ? "on" : "off"),
+    use("thread.pull_request.watch", command.watching ? (command.agentMerge ?? "on") : "off"),
   "thread.runtime-mode.set": (command) => use("thread.runtime_mode.set", command.runtimeMode),
   "thread.interaction-mode.set": (command) =>
     use("thread.interaction_mode.set", command.interactionMode),

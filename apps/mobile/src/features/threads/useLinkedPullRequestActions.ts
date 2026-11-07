@@ -13,6 +13,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { planThreadPullRequestMutation } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import {
+  AGENT_MERGE_OPTIONS,
+  threadCanStartAgentMerge,
+} from "@t3tools/client-runtime/thread-pull-requests";
+import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -43,13 +47,8 @@ export function useLinkedPullRequestActions(input: {
   );
   const canEdit = canOperate && capabilities !== undefined;
   const canWatch = canOperate && capabilities?.threadPullRequestWatch === true;
-  const canStartWatch =
-    canWatch &&
-    thread !== null &&
-    thread.archivedAt === null &&
-    thread.settledAt === null &&
-    thread.settledOverride !== "settled" &&
-    thread.lineage.relationshipToParent !== "subagent";
+  const canStartWatch = canWatch && thread !== null && threadCanStartAgentMerge(thread);
+  const canStartAgentMerge = canStartWatch && capabilities?.threadPullRequestAgentMerge === true;
   const link = useAtomCommand(threadEnvironment.linkPullRequest, { reportFailure: false });
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: false });
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: false });
@@ -117,14 +116,34 @@ export function useLinkedPullRequestActions(input: {
   const menuActions = (link: ThreadPullRequestLink): MenuAction[] => {
     const open = link.snapshot === null || link.snapshot.state === "open";
     const watching = link.watch !== undefined;
+    const agentMerge = link.watch?.agentMerge;
     return [
       { id: "copy", title: "Copy link", image: "link" },
       { id: "browser", title: "Open in browser", image: "safari" },
+      ...(canStartAgentMerge && open
+        ? [
+            {
+              id: "agent-merge",
+              title: "Agent merge",
+              image: "sparkles",
+              subactions: AGENT_MERGE_OPTIONS.map((option) => ({
+                id: `agent-merge:${option.value}`,
+                title: option.label,
+                state: option.value === agentMerge ? ("on" as const) : ("off" as const),
+              })),
+            },
+          ]
+        : []),
       ...((watching ? canWatch : canStartWatch) && open
         ? [
             {
               id: "watch",
-              title: watching ? "Stop watching" : "Watch for changes",
+              title:
+                agentMerge !== undefined
+                  ? "Stop agent merge"
+                  : watching
+                    ? "Stop watching"
+                    : "Watch for changes",
               image: watching ? "eye.slash" : "eye",
             },
           ]
@@ -169,6 +188,24 @@ export function useLinkedPullRequestActions(input: {
         }),
       );
     else if (action === "unlink") setLinked(link, false);
+    else if (thread !== null) {
+      const option = AGENT_MERGE_OPTIONS.find(({ value }) => action === `agent-merge:${value}`);
+      if (option === undefined) return;
+      void run(
+        "Couldn't start agent merge",
+        watch({
+          environmentId: thread.environmentId,
+          input: {
+            threadId: thread.id,
+            host: link.host,
+            repository: link.repository,
+            number: link.number,
+            watching: true,
+            agentMerge: option.value,
+          },
+        }),
+      );
+    }
   };
 
   return { canLink: canEdit, terminology, promptLink, menuActions, onMenuAction };

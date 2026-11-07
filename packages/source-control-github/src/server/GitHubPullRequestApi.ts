@@ -679,6 +679,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
+      readonly expectedHeadSha?: string;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<ProviderChangeRequestSummary | void, GitHubPullRequestApiError>;
 
@@ -1634,10 +1635,6 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map(([, runs]) => runs));
 
   const simpleActionMutations = {
-    "disable-auto-merge": (pullRequestId: string) =>
-      client
-        .DisablePullRequestAutoMerge({ pullRequestId })
-        .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
     ready: (pullRequestId: string) =>
       client
         .MarkPullRequestReadyForReview({ pullRequestId })
@@ -2652,8 +2649,22 @@ export const make = Effect.gen(function* () {
               graphql(target),
             );
         }
+        // A pull request the queue already holds has no auto-merge left to turn off.
+        if (action === "disable-auto-merge") {
+          return yield* actionSummary(
+            state.isInMergeQueue
+              ? client
+                  .DequeuePullRequest({ id: state.id })
+                  .pipe(
+                    Effect.map((result) => result.dequeuePullRequest?.mergeQueueEntry?.pullRequest),
+                  )
+              : client
+                  .DisablePullRequestAutoMerge({ pullRequestId: state.id })
+                  .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
+          ).pipe(graphql(target));
+        }
         let body: string | undefined;
-        let expectedHead: string | undefined;
+        let expectedHead = input.expectedHeadSha;
         if (input.removeAgentCreditsOnMerge === true && input.mergeMethod !== "rebase") {
           const message = yield* client
             .PullRequestMergeMessage({
@@ -2672,7 +2683,7 @@ export const make = Effect.gen(function* () {
             const cleaned = removeAgentCredits(message.viewerMergeBodyText);
             if (cleaned !== message.viewerMergeBodyText) {
               body = cleaned;
-              expectedHead = message.headRefOid;
+              expectedHead ??= message.headRefOid;
             }
           }
         }

@@ -87,7 +87,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   const row = (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${capitalizeTerm(singular)} ${link.number}, ${snapshot?.title ?? "waiting for host state"}${status ? `, ${status.label}` : ""}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, ${link.repository}${stack ? `, stack of ${stack.size}` : ""}${watching ? ", watching" : ""}${checks ? `, checks ${snapshot?.checksState}` : ""}${review ? `, ${review.accessibleLabel}` : ""}`}
+      accessibilityLabel={`${capitalizeTerm(singular)} ${link.number}, ${snapshot?.title ?? "waiting for host state"}${status ? `, ${status.label}` : ""}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, ${link.repository}${stack ? `, stack of ${stack.size}` : ""}${watching ? (link.watch?.agentMerge === undefined ? ", watching" : ", agent merge on") : ""}${checks ? `, checks ${snapshot?.checksState}` : ""}${review ? `, ${review.accessibleLabel}` : ""}`}
       accessibilityHint={props.actions ? "Touch and hold for actions." : undefined}
       onPress={() => {
         void props.openPullRequest(link.url).then((opened) => {
@@ -131,7 +131,11 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
             </View>
           ) : null}
           {watching ? (
-            <SymbolView name="eye" size={13} tintColorClassName="accent-foreground-muted" />
+            <SymbolView
+              name={link.watch?.agentMerge === undefined ? "eye" : "sparkles"}
+              size={13}
+              tintColorClassName="accent-foreground-muted"
+            />
           ) : null}
           {checks ? (
             <SymbolView name={checks.icon} size={13} tintColorClassName={checks.tint} />

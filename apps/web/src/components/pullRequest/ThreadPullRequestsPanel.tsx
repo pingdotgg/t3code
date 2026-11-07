@@ -1,16 +1,25 @@
-import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
+import type {
+  ProjectId,
+  ScopedThreadRef,
+  ThreadPullRequestAgentMerge,
+  ThreadPullRequestLink,
+} from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import {
   sourceControlClients,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
+  agentMergeLabel,
   type PullRequestListLine,
   pullRequestListLines,
   resolveThreadPullRequestChains,
+  threadCanStartAgentMerge,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import {
   ArrowUpRightIcon,
+  BotIcon,
   EyeIcon,
   EyeOffIcon,
   LinkIcon,
@@ -30,15 +39,25 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { useShortcutModifierState } from "~/shortcutModifierState";
 import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
+import { useEnvironmentScope } from "~/state/session";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RelativeTime } from "~/components/RelativeTime";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AgentMergeMenuItems } from "./AgentMergeMenuItems";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
 import {
   PULL_REQUEST_ROW_CLASS,
@@ -92,6 +111,7 @@ function LinkRowImpl({
   speedMode,
   onUnlink,
   onSetWatching,
+  onStartAgentMerge,
 }: {
   line: PullRequestListLine;
   threadRef: ScopedThreadRef;
@@ -99,6 +119,9 @@ function LinkRowImpl({
   speedMode: boolean;
   onUnlink: (link: ThreadPullRequestLink) => void;
   onSetWatching: ((link: ThreadPullRequestLink, watching: boolean) => void) | null;
+  onStartAgentMerge:
+    | ((link: ThreadPullRequestLink, agentMerge: ThreadPullRequestAgentMerge) => void)
+    | null;
 }) {
   const openPrLink = useOpenPrLink(threadRef);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -110,6 +133,7 @@ function LinkRowImpl({
   const snapshot = link.snapshot;
   const open = snapshot === null || snapshot.state === "open";
   const watching = link.watch !== undefined;
+  const agentMerge = link.watch?.agentMerge;
   const linkHost =
     sourceControlClients.findByChangeRequestUrl(link.url) ?? UNKNOWN_SOURCE_CONTROL_CLIENT;
   const linkHostActions = linkHost.changeRequestActions;
@@ -191,7 +215,14 @@ function LinkRowImpl({
           signals={
             open ? (
               <>
-                {watching ? (
+                {agentMerge !== undefined ? (
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+                      <BotIcon role="img" aria-label="Agent merge" className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipPopup>Agent merge: {agentMergeLabel(agentMerge)}</TooltipPopup>
+                  </Tooltip>
+                ) : watching ? (
                   <Tooltip>
                     <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
                       <EyeIcon role="img" aria-label="Watching" className="size-3.5" />
@@ -330,10 +361,28 @@ function LinkRowImpl({
               <ArrowUpRightIcon className="size-3.5" />
               Open
             </MenuItem>
+            {onStartAgentMerge !== null && open ? (
+              <MenuSub>
+                <MenuSubTrigger>
+                  <BotIcon className="size-3.5" />
+                  Agent merge
+                </MenuSubTrigger>
+                <MenuSubPopup>
+                  <AgentMergeMenuItems
+                    active={agentMerge}
+                    onSelect={(next) => onStartAgentMerge(link, next)}
+                  />
+                </MenuSubPopup>
+              </MenuSub>
+            ) : null}
             {onSetWatching !== null && open ? (
               <MenuItem onClick={() => onSetWatching(link, !watching)}>
                 {watching ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
-                {watching ? "Stop watching" : "Watch for changes"}
+                {agentMerge !== undefined
+                  ? "Stop agent merge"
+                  : watching
+                    ? "Stop watching"
+                    : "Watch for changes"}
               </MenuItem>
             ) : null}
             <MenuItem onClick={() => onUnlink(link)}>
@@ -398,6 +447,13 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
   const supportsWatch = capabilities?.threadPullRequestWatch === true;
+  const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
+  const supportsAgentMerge =
+    canOperate &&
+    capabilities?.threadPullRequestAgentMerge === true &&
+    thread !== null &&
+    thread !== undefined &&
+    threadCanStartAgentMerge(thread);
   const handleUnlink = (link: ThreadPullRequestLink) => {
     void unlink({
       environmentId: threadRef.environmentId,
@@ -409,7 +465,11 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
       },
     });
   };
-  const handleSetWatching = (link: ThreadPullRequestLink, watching: boolean) => {
+  const handleSetWatching = (
+    link: ThreadPullRequestLink,
+    watching: boolean,
+    agentMerge?: ThreadPullRequestAgentMerge,
+  ) => {
     void watch({
       environmentId: threadRef.environmentId,
       input: {
@@ -418,12 +478,24 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
         repository: link.repository,
         number: link.number,
         watching,
+        ...(agentMerge === undefined ? {} : { agentMerge }),
       },
     });
   };
+  const handleStartAgentMerge = (
+    link: ThreadPullRequestLink,
+    agentMerge: ThreadPullRequestAgentMerge,
+  ) => handleSetWatching(link, true, agentMerge);
 
   // Legend rows update only for data/extraData changes; include all external inputs.
-  const rowInputs = { speedMode, environmentProjects, capabilities, supportsWatch, thread };
+  const rowInputs = {
+    speedMode,
+    environmentProjects,
+    capabilities,
+    supportsWatch,
+    supportsAgentMerge,
+    thread,
+  };
 
   if (linkCount === 0) {
     return (
@@ -465,6 +537,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
               speedMode={speedMode}
               onUnlink={handleUnlink}
               onSetWatching={supportsWatch ? handleSetWatching : null}
+              onStartAgentMerge={supportsAgentMerge ? handleStartAgentMerge : null}
             />
           )}
           estimatedItemSize={44}

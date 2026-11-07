@@ -7,7 +7,9 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
+  agentMergeGate,
   evaluatePullRequestWatch as evaluate,
+  pullRequestAgentMergeMessage,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
@@ -77,6 +79,45 @@ const remark = (
 });
 
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
+
+describe("agentMergeGate", () => {
+  const green = { ...check("test", "success"), required: true };
+  const gateDetail = (overrides: Partial<Parameters<typeof agentMergeGate>[1]> = {}) => ({
+    capabilities: capabilities(true),
+    checks: [green],
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    ...overrides,
+  });
+  const open = [{ isResolved: false }, { isResolved: true }];
+
+  it.each([
+    ["a pending check", { checks: [green, check("bot", "pending")] }],
+    ["a failed required check", { checks: [{ ...green, status: "failure" as const }] }],
+    ["a conflict", { mergeability: "conflicting" as const }],
+    ["a host still computing mergeability", { mergeability: "unknown" as const }],
+    ["no checks yet where the host always reports them", { checks: [] }],
+  ])("decides nothing during %s", (_name, overrides) => {
+    assert.isNull(agentMergeGate("merge", gateDetail(overrides), [], null));
+  });
+
+  it("is ready on required checks, whatever advisory work remains", () => {
+    const checks = [green, check("flaky", "failure"), check("CodeRabbit", "pending")];
+    assert.deepEqual(agentMergeGate("merge", gateDetail({ checks }), [], null), { blockers: [] });
+  });
+
+  it("lets only review work hold back the modes that do it", () => {
+    assert.deepEqual(agentMergeGate("checks", gateDetail(), open, "changes-requested"), {
+      blockers: [],
+    });
+    assert.deepEqual(agentMergeGate("merge", gateDetail(), open, "changes-requested"), {
+      blockers: ["1 unresolved review thread", "a reviewer requested changes"],
+    });
+    assert.deepEqual(agentMergeGate("checks", gateDetail({ isDraft: true }), [], null), {
+      blockers: ["it is still a draft"],
+    });
+  });
+});
 
 describe("evaluatePullRequestWatch", () => {
   it("reports each failure at once, even while another check never finishes", () => {
@@ -334,6 +375,77 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [comments[1]!] }]);
     assert.equal(report.next.remarksThrough, "2026-10-02T12:06:00Z");
     assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), comments).changes, []);
+  });
+
+  it("keeps agent merge across reads and leaves comments out of fix-checks mode", () => {
+    const comment = remark("reviewer", "2026-10-02T12:05:00.000Z");
+    const checksOnly = evaluatePullRequestWatch(
+      watch({ agentMerge: "checks" }),
+      detail({ checks: [check("lint", "failure")] }),
+      [comment],
+    );
+    assert.deepEqual(
+      checksOnly.changes.map((change) => change.kind),
+      ["checks-failed"],
+    );
+    assert.equal(checksOnly.next.agentMerge, "checks");
+    assert.equal(checksOnly.next.remarksThrough, comment.createdAt);
+    assert.equal(checksOnly.next.wakes, 0);
+
+    const feedback = evaluatePullRequestWatch(watch({ agentMerge: "feedback" }), detail(), [
+      comment,
+    ]);
+    assert.deepEqual(
+      feedback.changes.map((change) => change.kind),
+      ["remarks"],
+    );
+  });
+
+  it("never tells the agent it may merge, in any agent merge mode", () => {
+    const wake = (agentMerge?: "checks" | "feedback" | "merge") =>
+      pullRequestWatchMessage({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        baseBranch: "main",
+        headSha: "aaaaaaaaaa",
+        agentMerge,
+        report: evaluatePullRequestWatch(
+          watch(),
+          detail({ checks: [check("lint", "failure")] }),
+          noRemarks,
+        ),
+      }).text;
+    const start = (agentMerge: "checks" | "feedback" | "merge") =>
+      pullRequestAgentMergeMessage({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        agentMerge,
+      }).text;
+    for (const text of [wake(), wake("checks"), wake("merge"), start("checks"), start("merge")]) {
+      assert.notInclude(text, "authorized");
+    }
+    for (const text of [wake("checks"), wake("merge"), start("checks"), start("merge")]) {
+      assert.include(text, "do not merge it yourself");
+    }
+    for (const text of [wake("feedback"), wake("merge")]) assert.include(text, "not instructions");
+    for (const text of [wake(), wake("checks"), wake("merge"), start("checks"), start("merge")]) {
+      assert.notInclude(text, "babysit");
+      assert.notInclude(text, "unwatch_pull_request");
+      assert.include(text, "do not link, watch, unwatch, or list it");
+    }
+    assert.include(start("checks"), "Leave review comments to the user");
+    assert.include(wake("checks"), "fix checks and conflicts only");
+    assert.include(wake(), "act on it as your task requires");
+  });
+
+  it("lets a new review retry a refused merge on the same head", () => {
+    const refused = watch({ agentMerge: "merge", headSha: "aaaaaaaaaa", mergeHead: "aaaaaaaaaa" });
+    const quiet = evaluatePullRequestWatch(refused, detail(), noRemarks);
+    assert.equal(quiet.next.mergeHead, "aaaaaaaaaa");
+    const approved = evaluatePullRequestWatch(refused, detail(), [
+      remark("reviewer", "2026-10-02T12:05:00.000Z"),
+    ]);
+    assert.isUndefined(approved.next.mergeHead);
   });
 
   it("cuts a long remark in the wake message without splitting an emoji", () => {

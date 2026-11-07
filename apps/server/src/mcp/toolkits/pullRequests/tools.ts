@@ -252,10 +252,14 @@ export const UnlinkPullRequestsResult = Schema.Struct({
 });
 export type UnlinkPullRequestsResult = typeof UnlinkPullRequestsResult.Type;
 
+export const AGENT_MERGE_WATCH_NEXT =
+  "Agent merge is on, so T3 Code manages this watch and nothing changed. End your turn; T3 Code prompts you on the next change.";
+
 export const WatchPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
   watching: Schema.Boolean,
   wasWatching: Schema.Boolean,
+  next: Schema.optional(Schema.String),
 });
 export type WatchPullRequestResult = typeof WatchPullRequestResult.Type;
 

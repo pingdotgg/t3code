@@ -4,12 +4,14 @@ import {
   CheckpointScopeId,
   CommandId,
   NodeId,
+  ProjectId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  PullRequestOperationError,
   ThreadId,
   VcsProcessExitError,
 } from "@t3tools/contracts";
@@ -563,6 +565,63 @@ it.effect("settles a delegated child once its restart continuation fails for goo
         Exit.isFailure(yield* Effect.exit(executor.execute(effect, { willRetry: false }))),
       );
       assert.deepEqual(yield* Ref.get(recovered), [threadId]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("tells the thread only after the last attempt to withdraw a merge fails", () =>
+  Effect.gen(function* () {
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const dispatched: Array<string> = [];
+    const layer = layerExecutorFor({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      threads: {
+        dispatch: (command) =>
+          Effect.sync(() => {
+            if (command.type === "message.dispatch") dispatched.push(command.text);
+            return { sequence: 1, storedEvents: [] };
+          }),
+      },
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(EffectWorker.MergeWithdrawal, {
+          withdraw: () =>
+            Effect.fail(
+              new PullRequestOperationError({ operation: "runAction", detail: "Refused." }),
+            ),
+        }),
+      ),
+    );
+    const effect: EffectOutbox.OrchestrationEffectV2 = {
+      id: "effect:withdraw",
+      commandId: CommandId.make("command:withdraw"),
+      threadId,
+      request: {
+        type: "pull-request-merge.withdraw",
+        projectId: ProjectId.make("project:withdraw"),
+        host: "github.com",
+        repository: "acme/web",
+        number: 7,
+        stacked: false,
+      },
+      status: "running",
+      attemptCount: 1,
+      availableAt: timestamp,
+      leaseOwner: "test-worker",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+      lastError: null,
+    };
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(executor.execute(effect, { willRetry: true }))),
+      );
+      assert.deepEqual(dispatched, []);
+      yield* executor.execute(effect, { willRetry: false });
+      assert.lengthOf(dispatched, 1);
+      assert.include(dispatched[0], "#7");
     }).pipe(Effect.provide(layer));
   }),
 );

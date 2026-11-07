@@ -15,6 +15,7 @@ import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
+  threadPullRequestKeyOf,
   threadPullRequestKeysEqual,
   legacyThreadPullRequestKey,
 } from "../sourceControl/threadPullRequests.ts";
@@ -62,6 +63,7 @@ import {
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
   orchestrationV2WorktreePending,
+  type ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
   isRuntimeModeAbove,
@@ -189,6 +191,11 @@ import {
   isForkableSourceRunStatus,
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
+import {
+  agentMergeMessagePrefix,
+  isAgentMergeMessage,
+  pullRequestAgentMergeMessage,
+} from "./pullRequestWatch.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
@@ -719,6 +726,11 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(isLiveRun);
 }
 
+type PullRequestWatchCommand = Extract<
+  OrchestrationV2ServerCommand,
+  { readonly type: "thread.pull-request.watch" | "thread.pull-request.unlink" }
+>;
+
 function withPullRequestWatch(
   link: ThreadPullRequestLink,
   watch: ThreadPullRequestWatch | undefined,
@@ -727,6 +739,36 @@ function withPullRequestWatch(
   if (watch !== undefined) return { ...rest, watch };
   const ended = previous ?? endedWatch;
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
+}
+
+/** The host keeps what T3 Code queued after the watch ends, so withdrawing has to take it back. */
+function agentMergeWithdrawEffects(
+  command: { readonly commandId: CommandId; readonly threadId: ThreadId },
+  projectId: ProjectId,
+  links: ReadonlyArray<ThreadPullRequestLink>,
+): ReadonlyArray<PendingOrchestrationEffectV2> {
+  return links.flatMap((link) => {
+    const watch = link.watch;
+    if (
+      watch?.agentMerge !== "merge" ||
+      (watch.mergeHead === undefined && watch.queuedHead === undefined)
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: `effect:${command.commandId}:pull-request-merge.withdraw:${threadPullRequestKeyOf(link)}`,
+        commandId: command.commandId,
+        threadId: command.threadId,
+        request: {
+          type: "pull-request-merge.withdraw",
+          projectId,
+          ...normalizeThreadPullRequestKey(link),
+          stacked: link.stack !== null,
+        },
+      },
+    ];
+  });
 }
 
 function legacyPullRequestLink(
@@ -3132,6 +3174,93 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  // A queued brief describes a mode that no longer applies. A running turn just finishes: T3 Code
+  // does the merging, so the turn holds nothing to take back.
+  const withdrawAgentMerge = Effect.fn("orchestrationV2.dispatch.withdrawAgentMerge")(function* (
+    command: PullRequestWatchCommand,
+    pullRequestKey: string,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* loadProjectionForCommand(command, ["runs", "messages"], {
+      turnItemTypes: [],
+      messageRoles: ["user"],
+    });
+    const prefix = agentMergeMessagePrefix(pullRequestKey);
+    const briefRunIds = new Set(
+      projection.messages.flatMap((message) =>
+        message.id.startsWith(prefix) && message.runId !== null ? [message.runId] : [],
+      ),
+    );
+    for (const run of projection.runs) {
+      if (run.status !== "queued" || !briefRunIds.has(run.id)) continue;
+      yield* dispatchQueuedRunCancel(
+        {
+          type: "queued-run.cancel",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          runId: run.id,
+        },
+        events,
+      );
+    }
+  });
+
+  // Older comments and news an ended watch already told never wake it, so the agent looks first.
+  const dispatchPullRequestWatch = Effect.fn("orchestrationV2.dispatch.pullRequestWatch")(
+    function* (
+      command: PullRequestWatchCommand,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const key = normalizeThreadPullRequestKey(command);
+      const link = threadPullRequestsOf(thread).find(
+        (candidate) =>
+          candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
+      );
+      const current = link?.watch?.agentMerge;
+      const requested = command.type === "thread.pull-request.watch" ? command : null;
+      const next = requested?.watching === true ? (requested.agentMerge ?? current) : undefined;
+      yield* dispatchThreadMutation(command, events, effects);
+      if (link !== undefined && current !== undefined && current !== next) {
+        yield* withdrawAgentMerge(command, threadPullRequestKeyOf(link), events);
+      }
+      if (link !== undefined && next !== "merge") {
+        const withdrawn = agentMergeWithdrawEffects(command, thread.projectId, [link]);
+        yield* Ref.update(effects, (existing) => [...existing, ...withdrawn]);
+      }
+      if (link !== undefined && next !== undefined && next !== current) {
+        yield* dispatchMessage(
+          {
+            type: "message.dispatch",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            messageId: MessageId.make(
+              `${agentMergeMessagePrefix(threadPullRequestKeyOf(link))}${command.commandId}`,
+            ),
+            ...pullRequestAgentMergeMessage({
+              number: link.number,
+              url: link.url,
+              agentMerge: next,
+            }),
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "server",
+          },
+          events,
+          effects,
+        );
+      }
+    },
+  );
+
   // Deleted after the share change commits: the files of waiting messages it dismissed or dropped.
   const releaseGuestAttachments = (
     command: { readonly commandId: CommandId; readonly threadId: ThreadId },
@@ -4039,31 +4168,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : existing.watch
               : !command.watching
                 ? undefined
-                : (existing.watch ?? {
-                    startedAt,
-                    headSha: null,
-                    failedChecks: [],
-                    passed: false,
-                    passedChecks: [],
-                    conflicting: false,
-                    // Watching again must not repeat check or conflict news the last watch told.
-                    ...(existing.endedWatch && {
-                      headSha: existing.endedWatch.headSha,
-                      failedChecks: existing.endedWatch.failedChecks,
-                      passed: existing.endedWatch.passed,
-                      passedChecks: existing.endedWatch.passedChecks,
-                      conflicting: existing.endedWatch.conflicting,
-                    }),
-                    ...(existing.endedWatch?.owedChecks !== undefined && {
-                      owedChecks: existing.endedWatch.owedChecks,
-                    }),
-                    ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
-                      checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
-                    }),
-                    remarksThrough: startedAt,
-                    remarkIds: [],
-                    wakes: 0,
-                  });
+                : existing.watch !== undefined &&
+                    command.agentMerge !== undefined &&
+                    command.agentMerge !== existing.watch.agentMerge
+                  ? // A new startedAt drops any read still in flight under the old mode.
+                    { ...existing.watch, startedAt, agentMerge: command.agentMerge }
+                  : (existing.watch ?? {
+                      startedAt,
+                      ...(command.agentMerge !== undefined && { agentMerge: command.agentMerge }),
+                      headSha: null,
+                      failedChecks: [],
+                      passed: false,
+                      passedChecks: [],
+                      conflicting: false,
+                      // Watching again must not repeat check or conflict news the last watch told.
+                      ...(existing.endedWatch && {
+                        headSha: existing.endedWatch.headSha,
+                        failedChecks: existing.endedWatch.failedChecks,
+                        passed: existing.endedWatch.passed,
+                        passedChecks: existing.endedWatch.passedChecks,
+                        conflicting: existing.endedWatch.conflicting,
+                      }),
+                      ...(existing.endedWatch?.owedChecks !== undefined && {
+                        owedChecks: existing.endedWatch.owedChecks,
+                      }),
+                      ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
+                        checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
+                      }),
+                      remarksThrough: startedAt,
+                      remarkIds: [],
+                      wakes: 0,
+                    });
           if (watch === existing.watch && links === linked) return thread;
           const final =
             command.type === "thread.pull-request-watch.sync" && watch === undefined
@@ -11102,6 +11237,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { readonly type: "run.interrupt" | "thread.stop" }
     >;
     readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>;
     readonly projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "subagents">;
     readonly cohortRunIds: ReadonlyArray<RunId>;
     readonly now: DateTime.Utc;
@@ -11163,8 +11299,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (cause) => new OrchestratorProjectionError({ threadId: thread.id, cause }),
               ),
             )).messages;
-    const bufferedMessageIds = new Set(
-      queuedMessages.filter(isBufferedProviderNotification).map((message) => message.id),
+    // A held run can still start later, and a stopped thread's brief no longer applies.
+    const droppedMessageIds = new Set(
+      queuedMessages
+        .filter(
+          (message) => isBufferedProviderNotification(message) || isAgentMergeMessage(message.id),
+        )
+        .map((message) => message.id),
     );
     for (const run of runs) {
       // A resumed queue can have a lower ordinal than a pending continuation source.
@@ -11177,7 +11318,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* markStoppedRun({ ...input, thread, run });
       }
       if (run.status !== "queued") continue;
-      if (bufferedMessageIds.has(run.userMessageId)) {
+      if (droppedMessageIds.has(run.userMessageId)) {
         yield* dispatchQueuedRunCancel(
           {
             type: "queued-run.cancel",
@@ -11211,6 +11352,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
         },
       });
+      const withdrawn = agentMergeWithdrawEffects(input.command, thread.projectId, pullRequests);
+      yield* Ref.update(input.effects, (existing) => [...existing, ...withdrawn]);
     }
     const cohortRunIds = new Set(input.cohortRunIds);
     for (const run of runs) {
@@ -11632,6 +11775,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? holdStoppedThread({
             command,
             events,
+            effects,
             projection,
             cohortRunIds: [completionCohortRunId],
             now,
@@ -12256,7 +12400,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     for (const run of reached.values()) {
       yield* markStoppedRun({ command, events, thread: projection.thread, run, now });
     }
-    yield* holdStoppedThread({ command, events, projection, cohortRunIds: [], now });
+    yield* holdStoppedThread({ command, events, effects, projection, cohortRunIds: [], now });
     yield* cancelIdleOrphans({ command, events, projection });
     yield* stopDelegatedTasks;
     return undefined;
@@ -13489,9 +13633,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.mark-unread":
       case "thread.metadata.update":
       case "thread.pull-request.link":
-      case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
-      case "thread.pull-request.watch":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":
       case "thread.runtime-mode.set":
@@ -13499,6 +13641,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.model-selection.set":
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
+        break;
+      case "thread.pull-request.watch":
+      case "thread.pull-request.unlink":
+        yield* dispatchPullRequestWatch(command, events, effects);
         break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);

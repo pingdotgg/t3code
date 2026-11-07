@@ -79,8 +79,13 @@ export const ThreadPullRequestKey = Schema.Struct({
 });
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
+/** What a watching agent may do unprompted; each mode includes the ones before it. */
+export const ThreadPullRequestAgentMerge = Schema.Literals(["checks", "feedback", "merge"]);
+export type ThreadPullRequestAgentMerge = typeof ThreadPullRequestAgentMerge.Type;
+
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
+  agentMerge: Schema.optional(ThreadPullRequestAgentMerge),
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
   passed: Schema.Boolean,
@@ -100,6 +105,12 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** The head whose agent merge blockers the agent was told, so each head wakes it once. */
+  blockedHead: Schema.optional(TrimmedNonEmptyString),
+  /** The head T3 Code tried to merge, so a refusal or a merge queue is not retried. */
+  mergeHead: Schema.optional(TrimmedNonEmptyString),
+  /** The head seen waiting on the host's merge, so leaving the queue unmerged wakes the agent. */
+  queuedHead: Schema.optional(TrimmedNonEmptyString),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

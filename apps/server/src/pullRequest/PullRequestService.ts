@@ -27,6 +27,8 @@ import {
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
   type PullRequestDetail,
+  type PullRequestStackHead,
+  type PullRequestMergeMethod,
   type PullRequestPreview,
   type PullRequestChecks,
   type PullRequestDiffFileContentsInput,
@@ -174,6 +176,15 @@ const routingCredential = Context.Reference<{
 const credentialNamespace = Symbol("pullRequestCredentialNamespace");
 type CredentialRef = PullRequestRef & { readonly [credentialNamespace]?: string };
 
+/** The project's method when the repository allows it, otherwise the first it does. */
+export function allowedMergeMethod(
+  preferred: PullRequestMergeMethod | null,
+  allowed: PullRequestDetail["mergeCapabilities"],
+): PullRequestMergeMethod | undefined {
+  if (preferred !== null && allowed[preferred]) return preferred;
+  return (["squash", "merge", "rebase"] as const).find((method) => allowed[method]);
+}
+
 export class PullRequestService extends Context.Service<
   PullRequestService,
   {
@@ -257,6 +268,22 @@ export class PullRequestService extends Context.Service<
     readonly runAction: (
       input: PullRequestActionInput,
     ) => Effect.Effect<PullRequestSummary | undefined, PullRequestError>;
+    /** Merges with the project's method, and only while the head is still `headSha`. */
+    readonly mergeHead: (
+      input: PullRequestRef & {
+        readonly headSha: string;
+        readonly mergeCapabilities: PullRequestDetail["mergeCapabilities"];
+        /** Lands this layer and every open one below it, while each head is still as given. */
+        readonly stack?: {
+          readonly number: number;
+          readonly heads: ReadonlyArray<PullRequestStackHead>;
+        };
+      },
+    ) => Effect.Effect<void, PullRequestError>;
+    /** Takes back a queued merge or auto-merge, and on a stack the open layers below it too. */
+    readonly withdrawMerge: (
+      input: PullRequestRef & { readonly stacked: boolean },
+    ) => Effect.Effect<void, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
     readonly updateComment: (
@@ -1850,6 +1877,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.autoMergeMethod === undefined
               ? {}
               : { autoMergeMethod: changeRequest.autoMergeMethod }),
+            ...(changeRequest.isInMergeQueue === undefined
+              ? {}
+              : { isInMergeQueue: changeRequest.isInMergeQueue }),
             ...(changeRequest.maintainerCanModify === undefined
               ? {}
               : { maintainerCanModify: changeRequest.maintainerCanModify }),
@@ -2150,6 +2180,9 @@ export const make = Effect.gen(function* () {
                       ? {}
                       : { expectedStackHeads: input.expectedStackHeads }),
                     ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+                    ...(input.expectedHeadSha === undefined
+                      ? {}
+                      : { expectedHeadSha: input.expectedHeadSha }),
                     ...(input.updateMethod === undefined
                       ? {}
                       : { updateMethod: input.updateMethod }),
@@ -3666,6 +3699,65 @@ export const make = Effect.gen(function* () {
     return input.replyWithSummary === true ? summary : undefined;
   });
 
+  const mergeHead: PullRequestService["Service"]["mergeHead"] = Effect.fn(
+    "PullRequestService.mergeHead",
+  )(function* ({ headSha, mergeCapabilities, stack, ...ref }) {
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(
+        () =>
+          new PullRequestOperationError({
+            operation: "mergeHead",
+            detail: "Could not read merge settings.",
+          }),
+      ),
+    );
+    const mergeMethod = allowedMergeMethod(
+      resolveProjectSettings(settings, ref.projectId).settings.pullRequestMergeMethod,
+      mergeCapabilities,
+    );
+    yield* runActionAndInvalidate({
+      ...ref,
+      action: "merge",
+      ...(stack === undefined
+        ? { expectedHeadSha: headSha }
+        : { stackNumber: stack.number, expectedStackHeads: stack.heads }),
+      ...(mergeMethod === undefined ? {} : { mergeMethod }),
+    });
+  });
+
+  const withdrawMerge: PullRequestService["Service"]["withdrawMerge"] = Effect.fn(
+    "PullRequestService.withdrawMerge",
+  )(function* ({ stacked, ...ref }) {
+    yield* invalidate({ reference: ref });
+    const layers = stacked ? (yield* stack(ref))?.layers : undefined;
+    const index = layers?.findIndex((layer) => layer.number === ref.number) ?? -1;
+    const numbers =
+      layers === undefined || index < 0
+        ? [ref.number]
+        : layers
+            .slice(0, index + 1)
+            .filter((layer) => layer.state !== "merged")
+            .map((layer) => layer.number)
+            .toReversed();
+    // Each read is fresh, because removing a layer can drop the ones queued with it.
+    yield* Effect.forEach(
+      numbers,
+      (number) =>
+        Effect.gen(function* () {
+          const layer = { ...ref, number };
+          yield* invalidate({ reference: layer });
+          const current = yield* detail({ ...layer, allowStale: false });
+          if (
+            current.state === "open" &&
+            (current.isInMergeQueue === true || current.autoMergeEnabled === true)
+          ) {
+            yield* runActionAndInvalidate({ ...layer, action: "disable-auto-merge" });
+          }
+        }),
+      { discard: true },
+    );
+  });
+
   const credentialCached =
     <I extends PullRequestRef, Args extends ReadonlyArray<unknown>, A, E>(
       read: (input: I, ...args: Args) => Effect.Effect<A, E>,
@@ -3825,6 +3917,8 @@ export const make = Effect.gen(function* () {
       Cache.get(changeBreakdownCache, refCacheKey(input)),
     ),
     runAction: runActionAndInvalidate,
+    mergeHead,
+    withdrawMerge,
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),
     updateComment: invalidatedByMutation(updateComment),

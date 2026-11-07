@@ -384,6 +384,7 @@ describe("pull request detail decoding", () => {
             headRef: null,
             author: null,
             autoMergeRequest: null,
+            isInMergeQueue: false,
             viewerCanUpdate: true,
             viewerDidAuthor: false,
             viewerCanUpdateBranch: false,
@@ -530,6 +531,7 @@ describe("pull request detail decoding", () => {
   });
 
   it("reads an auto-merge request and strategy, and its null as off", () => {
+    expect(detailOf([], { isInMergeQueue: true }).isInMergeQueue).toBe(true);
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
       autoMergeMethod: "squash",

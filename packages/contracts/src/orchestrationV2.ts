@@ -63,6 +63,7 @@ import {
   ThreadPullRequestLinkSource,
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
+  ThreadPullRequestAgentMerge,
   ThreadPullRequestWatch,
 } from "./threadPullRequest.ts";
 import {
@@ -3101,6 +3102,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
     watching: Schema.Boolean,
+    agentMerge: Schema.optional(ThreadPullRequestAgentMerge),
     link: Schema.optional(
       Schema.Struct({
         url: TrimmedNonEmptyString,

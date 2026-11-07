@@ -301,7 +301,7 @@ closed reviews refresh periodically so reopening one on the host is detected. Me
 when requested. A settled thread's reviews stop refreshing until you unsettle it. With **Auto-settle merged threads** enabled, a thread can settle after every linked
 review is terminal. An open or unsynced link keeps it active.
 
-Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
+Ask the agent to watch or monitor a pull request and it calls `watch_pull_request`. While
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
 check fails, the required checks pass, someone else comments or reviews, or the branch starts to
 conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
@@ -316,8 +316,40 @@ it yourself, use the row menu in the **Linked pull requests** panel. In the thre
 watched pull request shows an eye; click it to stop watching.
 
 A watched thread counts as working between wakes, so it stays in the **Working** section and does
-not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
-returns to your inbox.
+not auto-settle. T3 Code runs the watch until one of the endings above, and the thread then returns
+to your inbox. Stop watching to return it sooner.
+
+**Agent merge** starts a watch and has the agent fix what it finds, without asking. Start it from the
+bot button in the thread details card, or from a row's menu in the **Linked pull requests** panel; on
+mobile, long-press a linked review. Pick how far it goes:
+
+- **Fix checks** fixes failing checks and merge conflicts. Comments do not wake it.
+- **Fix checks and feedback** also addresses review comments. Anyone who can comment on the pull
+  request can wake the agent, so use it with care on public repositories.
+- **Fix and merge when ready** also merges for you.
+
+T3 Code decides when a pull request is ready, not the agent: required checks pass, every other check
+finishes, the branch has no conflict, and, when comments are in scope, no review thread is open and
+no reviewer requested changes. CodeRabbit is never waited for. It waits until the agent is idle. Then
+it stops watching and tells you, or with **Fix and merge when ready** it merges with your project's
+merge method, or the first one the repository allows. It merges only the commit it judged, so only
+GitHub merges this way: other hosts cannot refuse a commit that landed after the check, and those
+pull requests are reported ready instead. So are ones you lack write access to. With a merge queue,
+it adds the pull request to the queue, and the agent is told if it leaves without merging. On a
+stacked review, it lands that layer and every open one below it, once each of them is ready too.
+Turning **Fix and merge when ready** off, unlinking the pull request, or stopping the thread takes
+it back out of the queue, along with its auto-merge and any stack layers queued with it. Archiving
+or settling the thread does not. If it cannot be removed, the agent tells you it may still merge.
+If the host refuses, such as for a missing approval or an out-of-date branch, the agent is told why,
+and T3 Code tries again after a new push or review.
+
+T3 Code runs the watch and prompts the agent on each change, so the agent cannot watch or stop
+watching a pull request under agent merge. Agent merge starts right away, even if the agent is idle:
+it first reviews where the pull request stands. Pick another option to change it, or stop it the same way you stop a watch. Stopping,
+changing, or unlinking cancels anything the agent has not started yet, and a turn already running
+finishes. Permission to merge belongs to T3 Code, so it ends the moment you stop. All
+the limits above apply, and agent merge checks the host on every sweep while it is on. Starting it
+needs an active thread whose agent can push to the pull request's branch.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
