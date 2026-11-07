@@ -1976,6 +1976,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const deliveryProviderThread = canResumeAcrossInstances
         ? {
             ...queuedProviderThread,
+            status: activeProviderThread.status,
             nativeThreadRef: activeProviderThread.nativeThreadRef,
             nativeConversationHeadRef: activeProviderThread.nativeConversationHeadRef,
             nativeMetadata: activeProviderThread.nativeMetadata,

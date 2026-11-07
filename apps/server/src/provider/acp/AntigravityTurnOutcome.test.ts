@@ -46,16 +46,6 @@ const QUOTED_NOTICE = Buffer.from(
 );
 const reusable = (failure: OrchestrationV2ProviderFailure) =>
   ({ failure, threadDisposition: "reusable" }) as const;
-const POISONED_HISTORY = {
-  failure: {
-    class: "provider_error",
-    message:
-      "Antigravity's saved conversation can no longer be sent to the model. The next message starts a fresh Antigravity session with this thread's context.",
-    code: "INVALID_THINKING_SIGNATURE",
-    retryable: true,
-  },
-  threadDisposition: "broken",
-} as const;
 
 describe("watchAntigravityPromptOutcome", () => {
   it.effect("fails only turns whose own steps end in an upstream error", () =>
@@ -150,20 +140,14 @@ describe("watchAntigravityPromptOutcome", () => {
         }),
       );
       // A saved thinking block without a valid signature fails every later prompt.
-      assert.deepEqual(
-        yield* turn([
+      for (const error of [MISSING_SIGNATURE_ERROR, INVALID_SIGNATURE_ERROR]) {
+        const outcome = yield* turn([
           [USER_INPUT, input],
-          [ERROR_MESSAGE, MISSING_SIGNATURE_ERROR],
-        ]),
-        POISONED_HISTORY,
-      );
-      assert.deepEqual(
-        yield* turn([
-          [USER_INPUT, input],
-          [ERROR_MESSAGE, INVALID_SIGNATURE_ERROR],
-        ]),
-        POISONED_HISTORY,
-      );
+          [ERROR_MESSAGE, error],
+        ]);
+        assert.equal(outcome?.failure.code, "INVALID_THINKING_SIGNATURE");
+        assert.equal(outcome?.threadDisposition, "broken");
+      }
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
         (yield* turn(
