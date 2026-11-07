@@ -86,6 +86,17 @@ function publish(update: DesktopUpdateState | null) {
   });
 }
 
+function deferredUpdateCheck() {
+  type Result = Awaited<ReturnType<DesktopBridge["checkForUpdate"]>>;
+  let resolve!: (result: Result) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<Result>((resolveResult, rejectResult) => {
+    resolve = resolveResult;
+    reject = rejectResult;
+  });
+  return { promise, resolve, reject };
+}
+
 const releaseNotes = () => document.querySelector('[aria-label="Update release notes"]');
 
 describe("SidebarUpdatePill manual checks", () => {
@@ -98,7 +109,7 @@ describe("SidebarUpdatePill manual checks", () => {
         availableVersion: null,
       };
       setup(idle);
-      const check = Promise.withResolvers<Awaited<ReturnType<DesktopBridge["checkForUpdate"]>>>();
+      const check = deferredUpdateCheck();
       using _bridge = stubGlobal("desktopBridge", { checkForUpdate: () => check.promise });
       await using screen = await render(<SidebarUpdatePill />);
       const button = screen.getByRole("button", { name: "Check for updates" }).element();
@@ -176,7 +187,7 @@ describe("SidebarUpdatePill manual checks", () => {
       }
       return result;
     });
-    const check = Promise.withResolvers<Awaited<ReturnType<DesktopBridge["checkForUpdate"]>>>();
+    const check = deferredUpdateCheck();
     using _bridge = stubGlobal("desktopBridge", { checkForUpdate: () => check.promise });
     await using screen = await render(<SidebarUpdatePill />);
     const button = screen.getByRole("button", { name: "Check for updates" }).element();
