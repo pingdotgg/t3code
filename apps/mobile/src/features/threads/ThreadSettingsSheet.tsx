@@ -119,6 +119,13 @@ import {
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  formatDuration,
+  type ProviderQuotaReset,
+  type ProviderQuotaStatus,
+} from "@t3tools/shared/usageLimits";
+import { ResetCredits } from "../usage/UsageLimitsSection";
+import { useProviderQuotas } from "./use-provider-quotas";
 
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "claudeAgent",
@@ -150,12 +157,37 @@ function ProviderHeader(props: {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
+  readonly quota: ProviderQuotaStatus | null;
+  readonly quotaCheckedAt: number;
   readonly onToggle: () => void;
 }) {
+  const quotaLabel =
+    props.quota?.state === "exhausted"
+      ? props.quota.resetsAt === null
+        ? "Out of tokens"
+        : `Out of tokens · resets in ${formatDuration(props.quota.resetsAt - props.quotaCheckedAt)}`
+      : props.quota
+        ? `${props.quota.remainingPercent}% left`
+        : null;
   const content = (
     <>
       <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
-      <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      <Text className="shrink text-sm font-t3-medium text-foreground-muted" numberOfLines={1}>
+        {props.label}
+      </Text>
+      {quotaLabel ? (
+        <Text
+          numberOfLines={1}
+          className={cn(
+            "shrink text-2xs font-t3-medium",
+            props.quota?.state === "exhausted"
+              ? "text-warning-foreground"
+              : "text-foreground-tertiary",
+          )}
+        >
+          {quotaLabel}
+        </Text>
+      ) : null}
       {props.collapsible ? (
         <>
           <View className="flex-1" />
@@ -178,7 +210,9 @@ function ProviderHeader(props: {
   if (props.collapsible) {
     return (
       <Pressable
-        accessibilityLabel={`${props.label}, ${props.modelCount} models`}
+        accessibilityLabel={[props.label, quotaLabel, `${props.modelCount} models`]
+          .filter(Boolean)
+          .join(", ")}
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
         className="mx-4 mt-1 min-h-11 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60 android:min-h-12"
@@ -286,6 +320,8 @@ type ThreadSettingsSessionValue = {
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
   readonly favoritesLoaded: boolean;
+  readonly quotaByProvider: ReadonlyMap<string, ProviderQuotaStatus>;
+  readonly quotaCheckedAt: number;
   readonly toggleFavorite: (option: ModelOption) => void;
   readonly toggleHidden: (option: ModelOption) => void;
   readonly pendingHiddenKeys: ReadonlySet<string>;
@@ -347,6 +383,10 @@ function ThreadSettingsSessionProvider(
           ),
         )
       : props.providerGroups;
+  const { checkedAt: quotaCheckedAt, byProvider: quotaByProvider } = useProviderQuotas(
+    providerGroups,
+    config,
+  );
   const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
@@ -609,6 +649,8 @@ function ThreadSettingsSessionProvider(
     reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
+    quotaByProvider,
+    quotaCheckedAt,
     providerExpansionOverrides,
     hasLegacyModels,
     pendingModel,
@@ -650,6 +692,7 @@ type ThreadSettingsProviderCatalog = {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
+  readonly quota: ProviderQuotaStatus | null;
   readonly models: ReadonlyArray<ModelOption>;
 };
 
@@ -670,6 +713,11 @@ type ThreadSettingsCatalogItem =
       readonly kind: "notice";
       readonly key: string;
       readonly text: string;
+    }
+  | {
+      readonly kind: "reset";
+      readonly key: string;
+      readonly reset: ProviderQuotaReset;
     }
   | {
       readonly kind: "empty";
@@ -702,6 +750,7 @@ function ThreadSettingsModelListRow(props: {
           : undefined
       }
       hiddenUpdatePending={session.pendingHiddenKeys.has(props.option.key)}
+      dimmed={session.quotaByProvider.get(props.option.providerKey)?.state === "exhausted"}
       option={props.option}
       selected={session.isDisplayed(props.option)}
     />
@@ -722,8 +771,27 @@ function ThreadSettingsProviderListHeader(props: {
       iconUrl={props.provider.iconUrl}
       label={props.provider.label}
       modelCount={props.provider.modelCount}
+      quota={props.provider.quota}
+      quotaCheckedAt={session.quotaCheckedAt}
       onToggle={onToggle}
     />
+  );
+}
+
+function ThreadSettingsResetCredit(props: { readonly reset: ProviderQuotaReset }) {
+  const session = useThreadSettingsSession();
+  if (!session.environmentId) return null;
+  return (
+    <View className="mx-5 mb-2">
+      <ResetCredits
+        dense
+        singleLine
+        environmentId={session.environmentId}
+        input={props.reset.input}
+        credits={props.reset.credits}
+        now={session.quotaCheckedAt}
+      />
+    </View>
   );
 }
 
@@ -785,6 +853,7 @@ function buildThreadSettingsCatalogItems(
       collapsible,
       collapsed,
       modelCount: visibleModels.length,
+      quota: session.quotaByProvider.get(group.providerKey) ?? null,
       models: collapsed ? [] : visibleModels,
     };
     return [
@@ -793,6 +862,15 @@ function buildThreadSettingsCatalogItems(
         key: `provider:${group.providerKey}`,
         provider,
       },
+      ...(provider.quota?.state === "exhausted" && provider.quota.reset
+        ? [
+            {
+              kind: "reset" as const,
+              key: `reset:${group.providerKey}`,
+              reset: provider.quota.reset,
+            },
+          ]
+        : []),
       ...provider.models.map((option, index) => ({
         kind: "model" as const,
         key: `model:${option.key}`,
@@ -951,6 +1029,8 @@ function ThreadSettingsMainContent(props: {
       );
     } else if (item.kind === "notice") {
       content = <Text className="mx-8 mt-2 text-xs text-foreground-muted">{item.text}</Text>;
+    } else if (item.kind === "reset") {
+      content = <ThreadSettingsResetCredit reset={item.reset} />;
     } else if (item.kind === "empty") {
       content = (
         <View className="items-center px-8 py-14">

@@ -36,6 +36,7 @@ import {
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
+import { cn } from "../../lib/cn";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
@@ -233,8 +234,10 @@ export function ResetCredits(props: {
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
   readonly dense?: boolean;
+  /** Never wraps: drops the expiry, and a status or permission note replaces the summary. */
+  readonly singleLine?: boolean;
 }) {
-  const { environmentId, input, credits, now, dense = false } = props;
+  const { environmentId, input, credits, now, dense = false, singleLine = false } = props;
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
@@ -250,7 +253,7 @@ export function ResetCredits(props: {
     credits.availableCount === 0
       ? "No reset credits banked"
       : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-          expiresIn ? ` · next expires in ${expiresIn}` : ""
+          expiresIn && !singleLine ? ` · next expires in ${expiresIn}` : ""
         }`;
 
   const redeem = async () => {
@@ -282,20 +285,36 @@ export function ResetCredits(props: {
     );
   };
 
+  const note = !canManageProviders ? "This connection cannot manage provider accounts." : null;
   return (
-    <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
-      <Text className="text-xs tabular-nums text-foreground-tertiary">{summary}</Text>
+    <View
+      className={cn(
+        "flex-row items-center gap-x-3 gap-y-1",
+        singleLine ? "flex-nowrap" : "flex-wrap",
+      )}
+    >
+      <Text
+        className={cn(
+          "text-xs tabular-nums",
+          singleLine && status ? "text-foreground" : "text-foreground-tertiary",
+          singleLine && "min-w-0 shrink",
+        )}
+        numberOfLines={singleLine ? 1 : undefined}
+      >
+        {singleLine ? (status ?? note ?? summary) : summary}
+      </Text>
       {credits.availableCount > 0 ? (
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ disabled: busy || !canManageProviders }}
           disabled={busy || !canManageProviders}
           onPress={confirm}
-          className={
+          className={cn(
             dense
               ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
-              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
-          }
+              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]",
+            singleLine && "shrink-0",
+          )}
         >
           <Text
             className={
@@ -308,12 +327,10 @@ export function ResetCredits(props: {
           </Text>
         </Pressable>
       ) : null}
-      {!canManageProviders ? (
-        <Text className="text-xs text-foreground-tertiary">
-          This connection cannot manage provider accounts.
-        </Text>
+      {note && !singleLine ? (
+        <Text className="text-xs text-foreground-tertiary">{note}</Text>
       ) : null}
-      {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
+      {status && !singleLine ? <Text className="text-sm text-foreground">{status}</Text> : null}
     </View>
   );
 }
