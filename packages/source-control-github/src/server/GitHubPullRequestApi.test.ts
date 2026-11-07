@@ -315,7 +315,10 @@ function listedPullRequests(
       repository: {
         pullRequests: {
           pageInfo,
-          nodes: rows(count, firstNumber, overrides),
+          edges: rows(count, firstNumber, overrides).map((node, index) => ({
+            cursor: `edge-${firstNumber + index}`,
+            node,
+          })),
         },
       },
     },
@@ -2121,7 +2124,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(batch.items).toHaveLength(10);
       assert.isTrue(batch.truncated);
       assert.isTrue(batch.continues);
-      expect(batch.resumeAfter).toBe("listing-next");
+      // Resume after the last returned match (edge-10), not the page end past the probe row.
+      expect(batch.resumeAfter).toBe("edge-10");
     }),
   );
 
@@ -2156,7 +2160,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         cursor: {
           updatedBefore: "2026-07-02T00:00:00Z",
           delivered: 10,
-          resumeAfter: "listing-next",
+          resumeAfter: "edge-10",
         },
       });
 
@@ -2165,12 +2169,75 @@ layer("GitHubPullRequestApi.layer", (it) => {
         kind: "graphql",
         operationName: "PullRequestList",
       });
-      expect(varsAt(0)["after"]).toBe("listing-next");
+      expect(varsAt(0)["after"]).toBe("edge-10");
       expect(batch.items.map((item) => item.number)).toEqual([
         20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
       ]);
       assert.isTrue(batch.continues);
-      expect(batch.resumeAfter).toBe("listing-later");
+      expect(batch.resumeAfter).toBe("edge-29");
+    }),
+  );
+
+  it.effect("authored listing pages cover every match without skips or repeats", () =>
+    Effect.gen(function* () {
+      const author = {
+        __typename: "User",
+        login: "bilal",
+        name: null,
+        avatarUrl: "https://avatars.example/u",
+      };
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              listedPullRequests(11, 1, () => ({ author }), {
+                hasNextPage: true,
+                endCursor: "page-end-1",
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              listedPullRequests(2, 11, () => ({ author }), {
+                hasNextPage: false,
+                endCursor: null,
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const first = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+      });
+      const second = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+        cursor: {
+          updatedBefore: first.items.at(-1)?.updatedAt ?? "2026-07-02T00:00:00Z",
+          delivered: first.items.length,
+          resumeAfter: first.resumeAfter,
+        },
+      });
+
+      expect(varsAt(1)["after"]).toBe("edge-10");
+      expect([...first.items, ...second.items].map((item) => item.number)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+      ]);
+      assert.isFalse(second.continues);
     }),
   );
 

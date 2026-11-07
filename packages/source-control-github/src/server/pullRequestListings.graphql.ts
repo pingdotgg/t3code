@@ -286,12 +286,21 @@ export declare namespace PullRequestSearch {
   export type Result = typeof PullRequestSearch.result.Type
 }
 
+/** An edge in a connection. */
+export const PullRequestEdge = Schema.Struct({
+  /** A cursor for use in pagination. */
+  cursor: Schema.String,
+  /** The item at the end of the edge. */
+  node: Schema.NullOr(PullRequestRow)
+})
+export interface PullRequestEdge extends Schema.Struct.Type<typeof PullRequestEdge.fields> {}
+
 /** The connection type for PullRequest. */
 export const PullRequestConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PageInfo,
-  /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestRow)))
+  /** A list of edges. */
+  edges: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestEdge)))
 })
 export interface PullRequestConnection extends Schema.Struct.Type<typeof PullRequestConnection.fields> {}
 
@@ -315,7 +324,7 @@ export const PullRequestList = GraphQL.query("PullRequestList", {
       { name: "stats", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests(first:$", "first", " after:$", "after", " states:$", "states", " orderBy:{field:CREATED_AT direction:DESC}){pageInfo{hasNextPage endCursor}nodes{...", "PullRequestRow", "}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests(first:$", "first", " after:$", "after", " states:$", "states", " orderBy:{field:CREATED_AT direction:DESC}){pageInfo{hasNextPage endCursor}edges{cursor node{...", "PullRequestRow", "}}}}"] }
     ],
     fragments: [
       { name: "PullRequestRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft mergeable reviewDecision latestReviews(first:20){nodes{state author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }

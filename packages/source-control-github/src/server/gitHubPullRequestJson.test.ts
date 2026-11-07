@@ -220,8 +220,9 @@ function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
       repository: {
         pullRequests: {
           pageInfo: { hasNextPage: false, endCursor: null },
-          nodes: entries.map(({ reviewRequests, latestReviews, checks, ...entry }) =>
-            row({
+          edges: entries.map(({ reviewRequests, latestReviews, checks, ...entry }, index) => ({
+            cursor: `edge-${index}`,
+            node: row({
               ...(reviewRequests === undefined
                 ? {}
                 : {
@@ -239,7 +240,7 @@ function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
                 : { commits: { nodes: [{ commit: { statusCheckRollup: { state: checks } } }] } }),
               ...entry,
             }),
-          ),
+          })),
         },
       },
     },

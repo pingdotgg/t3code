@@ -124,8 +124,13 @@ query PullRequestList(
         hasNextPage
         endCursor
       }
-      nodes {
-        ...PullRequestRow
+      # Edge cursors resume after the last returned authored row; page endCursor would skip
+      # matches left in the window when the page is sliced to `limit`.
+      edges {
+        cursor
+        node {
+          ...PullRequestRow
+        }
       }
     }
   }

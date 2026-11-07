@@ -797,6 +797,11 @@ const LenientRows = Schema.Struct({
   nodes: Schema.NullOr(Schema.Array(Schema.Unknown)),
 });
 
+const LenientListRows = Schema.Struct({
+  pageInfo: ListingPageInfo,
+  edges: Schema.NullOr(Schema.Array(Schema.Unknown)),
+});
+
 export const LenientPullRequestSearch = GraphQL.query(PullRequestSearch.name, {
   document: PullRequestSearch.document,
   variables: PullRequestSearch.variables,
@@ -807,33 +812,57 @@ export const LenientPullRequestList = GraphQL.query(PullRequestList.name, {
   document: PullRequestList.document,
   variables: PullRequestList.variables,
   result: Schema.Struct({
-    repository: Schema.NullOr(Schema.Struct({ pullRequests: LenientRows })),
+    repository: Schema.NullOr(Schema.Struct({ pullRequests: LenientListRows })),
   }),
 });
 
 type DecodeFailure = Cause.Cause<Schema.SchemaError>;
 
+type PullRequestConnectionFields = {
+  readonly pageInfo: PageInfoFields;
+  readonly nodes?: ReadonlyArray<unknown> | null;
+  readonly edges?: ReadonlyArray<unknown> | null;
+};
+
 /** Count skipped invalid rows in rawCount to avoid ending pagination early. */
-export function toPullRequestRows(
-  connection:
-    | { readonly pageInfo: PageInfoFields; readonly nodes: ReadonlyArray<unknown> | null }
-    | null
-    | undefined,
-): {
+export function toPullRequestRows(connection: PullRequestConnectionFields | null | undefined): {
   readonly rows: ReadonlyArray<{
     readonly item: GitHubPullRequestListItem;
     readonly repository: string | null;
+    readonly cursor: string | null;
   }>;
   readonly rawCount: number;
   readonly hasNextPage: boolean;
   readonly endCursor: string | null;
 } {
+  const pageInfo = connection?.pageInfo;
+  const hasNextPage = pageInfo?.hasNextPage === true;
+  const endCursor = nextCursorOf(pageInfo);
+  if (connection?.edges != null) {
+    const edges = connection.edges;
+    return {
+      rows: edges.flatMap((entry) => {
+        if (entry === null || typeof entry !== "object") return [];
+        const edge = entry as { readonly cursor?: unknown; readonly node?: unknown };
+        const row = toRow(edge.node);
+        if (row === null) return [];
+        const cursor = typeof edge.cursor === "string" ? trimmed(edge.cursor) : null;
+        return [{ ...row, cursor }];
+      }),
+      rawCount: edges.length,
+      hasNextPage,
+      endCursor,
+    };
+  }
   const nodes = connection?.nodes ?? [];
   return {
-    rows: nodes.flatMap((entry) => toRow(entry) ?? []),
+    rows: nodes.flatMap((entry) => {
+      const row = toRow(entry);
+      return row === null ? [] : [{ ...row, cursor: null }];
+    }),
     rawCount: nodes.length,
-    hasNextPage: connection?.pageInfo.hasNextPage === true,
-    endCursor: nextCursorOf(connection?.pageInfo),
+    hasNextPage,
+    endCursor,
   };
 }
 

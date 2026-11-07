@@ -352,6 +352,8 @@ const LIST_STATES: Record<PullRequestListState, ReadonlyArray<"OPEN" | "CLOSED" 
 
 interface GitHubPullRequestListPage {
   readonly items: ReadonlyArray<GitHubPullRequestListItem>;
+  /** Parallel to `items`; listing edges carry a cursor, search rows do not. */
+  readonly cursors: ReadonlyArray<string | null>;
   readonly rawCount: number;
   readonly endCursor: string | null;
 }
@@ -1792,6 +1794,7 @@ export const make = Effect.gen(function* () {
         page: ReturnType<typeof toPullRequestRows>,
       ): GitHubPullRequestListPage & { readonly pageInfo: GraphQLClient.PageInfo } => ({
         items: page.rows.map((row) => row.item),
+        cursors: page.rows.map((row) => row.cursor),
         rawCount: page.rawCount,
         endCursor: page.endCursor,
         pageInfo: { hasNextPage: page.endCursor !== null, endCursor: page.endCursor },
@@ -1835,6 +1838,7 @@ export const make = Effect.gen(function* () {
         }
         return {
           items: pages.flatMap((read) => read.items),
+          cursors: pages.flatMap((read) => read.cursors),
           rawCount: countRows(pages),
           truncated,
           endCursor,
@@ -1878,32 +1882,56 @@ export const make = Effect.gen(function* () {
             ).pipe(graphql(target)),
           startAfter,
         ).pipe(
-          Effect.flatMap(({ items: rawItems, rawCount, truncated: cutShort, endCursor }) => {
-            const items = continues
-              ? rawItems
-              : rawItems.filter((item) => matchesUnsortedListing(item, input));
-            if (
-              !continues &&
-              items.length < input.limit &&
-              rawCount >= requestedRows &&
-              requestedRows < fallbackMaxRows
-            ) {
-              const nextRows = Math.min(requestedRows * 2, fallbackMaxRows);
-              if (nextRows > requestedRows) return read(false, nextRows, startAfter);
-            }
-            const truncated =
-              cutShort ||
-              (continues
-                ? rawCount > input.limit
-                : items.length > input.limit || rawCount >= requestedRows);
-            return Effect.succeed({
-              items: items.slice(0, input.limit),
-              // Probe one raw row past the limit; malformed rows must not prematurely end paging.
-              truncated,
-              continues,
-              ...(!continues && truncated && endCursor !== null ? { resumeAfter: endCursor } : {}),
-            });
-          }),
+          Effect.flatMap(
+            ({
+              items: rawItems,
+              cursors: rawCursors,
+              rawCount,
+              truncated: cutShort,
+              endCursor,
+            }) => {
+              const matched = continues
+                ? rawItems.map((item, index) => ({
+                    item,
+                    cursor: rawCursors[index] ?? null,
+                  }))
+                : rawItems.flatMap((item, index) =>
+                    matchesUnsortedListing(item, input)
+                      ? [{ item, cursor: rawCursors[index] ?? null }]
+                      : [],
+                  );
+              if (
+                !continues &&
+                matched.length < input.limit &&
+                rawCount >= requestedRows &&
+                requestedRows < fallbackMaxRows
+              ) {
+                const nextRows = Math.min(requestedRows * 2, fallbackMaxRows);
+                if (nextRows > requestedRows) return read(false, nextRows, startAfter);
+              }
+              const truncated =
+                cutShort ||
+                (continues
+                  ? rawCount > input.limit
+                  : matched.length > input.limit || rawCount >= requestedRows);
+              const delivered = matched.slice(0, input.limit);
+              // Overflow keeps the last returned row's edge cursor so Load more does not skip the
+              // matches left in this window; a short page advances with the connection endCursor.
+              const resumeAfter =
+                !continues && truncated
+                  ? matched.length > input.limit
+                    ? (delivered.at(-1)?.cursor ?? endCursor)
+                    : endCursor
+                  : null;
+              return Effect.succeed({
+                items: delivered.map((row) => row.item),
+                // Probe one raw row past the limit; malformed rows must not prematurely end paging.
+                truncated,
+                continues,
+                ...(resumeAfter !== null ? { resumeAfter } : {}),
+              });
+            },
+          ),
         );
       // Unindexed repos fall back to listing. Authored pages stay on listing (creation order;
       // search lags and pages by update time). Empty first windows and text search still search.
