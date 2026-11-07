@@ -269,7 +269,8 @@ function useSettingsIndexSections(): SettingsListSection[] {
       icon: row.icon as SettingsListRow["icon"],
       label: row.label,
       target: row.target as SettingsPageTarget,
-      ...(row.serverOwned ? { disabled: noServerTargets } : {}),
+      // Voice stays usable for on-device transcription and mic order with no environment selected.
+      ...(row.serverOwned && row.target !== "SettingsVoice" ? { disabled: noServerTargets } : {}),
       ...(row.target === "SettingsProjectOverview" && selectedProjectKey !== null
         ? { value: projectLabel }
         : {}),

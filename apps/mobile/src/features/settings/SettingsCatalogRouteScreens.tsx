@@ -1,4 +1,5 @@
 import {
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   SecretProviderId,
   SecretProviderKind,
@@ -13,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -30,6 +32,7 @@ import {
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
   uniformMobileSetting,
+  type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
 
 function SettingsCatalogPage(props: {
@@ -211,8 +214,9 @@ export function SettingsAccessRouteScreen() {
 export function SettingsSecretsRouteScreen() {
   const page = useServerSettingsPage();
   const secretsEnabled = Constants.expoConfig?.extra?.secretsFeatureEnabled === true;
-  const [label, setLabel] = useState("");
-  const [account, setAccount] = useState("");
+  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const settingsWritable = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
+  const providersWritable = useEnvironmentsWithScope(selectedTargets, AuthProvidersManageScope);
 
   if (!secretsEnabled) {
     return (
@@ -222,7 +226,7 @@ export function SettingsSecretsRouteScreen() {
     );
   }
 
-  if (page.targets.length > 1) {
+  if (page.targets.length !== 1) {
     return (
       <SettingsCatalogPage title="Secrets">
         <Text className="text-foreground-muted">
@@ -232,7 +236,34 @@ export function SettingsSecretsRouteScreen() {
     );
   }
 
-  const providers = page.targets[0]?.environment.serverConfig.settings.secretProviders ?? {};
+  const target = page.targets[0]!;
+  const environmentId = target.environment.environmentId;
+  // Add needs providers-manage; remove also clears settings fields that referenced the provider.
+  const canAdd = providersWritable.has(environmentId);
+  const canRemove = canAdd && settingsWritable.has(environmentId);
+
+  return (
+    <SettingsSecretsEditor
+      key={environmentId}
+      target={target}
+      pending={page.pending}
+      canAdd={canAdd}
+      canRemove={canRemove}
+      write={page.write}
+    />
+  );
+}
+
+function SettingsSecretsEditor(props: {
+  readonly target: ScopedMobileSettingsTarget;
+  readonly pending: boolean;
+  readonly canAdd: boolean;
+  readonly canRemove: boolean;
+  readonly write: (patch: ServerSettingsPatch) => Promise<void>;
+}) {
+  const [label, setLabel] = useState("");
+  const [account, setAccount] = useState("");
+  const providers = props.target.environment.serverConfig.settings.secretProviders ?? {};
   const entries = Object.entries(providers);
 
   return (
@@ -245,14 +276,14 @@ export function SettingsSecretsRouteScreen() {
             <View key={id} className="gap-1 border-b border-border-subtle px-4 py-3">
               <Text className="text-base text-foreground">{provider.label}</Text>
               <Text className="text-sm text-foreground-muted">{provider.kind}</Text>
-              {page.canWrite ? (
+              {props.canRemove ? (
                 <SettingsActionRow
                   label="Remove"
                   tone="danger"
-                  loading={page.pending}
+                  loading={props.pending}
                   onPress={() => {
                     const providerId = SecretProviderId.make(id);
-                    void page.write({ secretProviders: { [providerId]: null } });
+                    void props.write({ secretProviders: { [providerId]: null } });
                   }}
                 />
               ) : null}
@@ -260,7 +291,7 @@ export function SettingsSecretsRouteScreen() {
           ))
         )}
       </SettingsSection>
-      {page.canWrite ? (
+      {props.canAdd ? (
         <SettingsSection title="Add 1Password">
           <View className="gap-2 p-4">
             <TextInput
@@ -283,7 +314,7 @@ export function SettingsSecretsRouteScreen() {
             />
             <Button
               label="Add provider"
-              disabled={page.pending || label.trim().length === 0 || account.trim().length === 0}
+              disabled={props.pending || label.trim().length === 0 || account.trim().length === 0}
               onPress={() => {
                 const id = SecretProviderId.make(
                   `one_password_${label
@@ -291,7 +322,14 @@ export function SettingsSecretsRouteScreen() {
                     .toLowerCase()
                     .replace(/[^a-z0-9]+/g, "_")}`.slice(0, 64),
                 );
-                void page
+                if (Object.hasOwn(providers, id)) {
+                  Dialog.alert(
+                    "Provider already exists",
+                    "Choose a different label. This name maps to an existing secret provider.",
+                  );
+                  return;
+                }
+                void props
                   .write({
                     secretProviders: {
                       [id]: {
