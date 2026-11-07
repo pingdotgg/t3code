@@ -132,12 +132,16 @@ function SelectPopup({
           data-slot="select-popup"
           {...props}
         >
-          <SelectPrimitive.ScrollUpArrow
-            className="top-0 z-50 flex h-6 w-full cursor-default items-center justify-center before:pointer-events-none before:absolute before:inset-x-px before:top-px before:h-[200%] before:rounded-t-[calc(var(--radius-lg)-1px)] before:bg-linear-to-b before:from-50% before:from-popover"
-            data-slot="select-scroll-up-arrow"
-          >
-            <ChevronUpIcon className="relative size-4.5 sm:size-4" />
-          </SelectPrimitive.ScrollUpArrow>
+          {/* Mounted arrows make Base UI hide the list's native scrollbar; a list that never
+              aligns with its trigger keeps that scrollbar instead of arrows over its rows. */}
+          {alignItemWithTrigger ? (
+            <SelectPrimitive.ScrollUpArrow
+              className="top-0 z-50 flex h-6 w-full cursor-default items-center justify-center before:pointer-events-none before:absolute before:inset-x-px before:top-px before:h-[200%] before:rounded-t-[calc(var(--radius-lg)-1px)] before:bg-linear-to-b before:from-50% before:from-popover"
+              data-slot="select-scroll-up-arrow"
+            >
+              <ChevronUpIcon className="relative size-4.5 sm:size-4" />
+            </SelectPrimitive.ScrollUpArrow>
+          ) : null}
           <div
             className={cn(
               "dropdown-glass relative h-full rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
@@ -151,12 +155,14 @@ function SelectPopup({
               {children}
             </SelectPrimitive.List>
           </div>
-          <SelectPrimitive.ScrollDownArrow
-            className="bottom-0 z-50 flex h-6 w-full cursor-default items-center justify-center before:pointer-events-none before:absolute before:inset-x-px before:bottom-px before:h-[200%] before:rounded-b-[calc(var(--radius-lg)-1px)] before:bg-linear-to-t before:from-50% before:from-popover"
-            data-slot="select-scroll-down-arrow"
-          >
-            <ChevronDownIcon className="relative size-4.5 sm:size-4" />
-          </SelectPrimitive.ScrollDownArrow>
+          {alignItemWithTrigger ? (
+            <SelectPrimitive.ScrollDownArrow
+              className="bottom-0 z-50 flex h-6 w-full cursor-default items-center justify-center before:pointer-events-none before:absolute before:inset-x-px before:bottom-px before:h-[200%] before:rounded-b-[calc(var(--radius-lg)-1px)] before:bg-linear-to-t before:from-50% before:from-popover"
+              data-slot="select-scroll-down-arrow"
+            >
+              <ChevronDownIcon className="relative size-4.5 sm:size-4" />
+            </SelectPrimitive.ScrollDownArrow>
+          ) : null}
         </SelectPrimitive.Popup>
       </SelectPrimitive.Positioner>
     </SelectPrimitive.Portal>
