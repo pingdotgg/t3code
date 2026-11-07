@@ -247,7 +247,7 @@ export const make = Effect.gen(function* () {
           return;
         void runPromise(
           Effect.gen(function* () {
-            // A relaunch must not reshow a window that quit or final session end is closing.
+            // A relaunch must not reshow a window that quit is closing.
             if (yield* Ref.get(desktopState.quitting)) return;
             const mainWindow = yield* electronWindow.currentMainOrFirst;
             if (Option.isSome(mainWindow)) yield* electronWindow.reveal(mainWindow.value);
