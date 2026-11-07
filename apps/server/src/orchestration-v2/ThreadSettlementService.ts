@@ -677,6 +677,8 @@ export const make = Effect.gen(function* () {
         )
           ? enqueueThread(event.threadId)
           : Effect.void;
+      case "thread.deleted":
+        return Effect.sync(() => settleActionRunAt.delete(event.threadId));
       default:
         return Effect.void;
     }
