@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  RETAINED_RECORDING_ERROR,
   resetVoiceInputGlobalsForTests,
   resolveTranscriptCommit,
   VoiceInputController,
@@ -147,6 +148,26 @@ describe("environment voice input", () => {
       "hello retried text",
     ]);
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
+  it("offers a transcription retry only when the failed recording was kept", async () => {
+    for (const retryFailedRecording of [true, false]) {
+      resetVoiceInputGlobalsForTests();
+      const fail = async () => {
+        throw new Error("failed");
+      };
+      const harness = createHarness({
+        retryFailedRecording,
+        getTranscriber: () => ({
+          prepare: async () => ({ ...preparedTranscription(fail), streaming: { finish: fail } }),
+        }),
+      });
+      await harness.controller.start();
+      await harness.controller.stop();
+      expect(harness.controller.currentState.error === RETAINED_RECORDING_ERROR).toBe(
+        retryFailedRecording,
+      );
+    }
   });
 
   it("deletes retained failed audio when the user cancels instead of retrying", async () => {

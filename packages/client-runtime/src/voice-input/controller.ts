@@ -12,7 +12,8 @@ const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
 /** The recording is kept, so retrying transcribes it again without recording. */
-export const RETAINED_RECORDING_ERROR = "Could not transcribe this recording.";
+export const RETAINED_RECORDING_ERROR =
+  "Could not transcribe this recording. It was kept for a retry.";
 
 export const MICROPHONE_PERMISSION_ERROR =
   "Microphone access is required for voice input. Allow access in your browser or system settings and try again.";

@@ -21,6 +21,7 @@ const VOICE_ERROR_LABELS: Record<string, string> = {
   "Could not start voice recording.": "Couldn’t start recording",
   "Voice recording was interrupted.": "Recording interrupted",
   "Could not finish voice recording.": "Couldn’t finish recording",
+  "Could not transcribe this recording.": "Transcription failed",
   [RETAINED_RECORDING_ERROR]: "Transcription failed",
   "Voice transcription on this environment failed.": "Transcription failed",
   "The draft changed while voice input was running. The transcript was not added.": "Draft changed",
@@ -43,9 +44,9 @@ export function VoiceInputErrorPill(props: {
 }) {
   const navigate = useNavigate();
   const openSettings = props.errorAction === "settings";
+  const retained = props.error === RETAINED_RECORDING_ERROR;
   const retryTranscription =
-    props.error === RETAINED_RECORDING_ERROR ||
-    props.error === "Voice transcription on this environment failed.";
+    retained || props.error === "Voice transcription on this environment failed.";
   const actionLabel = openSettings
     ? "Open voice settings"
     : retryTranscription
@@ -94,8 +95,8 @@ export function VoiceInputErrorPill(props: {
             render={
               <Button
                 type="button"
-                size={retryTranscription && !openSettings ? "sm-pill" : "icon-sm-pill"}
-                variant={retryTranscription && !openSettings ? "outline" : "ghost"}
+                size={retained ? "sm-pill" : "icon-sm-pill"}
+                variant={retained ? "outline" : "ghost"}
                 aria-label={actionLabel}
                 disabled={props.disabled}
                 onPointerDown={(event) => event.preventDefault()}
@@ -109,7 +110,7 @@ export function VoiceInputErrorPill(props: {
                 }}
               >
                 {openSettings ? <SettingsIcon /> : <RotateCcwIcon />}
-                {retryTranscription && !openSettings ? "Retry" : null}
+                {retained ? "Retry" : null}
               </Button>
             }
           />
