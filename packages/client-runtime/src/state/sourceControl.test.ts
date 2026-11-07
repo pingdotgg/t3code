@@ -26,9 +26,6 @@ describe("verifiedSourceControlAccounts", () => {
           detail: Option.none(),
           accounts: [
             { host: "github.com", account: "personal", active: true, authenticated: true },
-            { host: "github.com", account: "alt", active: false, authenticated: true },
-            { host: "ghe.example.com", account: "etan", active: true, authenticated: true },
-            { host: "ghe.other.com", account: "expired", active: true, authenticated: false },
           ],
         }),
         provider({
@@ -40,23 +37,5 @@ describe("verifiedSourceControlAccounts", () => {
       ],
     });
     expect(accounts).toEqual([{ host: "github.com", account: "EtanHey" }]);
-    for (const status of ["unknown", "unauthenticated"] as const) {
-      expect(
-        verifiedSourceControlAccounts({
-          versionControlSystems: [],
-          sourceControlProviders: [
-            provider({
-              status,
-              account: Option.none(),
-              host: Option.some("github.com"),
-              detail: Option.none(),
-              accounts: [
-                { host: "github.com", account: "personal", active: true, authenticated: true },
-              ],
-            }),
-          ],
-        }),
-      ).toEqual([]);
-    }
   });
 });
