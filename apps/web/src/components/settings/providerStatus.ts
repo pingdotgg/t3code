@@ -40,12 +40,13 @@ function isAntigravitySignInUnchecked(provider: ServerProvider): boolean {
 
 export function getProviderStatusKey(provider: ServerProvider | undefined): ProviderStatusKey {
   if (provider && !provider.enabled) return "disabled";
+  if (provider?.status === "checking") return "neutral";
   if (provider && isAntigravitySignInUnchecked(provider)) return "neutral";
   return provider?.status ?? "warning";
 }
 
 export function getProviderSummary(provider: ServerProvider | undefined) {
-  if (!provider) {
+  if (!provider || (provider.enabled && provider.status === "checking")) {
     return {
       headline: "Checking provider status",
       detail: "Waiting for the server to report installation and authentication details.",

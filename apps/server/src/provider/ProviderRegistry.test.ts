@@ -44,7 +44,11 @@ import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
-import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
+import {
+  checkCodexProviderStatus,
+  makePendingCodexProvider,
+  type CodexAppServerProviderSnapshot,
+} from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -360,6 +364,14 @@ it.layer(
   describe("checkCodexProviderStatus", () => {
     it.effect("uses the app-server account and model list for provider status", () =>
       Effect.gen(function* () {
+        const pending = yield* makePendingCodexProvider(defaultCodexSettings);
+        assert.strictEqual(pending.status, "checking");
+        assert.strictEqual(pending.auth.status, "unknown");
+        const disabled = yield* makePendingCodexProvider({
+          ...defaultCodexSettings,
+          enabled: false,
+        });
+        assert.strictEqual(disabled.status, "disabled");
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
           Effect.succeed(
             makeCodexProbeSnapshot({
@@ -2799,7 +2811,7 @@ it.layer(
 
           const pendingRebuild = yield* Stream.toPull(
             codexSnapshots.pipe(
-              Stream.filter((provider) => provider.status === "warning" && !provider.installed),
+              Stream.filter((provider) => provider.status === "checking" && !provider.installed),
             ),
           );
           yield* serverSettings.updateSettings({

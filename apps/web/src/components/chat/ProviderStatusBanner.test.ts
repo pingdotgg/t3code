@@ -26,7 +26,53 @@ const provider: ServerProvider = {
   },
 };
 
-describe("compatibility banners", () => {
+describe("provider status banners", () => {
+  it("keeps initial checks quiet without hiding completed probe failures", () => {
+    const { compatibilityAdvisory: _compatibilityAdvisory, ...base } = provider;
+    const checking: ServerProvider = {
+      ...base,
+      installed: false,
+      version: null,
+      status: "checking",
+      auth: { status: "unknown" },
+      message: "Codex provider status has not been checked in this session yet.",
+    };
+    expect(shouldShowProviderStatusBanner(checking, null)).toBe(false);
+    expect(
+      shouldShowProviderStatusBanner({ ...checking, message: "Checking installation." }, null),
+    ).toBe(false);
+    expect(
+      shouldShowProviderStatusBanner(
+        { ...checking, installed: true, status: "ready", auth: { status: "authenticated" } },
+        null,
+      ),
+    ).toBe(false);
+    for (const failure of [
+      { status: "error", installed: false, message: "Could not start Codex CLI." },
+      { status: "error", installed: true, message: "Codex provider probe failed." },
+      { status: "error", installed: true, message: "Timed out while checking Codex." },
+      {
+        status: "warning",
+        installed: true,
+        message: "Codex did not return its model catalog in time.",
+      },
+      { status: "warning", installed: false, message: checking.message },
+      { status: "error", auth: { status: "unauthenticated" }, message: "Run codex login." },
+    ] as const) {
+      expect(shouldShowProviderStatusBanner({ ...checking, ...failure }, null)).toBe(true);
+    }
+    expect(shouldShowProviderStatusBanner({ ...checking, status: "disabled" }, null)).toBe(false);
+    expect(
+      shouldShowProviderStatusBanner(
+        {
+          ...checking,
+          compatibilityAdvisory: { ...provider.compatibilityAdvisory!, status: "broken" },
+        },
+        null,
+      ),
+    ).toBe(true);
+  });
+
   it("shows and dismisses a warning on a healthy provider, then clears it after policy relaxation", () => {
     expect(shouldShowProviderStatusBanner(provider, null)).toBe(true);
     expect(shouldShowProviderStatusBanner(provider, getProviderStatusBannerKey(provider))).toBe(
