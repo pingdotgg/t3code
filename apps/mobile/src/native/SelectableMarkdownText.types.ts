@@ -67,6 +67,8 @@ export interface SelectableMarkdownTextProps {
   readonly textStyle: NativeMarkdownTextStyle;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly preserveSoftBreaks?: boolean;
+  /** The text is still arriving, so it may convert block by block. Finished text converts whole. */
+  readonly streaming?: boolean | undefined;
   readonly onLinkPress?: (href: string) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction?: (href: string, actionId: string) => void;

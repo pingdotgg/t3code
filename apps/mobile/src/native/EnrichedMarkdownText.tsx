@@ -5,12 +5,11 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import {
-  markdownForNativeRendering,
-  markdownWithFileEmbeds,
-  markdownForNativeParsing,
-  markdownWithInlineFileLinks,
-  markdownWithTableBreaks,
-} from "../lib/markdownDocument";
+  convertNativeMarkdown,
+  convertStreamingMarkdown,
+  createNativeMarkdownBlockCache,
+  nativeMarkdownPipeline,
+} from "../lib/markdownStreamBlocks";
 import { isValidElement, useMemo, useState, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, useWindowDimensions, View } from "react-native";
 import {
@@ -27,7 +26,6 @@ import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { useRetryingImageSource } from "./useRetryingImageSource";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
-  ENRICHED_INLINE_FILE_LINK_REGEX,
   enrichedSkillLinkRegex,
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
@@ -164,20 +162,20 @@ function enrichedStyle(
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
-  const { markdown, fileHrefs } = useMemo(() => {
-    if (!fileEmbedLabel) {
-      return {
-        markdown: markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
-        fileHrefs: new Set<string>(),
-      };
-    }
-    const content = markdownWithInlineFileLinks(
-      markdownForNativeParsing(props.markdown),
-      ENRICHED_INLINE_FILE_LINK_REGEX,
-    );
-    const files = markdownWithFileEmbeds(content, fileEmbedLabel);
-    return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
-  }, [props.markdown, fileEmbedLabel]);
+  // A streaming reply grows at its end, so its earlier blocks keep their conversion.
+  const [blockCache] = useState(createNativeMarkdownBlockCache);
+  const streaming = props.streaming === true;
+  const { markdown, fileHrefs } = useMemo(
+    () =>
+      convertStreamingMarkdown(
+        props.markdown,
+        fileEmbedLabel,
+        blockCache,
+        streaming,
+        nativeMarkdownPipeline(fileEmbedLabel),
+      ) ?? convertNativeMarkdown(props.markdown, fileEmbedLabel),
+    [props.markdown, fileEmbedLabel, streaming, blockCache],
+  );
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {
     const urls = [...new Set(links.map((link) => link.url))];
