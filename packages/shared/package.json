@@ -179,6 +179,10 @@
       "types": "./src/threadTimingTrace.ts",
       "import": "./src/threadTimingTrace.ts"
     },
+    "./contextOccupancySeries": {
+      "types": "./src/contextOccupancySeries.ts",
+      "import": "./src/contextOccupancySeries.ts"
+    },
     "./remote": {
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"

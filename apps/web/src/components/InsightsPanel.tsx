@@ -7,13 +7,16 @@ import {
   type ThreadTurnTokenUsageSummary,
 } from "@t3tools/client-runtime/state/thread-turn-token-usage";
 import type {
-  ProviderContextUsage,
+  RunId,
   ScopedThreadRef,
-  ThreadId,
   UsageCostSource,
   UsagePriceItemInput,
   UsagePriceItemResult,
 } from "@t3tools/contracts";
+import {
+  deriveContextOccupancySeries,
+  type ContextOccupancySeries,
+} from "@t3tools/shared/contextOccupancySeries";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   buildCompressedTimingAxis,
@@ -29,7 +32,7 @@ import {
   type TimingSpanKind,
 } from "@t3tools/shared/threadTimingTrace";
 import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
-import { ChartNoAxesGantt, Focus, Minus, Plus, RefreshCw, Scan } from "lucide-react";
+import { ChartNoAxesGantt, Focus, Minus, Plus, Scan } from "lucide-react";
 import {
   useId,
   useRef,
@@ -45,29 +48,10 @@ import { cn } from "~/lib/utils";
 import { useQuietThreadProjection } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
-import { threadEnvironment } from "~/state/threads";
-import { ContextUsageBreakdown, type ContextUsageBreakdownState } from "./ContextUsageBreakdown";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { tokenTypeSegments } from "./usage/usageBreakdown";
 import { UsageShareBar, type ShareSegment } from "./usage/UsageShareBar";
-
-function activeClaudeThreadId(
-  projection: {
-    readonly thread: { readonly activeProviderThreadId: string | null; readonly id: ThreadId };
-    readonly providerThreads: ReadonlyArray<{
-      readonly id: string;
-      readonly driver: string;
-    }>;
-  } | null,
-): ThreadId | null {
-  if (projection === null) return null;
-  const active =
-    projection.providerThreads.find(
-      (thread) => thread.id === projection.thread.activeProviderThreadId,
-    ) ?? projection.providerThreads.at(-1);
-  return active?.driver === "claudeAgent" ? projection.thread.id : null;
-}
 
 const SPAN_BAR_CLASS: Record<TimingSpanKind, string> = {
   queue: "bg-muted-foreground/45",
@@ -223,16 +207,14 @@ export function InsightsPanel({
   const pricingPending = priceItems.length > 0 && priced.isPending && priced.data === null;
   const pricingError =
     priceItems.length > 0 && priced.error !== null && priced.data === null ? priced.error : null;
-  const claudeThreadId = activeClaudeThreadId(projection?.projection ?? null);
-  const contextUsageQuery = useEnvironmentQuery(
-    !visible || claudeThreadId === null
+  const occupancy =
+    projection === null
       ? null
-      : threadEnvironment.contextUsage({
-          environmentId: threadRef.environmentId,
-          input: { threadId: claudeThreadId },
-        }),
-  );
-  const contextUsageState = contextUsageBreakdownState(contextUsageQuery);
+      : deriveContextOccupancySeries({
+          attempts: projection.projection.attempts,
+          providerTurns: projection.projection.providerTurns,
+          turnItems: projection.projection.turnItems,
+        });
   const costLabel = formatCostEstimate(threadCost);
   const headerBits = [
     trace !== null ? formatDuration(trace.totalMs) : null,
@@ -281,13 +263,7 @@ export function InsightsPanel({
             selectedRunId={null}
             onSelect={() => undefined}
           />
-          {claudeThreadId !== null ? (
-            <ContextCompositionSection
-              state={contextUsageState}
-              onRefresh={contextUsageQuery.refresh}
-              refreshing={contextUsageQuery.isPending && contextUsageQuery.data !== null}
-            />
-          ) : null}
+          <ContextOccupancyChart series={occupancy} selectedRunId={null} />
           <p className="text-2xs text-muted-foreground">
             Timing appears after the first turn starts. Token totals update as the provider reports
             them.
@@ -303,60 +279,10 @@ export function InsightsPanel({
           threadCost={threadCost}
           pricingPending={pricingPending}
           pricingError={pricingError}
-          contextUsage={
-            claudeThreadId === null
-              ? null
-              : {
-                  state: contextUsageState,
-                  onRefresh: contextUsageQuery.refresh,
-                  refreshing: contextUsageQuery.isPending && contextUsageQuery.data !== null,
-                }
-          }
+          occupancy={occupancy}
         />
       )}
     </div>
-  );
-}
-
-function contextUsageBreakdownState(query: {
-  readonly data: ProviderContextUsage | null;
-  readonly error: string | null;
-  readonly isPending: boolean;
-}): ContextUsageBreakdownState {
-  if (query.data !== null) return { status: "ready", usage: query.data };
-  if (query.isPending) return { status: "loading" };
-  return {
-    status: "error",
-    message: query.error ?? "Context breakdown is unavailable right now.",
-  };
-}
-
-function ContextCompositionSection({
-  state,
-  onRefresh,
-  refreshing,
-}: {
-  readonly state: ContextUsageBreakdownState;
-  readonly onRefresh: () => void;
-  readonly refreshing: boolean;
-}) {
-  return (
-    <section aria-label="Context composition" className="flex min-w-0 flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <h3 className="min-w-0 flex-1 text-sm font-medium text-foreground">Context composition</h3>
-        <Button
-          type="button"
-          variant="ghost-muted"
-          size="icon-xs"
-          aria-label="Refresh context composition"
-          disabled={state.status === "loading" || refreshing}
-          onClick={onRefresh}
-        >
-          <RefreshCw />
-        </Button>
-      </div>
-      <ContextUsageBreakdown state={state} />
-    </section>
   );
 }
 
@@ -369,7 +295,7 @@ function FlameChartPanel({
   threadCost,
   pricingPending,
   pricingError,
-  contextUsage,
+  occupancy,
 }: {
   readonly trace: ThreadTimingTrace;
   readonly turnItems: ReadonlyArray<ThreadStructureTurnItem>;
@@ -379,11 +305,7 @@ function FlameChartPanel({
   readonly threadCost: TurnCostEstimate | null;
   readonly pricingPending: boolean;
   readonly pricingError: string | null;
-  readonly contextUsage: {
-    readonly state: ContextUsageBreakdownState;
-    readonly onRefresh: () => void;
-    readonly refreshing: boolean;
-  } | null;
+  readonly occupancy: ContextOccupancySeries | null;
 }) {
   const layout = layoutThreadFlameChart(trace);
   const axis = buildCompressedTimingAxis(trace.turns);
@@ -507,19 +429,6 @@ function FlameChartPanel({
           pricingPending={pricingPending}
           pricingError={pricingError}
         />
-        {contextUsage !== null ? (
-          <ContextCompositionSection
-            state={contextUsage.state}
-            onRefresh={contextUsage.onRefresh}
-            refreshing={contextUsage.refreshing}
-          />
-        ) : null}
-        <TurnTokenBreakdown
-          rows={turnRows}
-          costs={costs}
-          selectedRunId={selection?.runId ?? null}
-          onSelect={(runId) => setSelection({ type: "turn", runId })}
-        />
         <FlameViewport
           trace={trace}
           axis={axis}
@@ -531,6 +440,13 @@ function FlameChartPanel({
           onSelect={setSelection}
           onFocusRange={focusRange}
         />
+        <TurnTokenBreakdown
+          rows={turnRows}
+          costs={costs}
+          selectedRunId={selection?.runId ?? null}
+          onSelect={(runId) => setSelection({ type: "turn", runId })}
+        />
+        <ContextOccupancyChart series={occupancy} selectedRunId={selection?.runId ?? null} />
         {selection !== null && selectedTurn !== null ? (
           <DetailCard
             turn={selectedTurn}
@@ -552,6 +468,145 @@ function FlameChartPanel({
         )}
       </div>
     </div>
+  );
+}
+
+const OCCUPANCY_CHART = {
+  width: 320,
+  height: 112,
+  padLeft: 36,
+  padRight: 8,
+  padTop: 10,
+  padBottom: 22,
+} as const;
+
+function ContextOccupancyChart({
+  series,
+  selectedRunId,
+}: {
+  readonly series: ContextOccupancySeries | null;
+  readonly selectedRunId: RunId | null;
+}) {
+  if (series === null || series.points.length === 0) return null;
+
+  const { width, height, padLeft, padRight, padTop, padBottom } = OCCUPANCY_CHART;
+  const plotWidth = width - padLeft - padRight;
+  const plotHeight = height - padTop - padBottom;
+  const firstAt = series.points[0]?.atMs ?? 0;
+  const lastAt = series.points.at(-1)?.atMs ?? firstAt;
+  const spanMs = Math.max(1, lastAt - firstAt);
+  const ceiling = Math.max(
+    1,
+    series.maxTokens ?? 0,
+    series.peakUsedTokens,
+    ...series.points.map((point) => point.usedTokens),
+  );
+  const xFor = (atMs: number) => padLeft + ((atMs - firstAt) / spanMs) * plotWidth;
+  const yFor = (tokens: number) => padTop + (1 - tokens / ceiling) * plotHeight;
+  const linePoints = series.points
+    .map((point) => `${xFor(point.atMs).toFixed(2)},${yFor(point.usedTokens).toFixed(2)}`)
+    .join(" ");
+  const areaPath = [
+    `M ${xFor(firstAt).toFixed(2)} ${yFor(0).toFixed(2)}`,
+    ...series.points.map(
+      (point) => `L ${xFor(point.atMs).toFixed(2)} ${yFor(point.usedTokens).toFixed(2)}`,
+    ),
+    `L ${xFor(lastAt).toFixed(2)} ${yFor(0).toFixed(2)}`,
+    "Z",
+  ].join(" ");
+  const maxY = series.maxTokens === null ? null : yFor(series.maxTokens);
+  const geometry = { linePoints, areaPath, maxY, xFor, yFor, ceiling };
+  const peakLabel = formatContextWindowTokens(series.peakUsedTokens);
+  const maxLabel = series.maxTokens === null ? null : formatContextWindowTokens(series.maxTokens);
+  const durationLabel = formatDuration(
+    Math.max(0, (series.points.at(-1)?.atMs ?? 0) - (series.points[0]?.atMs ?? 0)),
+  );
+
+  return (
+    <section aria-label="Context over time" className="flex min-w-0 shrink-0 flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-sm font-medium text-foreground">Context over time</h3>
+        <span className="text-2xs tabular-nums text-muted-foreground">
+          Peak {peakLabel}
+          {maxLabel === null ? "" : ` · window ${maxLabel}`}
+          {` · ${durationLabel}`}
+        </span>
+      </div>
+      <svg
+        role="img"
+        aria-label={`Context occupancy rose to ${peakLabel} tokens over ${durationLabel}`}
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-28 w-full overflow-visible rounded-md border border-border/50 bg-muted/20"
+        preserveAspectRatio="none"
+      >
+        <path d={geometry.areaPath} className="fill-foreground/10" />
+        {geometry.maxY !== null ? (
+          <line
+            x1={padLeft}
+            x2={width - OCCUPANCY_CHART.padRight}
+            y1={geometry.maxY}
+            y2={geometry.maxY}
+            className="stroke-muted-foreground/40"
+            strokeWidth={1}
+            strokeDasharray="3 3"
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : null}
+        <polyline
+          points={geometry.linePoints}
+          fill="none"
+          className="stroke-foreground/75"
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+        {series.points.map((point) => {
+          const selected = selectedRunId !== null && point.runId === selectedRunId;
+          const isCompaction = point.kind !== "turn";
+          const radius = selected ? 3.2 : isCompaction ? 2.6 : 2;
+          return (
+            <circle
+              key={`${point.kind}:${point.atMs}:${point.usedTokens}:${point.runId ?? ""}`}
+              cx={geometry.xFor(point.atMs)}
+              cy={geometry.yFor(point.usedTokens)}
+              r={radius}
+              className={
+                selected
+                  ? "fill-foreground"
+                  : point.kind === "compaction-after"
+                    ? "fill-background stroke-foreground/70"
+                    : point.kind === "compaction-before"
+                      ? "fill-warning"
+                      : "fill-foreground/70"
+              }
+              strokeWidth={point.kind === "compaction-after" ? 1.25 : undefined}
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
+        <text x={4} y={padTop + 3} className="fill-muted-foreground text-4xs">
+          {formatTokens(geometry.ceiling)}
+        </text>
+        <text x={4} y={height - padBottom + 3} className="fill-muted-foreground text-4xs">
+          0
+        </text>
+        <text x={padLeft} y={height - 6} className="fill-muted-foreground text-4xs">
+          start
+        </text>
+        <text
+          x={width - 4}
+          y={height - 6}
+          textAnchor="end"
+          className="fill-muted-foreground text-4xs"
+        >
+          now
+        </text>
+      </svg>
+      <p className="text-2xs text-muted-foreground">
+        Per-turn context fill. Compaction marks the drop when the window is compacted.
+      </p>
+    </section>
   );
 }
 
