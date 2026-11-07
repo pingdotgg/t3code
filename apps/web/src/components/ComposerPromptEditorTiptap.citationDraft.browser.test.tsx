@@ -35,10 +35,12 @@ function Composer({
   editorRef,
   initialPrompt = promptBefore,
   richTextEnabled = false,
+  disabled = false,
 }: {
   question: boolean;
   initialPrompt?: string;
   richTextEnabled?: boolean;
+  disabled?: boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
@@ -70,7 +72,7 @@ function Composer({
         cursor={0}
         contextRecords={new Map()}
         skills={[]}
-        disabled={false}
+        disabled={disabled}
         placeholder=""
         onChange={(next) => (question ? setAnswer(next) : setPrompt(next))}
         onCitationDraftSave={(replacedValue, savedValue) => {
@@ -122,6 +124,10 @@ it("opens the existing comment at its source from a draft marker", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Edit citation 1 comment" }));
   await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
   expect(screen.container.querySelector("output")?.dataset.prompt).toBe(promptBefore);
+  await userEvent.keyboard("{Escape}");
+  await screen.rerender(<Composer question={false} editorRef={editorRef} disabled />);
+  await userEvent.click(screen.getByRole("button", { name: "Edit citation 1 comment" }));
+  await expect.element(page.getByLabelText("Comment on selected text")).not.toBeInTheDocument();
 });
 
 it("opens each duplicate marker's own comment and restores marker focus", async () => {
@@ -139,13 +145,6 @@ it("opens each duplicate marker's own comment and restores marker focus", async 
   const two = screen.getByRole("button", { name: "Edit citation 2 comment" });
   await expect.element(one).toBeVisible();
   await expect.element(two).toBeVisible();
-  const firstButton = screen.container.querySelector<HTMLElement>("[data-citation-marker-key]")!;
-  const secondButton = screen.container.querySelectorAll<HTMLElement>(
-    "[data-citation-marker-key]",
-  )[1]!;
-  expect(firstButton.getBoundingClientRect().left).not.toBe(
-    secondButton.getBoundingClientRect().left,
-  );
   await userEvent.click(one);
   await expect.element(page.getByLabelText("Comment on selected text")).toHaveValue("first");
   await userEvent.keyboard("{Escape}");

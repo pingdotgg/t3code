@@ -1,5 +1,8 @@
 import { updateCitationHighlight } from "./chat/AssistantCitationMarkers";
-import { draftCitationMarkers } from "./chat/assistantCitationMarkers.logic";
+import {
+  composerCitationMarker,
+  draftCitationMarkers,
+} from "./chat/assistantCitationMarkers.logic";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
@@ -399,11 +402,11 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   const citeKey = node.attrs.citeKey as string;
   const marker = useEditorState({
     editor,
-    selector: ({ editor }) =>
-      draftCitationMarkers(editor.state.doc.toJSON(), true).find(
-        (marker) => marker.nodeKey === citeKey,
-      ),
+    selector: ({ editor }) => composerCitationMarker(editor.state.doc, citeKey),
   });
+  const separator = marker?.indexOf("|") ?? -1;
+  const markerNumber = marker ? Number(marker.slice(0, separator)) : undefined;
+  const markerKey = marker?.slice(separator + 1);
   const commentTarget =
     commentContext.openComment?.key === citeKey ? commentContext.openComment : null;
 
@@ -467,7 +470,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       className={`${CHIP_NODE_SELECTION_CLASS_NAME} data-[citation-highlight]:ring-2 data-[citation-highlight]:ring-ring`}
       contentEditable={false}
       spellCheck={false}
-      data-citation-link-key={marker?.key}
+      data-citation-link-key={markerKey}
       onPointerEnter={updateCitationHighlight}
       onPointerLeave={updateCitationHighlight}
       onFocus={updateCitationHighlight}
@@ -492,7 +495,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     >
       <AssistantCitationChip
         citation={citation}
-        citationNumber={marker?.number}
+        citationNumber={markerNumber}
         composer
         commentEditor={{
           open: commentTarget !== null,
@@ -1666,7 +1669,7 @@ function ComposerPromptEditorTiptapInner(
         return selectionRangeRef.current;
       },
       openCitation: (key, sourceAnchor) => {
-        if (!editor) return;
+        if (!editor?.isEditable) return;
         const nodes = findChildren(
           editor.state.doc,
           (node) => node.type.name === "composer-citation",

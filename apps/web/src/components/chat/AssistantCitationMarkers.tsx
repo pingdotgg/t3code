@@ -34,9 +34,9 @@ export function AssistantCitationMarkers({
   onOpen: (key: string, anchor: AssistantCitationSourceAnchor) => void;
 }) {
   const citationJson = JSON.stringify(
-    draftCitationMarkers(
-      buildDocJson(showingDraft ? prompt : "", () => null, { styling: richTextEnabled }),
-    ),
+    showingDraft && prompt.includes("[Assistant quote](t3-citation://v1/")
+      ? draftCitationMarkers(buildDocJson(prompt, () => null, { styling: richTextEnabled }))
+      : [],
   );
   return <CitationMarkers viewport={viewport} citationJson={citationJson} onOpen={onOpen} />;
 }

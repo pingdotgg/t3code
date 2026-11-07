@@ -1,9 +1,10 @@
 import type { JSONContent } from "@tiptap/core";
+import { Schema } from "@tiptap/pm/model";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { buildDocJson } from "~/composer-rich-text-doc";
-import { draftCitationMarkers } from "./assistantCitationMarkers.logic";
+import { composerCitationMarker, draftCitationMarkers } from "./assistantCitationMarkers.logic";
 
 it("numbers only citation nodes in document order, including repeated sources", () => {
   const citation = {
@@ -34,13 +35,25 @@ it("numbers only citation nodes in document order, including repeated sources", 
     for (const child of node.content ?? []) assignKeys(child);
   };
   assignKeys(composerDoc);
-  const chips = draftCitationMarkers(composerDoc, true);
-  for (const index of [0, 1]) {
-    const chip = chips.find((marker) => marker.nodeKey === `chip-${index}`);
-    expect(chip?.number).toBe(markers[index]?.number);
-    expect(chip?.number).toBe(index + 1);
-    expect(chip?.key).toBe(markers[index]?.key);
+  const schema = new Schema({
+    nodes: {
+      doc: { content: "paragraph+" },
+      paragraph: { content: "inline*" },
+      text: { group: "inline" },
+      "composer-citation": {
+        inline: true,
+        group: "inline",
+        attrs: { citation: {}, citeKey: {}, source: { default: "" } },
+      },
+    },
+  });
+  const pmDoc = schema.nodeFromJSON(composerDoc);
+  for (const index of [0, 1, 2]) {
+    expect(composerCitationMarker(pmDoc, `chip-${index}`)).toBe(
+      `${markers[index]?.number}|${markers[index]?.key}`,
+    );
   }
+  expect(composerCitationMarker(pmDoc, "missing")).toBeUndefined();
   expect(new Set(markers.map(({ key }) => key)).size).toBe(3);
   expect(
     draftCitationMarkers(
