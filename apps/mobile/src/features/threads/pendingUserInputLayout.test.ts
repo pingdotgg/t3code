@@ -21,9 +21,18 @@ describe("deriveRevealScrollOffset", () => {
     ).toBe(120);
   });
 
-  it("aligns a child taller than the viewport to its top edge", () => {
+  it("aligns a child taller than the viewport to its top edge when none of it is visible", () => {
     expect(
       deriveRevealScrollOffset({ top: 400, height: 300, viewportHeight: 200, offset: 0 }),
     ).toBe(400);
+  });
+
+  it("keeps the offset when a child taller than the viewport already overlaps it", () => {
+    expect(
+      deriveRevealScrollOffset({ top: 40, height: 600, viewportHeight: 263, offset: 300 }),
+    ).toBeNull();
+    expect(
+      deriveRevealScrollOffset({ top: 0, height: 300, viewportHeight: 263, offset: 37 }),
+    ).toBeNull();
   });
 });

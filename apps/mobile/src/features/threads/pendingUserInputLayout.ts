@@ -35,8 +35,13 @@ export function deriveRevealScrollOffset(input: {
   readonly offset: number;
 }): number | null {
   const bottom = input.top + input.height;
+  const viewportBottom = input.offset + input.viewportHeight;
+  // A child that cannot fit is left where it overlaps, so its caret stays where the user put it.
+  if (input.height > input.viewportHeight && input.top < viewportBottom && bottom > input.offset) {
+    return null;
+  }
   if (input.top < input.offset) return input.top;
-  if (bottom > input.offset + input.viewportHeight) {
+  if (bottom > viewportBottom) {
     return Math.min(input.top, bottom - input.viewportHeight);
   }
   return null;
