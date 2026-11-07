@@ -250,6 +250,7 @@ export const ProjectEntry = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: ProjectEntryKind,
   ignored: Schema.optional(Schema.Boolean),
+  mtimeMs: Schema.optional(Schema.Number),
 });
 export type ProjectEntry = typeof ProjectEntry.Type;
 
@@ -294,6 +295,7 @@ export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Typ
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   directoryPath: Schema.optional(TrimmedString),
+  includeModifiedTimes: Schema.optional(Schema.Boolean),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 

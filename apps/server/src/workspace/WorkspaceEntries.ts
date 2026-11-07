@@ -124,6 +124,11 @@ const IGNORE_CHECK_CHUNK_SIZE = 1000;
 /** Children classified at once when listing a folder; each symlink costs a realpath and a stat. */
 const SYMLINK_RESOLVE_BATCH_SIZE = 64;
 
+interface ListedChild {
+  readonly kind: ProjectEntry["kind"];
+  readonly mtimeMs: number | undefined;
+}
+
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
   path: Path.Path,
@@ -345,9 +350,7 @@ export const make = Effect.gen(function* () {
                 }
                 return folders;
               })());
-            const resolveSymlinkKind = async (
-              name: string,
-            ): Promise<ProjectEntry["kind"] | undefined> => {
+            const resolveSymlink = async (name: string): Promise<ListedChild | undefined> => {
               const resolved = await NodeFSP.realpath(path.join(directory, name)).catch(
                 () => undefined,
               );
@@ -359,25 +362,37 @@ export const make = Effect.gen(function* () {
                 return undefined;
               }
               const stat = await NodeFSP.stat(resolved).catch(() => undefined);
-              if (stat?.isFile()) return "file";
+              if (stat?.isFile()) return { kind: "file", mtimeMs: stat.mtimeMs };
               if (!stat?.isDirectory()) return undefined;
               const folders = await loadVisitedFolders();
               return folders.some((folder) => isSameOrInside(resolved, folder))
                 ? undefined
-                : "directory";
+                : { kind: "directory", mtimeMs: stat.mtimeMs };
             };
+            const statMtime = async (name: string) =>
+              (await NodeFSP.stat(path.join(directory, name)).catch(() => undefined))?.mtimeMs;
             // Bound filesystem work for directories such as pnpm node_modules.
-            const kinds: Array<ProjectEntry["kind"] | undefined> = [];
+            const listed: Array<ListedChild | undefined> = [];
             for (let offset = 0; offset < children.length; offset += SYMLINK_RESOLVE_BATCH_SIZE) {
-              kinds.push(
+              listed.push(
                 ...(await Promise.all(
                   children
                     .slice(offset, offset + SYMLINK_RESOLVE_BATCH_SIZE)
-                    .map(async (child): Promise<ProjectEntry["kind"] | undefined> => {
+                    .map(async (child): Promise<ListedChild | undefined> => {
                       if (child.name === ".git") return undefined;
-                      if (child.isDirectory()) return "directory";
-                      if (child.isFile()) return "file";
-                      return child.isSymbolicLink() ? resolveSymlinkKind(child.name) : undefined;
+                      if (child.isSymbolicLink()) return resolveSymlink(child.name);
+                      const kind = child.isDirectory()
+                        ? "directory"
+                        : child.isFile()
+                          ? "file"
+                          : undefined;
+                      if (kind === undefined) return undefined;
+                      return {
+                        kind,
+                        mtimeMs: input.includeModifiedTimes
+                          ? await statMtime(child.name)
+                          : undefined,
+                      };
                     }),
                 )),
               );
@@ -394,12 +409,15 @@ export const make = Effect.gen(function* () {
             return {
               nestedGitRoots,
               entries: children.flatMap((child, index): ProjectEntry[] => {
-                const kind = kinds[index];
-                if (kind === undefined) return [];
+                const item = listed[index];
+                if (item === undefined) return [];
                 return [
                   {
                     path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
-                    kind,
+                    kind: item.kind,
+                    ...(input.includeModifiedTimes && item.mtimeMs !== undefined
+                      ? { mtimeMs: item.mtimeMs }
+                      : {}),
                   },
                 ];
               }),
