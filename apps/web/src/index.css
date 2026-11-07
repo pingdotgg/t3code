@@ -1737,6 +1737,15 @@ body {
   overscroll-behavior: none;
 }
 
+/* Chromium drops every scroller's rubber-band when the document's overscroll-behavior is none.
+   Touch-primary devices keep none against page bounce and pull-to-refresh; x stays none against swipe navigation. */
+@media (pointer: fine) {
+  html,
+  body {
+    overscroll-behavior-y: contain;
+  }
+}
+
 body {
   height: 100%;
   overflow: hidden;
