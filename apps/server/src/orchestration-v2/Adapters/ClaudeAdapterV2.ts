@@ -1830,6 +1830,24 @@ export function makeClaudeQueryOptions(input: {
           ...compactQuerySettings,
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
+  // The SDK warns on every query whose bare allowedTools entries shadow canUseTool. T3 means its
+  // own tools to skip the callback, so their allow rules go through flag settings, which the CLI
+  // applies the same way. A settings file path cannot take them, so they stay in allowedTools.
+  const t3McpAllowRules =
+    typeof effectiveQuerySettings === "string"
+      ? []
+      : (input.allowedTools ?? []).filter((tool) => tool.startsWith("mcp__t3-code__"));
+  const allowedTools = input.allowedTools?.filter((tool) => !t3McpAllowRules.includes(tool));
+  const settings: typeof effectiveQuerySettings =
+    t3McpAllowRules.length === 0 || typeof effectiveQuerySettings === "string"
+      ? effectiveQuerySettings
+      : ({
+          ...effectiveQuerySettings,
+          permissions: {
+            ...effectiveQuerySettings?.permissions,
+            allow: [...(effectiveQuerySettings?.permissions?.allow ?? []), ...t3McpAllowRules],
+          },
+        } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
@@ -1849,7 +1867,9 @@ export function makeClaudeQueryOptions(input: {
         }),
     ...threadIdentity,
     ...(input.resumeSessionAt === undefined ? {} : { resumeSessionAt: input.resumeSessionAt }),
-    ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
+    ...(allowedTools === undefined || allowedTools.length === 0
+      ? {}
+      : { allowedTools: [...allowedTools] }),
     ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
     ...(input.allowDangerouslySkipPermissions === true
@@ -1859,16 +1879,16 @@ export function makeClaudeQueryOptions(input: {
       ? {
           thinking: { type: "adaptive" as const, display: "summarized" as const },
           settings:
-            typeof effectiveQuerySettings === "string"
-              ? effectiveQuerySettings
+            typeof settings === "string"
+              ? settings
               : {
-                  ...effectiveQuerySettings,
+                  ...settings,
                   showThinkingSummaries: true,
                 },
         }
-      : effectiveQuerySettings === undefined
+      : settings === undefined
         ? {}
-        : { settings: effectiveQuerySettings }),
+        : { settings }),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
     ...(input.onElicitation === undefined ? {} : { onElicitation: input.onElicitation }),
     ...(input.supportedDialogKinds === undefined
