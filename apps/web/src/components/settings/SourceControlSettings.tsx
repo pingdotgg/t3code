@@ -165,14 +165,16 @@ function itemSummary({
       const authDetail = optionLabel(auth.detail);
       return (
         <>
-          <span>Authenticated</span>
-          {authAccount ? (
-            <>
-              <span aria-hidden>as</span>
-              <RedactedAccount account={authAccount} />
-            </>
-          ) : null}
-          {authDetail ? <span>· {authDetail}</span> : null}
+          <span className="flex min-w-0 flex-wrap items-center gap-x-1">
+            <span>Authenticated</span>
+            {authAccount ? (
+              <>
+                <span aria-hidden>as</span>
+                <RedactedAccount account={authAccount} />
+              </>
+            ) : null}
+          </span>
+          {authDetail ? <span>{authDetail}</span> : null}
         </>
       );
     }
@@ -254,7 +256,7 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
+            <p className="grid min-w-0 text-xs leading-normal text-muted-foreground/80">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
