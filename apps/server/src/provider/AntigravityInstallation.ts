@@ -394,7 +394,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
                     // Stop PyInstaller's tree before ACP closes pipes; after launcher exit, taskkill cannot reach children holding DLLs open.
                     yield* Scope.addFinalizer(
                       validationScope,
-                      child.kill({ forceKillAfter: "1 second" }).pipe(Effect.orDie),
+                      child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore),
                     );
                     return child;
                   }),
