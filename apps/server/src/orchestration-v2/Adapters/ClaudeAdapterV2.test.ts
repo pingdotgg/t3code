@@ -1842,6 +1842,7 @@ describe("ClaudeAdapterV2 attachments", () => {
       ultrathink: false,
       resumed: false,
       budget,
+      imageMimeType: "image/png",
     })),
     {
       name: "ordinary text",
@@ -1851,6 +1852,7 @@ describe("ClaudeAdapterV2 attachments", () => {
       ultrathink: true,
       resumed: false,
       budget: "none",
+      imageMimeType: "image/png",
     },
     {
       name: "mid-sentence skill",
@@ -1860,6 +1862,7 @@ describe("ClaudeAdapterV2 attachments", () => {
       ultrathink: true,
       resumed: false,
       budget: "none",
+      imageMimeType: "image/png",
     },
     {
       name: "prompt-leading skill",
@@ -1869,6 +1872,7 @@ describe("ClaudeAdapterV2 attachments", () => {
       ultrathink: false,
       resumed: false,
       budget: "none",
+      imageMimeType: "image/png",
     },
     {
       name: "resumed history without persisted counters",
@@ -1878,10 +1882,21 @@ describe("ClaudeAdapterV2 attachments", () => {
       ultrathink: true,
       resumed: true,
       budget: "none",
+      imageMimeType: "image/png",
+    },
+    {
+      name: "upper-case image MIME type",
+      prompt: "Read this PDF.",
+      expectedText: "Read this PDF.",
+      command: undefined,
+      ultrathink: false,
+      resumed: false,
+      budget: "none",
+      imageMimeType: "image/PNG",
     },
   ])(
     "preserves $name with native PDFs, images, and paths on sends and steering",
-    ({ prompt, expectedText, command, ultrathink, resumed, budget }) =>
+    ({ prompt, expectedText, command, ultrathink, resumed, budget, imageMimeType }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -1993,7 +2008,7 @@ describe("ClaudeAdapterV2 attachments", () => {
               "thread-claude-attachments-12345678-1234-1234-1234-123456789abc",
             ),
             name: "diagram.png",
-            mimeType: "image/png",
+            mimeType: imageMimeType,
             sizeBytes: 4,
           });
           const document = ChatFileAttachment.make({

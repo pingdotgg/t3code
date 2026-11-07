@@ -2602,7 +2602,8 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   input.pdfReservation.bytes += textBytes;
   for (const [index, attachment] of input.attachments.entries()) {
     if (attachment.type !== "image") continue;
-    if (!isSupportedClaudeImageMimeType(attachment.mimeType)) {
+    const mimeType = attachment.mimeType.toLowerCase();
+    if (!isSupportedClaudeImageMimeType(mimeType)) {
       return yield* new ProviderAdapter.ProviderAdapterProtocolError({
         driver: CLAUDE_PROVIDER,
         detail: `Unsupported Claude image attachment type '${attachment.mimeType}'`,
@@ -2637,7 +2638,7 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
       type: "image",
       source: {
         type: "base64",
-        media_type: attachment.mimeType,
+        media_type: mimeType,
         data: Buffer.from(bytes).toString("base64"),
       },
     };
