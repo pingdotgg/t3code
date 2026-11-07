@@ -3545,7 +3545,7 @@ export default function ChatView(props: ChatViewProps) {
               className={
                 isDraftHeroState
                   ? "pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"
-                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
+                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-background/0 to-background to-50% pt-1.5 sm:pt-2"
               }
             >
               <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">
