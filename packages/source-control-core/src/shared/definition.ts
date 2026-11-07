@@ -699,14 +699,8 @@ export function makeSourceControlDefinitionRegistry(
     }
     return undefined;
   };
-  const findByPublicDomain = (hostname: string) => {
-    const host = hostname.toLowerCase();
-    return definitions.find(
-      (definition) =>
-        definition.publicHost !== null &&
-        (host === definition.publicHost || host.endsWith(`.${definition.publicHost}`)),
-    );
-  };
+  const remoteOwner = (remote: GitRemoteHost) =>
+    recognitionOrder.find((definition) => definition.recognizeRemote(remote) !== null);
   const parseChangeRequestUrl = (value: string): ParsedChangeRequest | null => {
     const url = httpUrl(value);
     if (url === null) return null;
@@ -725,7 +719,14 @@ export function makeSourceControlDefinitionRegistry(
       const host = hostname.toLowerCase();
       return definitions.find((definition) => definition.publicHost === host);
     },
-    findByPublicDomain,
+    findByPublicDomain: (hostname) => {
+      const host = hostname.toLowerCase();
+      return definitions.find(
+        (definition) =>
+          definition.publicHost !== null &&
+          (host === definition.publicHost || host.endsWith(`.${definition.publicHost}`)),
+      );
+    },
     parseChangeRequestUrl,
     parseCommitUrl: (value, kind) => {
       const url = httpUrl(value);
@@ -764,8 +765,9 @@ export function makeSourceControlDefinitionRegistry(
     repositoryUrlFromPage: (value) => {
       const url = httpUrl(value);
       if (url === null) return null;
-      // A known public host's paths are its own, so an any-host route never rewrites them.
-      const owner = findByPublicDomain(url.hostname);
+      // A recognized host's paths are its own, so another host's any-host route never rewrites them.
+      const remote = parseGitRemoteHost(value);
+      const owner = remote === null ? undefined : remoteOwner(remote);
       for (const definition of owner ? [owner] : claimOrder) {
         const repositoryUrl = definition.repositoryUrlFromPage?.(url);
         if (repositoryUrl != null) return repositoryUrl;
