@@ -31,8 +31,8 @@ export function useSelectWorkspaceDetail() {
   return (
     selectDetail ??
     ((detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) => {
-      startOpeningDetail(detail);
       navigation.dispatch(selectWorkspaceDetail(detail, sheet));
+      startOpeningDetail(detail);
     })
   );
 }

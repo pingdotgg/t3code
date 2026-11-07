@@ -42,6 +42,7 @@ export function SettingsRouteScreen() {
 /** The Settings list inside a workspace shell that draws its bar, title and search itself. */
 export function WorkspaceSettingsList() {
   const list = useSettingsListPlacement();
+  // Tab chrome already painted; mount the index immediately (no second startTransition gate).
   return (
     <SettingsSidebarContext value={list.sidebar ? { selected: list.selected } : null}>
       <View className="flex-1 bg-screen">

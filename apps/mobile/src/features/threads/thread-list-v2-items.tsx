@@ -12,7 +12,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
-import { threadEnvironment } from "../../state/threads";
+import { startOpeningEnvironmentThread, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import type { ThreadMoveDestination } from "./threadOrder";
@@ -30,7 +30,16 @@ import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
-import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
+import {
+  createContext,
+  memo,
+  use,
+  useCallback,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -259,23 +268,52 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
+/** Urgent chevron state; list rows stay on deferred expansion without extraData churn. */
+export type ThreadListShelfChrome = {
+  readonly workingExpanded: boolean;
+  readonly snoozedExpanded: boolean;
+  readonly settledExpanded: boolean;
+};
+
+const ThreadListShelfChromeContext = createContext<ThreadListShelfChrome | null>(null);
+
+export function ThreadListShelfChromeProvider(props: {
+  readonly value: ThreadListShelfChrome;
+  readonly children: ReactNode;
+}) {
+  return (
+    <ThreadListShelfChromeContext.Provider value={props.value}>
+      {props.children}
+    </ThreadListShelfChromeContext.Provider>
+  );
+}
+
 const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled" } as const;
 
 function ThreadListV2ShelfHeader(
   props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_LABEL },
 ) {
+  const chrome = use(ThreadListShelfChromeContext);
+  const expanded =
+    chrome === null
+      ? props.expanded
+      : props.kind === "working"
+        ? chrome.workingExpanded
+        : props.kind === "snoozed"
+          ? chrome.snoozedExpanded
+          : chrome.settledExpanded;
   const label = SHELF_LABEL[props.kind];
   return (
     <ThreadListV2Section
-      label={props.expanded ? label : `${label} (${props.count})`}
+      label={expanded ? label : `${label} (${props.count})`}
       pane={props.pane}
       tone={props.kind === "snoozed" ? "snoozed" : "default"}
       disclosure={{
-        expanded: props.expanded,
+        expanded,
         disabled: props.disabled,
         onToggle: props.onToggle,
         accessibilityLabel: `${props.count} ${props.kind} ${props.count === 1 ? "thread" : "threads"}`,
-        accessibilityHint: `${props.expanded ? "Collapses" : "Expands"} the ${props.kind} threads.`,
+        accessibilityHint: `${expanded ? "Collapses" : "Expands"} the ${props.kind} threads.`,
       }}
     />
   );
@@ -712,6 +750,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
+  // Warm the detail while the finger is down so lift→navigate hits a loading thread.
+  const warmOpenThread = () => startOpeningEnvironmentThread(thread.environmentId, thread.id);
   const { providerDrivers, providerIconUrl } = useMemo(() => {
     const provider = props.providers?.find(
       (candidate) =>
@@ -1386,9 +1426,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
           if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
         }}
+        onPressIn={warmOpenThread}
         onPress={() => {
-          close();
+          // Navigate before closing the swipeable — close() kicks Reanimated work that
+          // otherwise steals the press frame before the stack transition can start.
           selectThread();
+          queueMicrotask(close);
         }}
         style={rowAppearance.cardStyle}
       >
@@ -1413,9 +1456,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={rowAppearance.className}
+        onPressIn={warmOpenThread}
         onPress={() => {
-          close();
           selectThread();
+          queueMicrotask(close);
         }}
         style={rowAppearance.style}
       >

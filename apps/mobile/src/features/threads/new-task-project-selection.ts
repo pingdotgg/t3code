@@ -148,29 +148,45 @@ export function resolveDraftProjectSelection(
 type ProjectRef = { readonly environmentId: string; readonly projectId: string };
 
 export function newTaskDestination(options: {
-  readonly projects: ReadonlyArray<EnvironmentProject>;
+  /** When omitted, refs are trusted and the draft screen opens the picker if a project is gone. */
+  readonly projects?: ReadonlyArray<EnvironmentProject>;
   readonly requestId: string;
   readonly useLastProject: boolean | undefined;
   readonly currentProject: ProjectRef | undefined;
   readonly lastProject: ProjectRef | undefined;
 }) {
-  const find = (ref: ProjectRef | undefined) =>
-    ref &&
-    options.projects.find(
+  const resolve = (
+    ref: ProjectRef | undefined,
+  ):
+    | { readonly environmentId: string; readonly projectId: string; readonly archived: boolean }
+    | undefined => {
+    if (!ref) return undefined;
+    if (!options.projects) {
+      return { environmentId: ref.environmentId, projectId: ref.projectId, archived: false };
+    }
+    const match = options.projects.find(
       (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
     );
+    if (!match) return undefined;
+    return {
+      environmentId: String(match.environmentId),
+      projectId: String(match.id),
+      archived: match.archivedAt != null,
+    };
+  };
   // A remembered project that was archived since opens the picker; the current one still wins.
-  const last = find(options.lastProject);
+  const current = resolve(options.currentProject);
+  const last = resolve(options.lastProject);
   const project =
     options.useLastProject === false
       ? undefined
-      : (find(options.currentProject) ?? (last?.archivedAt == null ? last : undefined));
+      : (current ?? (last && !last.archived ? last : undefined));
   return project
     ? {
         draft: {
           requestId: options.requestId,
-          environmentId: String(project.environmentId),
-          projectId: String(project.id),
+          environmentId: project.environmentId,
+          projectId: project.projectId,
         },
       }
     : { draft: { requestId: options.requestId } };

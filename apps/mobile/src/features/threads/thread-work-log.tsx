@@ -746,8 +746,10 @@ function ThreadWorkGroupList(props: {
         alwaysRender={
           restoringPosition && initialPosition ? { keys: [initialPosition.rowId] } : undefined
         }
+        // Nested expand/measure needs stable cells; recycle remounts break append height.
         recycleItems={false}
-        extraData={props.renderRow}
+        // Expand map only — renderRow identity would invalidate every row on each feed tick.
+        extraData={props.expandedRows}
         renderItem={renderItem}
         sharedValues={sharedValues}
         onLayout={finishPendingAppend}

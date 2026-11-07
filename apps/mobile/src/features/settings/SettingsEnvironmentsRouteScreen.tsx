@@ -1,10 +1,10 @@
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useRef, useState } from "react";
-import { RefreshControl } from "react-native";
+import { startTransition, useCallback, useRef, useState } from "react";
+import { RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -88,10 +88,28 @@ export function SettingsEnvironmentsRouteScreen() {
           : updates.displayUrl,
     });
   };
+  // Sheet chrome first; the env list waits until the push can settle.
+  const [listReady, setListReady] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const timer = setTimeout(() => {
+        if (cancelled) return;
+        startTransition(() => {
+          setListReady(true);
+        });
+      }, 800);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }, []),
+  );
 
   return (
     <SettingsScreen
       title="Environments"
+      eagerBody
       refresh={
         relaySession
           ? {
@@ -110,50 +128,58 @@ export function SettingsEnvironmentsRouteScreen() {
         },
       ]}
     >
-      <ScrollView
-        alwaysBounceVertical
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="px-5 pt-4"
-        contentContainerStyle={{
-          paddingBottom: Math.max(insets.bottom, 18) + 18,
-        }}
-        refreshControl={
-          relaySession ? (
-            <RefreshControl
-              refreshing={isRefreshingCloud}
-              onRefresh={() => void refreshCloudEnvironments()}
-            />
-          ) : undefined
-        }
-      >
-        <LocalEnvironmentList
-          environments={localEnvironments}
-          expandedId={null}
-          onToggle={openEnvironment}
-          opensDetails
-          onReconnect={onReconnectEnvironment}
-          onRemove={onRemoveEnvironmentPress}
-          onSetEnabled={onSetEnvironmentEnabled}
-          onUpdate={handleUpdateEnvironment}
-        />
+      {listReady ? (
+        <ScrollView
+          alwaysBounceVertical
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator={false}
+          className="flex-1"
+          contentContainerClassName="px-5 pt-4"
+          contentContainerStyle={{
+            paddingBottom: Math.max(insets.bottom, 18) + 18,
+          }}
+          refreshControl={
+            relaySession ? (
+              <RefreshControl
+                refreshing={isRefreshingCloud}
+                onRefresh={() => void refreshCloudEnvironments()}
+              />
+            ) : undefined
+          }
+        >
+          <LocalEnvironmentList
+            environments={localEnvironments}
+            expandedId={null}
+            onToggle={openEnvironment}
+            opensDetails
+            onReconnect={onReconnectEnvironment}
+            onRemove={onRemoveEnvironmentPress}
+            onSetEnabled={onSetEnvironmentEnabled}
+            onUpdate={handleUpdateEnvironment}
+          />
 
-        {/* Keep connected relays visible and removable without cloud config or sign-in; this component gates discovery. */}
-        <CloudEnvironmentRows
-          connectedCloudEnvironments={connectedCloudEnvironments}
-          onOpenEnvironment={openEnvironment}
-          onSetEnvironmentEnabled={onSetEnvironmentEnabled}
-          onRemoveEnvironment={onRemoveEnvironmentPress}
-          {...(SHOWCASE_ENABLED
-            ? {
-                showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
-                showcaseSignedIn: true,
-              }
-            : {})}
-        />
-        <PullRequestRoutingSettings />
-      </ScrollView>
+          {/* Keep connected relays visible and removable without cloud config or sign-in; this component gates discovery. */}
+          <CloudEnvironmentRows
+            connectedCloudEnvironments={connectedCloudEnvironments}
+            onOpenEnvironment={openEnvironment}
+            onSetEnvironmentEnabled={onSetEnvironmentEnabled}
+            onRemoveEnvironment={onRemoveEnvironmentPress}
+            {...(SHOWCASE_ENABLED
+              ? {
+                  showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
+                  showcaseSignedIn: true,
+                }
+              : {})}
+          />
+          <PullRequestRoutingSettings />
+        </ScrollView>
+      ) : (
+        <View className="gap-4 px-5 pt-4">
+          <View className="bg-border/40 h-12 rounded-2xl" />
+          <View className="bg-border/30 h-12 rounded-2xl" />
+          <View className="bg-border/20 h-12 rounded-2xl" />
+        </View>
+      )}
     </SettingsScreen>
   );
 }

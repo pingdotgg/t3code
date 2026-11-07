@@ -98,22 +98,33 @@ export function HomeRouteScreen() {
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } =
     usePendingTaskListActions(selectThreadRoute);
+  // Labels/ids only — keep filter UIMenu actions stable across reconnect phase churn.
+  const filterEnvironments = useMemo(
+    () =>
+      Arr.sort(
+        Object.values(savedConnectionsById).map((connection) => ({
+          environmentId: connection.environmentId,
+          label: connection.environmentLabel,
+        })),
+        Order.mapInput(
+          Order.String,
+          (environment: { readonly label: string }) => environment.label,
+        ),
+      ),
+    [savedConnectionsById],
+  );
   const connectionStateByEnvironmentId = new Map(
     workspaceEnvironments.map(
       (environment) => [environment.environmentId, environment.connectionState] as const,
     ),
   );
-  const environments = Arr.sort(
-    Object.values(savedConnectionsById).map((connection) => ({
-      environmentId: connection.environmentId,
-      label: connection.environmentLabel,
-      connectionState: connectionStateByEnvironmentId.get(connection.environmentId) ?? "available",
-    })),
-    Order.mapInput(Order.String, (environment: { readonly label: string }) => environment.label),
-  );
+  const environments = filterEnvironments.map((environment) => ({
+    ...environment,
+    connectionState: connectionStateByEnvironmentId.get(environment.environmentId) ?? "available",
+  }));
   const availableEnvironmentIds = useMemo(
-    () => new Set(environments.map((environment) => environment.environmentId)),
-    [environments],
+    () => new Set(filterEnvironments.map((environment) => environment.environmentId)),
+    [filterEnvironments],
   );
   const {
     options: listOptions,
@@ -176,7 +187,7 @@ export function HomeRouteScreen() {
           filter={{
             customized: selectedEnvironmentId !== null || selectedProjectKey !== null,
             items: buildHomeListFilterMenuItems({
-              environments,
+              environments: filterEnvironments,
               projects: projectFilterOptions,
               selectedEnvironmentId,
               selectedProjectKey,
@@ -189,6 +200,8 @@ export function HomeRouteScreen() {
         <HomeScreen
           catalogState={catalogState}
           environments={environments}
+          filterEnvironments={filterEnvironments}
+          filterProjects={projectFilterOptions}
           onAddConnection={() => openSettings(navigation, "SettingsEnvironmentNew")}
           onArchiveThread={archiveThread}
           onDeleteThread={confirmDeleteThread}

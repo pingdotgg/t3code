@@ -7,9 +7,9 @@ import {
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
-import { use, useMemo, useRef, useState, type ReactNode } from "react";
+import { use, useDeferredValue, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { Keyboard, Platform, Pressable, RefreshControl, View } from "react-native";
+import { Platform, Pressable, RefreshControl, View } from "react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -127,7 +127,7 @@ export function PullRequestsScreen(
     : null;
   const selectDetail = useSelectWorkspaceDetail();
   const selectPullRequest = (item: EnvironmentPullRequestListEntry) => {
-    Keyboard.dismiss();
+    // Do not dismiss the keyboard here — selectDetail dispatches first, then dismisses.
     const params = {
       environmentId: String(item.environmentId),
       projectId: String(item.projectId),
@@ -267,16 +267,18 @@ export function PullRequestsScreen(
       sidebar={sidebar}
     />
   );
+  // First screenful on the open frame; the rest follows after interactions settle.
+  const shownEntries = useDeferredValue(entries, entries.slice(0, 24));
   const list = (
     <View className={sidebar ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
       <LegendList
         ref={listRef}
-        data={entries}
+        data={shownEntries}
         extraData={`${selectedKey}:${busyKey}`}
         keyExtractor={pullRequestKey}
         itemsAreEqual={pullRequestListRowsAreEqual}
         estimatedItemSize={88}
-        drawDistance={1_000}
+        drawDistance={500}
         maintainVisibleContentPosition={result.continued ? maintainVisiblePosition : false}
         onEndReached={() => void result.loadMore()}
         onEndReachedThreshold={0.5}

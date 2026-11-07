@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/model-traits";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useSheetStackOptions } from "../layout/nested-stacks";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import {
@@ -30,6 +31,7 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import {
+  useFocusEffect,
   useNavigation,
   useRoute,
   type RouteProp,
@@ -40,7 +42,9 @@ import * as Haptics from "expo-haptics";
 import { AsyncResult } from "effect/reactivity";
 import {
   createContext,
+  startTransition,
   use,
+  useCallback,
   useEffect,
   useEffectEvent,
   useRef,
@@ -261,6 +265,8 @@ type ThreadSettingsSessionProps = {
   readonly providerInstanceId?: ProviderInstanceId;
   readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
+  /** True while the route defers buildModelOptions so the sheet can present its AppBar first. */
+  readonly catalogPending?: boolean;
   readonly selectedModel: ModelSelection | null;
   readonly prompt: string;
   readonly onPromptChange: (prompt: string) => void;
@@ -284,6 +290,7 @@ type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
+  readonly catalogPending: boolean;
   readonly favoriteKeys: ReadonlySet<string>;
   readonly favoritesLoaded: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
@@ -596,6 +603,7 @@ function ThreadSettingsSessionProvider(
     environmentId: props.environmentId,
     providerInstanceId: props.providerInstanceId,
     providerGroups,
+    catalogPending: props.catalogPending === true,
     manageHidden,
     setManageHidden,
     toggleHidden,
@@ -931,6 +939,9 @@ function ThreadSettingsMainContent(props: {
   const catalogItems = buildThreadSettingsCatalogItems(session);
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
+  if (session.catalogPending) {
+    return <ThreadSettingsOpenShellBody />;
+  }
   const listItems = [
     ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
     { kind: "options", key: "options" },
@@ -1002,7 +1013,7 @@ function ThreadSettingsMainContent(props: {
       estimatedItemSize={Platform.OS === "android" ? 56 : 48}
       extraData={animationsReady}
       getItemType={(item) => item.kind}
-      itemLayoutAnimation={THREAD_SETTINGS_CATALOG_LAYOUT_TRANSITION}
+      itemLayoutAnimation={animationsReady ? THREAD_SETTINGS_CATALOG_LAYOUT_TRANSITION : undefined}
       keyExtractor={(item) => item.key}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
@@ -1145,6 +1156,16 @@ function useThreadSettingsPickerPresentation() {
     );
   }
   return value;
+}
+
+function ThreadSettingsOpenShellBody() {
+  return (
+    <View className="gap-4 px-5 pt-4">
+      <View className="bg-border/40 h-12 rounded-2xl" />
+      <View className="bg-border/30 h-12 rounded-2xl" />
+      <View className="bg-border/20 h-12 rounded-2xl" />
+    </View>
+  );
 }
 
 function ThreadSettingsModelsScreen() {
@@ -1300,6 +1321,23 @@ export function ExistingThreadSettingsRouteScreen({
   route,
 }: StaticScreenProps<ExistingThreadSettingsRouteParams>) {
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
+  const [catalogReady, setCatalogReady] = useState(false);
+  // Focus arms early in the sheet transition; wait past presentation settle before the catalog wave.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const timer = setTimeout(() => {
+        if (cancelled) return;
+        startTransition(() => {
+          setCatalogReady(true);
+        });
+      }, 800);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }, []),
+  );
   // Reads the same environmentId/threadId params as the Thread route beneath it.
   const { selectedThread, selectedThreadDetailRef, selectedEnvironmentRuntime } =
     useThreadSelection();
@@ -1325,12 +1363,15 @@ export function ExistingThreadSettingsRouteScreen({
   })
     ? undefined
     : modelSelection.instanceId;
-  const modelOptions = buildModelOptions(
-    serverConfig,
-    modelSelection,
-    lockedProviderInstanceId,
-    selectedThread.projectId,
-  );
+  // Defer the catalog build so settle can quiet on sheet chrome first (tip-v1: ~480ms q50).
+  const modelOptions = catalogReady
+    ? buildModelOptions(
+        serverConfig,
+        modelSelection,
+        lockedProviderInstanceId,
+        selectedThread.projectId,
+      )
+    : [];
   const currentModelOption =
     modelOptions.find(
       (option) =>
@@ -1341,30 +1382,42 @@ export function ExistingThreadSettingsRouteScreen({
     updateThreadDraftModelSelection(threadKey, selection, serverConfig?.providers ?? []);
 
   return (
-    <ThreadSettingsPickerScreen
-      environmentId={selectedThread.environmentId}
-      projectId={selectedThread.projectId}
-      providerInstanceId={modelSelection.instanceId}
-      {...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {})}
-      providerGroups={groupByProvider(modelOptions)}
-      selectedModel={modelSelection}
-      prompt={prompt}
-      onPromptChange={(text) => setComposerDraftText(draftKey, text)}
-      reportedModelSelection={reportedModelSelection}
-      onSelectModel={(option) => updateModelSelection(withRememberedModelOptions(option.selection))}
-      restoreSelection={withRememberedModelOptions}
-      optionDescriptors={resolveProviderOptionDescriptors({
-        capabilities: currentModelOption?.capabilities,
-        selections: modelSelection.options,
-      })}
-      onUpdateOptionSelections={(options) => {
-        rememberModelOptions(modelSelection.instanceId, modelSelection.model, options ?? []);
-        updateModelSelection({ ...modelSelection, options });
-      }}
-      runtimeMode={draftSettings.runtimeMode ?? selectedThread.runtimeMode}
-      onUpdateRuntimeMode={(runtimeMode) => updateComposerDraftSettings(threadKey, { runtimeMode })}
-      onClose={() => navigation.goBack()}
-    />
+    <>
+      <NativeStackScreenOptions options={{ headerShown: false, title: "" }} />
+      <ThreadSettingsPickerScreen
+        environmentId={selectedThread.environmentId}
+        projectId={selectedThread.projectId}
+        providerInstanceId={modelSelection.instanceId}
+        {...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {})}
+        providerGroups={catalogReady ? groupByProvider(modelOptions) : []}
+        catalogPending={!catalogReady}
+        selectedModel={modelSelection}
+        prompt={prompt}
+        onPromptChange={(text) => setComposerDraftText(draftKey, text)}
+        reportedModelSelection={reportedModelSelection}
+        onSelectModel={(option) =>
+          updateModelSelection(withRememberedModelOptions(option.selection))
+        }
+        restoreSelection={withRememberedModelOptions}
+        optionDescriptors={
+          catalogReady
+            ? resolveProviderOptionDescriptors({
+                capabilities: currentModelOption?.capabilities,
+                selections: modelSelection.options,
+              })
+            : []
+        }
+        onUpdateOptionSelections={(options) => {
+          rememberModelOptions(modelSelection.instanceId, modelSelection.model, options ?? []);
+          updateModelSelection({ ...modelSelection, options });
+        }}
+        runtimeMode={draftSettings.runtimeMode ?? selectedThread.runtimeMode}
+        onUpdateRuntimeMode={(runtimeMode) =>
+          updateComposerDraftSettings(threadKey, { runtimeMode })
+        }
+        onClose={() => navigation.goBack()}
+      />
+    </>
   );
 }
 
@@ -1372,27 +1425,50 @@ export function ExistingThreadSettingsRouteScreen({
 export function NewTaskThreadSettingsRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
-  const optionDescriptors = resolveProviderOptionDescriptors({
-    capabilities: flow.selectedModelOption?.capabilities,
-    selections: flow.selectedModel?.options,
-  });
+  const [catalogReady, setCatalogReady] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const timer = setTimeout(() => {
+        if (cancelled) return;
+        startTransition(() => {
+          setCatalogReady(true);
+        });
+      }, 800);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }, []),
+  );
+  const prompt = useComposerDraft(flow.draftKey).text;
+  const optionDescriptors = catalogReady
+    ? resolveProviderOptionDescriptors({
+        capabilities: flow.selectedModelOption?.capabilities,
+        selections: flow.selectedModel?.options,
+      })
+    : [];
 
   return (
-    <ThreadSettingsPickerScreen
-      environmentId={flow.selectedEnvironmentId}
-      projectId={flow.selectedProject?.id ?? null}
-      {...(flow.selectedModel ? { providerInstanceId: flow.selectedModel.instanceId } : {})}
-      providerGroups={flow.providerGroups}
-      selectedModel={flow.selectedModel}
-      prompt={flow.prompt}
-      onPromptChange={flow.setPrompt}
-      onSelectModel={(option) => flow.setSelectedModelKey(option.key, option.selection.options)}
-      restoreSelection={withRememberedModelOptions}
-      optionDescriptors={optionDescriptors}
-      onUpdateOptionSelections={flow.setSelectedModelOptions}
-      runtimeMode={flow.runtimeMode}
-      onUpdateRuntimeMode={flow.setRuntimeMode}
-      onClose={() => navigation.goBack()}
-    />
+    <>
+      <NativeStackScreenOptions options={{ headerShown: false, title: "" }} />
+      <ThreadSettingsPickerScreen
+        environmentId={flow.selectedEnvironmentId}
+        projectId={flow.selectedProject?.id ?? null}
+        {...(flow.selectedModel ? { providerInstanceId: flow.selectedModel.instanceId } : {})}
+        providerGroups={catalogReady ? flow.providerGroups : []}
+        catalogPending={!catalogReady}
+        selectedModel={flow.selectedModel}
+        prompt={prompt}
+        onPromptChange={flow.setPrompt}
+        onSelectModel={(option) => flow.setSelectedModelKey(option.key, option.selection.options)}
+        restoreSelection={withRememberedModelOptions}
+        optionDescriptors={optionDescriptors}
+        onUpdateOptionSelections={flow.setSelectedModelOptions}
+        runtimeMode={flow.runtimeMode}
+        onUpdateRuntimeMode={flow.setRuntimeMode}
+        onClose={() => navigation.goBack()}
+      />
+    </>
   );
 }

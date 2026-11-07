@@ -35,6 +35,21 @@ export function dispatchRootStackReset(
   navigation.dispatch({ type: "RESET", payload, target: state.key });
 }
 
+/** True when a tab flip would rebuild the same root routes — skip RESET and only change tab state. */
+export function rootStackRoutesUnchanged(
+  current: NavigationState,
+  next: {
+    readonly index: number;
+    readonly routes: readonly { readonly key?: string; readonly name: string }[];
+  },
+) {
+  if (current.index !== next.index || current.routes.length !== next.routes.length) return false;
+  return current.routes.every((route, i) => {
+    const other = next.routes[i];
+    return other !== undefined && route.key === other.key && route.name === other.name;
+  });
+}
+
 export function resetRootStack(
   navigation: RootStackNavigation,
   nextState: (state: NavigationState) => RootStackResetAction["payload"],

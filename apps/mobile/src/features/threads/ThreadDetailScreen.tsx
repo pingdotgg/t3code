@@ -79,6 +79,7 @@ import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import * as Haptics from "expo-haptics";
 import {
+  startTransition,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -316,6 +317,8 @@ export interface ThreadDetailScreenProps {
   readonly onSubmitUserInput: () => Promise<unknown>;
   readonly onDismissUserInput: () => Promise<unknown>;
   readonly showContent?: boolean;
+  /** When false, keep composer/chrome but skip mounting the feed list until the next frame. */
+  readonly showFeed?: boolean;
 }
 
 // iOS questions overlay the controls; Android questions stack with child approvals.
@@ -403,9 +406,27 @@ function ThreadDetailBody(
   const openLinkedThread = useOpenLinkedThread();
   const openInspector = useOpenThreadInspector();
   const { session: voiceInputSession } = useGlobalVoiceInput();
-  const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
+  const isDraftScreen = props.draftMode !== undefined;
+  const liveThreadChildRef = isDraftScreen
+    ? null
+    : { environmentId: props.environmentId, threadId: props.selectedThread.id };
+  const reportedModelSelection = useThreadReportedModelSelection(
+    isDraftScreen ? null : props.selectedThreadDetailRef,
+  );
+  const detailThreadIdentity = `${props.environmentId}:${props.selectedThread.id}`;
+  // Device/browser queries compete with first feed paint; reset per thread so switches defer again.
+  // Draft new-task never needs them — skip the arming transition entirely.
+  const [chromeReadyIdentity, setChromeReadyIdentity] = useState<string | null>(null);
+  const chromeReady = !props.draftMode && chromeReadyIdentity === detailThreadIdentity;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers device/browser chrome until this thread's first paint has committed
+  useEffect(() => {
+    if (props.draftMode) return;
+    startTransition(() => {
+      setChromeReadyIdentity(detailThreadIdentity);
+    });
+  }, [detailThreadIdentity, props.draftMode]);
   const deviceState = useEnvironmentQuery(
-    deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
+    chromeReady ? deviceEnvironment.state({ environmentId: props.environmentId, input: {} }) : null,
   );
   const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id);
   const openDevicePreview = () => {
@@ -426,7 +447,9 @@ function ThreadDetailBody(
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
     enabled:
-      !props.draftMode && props.serverConfig?.environment.capabilities.serverBrowser === true,
+      chromeReady &&
+      !props.draftMode &&
+      props.serverConfig?.environment.capabilities.serverBrowser === true,
   });
   const openBrowserPreview = (tabId?: string) => {
     Keyboard.dismiss();
@@ -478,17 +501,15 @@ function ThreadDetailBody(
   const nativeMetrics = usesNativeWorkspaceColumns ? columnMetrics : screenMetrics;
   const controlInsets = deriveBottomControlInsets(nativeMetrics);
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
-  const childThreadInputs = useChildThreadInputs({
-    environmentId: props.environmentId,
-    threadId: props.selectedThread.id,
-  });
+  const childThreadInputs = useChildThreadInputs(liveThreadChildRef);
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
   const preferences = useAtomValue(mobilePreferencesAtom);
   const toolCallVisibility = AsyncResult.isSuccess(preferences)
     ? (preferences.value.toolCallVisibility ?? "showAll")
     : "showAll";
-  const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
-  const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
+  const liveDetailRef = isDraftScreen ? null : props.selectedThreadDetailRef;
+  const queuedCount = useThreadQueuedCount(liveDetailRef);
+  const turnSubagents = useThreadTurnSubagents(liveDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
@@ -632,24 +653,25 @@ function ThreadDetailBody(
   const [lifecycleNow, setLifecycleNow] = useState(() => new Date().toISOString());
   useFocusEffect(
     useCallback(() => {
+      if (isDraftScreen) return;
       setLifecycleNow(new Date().toISOString());
       const timer = setInterval(() => setLifecycleNow(new Date().toISOString()), 60_000);
       return () => clearInterval(timer);
-    }, []),
+    }, [isDraftScreen]),
   );
   const configLoaded = props.serverConfig !== null;
   const snoozed = configLoaded && effectiveSnoozed(props.selectedThread, { now: lifecycleNow });
   const snoozedUntil = props.selectedThread.snoozedUntil;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- arms a timer that refreshes the lifecycle clock when the thread's snooze expires
   useEffect(() => {
-    if (!snoozed || snoozedUntil === null) return;
+    if (isDraftScreen || !snoozed || snoozedUntil === null) return;
     const timer = setTimeout(
       () => setLifecycleNow(new Date().toISOString()),
       Math.min(Math.max(0, Date.parse(snoozedUntil) - Date.now()) + 50, 2_147_483_647),
     );
     return () => clearTimeout(timer);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-arm if timer clamping fires before the wake time.
-  }, [snoozed, snoozedUntil, lifecycleNow]);
+  }, [isDraftScreen, snoozed, snoozedUntil, lifecycleNow]);
   // The usage-limit recovery card shows this snooze and its Wake now.
   const lifecycleSnoozed =
     snoozed &&
@@ -880,16 +902,17 @@ function ThreadDetailBody(
   })();
   const showWorkingControl = floatingStatus !== null;
   const showFloatingStatus =
-    showWorkingControl ||
-    queuedCount > 0 ||
-    agentsSegment !== null ||
-    devicePreviews.length > 0 ||
-    browserTabs.tabs.length > 0 ||
-    props.connectionStateLabel !== "connected" ||
-    props.queuedMessages.length > 0 ||
-    props.selectedThreadFeed.some(
-      (entry) => "acknowledged" in entry && entry.acknowledged === true,
-    );
+    !isDraftScreen &&
+    (showWorkingControl ||
+      queuedCount > 0 ||
+      agentsSegment !== null ||
+      devicePreviews.length > 0 ||
+      browserTabs.tabs.length > 0 ||
+      props.connectionStateLabel !== "connected" ||
+      props.queuedMessages.length > 0 ||
+      props.selectedThreadFeed.some(
+        (entry) => "acknowledged" in entry && entry.acknowledged === true,
+      ));
   const selectedThreadFeed = props.selectedThreadFeed;
   // A palette message result opens the thread at that message: earlier
   // history loads until the message is in the feed, which then scrolls to it.
@@ -907,7 +930,13 @@ function ThreadDetailBody(
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests earlier history from the server until the jump target message loads, or ends the jump
   useEffect(() => {
-    if (jumpMessageId === null || jumpMessageLoaded || contentPresentationKind !== "ready") return;
+    if (
+      isDraftScreen ||
+      jumpMessageId === null ||
+      jumpMessageLoaded ||
+      contentPresentationKind !== "ready"
+    )
+      return;
     if (historyForJump?.loading) return;
     if (!historyForJump?.hasMoreHistory || historyForJump.error !== null) {
       finishThreadMessageJump(selectedThreadKey);
@@ -919,6 +948,7 @@ function ThreadDetailBody(
     historyForJump?.error,
     historyForJump?.hasMoreHistory,
     historyForJump?.loading,
+    isDraftScreen,
     jumpMessageId,
     jumpMessageLoaded,
     selectedThreadKey,
@@ -1217,10 +1247,11 @@ function ThreadDetailBody(
     }
   };
   const showContent = props.showContent ?? true;
+  const showFeed = props.showFeed ?? showContent;
   // Showing the thread counts as viewing it, before its live shell arrives too.
   useAtomMount(
     threadVisitTracker(
-      showContent && !props.draftMode
+      showFeed && !props.draftMode
         ? { environmentId: props.environmentId, threadId: props.selectedThread.id }
         : null,
     ),
@@ -1260,7 +1291,7 @@ function ThreadDetailBody(
       : { width: "auto", right: controlInsets.right },
   );
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
-  useAtomMount(threadStreamHaptics(props.selectedThreadDetailRef));
+  useAtomMount(threadStreamHaptics(liveDetailRef));
   const selectedProviderSkills = (() => {
     const provider = props.serverConfig?.providers.find(
       (candidate) => candidate.instanceId === selectedInstanceId,
@@ -1462,7 +1493,7 @@ function ThreadDetailBody(
             estimatedOverlayHeight -
             24,
         )
-      ) : showContent ? (
+      ) : showFeed ? (
         <View
           style={{ flex: 1 }}
           onTouchStart={handleFeedTouchStart}
@@ -1546,7 +1577,7 @@ function ThreadDetailBody(
         <View className="flex-1" />
       )}
 
-      {showContent ? (
+      {showContent && !isDraftScreen ? (
         <ThreadBrowserFloat
           key={selectedThreadKey}
           environmentId={props.environmentId}
@@ -1675,19 +1706,25 @@ function ThreadDetailBody(
                         />
                       </Animated.View>
                     ) : null}
-                    <UsageLimitRecoveryCard
-                      key={props.selectedThread.latestRun?.runId}
-                      thread={props.selectedThread}
-                      environmentId={props.environmentId}
-                    />
-                    <ChildThreadApprovals
-                      threadRef={props.selectedThreadDetailRef}
-                      maxHeight={pendingUserInputMaxHeight}
-                    />
-                    <ThreadGuestShareBar
-                      threadRef={props.selectedThreadDetailRef}
-                      canOperateThread={props.canOperateThread}
-                    />
+                    {isDraftScreen ? null : (
+                      <UsageLimitRecoveryCard
+                        key={props.selectedThread.latestRun?.runId}
+                        thread={props.selectedThread}
+                        environmentId={props.environmentId}
+                      />
+                    )}
+                    {isDraftScreen ? null : (
+                      <ChildThreadApprovals
+                        threadRef={liveDetailRef}
+                        maxHeight={pendingUserInputMaxHeight}
+                      />
+                    )}
+                    {isDraftScreen ? null : (
+                      <ThreadGuestShareBar
+                        threadRef={liveDetailRef}
+                        canOperateThread={props.canOperateThread}
+                      />
+                    )}
                     {props.draftMode ? null : (
                       <ThreadSideChatsRow
                         environmentId={props.environmentId}

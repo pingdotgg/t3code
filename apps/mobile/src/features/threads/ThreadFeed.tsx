@@ -155,6 +155,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { splitMarkdownDetails } from "../../lib/markdownDetails";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
+import { splitMarkdownBlocks } from "./markdownStreamBlocks";
 import {
   SelectableMarkdownText,
   type MarkdownFileContextMenu,
@@ -234,6 +235,7 @@ import {
   appendGuestPendingMessages,
   appendPendingThreadMessages,
   createThreadFeedGrouping,
+  groupedThreadFeedRowsAreEqual,
   isCompactionCommandFeedEntry,
   type GroupedThreadFeedRow,
   type ThreadFeedRow,
@@ -1183,6 +1185,8 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  /** Streamed messages keep finished blocks mounted while only the trailing block updates. */
+  readonly streaming?: boolean;
 }) {
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
@@ -1200,6 +1204,25 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       onUseArtifactTemplate={props.onUseArtifactTemplate}
       renderImage={props.renderImage}
       skills={props.skills}
+      streaming={props.streaming === true}
+    />
+  );
+});
+
+const SettledMarkdownText = memo(function SettledMarkdownText(props: {
+  readonly markdown: string;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly textStyle: NativeMarkdownTextStyle;
+  readonly linkHandlers: MarkdownLinkHandlers;
+  readonly renderImage: MarkdownImageRenderer;
+}) {
+  return (
+    <SelectableMarkdownText
+      markdown={props.markdown}
+      skills={props.skills}
+      textStyle={props.textStyle}
+      {...props.linkHandlers}
+      renderImage={props.renderImage}
     />
   );
 });
@@ -1212,6 +1235,7 @@ function AssistantMarkdownBlocks(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly streaming: boolean;
 }) {
   const blocks = useMemo(
     () =>
@@ -1246,16 +1270,40 @@ function AssistantMarkdownBlocks(props: {
         );
       }
       if (segment.markdown.trim().length === 0) return null;
-      return (
-        <SelectableMarkdownText
-          key={`markdown:${offset}`}
-          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
-          skills={props.skills}
-          textStyle={props.markdownStyles.nativeTextStyle}
-          {...props.linkHandlers}
-          renderImage={props.renderImage}
-        />
-      );
+      const rendered = renderCodexInlineDirectivesAsMarkdown(segment.markdown);
+      // Only the trailing segment grows while streaming; earlier parts stay mounted.
+      const trailing =
+        props.streaming &&
+        block === blocks[blocks.length - 1] &&
+        segment === block.segments[block.segments.length - 1];
+      const streamParts = trailing ? (splitMarkdownBlocks(rendered) ?? [rendered]) : [rendered];
+      return streamParts.map((part, partIndex) => {
+        if (part.trim().length === 0) return null;
+        const settled = !trailing || partIndex < streamParts.length - 1;
+        // Prefix length is stable for finished stream blocks; the live tail uses "live".
+        const partKey = settled
+          ? `markdown:${offset}:settled:${part.length}`
+          : `markdown:${offset}:live`;
+        return settled ? (
+          <SettledMarkdownText
+            key={partKey}
+            markdown={part}
+            skills={props.skills}
+            textStyle={props.markdownStyles.nativeTextStyle}
+            linkHandlers={props.linkHandlers}
+            renderImage={props.renderImage}
+          />
+        ) : (
+          <SelectableMarkdownText
+            key={partKey}
+            markdown={part}
+            skills={props.skills}
+            textStyle={props.markdownStyles.nativeTextStyle}
+            {...props.linkHandlers}
+            renderImage={props.renderImage}
+          />
+        );
+      });
     });
   });
 }
@@ -2264,6 +2312,10 @@ function renderFeedEntry(
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
+              streaming={
+                message.role === "assistant" &&
+                (message.streaming === true || assistantTurnStillInProgress)
+              }
             />
           </MarkdownImageAvailableWidthContext>
         ) : null}
@@ -3308,19 +3360,22 @@ export const ThreadFeed = memo(function ThreadFeed({
     },
   }));
 
-  // Opening at a message: once the filled list has loaded, the render that sees
-  // the jump unfolds a run hiding the message and stops following the end, so
-  // the committed list holds the target row with end maintenance off.
+  // Opening at a message: once this thread's list has loaded and the target row
+  // exists, unfold a run hiding it and stop following the end so the committed
+  // list holds the row with end maintenance off.
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const { jumpToMessageId } = props;
-  const jumpReady = !!jumpToMessageId && loadedListKey === `${feedThreadKey}:filled`;
-  if (jumpReady && revealedMessageId !== jumpToMessageId) {
+  // List mounts by thread only (no empty→filled remount); reveal once this thread's list has loaded.
+  const jumpListReady = !!jumpToMessageId && loadedListKey === feedThreadKey;
+  if (jumpListReady && revealedMessageId !== jumpToMessageId) {
     setInteractionState((current) => ({ ...current, revealedMessageId: jumpToMessageId }));
   }
   const presentedFeed = appendGuestPendingMessages(
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
     guestShare,
   );
+  const feedHasContent = presentedFeed.some((entry) => entry.type !== "thinking");
+  const jumpReady = jumpListReady && feedHasContent;
   const jumpRunId =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
@@ -3341,11 +3396,9 @@ export const ThreadFeed = memo(function ThreadFeed({
     setupAnchorIndex:
       props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
   });
-  // The empty↔filled key below remounts the list and resets its imperative
-  // content-inset override. Seed each fresh instance as it attaches with the
-  // current overlay height before the scroll integration's next reaction;
-  // on Android the declarative contentInset floor covers this same window.
-  const listMountKey = `${feedThreadKey}:${presentedFeed.some((entry) => entry.type !== "thinking") ? "filled" : "empty"}`;
+  // Thread identity only: empty→filled remounts remeasured the list on every cold open.
+  // Seed overlay inset on attach; Android's declarative contentInset covers the same window.
+  const listMountKey = feedThreadKey;
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
     listRef.current = list;
@@ -3891,6 +3944,8 @@ export const ThreadFeed = memo(function ThreadFeed({
             renderItem={renderItem}
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
+            itemsAreEqual={groupedThreadFeedRowsAreEqual}
+            recycleItems
             getItemType={(entry) => {
               if (entry.type !== "message") return entry.type;
               if (isCompactionCommandFeedEntry(entry)) return "message:compaction";
@@ -3900,10 +3955,17 @@ export const ThreadFeed = memo(function ThreadFeed({
               ) {
                 return "message:assistant-progress";
               }
+              // LegendList averages by type; length buckets keep estimates honest as text grows.
+              const lengthBucket = Math.max(
+                0,
+                Math.floor(Math.log2(Math.max(entry.message.text.length, 1) / 1000)),
+              );
               const { attribution } = resolveUserMessagePresentation(entry.message);
-              return attribution === "automation" || attribution === "agent"
-                ? `message:${attribution}`
-                : `message:${entry.message.role}`;
+              const role =
+                attribution === "automation" || attribution === "agent"
+                  ? attribution
+                  : entry.message.role;
+              return `message:${role}:${lengthBucket}`;
             }}
             getFixedItemSize={getFixedItemSize}
             // Native layout transitions retain stale row positions during sync, even at duration zero.

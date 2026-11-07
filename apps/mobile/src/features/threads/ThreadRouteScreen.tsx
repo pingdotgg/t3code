@@ -5,7 +5,6 @@ import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
-import { AppBar } from "../../components/ui/AppBar";
 import {
   StackActions,
   useNavigation,
@@ -14,6 +13,7 @@ import {
 } from "@react-navigation/native";
 import {
   createContext,
+  startTransition,
   use,
   useEffect,
   useEffectEvent,
@@ -45,13 +45,16 @@ import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
 import { recoverFailedThreadDraft } from "../../state/recover-failed-thread-draft";
 import { useEnvironmentQuery } from "../../state/query";
-import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
+import {
+  dismissGitActionResult,
+  useGitActionProgress,
+  useVcsActionState,
+} from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useThreadShell } from "../../state/entities";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useProject, useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 import {
@@ -82,10 +85,12 @@ import type { ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { ThreadScreenBinding, ThreadScreenFallback, ThreadScreenHost } from "./ThreadScreenHost";
 import { draftRouteIdentity } from "./thread-route-state";
 import { NewTaskDraftRouteScreen, type NewTaskDraftRouteParams } from "./NewTaskDraftRouteScreen";
+import { NewTaskDraftShellHeader } from "./DraftThreadHeader";
+import { AppText as Text } from "../../components/ui/AppText";
+import { View } from "react-native";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
-import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
@@ -105,11 +110,14 @@ import {
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
 import { ThreadHeader } from "./ThreadHeader";
-import { resumeThread } from "./resume-thread";
 import {
-  useAndroidWorkspaceBack,
-  useWorkspaceBackNavigation,
-} from "../layout/workspace/useAndroidWorkspaceNavigation";
+  threadGitControlsContentKey,
+  threadGitControlsStructureKey,
+  type ThreadGitControlsProps,
+} from "./ThreadGitControls";
+import { threadOpenGitControls } from "./thread-open-chrome";
+import { resumeThread } from "./resume-thread";
+import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { openSettings } from "../settings/settings-navigation";
 import {
   InspectorContentScope,
@@ -129,28 +137,37 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 // The inspector pane's bar belongs to ThreadInspectorHeader; the fallback must not draw its own.
 const InspectorHeaderShownContext = createContext(false);
 
-function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
-  const goBack = useWorkspaceBackNavigation("threads");
+function ThreadRouteFallbackLayout(props: {
+  readonly children: ReactNode;
+  readonly title?: string;
+  readonly subtitle?: string;
+  readonly environmentId?: string | null;
+  readonly threadId?: string | null;
+  readonly currentBranch?: string | null;
+}) {
   const inspectorHeaderShown = use(InspectorHeaderShownContext);
-  return (
-    <ThreadScreenFallback
-      header={
-        inspectorHeaderShown ? undefined : (
-          <AppBar title="Thread" onBackToList={goBack} hideBottomBorder />
-        )
-      }
-    >
-      {props.children}
-    </ThreadScreenFallback>
-  );
-}
-
-function OpeningThreadLoadingScreen() {
-  return (
-    <ThreadRouteFallbackLayout>
-      <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" embedded />
-    </ThreadRouteFallbackLayout>
-  );
+  const { fileInspector } = useAdaptiveWorkspaceLayout();
+  const environmentId = props.environmentId ?? "";
+  const threadId = props.threadId ?? "";
+  const header =
+    inspectorHeaderShown || environmentId.length === 0 || threadId.length === 0 ? undefined : (
+      <ThreadHeader
+        title={props.title ?? ""}
+        subtitle={props.subtitle ?? ""}
+        gitControls={threadOpenGitControls({
+          environmentId,
+          threadId,
+          currentBranch: props.currentBranch ?? null,
+          hasWorkspace: false,
+        })}
+        hasThreadCwd={false}
+        fileInspectorSupported={fileInspector.supported}
+        inspectorMode={null}
+        onToggleInspector={() => {}}
+        onOpenFilesInspector={() => {}}
+      />
+    );
+  return <ThreadScreenFallback header={header}>{props.children}</ThreadScreenFallback>;
 }
 
 type ThreadRouteScreenRouteProps = StaticScreenProps<{
@@ -216,18 +233,160 @@ function UnavailableThreadDraftRedirect(props: { readonly environmentId: Environ
   useEffect(() => {
     openDraft();
   }, []);
-  return <OpeningThreadLoadingScreen />;
+  return <ThreadScreenFallback>{null}</ThreadScreenFallback>;
+}
+
+/**
+ * First paint is the same ThreadHeader chrome as live (reserved menus/actions) so
+ * promoting the body does not shift the bar. Body promotes after the push frame.
+ */
+function ThreadOpenShell(props: {
+  readonly environmentId: string | null;
+  readonly threadId: string | null;
+  readonly hideHeader: boolean;
+}) {
+  const { fileInspector } = useAdaptiveWorkspaceLayout();
+  const environmentId =
+    props.environmentId !== null ? EnvironmentId.make(props.environmentId) : null;
+  const threadRef =
+    environmentId !== null && props.threadId !== null
+      ? scopeThreadRef(environmentId, ThreadId.make(props.threadId))
+      : null;
+  const shell = useThreadShell(threadRef);
+  const project = useProject(shell ? scopeProjectRef(shell.environmentId, shell.projectId) : null);
+  // Prefer empty shell chrome over hydrating title/subtitle churn during open settle.
+  const title = shell?.title ?? "";
+  const subtitle = "";
+  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const hasWorkspace = Boolean(project?.workspaceRoot);
+  const statusCwd = shell?.worktreePath ?? project?.workspaceRoot ?? null;
+  // Keep the open shell free of git/terminal queries — live chrome hydrates menus after first paint.
+  const gitControls = threadOpenGitControls({
+    environmentId: props.environmentId ?? "",
+    threadId: props.threadId ?? "",
+    currentBranch: shell?.branch ?? null,
+    hasWorkspace,
+    canOperateTerminal,
+    canOpenFiles: hasWorkspace,
+  });
+  const menuKeyInput = {
+    ...gitControls,
+    hasFilesInspector: statusCwd !== null,
+    hasMergeBack: false,
+  };
+  // Structure only — content keys would retarget menus as cwd/branch hydrate.
+  const structureKey = threadGitControlsStructureKey(menuKeyInput);
+  const contentKey = structureKey;
+  const navigation = useNavigation();
+  const openFilesFromShell = useEffectEvent(() => {
+    if (props.environmentId === null || props.threadId === null || statusCwd === null) return;
+    // Shell may outlive the first tap; push the files route until live chrome owns the inspector.
+    navigation.navigate("ThreadFiles", {
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+    });
+  });
+  if (props.hideHeader || props.environmentId === null || props.threadId === null) {
+    return <ThreadScreenFallback>{null}</ThreadScreenFallback>;
+  }
+  return (
+    <ThreadScreenFallback
+      header={
+        <ThreadHeader
+          title={title}
+          subtitle={subtitle}
+          gitControls={gitControls}
+          hasThreadCwd={statusCwd !== null}
+          fileInspectorSupported={fileInspector.supported}
+          inspectorMode={null}
+          onToggleInspector={openFilesFromShell}
+          onOpenFilesInspector={openFilesFromShell}
+        />
+      }
+      headerKey={[
+        "thread",
+        "shell",
+        props.environmentId,
+        props.threadId,
+        title,
+        subtitle,
+        structureKey,
+        contentKey,
+        fileInspector.supported ? "1" : "0",
+        "",
+        "0",
+      ]}
+    >
+      {null}
+    </ThreadScreenFallback>
+  );
+}
+
+function NewTaskOpenShell() {
+  return (
+    <ThreadScreenFallback header={<NewTaskDraftShellHeader />} headerKey={["new-task", "chrome"]}>
+      <View className="flex-1">
+        <View className="flex-1 items-center justify-center gap-2 px-6">
+          <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
+            What should we build?
+          </Text>
+          <Text className="text-center text-foreground-muted">Tap below to start typing</Text>
+        </View>
+        <View className="gap-2 p-4 pb-1">
+          <View className="min-h-16 justify-center rounded-2xl bg-grouped-card px-4 py-3">
+            <Text className="text-foreground-muted">Ask anything</Text>
+          </View>
+        </View>
+      </View>
+    </ThreadScreenFallback>
+  );
+}
+
+function DraftThreadRouteController(props: {
+  readonly draft: NonNullable<ThreadRouteScreenProps["route"]["params"]>["draft"] & object;
+  readonly route: ThreadRouteScreenProps["route"];
+}) {
+  const draftIdentity = draftRouteIdentity(props.draft);
+  const [bodyReadyIdentity, setBodyReadyIdentity] = useState<string | null>(null);
+  const bodyReady = bodyReadyIdentity === draftIdentity;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers NewTaskDraftRouteScreen until the open shell can settle
+  useEffect(() => {
+    let cancelled = false;
+    let secondFrame = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        timer = setTimeout(() => {
+          if (cancelled) return;
+          startTransition(() => {
+            setBodyReadyIdentity(draftIdentity);
+          });
+        }, 200);
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [draftIdentity]);
+  if (!bodyReady) {
+    return <NewTaskOpenShell />;
+  }
+  return (
+    <NewTaskDraftRouteScreen key={draftIdentity} route={{ ...props.route, params: props.draft }} />
+  );
 }
 
 export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
+  const draft = props.route.params?.draft;
   return (
     <ThreadScreenHost>
-      {props.route.params?.draft ? (
-        <NewTaskDraftRouteScreen
-          key={draftRouteIdentity(props.route.params.draft)}
-          route={{ ...props.route, params: props.route.params.draft }}
-        />
+      {draft ? (
+        <DraftThreadRouteController draft={draft} route={props.route} />
       ) : (
+        // One controller owns the open shell → live promote so the shell is not remounted mid-push.
         <LiveThreadRouteController {...props} />
       )}
     </ThreadScreenHost>
@@ -266,6 +425,32 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   if (routeConnectionState !== "connected" && errorBeforeConnected !== detailError) {
     setErrorBeforeConnected(detailError);
   }
+  const [bodyReadyIdentity, setBodyReadyIdentity] = useState<string | null>(null);
+  const bodyReady = bodyReadyIdentity === routeThreadKey && routeThreadKey !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers ThreadRouteContent until after the open shell paints; re-arms per thread
+  useEffect(() => {
+    if (routeThreadKey === null) return;
+    let cancelled = false;
+    let secondFrame = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Long enough for settle-quiet 50ms to close on the open shell before the feed cliff.
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        timer = setTimeout(() => {
+          if (cancelled) return;
+          startTransition(() => {
+            setBodyReadyIdentity(routeThreadKey);
+          });
+        }, 200);
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [routeThreadKey]);
   const withInspectorHeader = (content: ReactNode) =>
     props.inspectorPresentation ? (
       <InspectorHeaderShownContext value>
@@ -279,11 +464,22 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       content
     );
 
+  const openingScreen = (
+    <ThreadOpenShell
+      environmentId={environmentIdRaw}
+      threadId={threadIdRaw}
+      hideHeader={Boolean(props.inspectorPresentation)}
+    />
+  );
+
   if (environmentId === null || threadIdRaw === null) {
-    return withInspectorHeader(<OpeningThreadLoadingScreen />);
+    return withInspectorHeader(openingScreen);
   }
 
   if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
+    if (!bodyReady) {
+      return withInspectorHeader(openingScreen);
+    }
     return withInspectorHeader(
       <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />,
     );
@@ -307,7 +503,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   });
 
   if (stillHydrating) {
-    return withInspectorHeader(<OpeningThreadLoadingScreen />);
+    return withInspectorHeader(openingScreen);
   }
 
   if (
@@ -358,10 +554,6 @@ function ThreadRouteContent(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const canReadTerminal = useEnvironmentScope(
-    selectedThread?.environmentId ?? null,
-    AuthTerminalReadScope,
-  );
   const canOperateTerminal = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthTerminalOperateScope,
@@ -371,8 +563,28 @@ function ThreadRouteContent(
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const startSideChat = useStartSideChat();
   const composer = useThreadComposerState({ startSideChat });
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
+  const params = props.route.params ?? {};
+  const environmentIdRaw = firstRouteParam(params.environmentId);
+  const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
+  const threadId = firstRouteParam(params.threadId);
+  const routeThreadIdentity =
+    environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  // Git/terminal queries compete with first feed paint; reset per thread so switches defer again.
+  const [chromeReadyIdentity, setChromeReadyIdentity] = useState<string | null>(null);
+  const chromeReady = chromeReadyIdentity === routeThreadIdentity && routeThreadIdentity !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers git/terminal chrome until this thread's first paint has committed
+  useEffect(() => {
+    if (routeThreadIdentity === null) return;
+    startTransition(() => {
+      setChromeReadyIdentity(routeThreadIdentity);
+    });
+  }, [routeThreadIdentity]);
+  // Label-only: full branch/discovery queries stay in git sheets, not the open path.
+  const gitActionState = useVcsActionState({
+    environmentId: chromeReady ? (selectedThread?.environmentId ?? null) : null,
+    cwd: chromeReady ? selectedThreadCwd : null,
+  });
+  const gitActions = useSelectedThreadGitActions({ enabled: chromeReady });
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const resumeThreadQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, {
@@ -455,12 +667,6 @@ function ThreadRouteContent(
       params: { environmentId: selectedThread.environmentId, threadId: mergeBackTargetThreadId },
     });
   };
-  const params = props.route.params ?? {};
-  const environmentIdRaw = firstRouteParam(params.environmentId);
-  const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
-  const threadId = firstRouteParam(params.threadId);
-  const routeThreadIdentity =
-    environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
   // The chosen mode survives thread switches; "route" only applies while the route
   // supplies an inspector, which is also the default whenever it does.
   const [chosenInspectorMode, setChosenInspectorMode] = useState<ThreadInspectorMode | null>(null);
@@ -486,14 +692,21 @@ function ThreadRouteContent(
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
-  const selectedThreadWithDraftSettings = selectedThread
-    ? {
-        ...selectedThread,
-        modelSelection: composer.modelSelection ?? selectedThread.modelSelection,
-        runtimeMode: composer.runtimeMode ?? selectedThread.runtimeMode,
-        interactionMode: composer.interactionMode ?? selectedThread.interactionMode,
-      }
-    : null;
+  // Keep the shell reference when the composer is not overlaying draft settings so
+  // ThreadScreenBinding's body fingerprint stays stable across controller ticks.
+  const selectedThreadWithDraftSettings =
+    selectedThread === null
+      ? null
+      : composer.modelSelection !== null ||
+          composer.runtimeMode !== null ||
+          composer.interactionMode !== null
+        ? {
+            ...selectedThread,
+            modelSelection: composer.modelSelection ?? selectedThread.modelSelection,
+            runtimeMode: composer.runtimeMode ?? selectedThread.runtimeMode,
+            interactionMode: composer.interactionMode ?? selectedThread.interactionMode,
+          }
+        : selectedThread;
 
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
   const delegatedFrom = selectedThread?.delegatedFrom ?? null;
@@ -515,6 +728,8 @@ function ThreadRouteContent(
   ]
     .filter(Boolean)
     .join(" · ");
+  // Read-only menu hydration — do not wait on chromeReady (git actions). Early status
+  // keeps the first UIMenu tree from rebuilding under the user's first tap.
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
@@ -545,26 +760,26 @@ function ThreadRouteContent(
   };
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 
-  const handleOpenGitInspector = () => {
+  const handleOpenGitInspector = useEffectEvent(() => {
     navigation.setParams({ inspector: undefined });
     setChosenInspectorMode("git");
     showInspector();
-  };
-  const handleOpenFilesInspector = () => {
+  });
+  const handleOpenFilesInspector = useEffectEvent(() => {
     if (selectedThread === null || selectedThreadCwd === null) {
       return;
     }
     navigation.setParams({ inspector: undefined });
     setChosenInspectorMode(props.renderInspector === undefined ? "files" : "route");
     showInspector();
-  };
-  const handleToggleInspector = () => {
+  });
+  const handleToggleInspector = useEffectEvent(() => {
     if (inspectorMode === null) {
       handleOpenFilesInspector();
       return;
     }
     toggleAuxiliaryPane();
-  };
+  });
   const handleSelectInspectorFile = (path: string) => {
     if (selectedThread === null) {
       return;
@@ -685,7 +900,7 @@ function ThreadRouteContent(
     }
   };
 
-  const handleOpenTerminal = (nextTerminalId?: string | null) => {
+  const handleOpenTerminal = useEffectEvent((nextTerminalId?: string | null) => {
     if (
       !selectedThread ||
       !selectedThreadProject?.workspaceRoot ||
@@ -700,9 +915,9 @@ function ThreadRouteContent(
       threadId: String(selectedThread.id),
       ...(nextTerminalId ? { terminalId: nextTerminalId } : {}),
     });
-  };
+  });
 
-  const handleOpenNewTerminal = () => {
+  const handleOpenNewTerminal = useEffectEvent(() => {
     if (
       !selectedThread ||
       !selectedThreadProject?.workspaceRoot ||
@@ -723,9 +938,9 @@ function ThreadRouteContent(
       threadId: String(selectedThread.id),
       terminalId: nextId,
     });
-  };
+  });
 
-  const handleRunProjectScript = async (script: ProjectScript) => {
+  const handleRunProjectScript = useEffectEvent(async (script: ProjectScript) => {
     if (
       !selectedThread ||
       !selectedThreadProject?.workspaceRoot ||
@@ -776,35 +991,79 @@ function ThreadRouteContent(
       threadId: String(selectedThread.id),
       terminalId: targetTerminalId,
     });
-  };
-  const threadGitControlProps = {
+  });
+  const handleMergeBackPress = useEffectEvent(() => {
+    void handleMergeBack();
+  });
+  const onPullSelectedThreadBranch = useEffectEvent(() => gitActions.onPullSelectedThreadBranch());
+  const onRunSelectedThreadGitAction = useEffectEvent(
+    (input: Parameters<ThreadGitControlsProps["onRunAction"]>[0]) =>
+      gitActions.onRunSelectedThreadGitAction(input),
+  );
+  const projectScripts = selectedThreadProject
+    ? resolveProjectScripts(
+        routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+        selectedThreadProject,
+      )
+    : [];
+  // Keep the terminal menu mounted whenever the project has a root — scopes only disable items.
+  const canOpenTerminal = Boolean(selectedThreadProject?.workspaceRoot);
+  const canOpenFiles = Boolean(selectedThreadProject?.workspaceRoot);
+  const hasMergeBack = mergeBackTargetThreadId !== null && mergeBackRun !== null;
+  const hasFilesInspector = selectedThreadCwd !== null;
+  const gitMenuInput = {
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
-    onOpenFilesInspector: selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
-    onOpenGitInspector: handleOpenGitInspector,
-    onMergeBack:
-      mergeBackTargetThreadId !== null && mergeBackRun !== null
-        ? () => void handleMergeBack()
-        : undefined,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
-    gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal:
-      Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
+    gitOperationLabel: gitActionState.currentLabel,
+    canOpenTerminal,
     canOperateTerminal,
-    canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
-    projectScripts: selectedThreadProject
-      ? resolveProjectScripts(
-          routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-          selectedThreadProject,
-        )
-      : [],
+    canOpenFiles,
+    projectScripts,
+    terminalSessions: terminalMenuSessions,
+    hasFilesInspector,
+    hasMergeBack,
+  };
+  const gitStructureKey = threadGitControlsStructureKey(gitMenuInput);
+  const gitContentKey = threadGitControlsContentKey(gitMenuInput);
+  // Folder selected state can lag; publishing it in headerKey races the Files sheet open.
+  const [publishedInspectorMode, setPublishedInspectorMode] = useState<ThreadInspectorMode | null>(
+    inspectorMode,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers folder-selected header republish until after the Files sheet presents
+  useEffect(() => {
+    if (publishedInspectorMode === inspectorMode) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        setPublishedInspectorMode(inspectorMode);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [inspectorMode, publishedInspectorMode]);
+  const threadGitControlProps: ThreadGitControlsProps = {
+    environmentId: environmentIdRaw ?? "",
+    threadId: threadId ?? "",
+    onOpenFilesInspector: hasFilesInspector ? handleOpenFilesInspector : undefined,
+    onOpenGitInspector: handleOpenGitInspector,
+    onMergeBack: hasMergeBack ? handleMergeBackPress : undefined,
+    currentBranch: selectedThread?.branch ?? null,
+    gitStatus: gitStatus.data,
+    gitOperationLabel: gitActionState.currentLabel,
+    canOpenTerminal,
+    canOperateTerminal,
+    canOpenFiles,
+    projectScripts,
     terminalSessions: terminalMenuSessions,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
-    onPull: gitActions.onPullSelectedThreadBranch,
-    onRunAction: gitActions.onRunSelectedThreadGitAction,
+    onPull: onPullSelectedThreadBranch,
+    onRunAction: onRunSelectedThreadGitAction,
   };
   const handleEditFailedCreation = async () => {
     const creation = selectedThreadCreation?.message;
@@ -928,14 +1187,6 @@ function ThreadRouteContent(
       serverOwned: false,
     };
   })();
-  if (!environmentId || !threadId) {
-    return <OpeningThreadLoadingScreen />;
-  }
-
-  if (!selectedThread) {
-    return <OpeningThreadLoadingScreen />;
-  }
-
   // Queued creation displays its prompt before server creation; temporary not-found is expected.
   const contentPresentation =
     creationState !== null
@@ -947,6 +1198,56 @@ function ThreadRouteContent(
           connectionState: routeConnectionState,
         });
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const hasThreadCwd = selectedThreadCwd !== null;
+  const threadTitle = selectedThread?.title ?? "";
+  // Publish content with structure so menu subtitles are ready on first open.
+  const threadHeaderKey = [
+    props.inspectorPresentation ? "inspector" : "thread",
+    "live",
+    environmentIdRaw ?? "",
+    threadId ?? "",
+    threadTitle,
+    headerSubtitle,
+    gitStructureKey,
+    gitContentKey,
+    fileInspector.supported ? "1" : "0",
+    publishedInspectorMode ?? "",
+    props.onReturnToThread ? "1" : "0",
+  ] as const;
+  const threadHeader =
+    props.inspectorPresentation || threadTitle.length === 0 ? null : (
+      <ThreadHeader
+        title={threadTitle}
+        subtitle={headerSubtitle}
+        gitControls={threadGitControlProps}
+        hasThreadCwd={hasThreadCwd}
+        fileInspectorSupported={fileInspector.supported}
+        inspectorMode={publishedInspectorMode}
+        onToggleInspector={handleToggleInspector}
+        onOpenFilesInspector={handleOpenFilesInspector}
+        onReturnToThread={props.onReturnToThread}
+      />
+    );
+  if (!environmentId || !threadId) {
+    return (
+      <ThreadOpenShell
+        environmentId={environmentIdRaw}
+        threadId={threadId}
+        hideHeader={Boolean(props.inspectorPresentation)}
+      />
+    );
+  }
+
+  if (!selectedThread) {
+    return (
+      <ThreadOpenShell
+        environmentId={environmentIdRaw}
+        threadId={threadId}
+        hideHeader={Boolean(props.inspectorPresentation)}
+      />
+    );
+  }
+
   const renderThreadRouteBody = () => (
     <>
       <GitActionProgressOverlay
@@ -957,21 +1258,8 @@ function ThreadRouteContent(
 
       <>
         <ThreadScreenBinding
-          header={
-            props.inspectorPresentation ? null : (
-              <ThreadHeader
-                title={selectedThread.title}
-                subtitle={headerSubtitle}
-                gitControls={threadGitControlProps}
-                hasThreadCwd={selectedThreadCwd !== null}
-                fileInspectorSupported={fileInspector.supported}
-                inspectorMode={inspectorMode}
-                onToggleInspector={handleToggleInspector}
-                onOpenFilesInspector={handleOpenFilesInspector}
-                onReturnToThread={props.onReturnToThread}
-              />
-            )
-          }
+          header={threadHeader}
+          headerKey={threadHeaderKey}
           canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           selectedThreadDetailRef={selectedThreadDetailRef}

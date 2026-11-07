@@ -50,12 +50,13 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
-import { useAtomRefresh } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
+import { environmentThreadShells } from "../../state/threads";
 import {
   useComposerPathSearch,
   useComposerPullRequestSearch,
@@ -71,6 +72,10 @@ const providerWorkspaceSnapshotRefresh = createProviderWorkspaceSnapshotRefreshA
 
 const idleWorkspaceSnapshotRefreshAtom: Atom.Atom<unknown> = Atom.make<void>(undefined).pipe(
   Atom.withLabel("mobile:provider-workspace-snapshot-refresh:idle"),
+);
+
+const EMPTY_VISIBLE_THREAD_SHELLS_ATOM = Atom.make(EMPTY_THREAD_SHELLS).pipe(
+  Atom.withLabel("mobile:composer-empty-visible-thread-shells"),
 );
 
 function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
@@ -237,7 +242,6 @@ export function useComposerCommandMenu({
   draftMessage,
   ownerKey,
   environmentId,
-  threadShells = EMPTY_THREAD_SHELLS,
   environments = EMPTY_ENVIRONMENTS,
   linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
@@ -259,7 +263,6 @@ export function useComposerCommandMenu({
   readonly draftMessage: string;
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
-  readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
   /** The machines `environmentId` links to, by name, whose threads the picker also offers. */
   readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
@@ -300,25 +303,17 @@ export function useComposerCommandMenu({
     ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd)
     : [];
   const selectedProviderInstanceId = selectedProviderStatus?.instanceId;
-  const refreshWorkspaceSnapshot = useAtomRefresh(
+  // Mount while the composer has a cwd so skill/command descriptions are warm before `/` opens.
+  const workspaceSnapshotAtom =
     environmentId && projectCwd && selectedProviderInstanceId
       ? providerWorkspaceSnapshotRefresh({
           environmentId,
           instanceId: selectedProviderInstanceId,
           cwd: projectCwd,
         })
-      : idleWorkspaceSnapshotRefreshAtom,
-  );
-  // Every draft change rechecks a stale snapshot, including drafts written by
-  // another surface (a prompt link) that never move the editor selection.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the provider workspace snapshot atom whenever the draft text changes from any surface
-  useEffect(() => {
-    refreshWorkspaceSnapshot();
-  }, [
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Draft changes are the recheck signal.
-    draftMessage,
-    refreshWorkspaceSnapshot,
-  ]);
+      : idleWorkspaceSnapshotRefreshAtom;
+  useAtomValue(workspaceSnapshotAtom);
+  const refreshWorkspaceSnapshot = useAtomRefresh(workspaceSnapshotAtom);
   const onSelectionChange = (nextSelection: ComposerEditorSelection) => {
     setSelection(nextSelection);
   };
@@ -329,6 +324,19 @@ export function useComposerCommandMenu({
     }
     return detectComposerTrigger(draftMessage, selection.end);
   })();
+  // Path mentions need shells; keep the composer off the visible-shells atom otherwise.
+  const threadShells = useAtomValue(
+    trigger?.kind === "path"
+      ? environmentThreadShells.visibleThreadShellsAtom
+      : EMPTY_VISIBLE_THREAD_SHELLS_ATOM,
+  );
+  // Re-check when the menu opens in case the TTL expired while the composer was idle.
+  const workspaceMenuOpen = trigger?.kind === "slash-command" || trigger?.kind === "skill";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes provider skills/commands when a slash or skill trigger opens
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    refreshWorkspaceSnapshot();
+  }, [workspaceMenuOpen, refreshWorkspaceSnapshot]);
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,

@@ -15,12 +15,23 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { THREAD_SIDEBAR_ROW_LAYOUT } from "./threadListAnimations";
+import {
+  threadListShelfExpansionKey,
+  useThreadListShelfLayoutAnimation,
+} from "./threadListAnimations";
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useRef, useState } from "react";
-import { Platform, StyleSheet, View } from "react-native";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Platform,
+  StyleSheet,
+  View,
+  type GestureResponderEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import type { LegendListRef } from "@legendapp/list/react-native";
 import { FLOATING_TABS } from "../layout/workspace/floating-workspace-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -43,6 +54,7 @@ import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenuItems } from "../home/home-list-filter-menu";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
+import { createSwipeRowActivation } from "../home/swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -51,6 +63,7 @@ import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { WORKSPACE_LIST_SCROLL_INSETS } from "../layout/workspace/workspace-list-insets";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
+  ThreadListShelfChromeProvider,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -154,25 +167,36 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   );
   const { options, setSelectedEnvironmentId, setSelectedProjectKey } =
     useHomeListOptions(availableEnvironmentIds);
+  // Filter menu labels stay urgent; the sidebar list rebuild follows deferred ids.
+  const listEnvironmentId = useDeferredValue(options.selectedEnvironmentId);
+  const deferredProjectKey = useDeferredValue(options.selectedProjectKey);
   const searchEnvironmentIds =
-    options.selectedEnvironmentId === null
+    listEnvironmentId === null
       ? workspaceEnvironments
           .filter((environment) => environment.connectionState === "connected")
           .map((environment) => environment.environmentId)
       : workspaceEnvironments.some(
             (environment) =>
-              environment.environmentId === options.selectedEnvironmentId &&
+              environment.environmentId === listEnvironmentId &&
               environment.connectionState === "connected",
           )
-        ? [options.selectedEnvironmentId]
+        ? [listEnvironmentId]
         : [];
   // A legacy per-environment scratch key resolves here on every render; the stored
   // value is only rewritten when the user picks a filter.
-  const resolvedProjectKey = resolveScratchProjectScopeKey(options.selectedProjectKey, projects, {
+  const filterResolvedProjectKey = resolveScratchProjectScopeKey(
+    options.selectedProjectKey,
+    projects,
+    {
+      sidebarProjectGroupingMode: options.projectGroupingMode,
+      sidebarProjectGroupingOverrides: {},
+    },
+  );
+  const listResolvedProjectKey = resolveScratchProjectScopeKey(deferredProjectKey, projects, {
     sidebarProjectGroupingMode: options.projectGroupingMode,
     sidebarProjectGroupingOverrides: {},
   });
-  const projectScopes = useMemo(
+  const filterProjectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
         projects,
@@ -181,14 +205,31 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       }),
     [projects, options.selectedEnvironmentId, options.projectGroupingMode],
   );
-  const projectFilterOptions = pickableProjectGroups(projectScopes).map((scope) => ({
+  const listProjectScopes = useMemo(
+    () =>
+      listEnvironmentId === options.selectedEnvironmentId
+        ? filterProjectScopes
+        : buildHomeProjectScopes({
+            projects,
+            environmentId: listEnvironmentId,
+            projectGroupingMode: options.projectGroupingMode,
+          }),
+    [
+      filterProjectScopes,
+      listEnvironmentId,
+      options.projectGroupingMode,
+      options.selectedEnvironmentId,
+      projects,
+    ],
+  );
+  const projectFilterOptions = pickableProjectGroups(filterProjectScopes).map((scope) => ({
     key: scope.key,
     label: scope.title,
   }));
   const projectTitleByProjectKey = useMemo(
     () =>
       new Map(
-        projectScopes.flatMap((scope) =>
+        listProjectScopes.flatMap((scope) =>
           scope.projectRefs.map(
             (projectRef) =>
               [
@@ -198,11 +239,17 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           ),
         ),
       ),
-    [projectScopes],
+    [listProjectScopes],
   );
   // An archived project's filter reads as all projects, matching the filter menu.
+  const filterSelectedProjectScope =
+    pickableProjectGroups(filterProjectScopes).find(
+      (scope) => scope.key === filterResolvedProjectKey,
+    ) ?? null;
   const selectedProjectScope =
-    pickableProjectGroups(projectScopes).find((scope) => scope.key === resolvedProjectKey) ?? null;
+    pickableProjectGroups(listProjectScopes).find(
+      (scope) => scope.key === listResolvedProjectKey,
+    ) ?? null;
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,
@@ -213,7 +260,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   // This map reaches LegendList's extraData, which re-renders every row whenever it changes
   // identity; the hook keeps it stable.
   const threadSearchMatchByKey = useThreadListSearchMatches(threads, threadSearch);
-  const selectedProjectKey = selectedProjectScope?.key ?? null;
+  const selectedProjectKey = filterSelectedProjectScope?.key ?? null;
   const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
     for (const project of projects) {
@@ -225,7 +272,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
-  const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${selectedProjectKey ?? "all"}:${props.searchQuery.trim()}`;
+  const settledResetKey = `${listEnvironmentId ?? "all"}:${selectedProjectScope?.key ?? "all"}:${props.searchQuery.trim()}`;
   const [lastSettledResetKey, setLastSettledResetKey] = useState(settledResetKey);
   if (lastSettledResetKey !== settledResetKey) {
     setLastSettledResetKey(settledResetKey);
@@ -243,6 +290,17 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
+  // Chevron reads the urgent flags; the list inserts/removes rows on the deferred pass.
+  const listWorkingShelfExpanded = useDeferredValue(workingShelfExpanded);
+  const listSnoozedShelfExpanded = useDeferredValue(snoozedShelfExpanded);
+  const listSettledShelfExpanded = useDeferredValue(settledShelfExpanded);
+  const shelfLayoutAnimation = useThreadListShelfLayoutAnimation(
+    threadListShelfExpansionKey({
+      workingShelfExpanded: listWorkingShelfExpanded,
+      snoozedShelfExpanded: listSnoozedShelfExpanded,
+      settledShelfExpanded: listSettledShelfExpanded,
+    }),
+  );
   const now = useThreadListNow(threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
@@ -267,7 +325,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   } = useThreadListV2({
     threads,
     pendingTasks,
-    environmentId: options.selectedEnvironmentId,
+    environmentId: listEnvironmentId,
     projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
     searchQuery: props.searchQuery,
     searchMatches: threadSearchMatchByKey,
@@ -281,13 +339,13 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     pendingOrder,
     shelfPreferencesLoaded,
     workingShelfEnabled,
-    workingShelfExpanded,
-    snoozedShelfExpanded,
-    settledShelfExpanded,
+    workingShelfExpanded: listWorkingShelfExpanded,
+    snoozedShelfExpanded: listSnoozedShelfExpanded,
+    settledShelfExpanded: listSettledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
   });
   const listItems: readonly SidebarListItem[] =
-    settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
+    listSettledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
       ? [
           ...threadListV2Items,
           {
@@ -340,21 +398,76 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     openSwipeableRef.current?.close();
   };
   const onFabScroll = useFabScroll();
+  const listRef = useRef<LegendListRef>(null);
+  const swipeRowActivation = createSwipeRowActivation();
+  const activateVisibleRows = (rows: ReadonlyArray<SidebarListItem>) => {
+    const state = listRef.current?.getState();
+    if (state === undefined || !(state.end >= 0)) return;
+    swipeRowActivation.activate(
+      rows.slice(Math.max(0, state.start - 2), state.end + 3).map((row) => row.key),
+    );
+  };
+  const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
+  useEffect(() => () => clearTimeout(activationTimerRef.current), []);
+  const handleListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    onFabScroll?.(event);
+    clearTimeout(activationTimerRef.current);
+    activationTimerRef.current = setTimeout(
+      () => activateVisibleRows(listRef.current?.getState().data ?? []),
+      200,
+    );
+  };
+  const trackListTouches = (event: GestureResponderEvent, started: boolean) => {
+    const { changedTouches, touches } = event.nativeEvent;
+    swipeRowActivation.trackTouches(
+      started ? changedTouches.map((touch) => String(touch.identifier)) : [],
+      touches.map((touch) => String(touch.identifier)),
+    );
+  };
   const { swipeEnabled, scrollGateHandlers } = useSwipeableScrollGate({
-    onScroll: onFabScroll,
+    onScroll: handleListScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
+  useEffect(() => {
+    if (!swipeEnabled) return;
+    // Defer past shelf insert paint so arming swipeables does not compete with row mount.
+    clearTimeout(activationTimerRef.current);
+    activationTimerRef.current = setTimeout(() => activateVisibleRows(listItems), 32);
+  }, [activateVisibleRows, swipeEnabled, listItems]);
   // Recycle equality needs project/search data for titles and favicons; keep the minute clock on items to limit updates.
-  const listExtraData = {
-    activeNewTask,
-    selectedThreadKey: props.selectedThreadKey ?? "",
-    projectByKey,
-    projectTitleByProjectKey,
-    savedConnectionsById,
-    listEnvironments,
-    threadSearchMatchByKey,
-    workingShelfEnabled,
-  };
+  // Shelf chevrons use ThreadListShelfChromeProvider — keep them out of extraData.
+  const listExtraData = useMemo(
+    () => ({
+      activeNewTask,
+      selectedThreadKey: props.selectedThreadKey ?? "",
+      projectByKey,
+      projectTitleByProjectKey,
+      savedConnectionsById,
+      listEnvironments,
+      threadSearchMatchByKey,
+      workingShelfEnabled,
+    }),
+    [
+      activeNewTask,
+      props.selectedThreadKey,
+      projectByKey,
+      projectTitleByProjectKey,
+      savedConnectionsById,
+      listEnvironments,
+      threadSearchMatchByKey,
+      workingShelfEnabled,
+    ],
+  );
+  const shelfChrome = useMemo(
+    () => ({
+      workingExpanded: workingShelfExpanded,
+      snoozedExpanded: snoozedShelfExpanded,
+      settledExpanded: settledShelfExpanded,
+    }),
+    [workingShelfExpanded, snoozedShelfExpanded, settledShelfExpanded],
+  );
   useThreadJumpShortcuts(listItems, handleSelectThread);
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
     if (isThreadListV2ListItem(previous) && isThreadListV2ListItem(item)) {
@@ -398,6 +511,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             fullSwipeWidth={props.width - 20}
             onSwipeableClose={handleSwipeableClose}
             onSwipeableWillOpen={handleSwipeableWillOpen}
+            activationKey={item.key}
             simultaneousSwipeGesture={sidebarScrollGesture}
           />
         );
@@ -475,6 +589,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onMoveThread={moveThread}
             onSwipeableClose={handleSwipeableClose}
             onSwipeableWillOpen={handleSwipeableWillOpen}
+            activationKey={item.key}
             simultaneousSwipeGesture={sidebarScrollGesture}
           />
         );
@@ -579,37 +694,44 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       <>
         {header}
         <View className="flex-1">
-          <SwipeableScrollGateProvider enabled={swipeEnabled}>
-            <GestureDetector gesture={sidebarScrollGesture}>
-              <AnimatedLegendList
-                renderScrollComponent={NativeScrollView}
-                itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
-                data={listItems}
-                drawDistance={500}
-                estimatedItemSize={64}
-                extraData={listExtraData}
-                getItemType={(item) => item.type}
-                itemsAreEqual={sidebarItemsAreEqual}
-                keyExtractor={(item) => item.key}
-                renderItem={renderListItem}
-                {...WORKSPACE_LIST_SCROLL_INSETS}
-                contentContainerStyle={[
-                  styles.threadListContent,
-                  {
-                    paddingBottom: Math.max(insets.bottom, 16) + 16,
-                    paddingTop: 6,
-                  },
-                ]}
-                keyboardDismissMode="on-drag"
-                keyboardShouldPersistTaps="handled"
-                {...scrollGateHandlers}
-                recycleItems
-                scrollEventThrottle={16}
-                showsVerticalScrollIndicator={false}
-                style={styles.threadList}
-                ListEmptyComponent={listEmpty}
-              />
-            </GestureDetector>
+          <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
+            <ThreadListShelfChromeProvider value={shelfChrome}>
+              <GestureDetector gesture={sidebarScrollGesture}>
+                <AnimatedLegendList
+                  ref={listRef}
+                  onLoad={() => activateVisibleRows(listItems)}
+                  onTouchStart={(event) => trackListTouches(event, true)}
+                  onTouchEnd={(event) => trackListTouches(event, false)}
+                  onTouchCancel={(event) => trackListTouches(event, false)}
+                  renderScrollComponent={NativeScrollView}
+                  itemLayoutAnimation={shelfLayoutAnimation}
+                  data={listItems}
+                  drawDistance={500}
+                  estimatedItemSize={64}
+                  extraData={listExtraData}
+                  getItemType={(item) => item.type}
+                  itemsAreEqual={sidebarItemsAreEqual}
+                  keyExtractor={(item) => item.key}
+                  renderItem={renderListItem}
+                  {...WORKSPACE_LIST_SCROLL_INSETS}
+                  contentContainerStyle={[
+                    styles.threadListContent,
+                    {
+                      paddingBottom: Math.max(insets.bottom, 16) + 16,
+                      paddingTop: 6,
+                    },
+                  ]}
+                  keyboardDismissMode="on-drag"
+                  keyboardShouldPersistTaps="handled"
+                  {...scrollGateHandlers}
+                  recycleItems
+                  scrollEventThrottle={16}
+                  showsVerticalScrollIndicator={false}
+                  style={styles.threadList}
+                  ListEmptyComponent={listEmpty}
+                />
+              </GestureDetector>
+            </ThreadListShelfChromeProvider>
           </SwipeableScrollGateProvider>
           <ThreadUndoNotice visible={props.visible} />
         </View>
@@ -634,35 +756,42 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
         {listItems.length === 0 ? (
           <View className="flex-1 items-center justify-center">{listEmpty}</View>
         ) : (
-          <SwipeableScrollGateProvider enabled={swipeEnabled}>
-            <GestureDetector gesture={sidebarScrollGesture}>
-              {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- The Android sidebar has no native header to register with. */}
-              <AnimatedLegendList
-                itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
-                data={listItems}
-                drawDistance={500}
-                estimatedItemSize={64}
-                extraData={listExtraData}
-                getItemType={(item) => item.type}
-                itemsAreEqual={sidebarItemsAreEqual}
-                keyExtractor={(item) => item.key}
-                renderItem={renderListItem}
-                contentContainerStyle={{
-                  paddingBottom: floatingTabsEnabled
-                    ? FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
-                    : Math.max(insets.bottom, 16) + fabClearance - insets.bottom,
-                  paddingTop: 6,
-                }}
-                keyboardDismissMode="on-drag"
-                keyboardShouldPersistTaps="handled"
-                {...scrollGateHandlers}
-                recycleItems
-                scrollEventThrottle={16}
-                showsVerticalScrollIndicator={false}
-                style={styles.threadList}
-                ListEmptyComponent={listEmpty}
-              />
-            </GestureDetector>
+          <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
+            <ThreadListShelfChromeProvider value={shelfChrome}>
+              <GestureDetector gesture={sidebarScrollGesture}>
+                {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- The Android sidebar has no native header to register with. */}
+                <AnimatedLegendList
+                  ref={listRef}
+                  onLoad={() => activateVisibleRows(listItems)}
+                  onTouchStart={(event) => trackListTouches(event, true)}
+                  onTouchEnd={(event) => trackListTouches(event, false)}
+                  onTouchCancel={(event) => trackListTouches(event, false)}
+                  itemLayoutAnimation={shelfLayoutAnimation}
+                  data={listItems}
+                  drawDistance={500}
+                  estimatedItemSize={64}
+                  extraData={listExtraData}
+                  getItemType={(item) => item.type}
+                  itemsAreEqual={sidebarItemsAreEqual}
+                  keyExtractor={(item) => item.key}
+                  renderItem={renderListItem}
+                  contentContainerStyle={{
+                    paddingBottom: floatingTabsEnabled
+                      ? FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
+                      : Math.max(insets.bottom, 16) + fabClearance - insets.bottom,
+                    paddingTop: 6,
+                  }}
+                  keyboardDismissMode="on-drag"
+                  keyboardShouldPersistTaps="handled"
+                  {...scrollGateHandlers}
+                  recycleItems
+                  scrollEventThrottle={16}
+                  showsVerticalScrollIndicator={false}
+                  style={styles.threadList}
+                  ListEmptyComponent={listEmpty}
+                />
+              </GestureDetector>
+            </ThreadListShelfChromeProvider>
           </SwipeableScrollGateProvider>
         )}
       </View>

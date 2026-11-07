@@ -16,7 +16,7 @@ import {
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CommandId,
@@ -269,7 +269,7 @@ export function useThreadComposerState(input: {
   // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
   const [feedCache] = useState(createThreadFeedCache);
-  const selectedThreadFeed = (() => {
+  const selectedThreadFeed = useMemo(() => {
     const pendingCreation =
       pendingCreationMessage !== null &&
       !selectedThreadMessages?.some((message) => message.id === pendingCreationMessage.messageId)
@@ -292,7 +292,19 @@ export function useThreadComposerState(input: {
     return appendPendingThreadMessages(feed, feed, pendingAcknowledgments).map((entry) =>
       entry.pendingMessage ? { ...entry, acknowledged: true } : entry,
     );
-  })();
+  }, [
+    acknowledgedMessages,
+    checkpointSummaries,
+    feedCache,
+    pendingCreationMessage,
+    selectedThreadAttempts,
+    selectedThreadMessages,
+    selectedThreadNodes,
+    selectedThreadQueuedMessages,
+    selectedThreadKey,
+    selectedThreadSequence,
+    selectedThreadVisibleTurnItems,
+  ]);
 
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const followUpBehavior = AsyncResult.isSuccess(preferencesResult)
