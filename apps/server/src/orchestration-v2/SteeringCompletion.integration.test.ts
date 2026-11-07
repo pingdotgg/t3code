@@ -479,6 +479,8 @@ const composerSelection = {
   options: [...runSelection.options, { id: "fastMode", value: false }],
 };
 
+const otherInstanceId = ProviderInstanceId.make("codex-other");
+
 const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function* (
   name: string,
   canRestart = false,
@@ -603,7 +605,11 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   };
   const layer = ProviderReplayHarness.layerWithRegistry(
     { name },
-    ProviderAdapterRegistry.layerSingle(adapter),
+    // A second instance on the same driver, like claude-public-pool beside claudeAgent.
+    ProviderAdapterRegistry.layerFromAdapters([
+      adapter,
+      { ...adapter, instanceId: otherInstanceId },
+    ]),
     { runEffectWorker: false },
   );
   const startFirstTurn = Effect.gen(function* () {
@@ -1208,6 +1214,42 @@ it.effect("queues a steer that needs an unsupported restart until the turn ends"
             },
           ],
           modelSelection: runSelection,
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent: "steer",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+
+        const held = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(steered, []);
+        assert.deepEqual(interrupted, []);
+        assert.equal(started.length, 1);
+        assert.equal(held.runs.find((run) => run.userMessageId === messageId)?.status, "queued");
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+// APP-88: med's send mid-reply named another instance (claude-public-pool → claudeAgent) and was refused.
+it.effect("queues a steer that names another provider instance until the turn ends", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, interrupted, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("steering-other-instance-queues");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const messageId = MessageId.make("message:other-instance-steer");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("other-instance-steer"),
+          threadId,
+          messageId,
+          text: "and also this",
+          attachments: [],
+          modelSelection: { ...runSelection, instanceId: otherInstanceId },
           dispatchMode: { type: "start_immediately" },
           deliveryIntent: "steer",
           createdBy: "user",
