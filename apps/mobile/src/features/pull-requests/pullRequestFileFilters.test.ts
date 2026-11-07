@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import { buildNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
-import { filterPullRequestTestFiles } from "./pullRequestFileFilters";
+import { filterPullRequestFiles } from "./pullRequestFileFilters";
 
 function patch(path: string) {
   return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
 }
 
-describe("mobile PR test file filter", () => {
+describe("mobile PR file filter", () => {
   it("removes whole files from the native diff while retaining source order and line anchors", () => {
     const parsed = buildReviewParsedDiff(
       ["src/first.test.ts", "src/first.ts", "src/__tests__/second.ts", "src/second.ts"]
@@ -15,7 +15,7 @@ describe("mobile PR test file filter", () => {
         .join("\n"),
       "pr",
     );
-    const visible = filterPullRequestTestFiles(parsed, true);
+    const visible = filterPullRequestFiles(parsed, { hideTestFiles: true });
     if (parsed.kind !== "files" || visible.kind !== "files") throw new Error("Expected files");
     expect(visible.files.map((file) => file.path)).toEqual(["src/first.ts", "src/second.ts"]);
     expect(visible.fileCount).toBe(2);
@@ -27,7 +27,7 @@ describe("mobile PR test file filter", () => {
     const visibleData = buildNativeReviewDiffData(visible);
     const visibleIds = new Set(visible.files.map((file) => file.id));
     expect(visibleData.rows).toEqual(allRows.filter((row) => visibleIds.has(row.fileId ?? "")));
-    expect(filterPullRequestTestFiles(parsed, false)).toBe(parsed);
+    expect(filterPullRequestFiles(parsed, { hideTestFiles: false })).toBe(parsed);
     expect(parsed.files).toHaveLength(4);
   });
 
@@ -36,7 +36,10 @@ describe("mobile PR test file filter", () => {
       ["src/first.test.ts", "src/app.ts", "src/second.test.ts"].map(patch).join("\n"),
       "pr",
     );
-    const visible = filterPullRequestTestFiles(parsed, true, "src/second.test.ts");
+    const visible = filterPullRequestFiles(parsed, {
+      hideTestFiles: true,
+      includePath: "src/second.test.ts",
+    });
     if (parsed.kind !== "files" || visible.kind !== "files") throw new Error("Expected files");
     expect(visible.files.map((file) => file.path)).toEqual(["src/app.ts", "src/second.test.ts"]);
     expect(visible.files[1]).toBe(parsed.files[2]);
@@ -47,15 +50,15 @@ describe("mobile PR test file filter", () => {
       "diff --git a/tests/helper.ts b/src/helper.ts\nsimilarity index 100%\nrename from tests/helper.ts\nrename to src/helper.ts\n",
       "pr",
     );
-    expect(filterPullRequestTestFiles(parsed, true)).toBe(parsed);
+    expect(filterPullRequestFiles(parsed, { hideTestFiles: true })).toBe(parsed);
   });
 
   it("keeps an all-test result distinct from a missing diff and preserves truncation notices", () => {
     const parsed = buildReviewParsedDiff(patch("src/app.test.ts"), "pr");
     if (parsed.kind !== "files") throw new Error("Expected files");
-    const visible = filterPullRequestTestFiles(
+    const visible = filterPullRequestFiles(
       { ...parsed, notice: "More files unavailable" },
-      true,
+      { hideTestFiles: true },
     );
     expect(visible).toMatchObject({
       kind: "files",
@@ -66,8 +69,36 @@ describe("mobile PR test file filter", () => {
       notice: "More files unavailable",
     });
     const raw = { kind: "raw" as const, text: "unparsed", reason: "Unsupported", notice: null };
-    expect(filterPullRequestTestFiles(raw, true)).toBe(raw);
+    expect(filterPullRequestFiles(raw, { hideTestFiles: true })).toBe(raw);
     const empty = { kind: "empty" as const };
-    expect(filterPullRequestTestFiles(empty, true)).toBe(empty);
+    expect(filterPullRequestFiles(empty, { hideTestFiles: true })).toBe(empty);
+  });
+
+  it("hides documentation files independently of tests", () => {
+    const parsed = buildReviewParsedDiff(
+      ["README.md", "src/app.ts", "src/app.test.ts", "docs/guide.mdx"].map(patch).join("\n"),
+      "pr",
+    );
+    const withoutDocs = filterPullRequestFiles(parsed, { hideDocumentationFiles: true });
+    if (parsed.kind !== "files" || withoutDocs.kind !== "files") {
+      throw new Error("Expected files");
+    }
+    expect(withoutDocs.files.map((file) => file.path)).toEqual(["src/app.ts", "src/app.test.ts"]);
+    const withoutBoth = filterPullRequestFiles(parsed, {
+      hideTestFiles: true,
+      hideDocumentationFiles: true,
+    });
+    if (withoutBoth.kind !== "files") throw new Error("Expected files");
+    expect(withoutBoth.files.map((file) => file.path)).toEqual(["src/app.ts"]);
+    const withGuide = filterPullRequestFiles(parsed, {
+      hideDocumentationFiles: true,
+      includePath: "docs/guide.mdx",
+    });
+    if (withGuide.kind !== "files") throw new Error("Expected files");
+    expect(withGuide.files.map((file) => file.path)).toEqual([
+      "src/app.ts",
+      "src/app.test.ts",
+      "docs/guide.mdx",
+    ]);
   });
 });

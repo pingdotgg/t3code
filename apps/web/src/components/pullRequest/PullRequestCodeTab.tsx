@@ -18,6 +18,7 @@ import type {
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  BookTextIcon,
   Columns2Icon,
   FlaskConicalOffIcon,
   FolderTreeIcon,
@@ -56,7 +57,7 @@ import {
   canEditPullRequestComment,
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
-import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { isDocumentationChangedFile, isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffRenderKey,
@@ -87,6 +88,7 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
+import { useHideDocumentationFiles } from "../diffs/useHideDocumentationFiles";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
@@ -390,6 +392,7 @@ function PullRequestCodeTab({
     Schema.Boolean,
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
+  const [hideDocumentationFiles, setHideDocumentationFiles] = useHideDocumentationFiles();
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
     range: SelectedLineRange;
@@ -578,14 +581,32 @@ function PullRequestCodeTab({
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
-  // A requested file stays visible so a jump to a hidden test still lands.
-  const files = hideTestFiles
+  const documentationFileCount = loadedFiles.filter((file) =>
+    isDocumentationChangedFile(resolveFileDiffPath(file)),
+  ).length;
+  // A requested file stays visible so a jump to a hidden test or doc still lands.
+  const files =
+    hideTestFiles || hideDocumentationFiles
+      ? loadedFiles.filter((file) => {
+          const path = resolveFileDiffPath(file);
+          if (path === revealRequest?.path) return true;
+          if (hideTestFiles && isTestChangedFile(path)) return false;
+          if (hideDocumentationFiles && isDocumentationChangedFile(path)) return false;
+          return true;
+        })
+      : loadedFiles;
+  const hiddenTestFileCount = hideTestFiles
     ? loadedFiles.filter((file) => {
         const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || !isTestChangedFile(path);
-      })
-    : loadedFiles;
-  const hiddenTestFileCount = loadedFiles.length - files.length;
+        return path !== revealRequest?.path && isTestChangedFile(path);
+      }).length
+    : 0;
+  const hiddenDocumentationFileCount = hideDocumentationFiles
+    ? loadedFiles.filter((file) => {
+        const path = resolveFileDiffPath(file);
+        return path !== revealRequest?.path && isDocumentationChangedFile(path);
+      }).length
+    : 0;
   const filePaths = files.map((file) => resolveFileDiffPath(file));
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
@@ -1153,6 +1174,17 @@ function PullRequestCodeTab({
               {hiddenTestFileCount} test {hiddenTestFileCount === 1 ? "file" : "files"} hidden
             </Button>
           ) : null}
+          {hiddenDocumentationFileCount > 0 ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="link"
+              onClick={() => setHideDocumentationFiles(false)}
+            >
+              {hiddenDocumentationFileCount} documentation{" "}
+              {hiddenDocumentationFileCount === 1 ? "file" : "files"} hidden
+            </Button>
+          ) : null}
           {filesViewed.enabled && files.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
@@ -1382,6 +1414,26 @@ function PullRequestCodeTab({
             </TooltipTrigger>
             <TooltipPopup side="top">
               {hideTestFiles ? "Show test files" : "Hide test files"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {documentationFileCount > 0 ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label="Hide documentation files"
+                  variant="ghost"
+                  size="sm"
+                  pressed={hideDocumentationFiles}
+                  onPressedChange={(pressed) => setHideDocumentationFiles(Boolean(pressed))}
+                />
+              }
+            >
+              <BookTextIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {hideDocumentationFiles ? "Show documentation" : "Hide documentation"}
             </TooltipPopup>
           </Tooltip>
         ) : null}

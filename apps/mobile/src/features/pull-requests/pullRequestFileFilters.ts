@@ -1,14 +1,27 @@
-import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { isDocumentationChangedFile, isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import type { ReviewParsedDiff } from "../review/reviewModel";
 
-export function filterPullRequestTestFiles(
+export type PullRequestFileFilterOptions = {
+  readonly hideTestFiles?: boolean;
+  readonly hideDocumentationFiles?: boolean;
+  readonly includePath?: string;
+};
+
+function isHiddenPullRequestFile(path: string, options: PullRequestFileFilterOptions) {
+  if (options.hideTestFiles && isTestChangedFile(path)) return true;
+  if (options.hideDocumentationFiles && isDocumentationChangedFile(path)) return true;
+  return false;
+}
+
+export function filterPullRequestFiles(
   parsed: ReviewParsedDiff,
-  hideTestFiles: boolean,
-  includePath?: string,
+  options: PullRequestFileFilterOptions,
 ): ReviewParsedDiff {
-  if (!hideTestFiles || parsed.kind !== "files") return parsed;
+  if ((!options.hideTestFiles && !options.hideDocumentationFiles) || parsed.kind !== "files") {
+    return parsed;
+  }
   const files = parsed.files.filter(
-    (file) => file.path === includePath || !isTestChangedFile(file.path),
+    (file) => file.path === options.includePath || !isHiddenPullRequestFile(file.path, options),
   );
   if (files.length === parsed.files.length) return parsed;
   return {

@@ -78,14 +78,20 @@ function describeFiles(
   { filter, viewed }: ChangedFiles,
 ) {
   const noun = (count: number) => (count === 1 ? "file" : "files");
+  const hiddenKinds = [
+    filter.hideTestFiles ? "tests" : null,
+    filter.hideDocumentationFiles ? "docs" : null,
+  ].filter(Boolean);
   return [
     `${parsed.fileCount} ${filter.hiddenCount ? "visible" : "changed"} ${noun(parsed.fileCount)}`,
     viewed.supported
       ? `${parsed.files.filter((file) => viewed.isViewed(file.path)).length} viewed`
       : null,
-    filter.hideTestFiles
-      ? `${filter.hiddenCount} test ${noun(filter.hiddenCount)} hidden`
-      : "Test files included",
+    filter.hiddenCount > 0
+      ? `${filter.hiddenCount} ${hiddenKinds.join(" + ")} ${noun(filter.hiddenCount)} hidden`
+      : hiddenKinds.length > 0
+        ? `${hiddenKinds.join(" + ")} hidden`
+        : "All file kinds included",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -166,31 +172,68 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
           image: "line.3.horizontal.decrease",
           state: filter.hideTestFiles ? "on" : "off",
         },
+        {
+          id: "hide-docs",
+          title: "Hide documentation",
+          image: "doc.text",
+          state: filter.hideDocumentationFiles ? "on" : "off",
+        },
       ]}
-      onPressAction={filter.toggle}
+      onPressAction={({ nativeEvent }) => {
+        if (nativeEvent.event === "hide-tests") filter.toggleTests();
+        if (nativeEvent.event === "hide-docs") filter.toggleDocumentation();
+      }}
     >
       <View pointerEvents="none">
         <IconButton
           icon="line.3.horizontal.decrease"
           accessibilityLabel="Filter review files"
-          selected={filter.hideTestFiles}
+          selected={filter.hideTestFiles || filter.hideDocumentationFiles}
         />
       </View>
     </Menu>
   );
 }
 
+function hiddenFilesEmptyState(filter: ChangedFiles["filter"], nextCursor: string | null) {
+  const hidingTests = filter.hideTestFiles;
+  const hidingDocs = filter.hideDocumentationFiles;
+  if (hidingTests && hidingDocs) {
+    return {
+      title: nextCursor ? "No matching files loaded yet" : "Only tests and docs changed",
+      detail: "Test and documentation files are hidden from this review.",
+      label: "Show all files",
+    };
+  }
+  if (hidingDocs) {
+    return {
+      title: nextCursor ? "No non-documentation files loaded yet" : "Only documentation changed",
+      detail: "Documentation files are hidden from this review.",
+      label: "Show documentation",
+    };
+  }
+  return {
+    title: nextCursor ? "No non-test files loaded yet" : "Only test files changed",
+    detail: "Test files are hidden from this review.",
+    label: "Show test files",
+  };
+}
+
 function NoVisibleFiles({ files }: { readonly files: ChangedFiles }) {
   const { diff, filter, parsed } = files;
   if (parsed.kind === "files") {
-    return parsed.files.length === 0 && filter.hiddenCount > 0 ? (
-      <EmptyState
-        title={diff.nextCursor ? "No non-test files loaded yet" : "Only test files changed"}
-        detail="Test files are hidden from this review."
-        action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
-        variant="plain"
-      />
-    ) : null;
+    if (parsed.files.length === 0 && filter.hiddenCount > 0) {
+      const empty = hiddenFilesEmptyState(filter, diff.nextCursor);
+      return (
+        <EmptyState
+          title={empty.title}
+          detail={empty.detail}
+          action={<Button label={empty.label} tone="contrast" onPress={filter.showAll} />}
+          variant="plain"
+        />
+      );
+    }
+    return null;
   }
   return !diff.isPending && !diff.error ? (
     <Text textRole="footnote" className="py-6 text-foreground-muted">
@@ -425,7 +468,14 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
                 title: "Hide test files",
                 icon: "line.3.horizontal.decrease",
                 selected: filter.hideTestFiles,
-                onPress: filter.toggle,
+                onPress: filter.toggleTests,
+              },
+              {
+                id: "hide-docs",
+                title: "Hide documentation",
+                icon: "doc.text",
+                selected: filter.hideDocumentationFiles,
+                onPress: filter.toggleDocumentation,
               },
             ],
           },
