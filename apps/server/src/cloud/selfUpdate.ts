@@ -144,9 +144,14 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     mirror?.feedUrl ??
     Option.getOrUndefined(yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option));
   const inFlight = yield* Ref.make(false);
-  // Desktop prepare keeps the drain until commit/restart; track ownership so no-handoff
-  // and failed-commit paths can release it without clearing an unrelated drain.
-  const ownedDesktopDrainId = yield* Ref.make<GracefulShutdownId | null>(null);
+  // Desktop prepare keeps the drain until commit/restart; ownership is keyed by shutdown ID
+  // (and prepare token) so a stale commit/watchdog cannot clear a newer prepare's drain.
+  type OwnedDesktopDrain = {
+    readonly shutdownId: GracefulShutdownId;
+    readonly prepareToken: string | null;
+    readonly watchdog: Fiber.Fiber<void, never> | null;
+  };
+  const ownedDesktopDrain = yield* Ref.make<OwnedDesktopDrain | null>(null);
 
   yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
     Effect.forkScoped,
@@ -159,12 +164,48 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       ? new ServerSelfUpdateError({ reason })
       : new ServerSelfUpdateError({ reason, cause });
 
+  const interruptWatchdog = (fiber: Fiber.Fiber<void, never> | null) =>
+    fiber === null ? Effect.void : Fiber.interrupt(fiber).pipe(Effect.ignore);
+
+  /** Release whichever drain this server currently owns (intentional supersede). */
   const releaseOwnedDesktopDrain = Effect.fn("ServerSelfUpdate.releaseOwnedDesktopDrain")(
     function* () {
-      const shutdownId = yield* Ref.getAndSet(ownedDesktopDrainId, null);
-      if (shutdownId !== null) {
-        yield* gracefulShutdown.complete(shutdownId).pipe(Effect.ignore({ log: true }));
+      const previous = yield* Ref.getAndSet(ownedDesktopDrain, null);
+      if (previous === null) return;
+      yield* interruptWatchdog(previous.watchdog);
+      yield* gracefulShutdown.complete(previous.shutdownId).pipe(Effect.ignore({ log: true }));
+    },
+  );
+
+  /** Atomically claim+clear only when the active ownership still matches `shutdownId`. */
+  const claimDesktopDrainIfOwned = (shutdownId: GracefulShutdownId) =>
+    Ref.modify(ownedDesktopDrain, (current) => {
+      if (current === null || current.shutdownId !== shutdownId) {
+        return [null, current] as const;
       }
+      return [current, null] as const;
+    });
+
+  const releaseDesktopDrainIfOwned = Effect.fn("ServerSelfUpdate.releaseDesktopDrainIfOwned")(
+    function* (shutdownId: GracefulShutdownId) {
+      const claimed = yield* claimDesktopDrainIfOwned(shutdownId);
+      if (claimed === null) return false;
+      yield* interruptWatchdog(claimed.watchdog);
+      yield* gracefulShutdown.complete(shutdownId).pipe(Effect.ignore({ log: true }));
+      return true;
+    },
+  );
+
+  /** Cancel the abandoned-prepare watchdog when a matching commit starts. */
+  const disarmDesktopDrainWatchdog = Effect.fn("ServerSelfUpdate.disarmDesktopDrainWatchdog")(
+    function* (shutdownId: GracefulShutdownId) {
+      const previous = yield* Ref.modify(ownedDesktopDrain, (current) => {
+        if (current === null || current.shutdownId !== shutdownId || current.watchdog === null) {
+          return [null, current] as const;
+        }
+        return [current.watchdog, { ...current, watchdog: null }] as const;
+      });
+      yield* interruptWatchdog(previous);
     },
   );
 
@@ -209,7 +250,11 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                 : Effect.void,
             ),
           );
-        yield* Ref.set(ownedDesktopDrainId, drain.shutdownId);
+        yield* Ref.set(ownedDesktopDrain, {
+          shutdownId: drain.shutdownId,
+          prepareToken: null,
+          watchdog: null,
+        });
         return yield* desktopAppUpdate
           .run(
             reportProgress,
@@ -220,26 +265,39 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
           .pipe(
             Effect.tap((result) => {
               if (result.desktopUpdateToken === undefined) {
-                return releaseOwnedDesktopDrain();
+                return releaseDesktopDrainIfOwned(drain.shutdownId).pipe(Effect.asVoid);
               }
-              // Commit is a separate RPC; if it never arrives, release this owned drain only.
               const shutdownId = drain.shutdownId;
-              return Effect.sleep(DESKTOP_ABANDONED_PREPARE_DRAIN_TIMEOUT).pipe(
-                Effect.andThen(
-                  Effect.gen(function* () {
-                    if ((yield* Ref.get(ownedDesktopDrainId)) !== shutdownId) return;
-                    yield* Effect.logWarning(
-                      "Releasing desktop update drain after abandoned prepare.",
-                      { shutdownId },
-                    );
-                    yield* releaseOwnedDesktopDrain();
-                  }),
-                ),
-                Effect.forkDetach,
-                Effect.asVoid,
-              );
+              const prepareToken = result.desktopUpdateToken;
+              // Commit is a separate RPC; if it never arrives, release this owned drain only.
+              return Effect.gen(function* () {
+                const watchdog = yield* Effect.sleep(DESKTOP_ABANDONED_PREPARE_DRAIN_TIMEOUT).pipe(
+                  Effect.andThen(
+                    Effect.gen(function* () {
+                      // Claim without interrupting this fiber; external releasers interrupt us.
+                      const claimed = yield* claimDesktopDrainIfOwned(shutdownId);
+                      if (claimed === null) return;
+                      yield* Effect.logWarning(
+                        "Releasing desktop update drain after abandoned prepare.",
+                        { shutdownId },
+                      );
+                      yield* gracefulShutdown
+                        .complete(shutdownId)
+                        .pipe(Effect.ignore({ log: true }));
+                    }),
+                  ),
+                  Effect.forkDetach,
+                );
+                const armed = yield* Ref.modify(ownedDesktopDrain, (current) => {
+                  if (current === null || current.shutdownId !== shutdownId) {
+                    return [false, current] as const;
+                  }
+                  return [true, { shutdownId, prepareToken, watchdog }] as const;
+                });
+                if (!armed) yield* interruptWatchdog(watchdog);
+              });
             }),
-            Effect.onError(() => releaseOwnedDesktopDrain()),
+            Effect.onError(() => releaseDesktopDrainIfOwned(drain.shutdownId).pipe(Effect.asVoid)),
           );
       }
       return yield* failWith(
@@ -429,9 +487,21 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     update,
     commitDesktopUpdate: Effect.fn("ServerSelfUpdate.commitDesktopUpdate")(
       function* (requestId, onHandoffAccepted) {
+        const owned = yield* Ref.get(ownedDesktopDrain);
+        const matchingShutdownId =
+          owned !== null && owned.prepareToken === requestId ? owned.shutdownId : null;
+        if (matchingShutdownId !== null) {
+          yield* disarmDesktopDrainWatchdog(matchingShutdownId);
+        }
         return yield* desktopAppUpdate
           .commit(requestId, onHandoffAccepted)
-          .pipe(Effect.onError(() => releaseOwnedDesktopDrain()));
+          .pipe(
+            Effect.onError(() =>
+              matchingShutdownId === null
+                ? Effect.void
+                : releaseDesktopDrainIfOwned(matchingShutdownId).pipe(Effect.asVoid),
+            ),
+          );
       },
     ),
   });

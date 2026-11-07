@@ -29,9 +29,10 @@ import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 
-const TEST_DESKTOP_SHUTDOWN_ID = GracefulShutdownId.make("test-shutdown");
-
-const makeGracefulShutdownLayer = (completedIds: Ref.Ref<ReadonlyArray<GracefulShutdownId>>) =>
+const makeGracefulShutdownLayer = (
+  completedIds: Ref.Ref<ReadonlyArray<GracefulShutdownId>>,
+  nextShutdownId: Ref.Ref<number>,
+) =>
   Layer.succeed(
     GracefulShutdown.GracefulShutdown,
     GracefulShutdown.GracefulShutdown.of({
@@ -42,16 +43,18 @@ const makeGracefulShutdownLayer = (completedIds: Ref.Ref<ReadonlyArray<GracefulS
         saveWorkTurnCount: 0,
       }),
       beginAndAwait: () =>
-        Effect.succeed({
-          shutdownId: TEST_DESKTOP_SHUTDOWN_ID,
-          phase: "quiesced",
-          scope: { type: "environment" },
-          timedOut: false,
-          activeRunCount: 0,
-          saveWorkPrompted: false,
-          saveWorkTurnCount: 0,
-          elapsedMs: 0,
-        }),
+        Ref.getAndUpdate(nextShutdownId, (value) => value + 1).pipe(
+          Effect.map((sequence) => ({
+            shutdownId: GracefulShutdownId.make(`test-shutdown-${sequence}`),
+            phase: "quiesced" as const,
+            scope: { type: "environment" as const },
+            timedOut: false,
+            activeRunCount: 0,
+            saveWorkPrompted: false,
+            saveWorkTurnCount: 0,
+            elapsedMs: 0,
+          })),
+        ),
       complete: (shutdownId) =>
         shutdownId === undefined
           ? Effect.void
@@ -171,6 +174,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
   const completedShutdownIds = yield* Ref.make<ReadonlyArray<GracefulShutdownId>>([]);
+  const nextShutdownId = yield* Ref.make(1);
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
@@ -190,7 +194,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provideService(HostProcess.Architecture, "x64"),
     Effect.provide(
       Layer.mergeAll(
-        makeGracefulShutdownLayer(completedShutdownIds),
+        makeGracefulShutdownLayer(completedShutdownIds, nextShutdownId),
         ServerConfig.layer({ ...config, mode: options.mode ?? "web" }),
         ManagedPolicy.layerTest(options.policy),
       ),
@@ -330,7 +334,9 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(stages).toEqual(["draining", "downloading", "installing"]);
       expect(order).toEqual([]);
       // No install token means no handoff; release the update-owned drain.
-      expect(yield* Ref.get(completedShutdownIds)).toEqual([TEST_DESKTOP_SHUTDOWN_ID]);
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([
+        GracefulShutdownId.make("test-shutdown-1"),
+      ]);
     }),
   );
 
@@ -358,7 +364,9 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(
         (yield* selfUpdate.commitDesktopUpdate("desktop-token").pipe(Effect.flip)).reason,
       ).toBe("The desktop app failed to install.");
-      expect(yield* Ref.get(completedShutdownIds)).toEqual([TEST_DESKTOP_SHUTDOWN_ID]);
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([
+        GracefulShutdownId.make("test-shutdown-1"),
+      ]);
     }),
   );
 
@@ -380,7 +388,127 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       yield* selfUpdate.update({ targetVersion: "1.1.0" });
       expect(yield* Ref.get(completedShutdownIds)).toEqual([]);
       yield* TestClock.adjust("20 minutes");
-      expect(yield* Ref.get(completedShutdownIds)).toEqual([TEST_DESKTOP_SHUTDOWN_ID]);
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([
+        GracefulShutdownId.make("test-shutdown-1"),
+      ]);
+    }),
+  );
+
+  it.effect("does not let a stale commit release a newer desktop prepare drain", () =>
+    Effect.gen(function* () {
+      let prepareCount = 0;
+      const { selfUpdate, completedShutdownIds } = yield* makeHarness({
+        mode: "desktop",
+        desktopAppUpdate: {
+          available: true,
+          run: () => {
+            prepareCount += 1;
+            return Effect.succeed({
+              targetVersion: "1.2.0",
+              method: "desktop-app" as const,
+              desktopUpdateToken: `desktop-token-${prepareCount}`,
+            });
+          },
+          commit: (requestId) =>
+            requestId === "desktop-token-1"
+              ? Effect.fail(new ServerSelfUpdateError({ reason: "Stale prepare token." }))
+              : Effect.never,
+        },
+      });
+      const first = yield* selfUpdate.update({ targetVersion: "1.1.0" });
+      expect(first.desktopUpdateToken).toBe("desktop-token-1");
+      const second = yield* selfUpdate.update({ targetVersion: "1.1.0" });
+      expect(second.desktopUpdateToken).toBe("desktop-token-2");
+      // Starting prepare 2 intentionally released prepare 1's drain.
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([
+        GracefulShutdownId.make("test-shutdown-1"),
+      ]);
+      expect(
+        (yield* selfUpdate.commitDesktopUpdate("desktop-token-1").pipe(Effect.flip)).reason,
+      ).toBe("Stale prepare token.");
+      // Prepare 2's drain must stay owned for its own commit.
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([
+        GracefulShutdownId.make("test-shutdown-1"),
+      ]);
+    }),
+  );
+
+  it.effect("does not let a stale prepare watchdog release a newer desktop drain", () =>
+    Effect.gen(function* () {
+      let prepareCount = 0;
+      const { selfUpdate, completedShutdownIds } = yield* makeHarness({
+        mode: "desktop",
+        desktopAppUpdate: {
+          available: true,
+          run: () => {
+            prepareCount += 1;
+            return Effect.succeed({
+              targetVersion: "1.2.0",
+              method: "desktop-app" as const,
+              desktopUpdateToken: `desktop-token-${prepareCount}`,
+            });
+          },
+          commit: () => Effect.never,
+        },
+      });
+      yield* selfUpdate.update({ targetVersion: "1.1.0" });
+      yield* TestClock.adjust("10 minutes");
+      yield* selfUpdate.update({ targetVersion: "1.1.0" });
+      // Prepare 2 released prepare 1 immediately; prepare 1's watchdog must not clear prepare 2.
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([
+        GracefulShutdownId.make("test-shutdown-1"),
+      ]);
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([
+        GracefulShutdownId.make("test-shutdown-1"),
+      ]);
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([
+        GracefulShutdownId.make("test-shutdown-1"),
+        GracefulShutdownId.make("test-shutdown-2"),
+      ]);
+    }),
+  );
+
+  it.effect("disarms the abandoned-prepare watchdog when a matching commit begins", () =>
+    Effect.gen(function* () {
+      const commitStarted = yield* Deferred.make<void>();
+      const commitFinished = yield* Deferred.make<void>();
+      const { selfUpdate, completedShutdownIds } = yield* makeHarness({
+        mode: "desktop",
+        desktopAppUpdate: {
+          available: true,
+          run: () =>
+            Effect.succeed({
+              targetVersion: "1.2.0",
+              method: "desktop-app" as const,
+              desktopUpdateToken: "desktop-token",
+            }),
+          commit: () =>
+            Deferred.succeed(commitStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(commitFinished)),
+              Effect.andThen(
+                Effect.fail(
+                  new ServerSelfUpdateError({ reason: "The desktop app failed to install." }),
+                ),
+              ),
+            ),
+        },
+      });
+      yield* selfUpdate.update({ targetVersion: "1.1.0" });
+      const commit = yield* Effect.forkChild(
+        selfUpdate.commitDesktopUpdate("desktop-token").pipe(Effect.flip),
+        { startImmediately: true },
+      );
+      yield* Deferred.await(commitStarted);
+      // Crossing the abandoned-prepare deadline during install must not clear the drain.
+      yield* TestClock.adjust("20 minutes");
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([]);
+      yield* Deferred.succeed(commitFinished, undefined);
+      expect((yield* Fiber.join(commit)).reason).toBe("The desktop app failed to install.");
+      expect(yield* Ref.get(completedShutdownIds)).toEqual([
+        GracefulShutdownId.make("test-shutdown-1"),
+      ]);
     }),
   );
 

@@ -294,7 +294,7 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
           );
           saveWorkMessageIds = prompted.messageIds;
           saveWorkThreadIds = prompted.threadIds;
-          yield* gate.updateIfShutdown(shutdownId, () => ({
+          const retained = yield* gate.updateIfShutdown(shutdownId, () => ({
             phase: "draining",
             shutdownId,
             scope: input.scope,
@@ -305,6 +305,11 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
             saveWorkMessageIds,
             saveWorkThreadIds,
           }));
+          if (!retained) {
+            return yield* new GracefulShutdownError({
+              reason: "That graceful shutdown is no longer active.",
+            });
+          }
         }
 
         const waitQuiesced = Effect.gen(function* () {
@@ -337,10 +342,15 @@ const make = Effect.fn("GracefulShutdown.make")(function* () {
           Effect.orElseSucceed(() => 0),
         );
         const phase = outcome === "quiesced" ? ("quiesced" as const) : ("timed_out" as const);
-        yield* gate.updateIfShutdown(shutdownId, (state) => ({
+        const retained = yield* gate.updateIfShutdown(shutdownId, (state) => ({
           ...state,
           phase,
         }));
+        if (!retained) {
+          return yield* new GracefulShutdownError({
+            reason: "That graceful shutdown is no longer active.",
+          });
+        }
 
         return {
           shutdownId,
