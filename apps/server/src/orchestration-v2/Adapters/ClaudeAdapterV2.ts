@@ -3908,6 +3908,17 @@ function resultUserFacingError(result: SDKResultMessage): string | undefined {
   );
 }
 
+// The CLI's only signal that a resumed session's transcript is gone.
+function isClaudeConversationNotFoundResult(
+  result: SDKResultMessage,
+  nativeThreadId: string,
+): boolean {
+  return (
+    result.subtype !== "success" &&
+    result.errors.includes(`No conversation found with session ID: ${nativeThreadId}`)
+  );
+}
+
 const CONTEXT_WINDOW_FULL_ERROR =
   "Claude stopped: the prompt exceeds the model's context window. Run /compact or start a new thread.";
 
@@ -4894,6 +4905,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
   const announcedBypassDowngrades = new Set<ThreadId>();
+  // Outlives provider sessions so a reopened session still refuses to resume these.
+  const lostNativeThreads = yield* Ref.make(new Set<string>());
   const readBypassSettings = (filePath: string) =>
     fileSystem.readFileString(filePath).pipe(
       Effect.flatMap(decodeClaudeBypassSettings),
@@ -8224,7 +8237,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     roster,
                     awaitedTaskIds,
                   ),
-                  status: input.status === "completed" ? "active" : "idle",
+                  // "error" makes the session manager resume the thread again instead of reusing it.
+                  status:
+                    nativeThreadId !== null &&
+                    (yield* Ref.get(lostNativeThreads)).has(nativeThreadId)
+                      ? "error"
+                      : input.status === "completed"
+                        ? "active"
+                        : "idle",
                   updatedAt: input.completedAt,
                 };
                 yield* rememberProviderThread(providerThread);
@@ -10008,6 +10028,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             if (!isClaudeProviderContinuationTurn(context.input)) {
               yield* markAbsorbedWake(liveQuery.nativeThreadId);
+            }
+            if (isClaudeConversationNotFoundResult(message, liveQuery.nativeThreadId)) {
+              yield* Ref.update(lostNativeThreads, (current) =>
+                new Set(current).add(liveQuery.nativeThreadId),
+              );
             }
             const usageLimited =
               context.authenticationFailureMessage === undefined &&
@@ -11859,6 +11884,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
               const nativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
+              if (
+                nativeThreadId !== undefined &&
+                nativeThreadId !== null &&
+                (yield* Ref.get(lostNativeThreads)).has(nativeThreadId)
+              ) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude no longer has a conversation for session ${nativeThreadId}.`,
+                });
+              }
               if (
                 nativeThreadId !== undefined &&
                 nativeThreadId !== null &&
