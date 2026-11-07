@@ -29,7 +29,6 @@ import {
 import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { ChartNoAxesGantt, Focus, Minus, Plus, Scan } from "lucide-react";
 import {
-  useEffect,
   useId,
   useRef,
   useState,
@@ -777,13 +776,16 @@ function FlameViewport({
     onViewChange(view.startMs + deltaMs, view.durationMs);
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- non-passive wheel listener; React's onWheel cannot preventDefault
-  useEffect(() => {
-    const node = viewportRef.current;
+  const attachViewport = (node: HTMLDivElement | null) => {
+    viewportRef.current = node;
     if (node === null) return;
+    // React's onWheel is passive and cannot stop the panel from scrolling.
     node.addEventListener("wheel", onWheel, { passive: false });
-    return () => node.removeEventListener("wheel", onWheel);
-  }, [onWheel]);
+    return () => {
+      node.removeEventListener("wheel", onWheel);
+      if (viewportRef.current === node) viewportRef.current = null;
+    };
+  };
 
   function positionForDisplay(displayStartMs: number, displayEndMs: number) {
     const left = ((displayStartMs - view.startMs) / view.durationMs) * 100;
@@ -856,7 +858,7 @@ function FlameViewport({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div
-        ref={viewportRef}
+        ref={attachViewport}
         role="application"
         aria-label="Thread timing flame chart"
         className="relative min-h-40 flex-1 cursor-grab overflow-hidden rounded-lg border border-border/60 bg-muted/25 active:cursor-grabbing"
