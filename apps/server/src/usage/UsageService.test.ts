@@ -800,6 +800,95 @@ describe("UsageService", () => {
   );
 
   it.live(
+    "keeps resolved Codex tiers when a grown pre-v12 cache entry re-parses without history",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const sessions = NodePath.join(home, "codex", "sessions");
+        const rolloutPath = NodePath.join(sessions, "tier.jsonl");
+        const context = (turn_id: string) => ({
+          type: "turn_context",
+          payload: { model: "gpt-6-astra", turn_id },
+        });
+        const usage = (output_tokens: number) => ({
+          type: "event_msg",
+          timestamp: "2026-08-01T10:00:00Z",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 0, output_tokens } },
+          },
+        });
+        const lines = (records: readonly unknown[]) =>
+          records.map((record) => encodeUnknownJsonString(record)).join("\n") + "\n";
+        const verify = (summary: UsageSummary, output: number, cost: number) => {
+          assert.strictEqual(totalOutputTokens(summary), output);
+          assert.strictEqual(
+            summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            cost,
+          );
+        };
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(sessions, { recursive: true });
+          await NodeFSP.writeFile(
+            rolloutPath,
+            lines([
+              { type: "session_meta", payload: { id: "tier-session", model_provider: "openai" } },
+              context("ultra-turn"),
+              usage(1),
+            ]),
+          );
+        });
+        yield* Effect.gen(function* () {
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          yield* seedCodexHistory({
+            id: "ultra-turn",
+            sessionId: "tier-session",
+            options: [{ id: "serviceTier", value: "ultrafast" }],
+          });
+          const first = yield* UsageService.make;
+          verify(yield* first.readSummary(WINDOW), 1, 6);
+          yield* first.awaitPersisted;
+
+          // Downgrade the saved cache to v11, whose clean Codex entries cannot resume.
+          yield* Effect.promise(async () => {
+            const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+            const document = JSON.parse(await NodeFSP.readFile(cachePath, "utf8"));
+            await NodeFSP.rm(cachePath);
+            await NodeFSP.writeFile(
+              NodePath.join(stateDir, "usage-scan-cache-v11.json"),
+              encodeUnknownJsonString({ ...document, version: 11 }),
+            );
+            await NodeFSP.appendFile(rolloutPath, lines([context("later-turn"), usage(2)]));
+          });
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`ALTER TABLE orchestration_events RENAME TO unavailable_events`;
+          const upgraded = yield* UsageService.make;
+          verify(yield* upgraded.readSummary(WINDOW), 3, 8);
+          yield* upgraded.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          verify(yield* restarted.readSummary(WINDOW), 3, 8);
+          yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-reparse-tier",
+              home,
+              settings,
+              ratesDocument: {
+                "gpt-6-astra": {
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 1,
+                  input_cost_per_token_ultrafast: 0,
+                  output_cost_per_token_ultrafast: 6,
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
     "reads Pi per-model usage and auxiliary costs once across forks and repeated entries",
     () =>
       Effect.gen(function* () {
@@ -2669,7 +2758,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6, 7, 8, 10])(
+  it.live.each([4, 5, 6, 7, 8, 10, 11])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2768,7 +2857,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v12.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,

@@ -489,21 +489,37 @@ export const make = Effect.gen(function* () {
         failed: true,
       };
 
+    const identity = (record: UsageRecord) =>
+      encodeUsageRecordKey([
+        record.provider,
+        record.sessionId,
+        record.timestampMs,
+        record.model,
+        record.rateModel,
+        record.totals,
+        record.reportedCostUsd,
+        record.dedupeKey,
+      ]);
+    if (!parsed.resumed && cached !== undefined && cached.provider === provider) {
+      // A whole-file re-parse re-emits saved requests unresolved. Keep their saved tier
+      // corrections, since the history that resolved them may no longer be available.
+      const saved = new Map<string, UsageRecord>();
+      for (const previous of [...cached.records, ...cached.tailRecords]) {
+        const corrected = correctedRecord(previous);
+        if (corrected.unresolvedServiceTierTurnId === undefined) {
+          saved.set(identity(corrected), corrected);
+        }
+      }
+      for (const record of [...parsed.records, ...parsed.tailRecords]) {
+        if (record.unresolvedServiceTierTurnId === undefined) continue;
+        const corrected = saved.get(identity(record));
+        if (corrected !== undefined) resolvedRecords.set(record, corrected);
+      }
+    }
     if (parsed.resumed && cached !== undefined && cached.tailRecords.length > 0) {
       // Completing a tentative line reparses it. Reuse its saved correction only when the
       // same usage is emitted again, without putting inferred tiers in the parser state.
       const reparsed = [...parsed.records, ...parsed.tailRecords];
-      const identity = (record: UsageRecord) =>
-        encodeUsageRecordKey([
-          record.provider,
-          record.sessionId,
-          record.timestampMs,
-          record.model,
-          record.rateModel,
-          record.totals,
-          record.reportedCostUsd,
-          record.dedupeKey,
-        ]);
       for (const [index, previous] of cached.tailRecords.entries()) {
         const record = reparsed[index];
         const corrected = correctedRecord(previous);
