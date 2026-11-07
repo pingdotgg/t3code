@@ -191,25 +191,6 @@ const makeStrictNdJsonRpcParser = () => {
       }
     },
     encode: (response: Parameters<typeof codec.encode>[0]) => {
-      // ACP peers consume JSON-RPC errors, not Effect's private Cause envelope.
-      if (response._tag === "Exit" && response.exit._tag === "Failure") {
-        const [failure] = response.exit.cause;
-        const error =
-          response.exit.cause.length === 1 &&
-          failure?._tag === "Fail" &&
-          isProtocolError(failure.error)
-            ? failure.error
-            : AcpError.AcpRequestError.internalError().toProtocolError();
-        return `${JSON.stringify({
-          jsonrpc: "2.0",
-          id: response.requestId,
-          error: {
-            code: error.code,
-            message: error.message,
-            ...(error.data === undefined ? {} : { data: error.data }),
-          },
-        })}\n`;
-      }
       const encoded = codec.encode(response);
       return encoded === undefined ? undefined : `${encoded}\n`;
     },
@@ -333,7 +314,28 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
           : undefined;
     const requestId = encodedRequestId === "" ? undefined : encodedRequestId;
     const encoded = yield* Effect.try({
-      try: () => parser.encode(message),
+      try: () => {
+        // ACP peers consume JSON-RPC errors, not Effect's private Cause envelope.
+        if (message._tag === "Exit" && message.exit._tag === "Failure") {
+          const [failure] = message.exit.cause;
+          const error =
+            message.exit.cause.length === 1 &&
+            failure?._tag === "Fail" &&
+            isProtocolError(failure.error)
+              ? failure.error
+              : AcpError.AcpRequestError.internalError().toProtocolError();
+          return `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.requestId,
+            error: {
+              code: error.code,
+              message: error.message,
+              ...(error.data === undefined ? {} : { data: error.data }),
+            },
+          })}\n`;
+        }
+        return parser.encode(message);
+      },
       catch: (cause) => AcpError.AcpProtocolParseError.fromEncodingError(method, requestId, cause),
     });
 
