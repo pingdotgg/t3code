@@ -71,7 +71,7 @@ function SecretDeliveryRow(props: {
 }
 
 async function writeSecretToClipboard(value: Promise<string>): Promise<boolean> {
-  return tryCopyTextWithHaptic(await value, { target: "secret" });
+  return tryCopyTextWithHaptic(await value, { target: "secret", isSensitive: true });
 }
 
 function AvailableSecretDelivery(props: {
