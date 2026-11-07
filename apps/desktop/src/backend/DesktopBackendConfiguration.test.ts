@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -306,6 +307,16 @@ describe("DesktopBackendConfiguration", () => {
             launcherExists: true,
           },
           {
+            name: "Helper probe fails",
+            platform: "darwin",
+            isPackaged: true,
+            appName: "T3 Code (Beta)",
+            launcher: "resources/backend-launcher/t3-backend-launcher",
+            helperExists: true,
+            launcherExists: true,
+            helperCheckFails: true,
+          },
+          {
             name: "Linux",
             platform: "linux",
             isPackaged: true,
@@ -337,6 +348,21 @@ describe("DesktopBackendConfiguration", () => {
             yield* fileSystem.makeDirectory(path.dirname(resource), { recursive: true });
             yield* fileSystem.writeFileString(resource, "");
           }
+          const helperCheckFails = "helperCheckFails" in testCase;
+          const resourceFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            exists: (candidate) =>
+              helperCheckFails && candidate === helperPath
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "exists",
+                      pathOrDescriptor: candidate,
+                    }),
+                  )
+                : fileSystem.exists(candidate),
+          });
           const { config, environment } = yield* Effect.gen(function* () {
             const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
             return {
@@ -347,6 +373,7 @@ describe("DesktopBackendConfiguration", () => {
             Effect.provideService(HostProcess.ExecutablePath, executablePath),
             Effect.provide(
               layerBackendConfiguration().pipe(
+                Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, resourceFileSystem)),
                 Layer.provideMerge(layerServerExposure),
                 Layer.provideMerge(DesktopAppSettings.layerTest()),
                 Layer.provideMerge(DesktopWslEnvironment.layerTest()),
@@ -371,7 +398,10 @@ describe("DesktopBackendConfiguration", () => {
           ];
           assert.deepEqual(
             [config.executablePath, ...config.args],
-            testCase.launcher === null || !testCase.helperExists || !testCase.launcherExists
+            testCase.launcher === null ||
+              !testCase.helperExists ||
+              !testCase.launcherExists ||
+              helperCheckFails
               ? [executablePath, ...backendArgs]
               : [launcherPath, helperPath, ...backendArgs],
             testCase.name,

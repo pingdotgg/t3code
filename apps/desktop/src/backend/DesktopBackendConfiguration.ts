@@ -223,9 +223,11 @@ const resolveBackendExecutable = Effect.fn("desktop.backendConfiguration.resolve
       ? path.join(environment.resourcesPath, "backend-launcher", "t3-backend-launcher")
       : path.join(environment.rootDir, "native/backend-launcher/build/t3-backend-launcher");
     const fileSystem = yield* FileSystem.FileSystem;
-    if (!(yield* fileSystem.exists(launcherPath)) || !(yield* fileSystem.exists(helperPath))) {
+    const exists = (candidate: string) =>
+      fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+    if (!(yield* exists(launcherPath)) || !(yield* exists(helperPath))) {
       yield* Effect.logWarning(
-        "macOS backend launcher or Helper is missing; processes the backend starts will be attributed to T3 Code.",
+        "macOS backend launcher or Helper is unavailable; processes the backend starts will be attributed to T3 Code.",
       );
       return { executablePath, leadingArgs: [] as ReadonlyArray<string> };
     }
