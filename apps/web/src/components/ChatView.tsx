@@ -262,6 +262,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { UsageStatusBar } from "./chat/UsageStatusBar";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -1261,6 +1262,9 @@ export default function ChatView(props: ChatViewProps) {
   const canChangeEnvironment =
     hasMultipleEnvironments && !envLocked && draftId !== null && !draftThread?.promotedTo;
 
+  const subscriptionUsageBarEnabled = useClientSettings(
+    (settings) => settings.subscriptionUsageBarEnabled,
+  );
   const loadBalancingSettings = useClientSettings((settings) => ({
     loadBalancingEnabled: settings.loadBalancingEnabled,
     loadBalancingWeights: settings.loadBalancingWeights,
@@ -3980,6 +3984,16 @@ export default function ChatView(props: ChatViewProps) {
             closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
             keybindings={keybindings}
             onAddTerminalContext={addTerminalContextToDraftStable}
+          />
+        )}
+        {embedded || !subscriptionUsageBarEnabled ? null : (
+          <UsageStatusBar
+            provider={activeProviderStatus}
+            connected={
+              (activeThread ? activeEnvironment : primaryEnvironment)?.connection.phase ===
+              "connected"
+            }
+            loading={serverConfig === null}
           />
         )}
       </div>
