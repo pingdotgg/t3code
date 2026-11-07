@@ -276,11 +276,12 @@ export function threadDropLifecycle(
   section: "pinned" | "active",
   now: string,
 ) {
-  if (section === "pinned") return { pin: true, unpin: false, unsettle: false, unsnooze: false };
+  const unsettle = thread.settledOverride === "settled" || thread.settledAt != null;
+  if (section === "pinned") return { pin: true, unpin: false, unsettle, unsnooze: false };
   return {
     pin: false,
     unpin: thread.pinnedAt != null,
-    unsettle: thread.settledOverride === "settled",
+    unsettle,
     unsnooze: effectiveSnoozed(thread, { now }),
   };
 }
