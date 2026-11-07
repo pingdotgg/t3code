@@ -12,7 +12,13 @@ import {
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
-import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionTarget,
+  type ConnectionTarget,
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "./model.ts";
 
 export type ConnectionRouteKind =
   | "relay"
@@ -63,6 +69,19 @@ export function routeEntry(
   route: ConnectionRoute,
 ): ConnectionCatalogEntry {
   return entryWithRoutes(entry, [route]);
+}
+
+export function targetWithLabel(target: ConnectionTarget, label: string): ConnectionTarget {
+  switch (target._tag) {
+    case "PrimaryConnectionTarget":
+      return new PrimaryConnectionTarget({ ...target, label });
+    case "BearerConnectionTarget":
+      return new BearerConnectionTarget({ ...target, label });
+    case "RelayConnectionTarget":
+      return new RelayConnectionTarget({ ...target, label });
+    case "SshConnectionTarget":
+      return new SshConnectionTarget({ ...target, label });
+  }
 }
 
 export function routeHttpBaseUrl(route: ConnectionRoute): string | null {
