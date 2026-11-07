@@ -60,6 +60,20 @@ export function useThreadContextDragGhost(): ThreadContextDragGhost | null {
   );
 }
 
+interface WorkspaceDropTarget {
+  move: (point: { x: number; y: number } | null, threads: ReadonlyArray<ScopedThreadRef>) => void;
+  drop: (point: { x: number; y: number }, threads: ReadonlyArray<ScopedThreadRef>) => boolean;
+}
+
+const workspaceTargets = new Set<WorkspaceDropTarget>();
+
+export function registerThreadWorkspaceDrop(target: WorkspaceDropTarget) {
+  workspaceTargets.add(target);
+  return () => {
+    workspaceTargets.delete(target);
+  };
+}
+
 let overTarget: HTMLElement | null = null;
 
 function findDropTarget(point: { x: number; y: number }): HTMLElement | null {
@@ -72,7 +86,7 @@ function findDropTarget(point: { x: number; y: number }): HTMLElement | null {
 
 export function moveThreadContextDrag(
   point: { x: number; y: number },
-  label: { title: string; count: number },
+  label: { title: string; count: number; threads?: ReadonlyArray<ScopedThreadRef> },
 ) {
   const target = findDropTarget(point);
   if (target !== overTarget) {
@@ -80,10 +94,13 @@ export function moveThreadContextDrag(
     target?.setAttribute(DROP_OVER_ATTRIBUTE, "true");
     overTarget = target;
   }
+  for (const workspace of workspaceTargets)
+    workspace.move(target ? null : point, label.threads ?? []);
   setGhost({ x: point.x, y: point.y, ...label });
 }
 
 export function endThreadContextDrag() {
+  for (const workspace of workspaceTargets) workspace.move(null, []);
   overTarget?.removeAttribute(DROP_OVER_ATTRIBUTE);
   overTarget = null;
   setGhost(null);
@@ -94,7 +111,13 @@ export function dropThreadContext(
   threads: ReadonlyArray<ScopedThreadRef>,
 ): boolean {
   const target = findDropTarget(point);
-  if (!target || threads.length === 0) return false;
+  if (threads.length === 0) return false;
+  if (!target) {
+    for (const workspace of workspaceTargets) {
+      if (workspace.drop(point, threads)) return true;
+    }
+    return false;
+  }
   target.dispatchEvent(new CustomEvent(THREAD_CONTEXT_DROP_EVENT, { detail: threads }));
   return true;
 }

@@ -35,6 +35,7 @@ const compactEnv = (env: Readonly<Record<string, string | undefined>>): Record<s
 
 export const DesktopConfig = Config.all({
   appDataDirectory: trimmedString("APPDATA"),
+  desktopAppDataDirectory: trimmedString("T3CODE_DESKTOP_APP_DATA_DIR"),
   xdgConfigHome: trimmedString("XDG_CONFIG_HOME"),
   xdgDataHome: trimmedString("XDG_DATA_HOME"),
   t3Home: trimmedString("T3CODE_HOME"),

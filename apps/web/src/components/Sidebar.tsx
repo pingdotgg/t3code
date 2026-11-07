@@ -115,6 +115,7 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { useSplitChatStore } from "../splitChatStore";
 import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
@@ -1761,7 +1762,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const threads = contextDragThreads();
     const title =
       threadByKeyRef.current.get(contextDragKeyRef.current ?? "")?.title.trim() || "Thread";
-    moveThreadContextDragGhost(point, { title, count: threads.length });
+    moveThreadContextDragGhost(point, { title, count: threads.length, threads });
     return true;
   };
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
@@ -2640,6 +2641,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              showOpenToSide: true,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2668,6 +2670,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "open-to-side": {
+            const opened = useSplitChatStore.getState().openToSide({ kind: "server", threadRef });
+            if (!opened) {
+              toastManager.add({
+                type: "info",
+                title: "Split chat limit reached",
+                description: "You can open up to 4 chats simultaneously.",
+              });
+            }
+            return;
+          }
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKeys(

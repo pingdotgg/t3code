@@ -74,4 +74,16 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("offers open-to-side only to the sidebar, after find", () => {
+    const openToSide = buildThreadActionMenuItems({ ...baseState, showOpenToSide: true }).find(
+      (item) => item.id === "open-to-side",
+    );
+    expect(openToSide).toBeDefined();
+    expect(openToSide?.label).toBe("Open to the side");
+    expect(openToSide?.disabled).toBeFalsy();
+    expect(buildThreadActionMenuItems(baseState).some((item) => item.id === "open-to-side")).toBe(
+      false,
+    );
+  });
 });

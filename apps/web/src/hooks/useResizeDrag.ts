@@ -6,6 +6,7 @@ export interface ResizeBounds {
 }
 
 interface ResizeSession {
+  readonly axis?: "x" | "y";
   width: number;
   edge: "left" | "right";
   /** Pointer widths are clamped to these before `resize` sees them. */
@@ -67,7 +68,7 @@ function createResizeDrag<T extends HTMLElement>() {
     const active = drag;
     if (!active || active.pointerId !== event.pointerId) return;
     event.preventDefault();
-    if (usePosition) active.pendingX = event.clientX;
+    if (usePosition) active.pendingX = active.session.axis === "y" ? event.clientY : event.clientX;
     finish(true);
   };
 
@@ -98,22 +99,22 @@ function createResizeDrag<T extends HTMLElement>() {
         session,
         target: event.currentTarget,
         pointerId: event.pointerId,
-        startX: event.clientX,
-        pendingX: event.clientX,
+        startX: session.axis === "y" ? event.clientY : event.clientX,
+        pendingX: session.axis === "y" ? event.clientY : event.clientX,
         width: session.width,
         moved: false,
         frame: null,
         onBlur,
       };
-      document.body.style.cursor = "col-resize";
+      document.body.style.cursor = session.axis === "y" ? "row-resize" : "col-resize";
       document.body.style.userSelect = "none";
     },
     onPointerMove(event: PointerEvent<T>) {
       const active = drag;
       if (!active || active.pointerId !== event.pointerId) return;
       event.preventDefault();
-      active.pendingX = event.clientX;
-      if (Math.abs(event.clientX - active.startX) > 2) active.moved = true;
+      active.pendingX = active.session.axis === "y" ? event.clientY : event.clientX;
+      if (Math.abs(active.pendingX - active.startX) > 2) active.moved = true;
       if (active.frame !== null) return;
       active.frame = requestAnimationFrame(() => {
         active.frame = null;
