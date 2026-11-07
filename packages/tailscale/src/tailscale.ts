@@ -29,6 +29,15 @@ const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 const tailscaleCommandForPlatform = (platform: NodeJS.Platform): "tailscale" | "tailscale.exe" =>
   platform === "win32" ? "tailscale.exe" : "tailscale";
 
+// Without a shell-like env (SHLVL, TERM), the macOS app binary runs as the GUI: it
+// prints an error on stdout and exits 0. Other platforms' CLIs ignore the variable.
+const tailscaleCommand = (executable: string, args: readonly string[]) =>
+  ChildProcess.make(executable, [...args], {
+    env: { TAILSCALE_BE_CLI: "1" },
+    extendEnv: true,
+    forceKillAfter: TAILSCALE_KILL_GRACE,
+  });
+
 const TailscaleCommandContext = {
   executable: Schema.Literals(["tailscale", "tailscale.exe"]),
   subcommand: Schema.Literals(["status", "serve", "debug"]),
@@ -241,9 +250,7 @@ const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function*
     subcommand,
     argumentCount: args.length,
   };
-  const command = ChildProcess.make(executable, [...args], {
-    forceKillAfter: TAILSCALE_KILL_GRACE,
-  });
+  const command = tailscaleCommand(executable, args);
   return yield* Effect.gen(function* () {
     const child = yield* spawner.spawn(command).pipe(
       Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
@@ -397,14 +404,12 @@ const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function*
   };
   const timeout = Duration.fromInputUnsafe(timeoutInput);
   return yield* Effect.gen(function* () {
-    const child = yield* spawner
-      .spawn(ChildProcess.make(executable, args, { forceKillAfter: TAILSCALE_KILL_GRACE }))
-      .pipe(
-        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-        Effect.catchDefect((cause) =>
-          Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
-        ),
-      );
+    const child = yield* spawner.spawn(tailscaleCommand(executable, args)).pipe(
+      Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
+      Effect.catchDefect((cause) =>
+        Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
+      ),
+    );
     const [stderr, exitCode] = yield* Effect.all(
       [collectStderr(child.stderr), child.exitCode.pipe(Effect.map(Number))],
       { concurrency: "unbounded" },
