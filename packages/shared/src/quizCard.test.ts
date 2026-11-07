@@ -103,6 +103,7 @@ describe("quiz cards", () => {
     expect(numberAnswerRight({ answer: 1000, tolerance: 0 }, "1,000")).toBe(true);
     expect(numberAnswerRight({ answer: -5, tolerance: 0 }, "\u22125")).toBe(true);
     expect(blankAnswerRight({ answers: ["m"] }, "M")).toBe(false);
+    expect(blankAnswerRight({ answers: ["mPa"] }, "MPa")).toBe(false);
     expect(blankAnswerRight({ answers: ["acceleration"] }, "Acceleration")).toBe(true);
   });
   it("validates options and bounds", () => {

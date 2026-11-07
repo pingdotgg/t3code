@@ -105,7 +105,7 @@ export function readQuestionCard(value: unknown): QuestionCard | undefined {
 
 const normalizedAnswer = (value: string) => value.trim().replace(/\s+/g, " ");
 
-// Short answers are symbols or units (m vs M, Co vs CO), so their case counts.
+// Symbols and units (m vs M, Co vs CO, mPa vs MPa) keep their case: short or mixed-case answers.
 export function blankAnswerRight(
   blank: { readonly answers: ReadonlyArray<string> },
   input: string,
@@ -113,7 +113,7 @@ export function blankAnswerRight(
   const answer = normalizedAnswer(input);
   return blank.answers.some((accepted) => {
     const expected = normalizedAnswer(accepted);
-    return expected.length <= 2
+    return expected.length <= 2 || /.\p{Lu}/u.test(expected)
       ? expected === answer
       : expected.toLocaleLowerCase() === answer.toLocaleLowerCase();
   });
@@ -250,7 +250,7 @@ export function blanksAnswerMessage(input: {
   const thinking = input.thinking?.trim();
   const results = input.answers.map((answer, index) => {
     const blank = input.card.blanks?.[index];
-    return `${index + 1}. "${answer}", ${blank && blankAnswerRight(blank, answer) ? "right" : "wrong"}`;
+    return `${index + 1}. "${normalizedAnswer(answer)}", ${blank && blankAnswerRight(blank, answer) ? "right" : "wrong"}`;
   });
   return `Blanks answer: ${results.join("; ")}.${thinking ? ` My thinking: ${thinking}` : ""}`;
 }

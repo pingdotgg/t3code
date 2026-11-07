@@ -171,6 +171,8 @@ function OpenQuestionCard(props: {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const revealed = props.answered || submitted;
+  const numberRight =
+    props.card.number !== undefined && numberAnswerRight(props.card.number, numberAnswer);
   const isStructured = props.card.blanks !== undefined || props.card.number !== undefined;
   const answerReady =
     props.card.blanks !== undefined
@@ -345,14 +347,8 @@ function OpenQuestionCard(props: {
                 <p>Expected {numberAnswerExpected(props.card.number)}</p>
               </>
             ) : (
-              <p
-                className={
-                  numberAnswerRight(props.card.number, numberAnswer)
-                    ? "text-success"
-                    : "text-destructive"
-                }
-              >
-                {numberAnswerRight(props.card.number, numberAnswer) ? "Right." : "Wrong."} Expected{" "}
+              <p className={numberRight ? "text-success" : "text-destructive"}>
+                {numberRight ? "Right." : "Wrong."} Expected{" "}
                 {numberAnswerExpected(props.card.number)}
               </p>
             )

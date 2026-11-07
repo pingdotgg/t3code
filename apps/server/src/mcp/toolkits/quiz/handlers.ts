@@ -37,7 +37,7 @@ const handlers = {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message:
-            "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both.",
+            "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both; keep the whole card under about 7 KB.",
         });
       }
       return { questionCard: card, message: QUESTION_CARD_SHOWN };
