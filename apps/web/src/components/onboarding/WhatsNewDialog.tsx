@@ -125,7 +125,8 @@ function WhatsNewDialog({
     queueMicrotask(() => {
       switch (guide.id) {
         case "new-lesson":
-        case "quiz-cards": {
+        case "quiz-cards":
+        case "question-cards": {
           const button = document.querySelector<HTMLButtonElement>('[aria-label="New lesson"]');
           if (button) button.click();
           else openCommandPalette({ query: "New lesson" });
