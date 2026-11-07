@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
 import "../../index.css";
-import { ChatMarkdownAssetImage, ChatMarkdownVideo } from "./ChatMarkdownMedia";
+import {
+  authoredImageSizeStyle,
+  ChatMarkdownAssetImage,
+  ChatMarkdownVideo,
+} from "./ChatMarkdownMedia";
 
 // Every evaluation of the URL query is one mint: the first read, then one per refresh.
 const assetQuery = vi.hoisted(() => ({ mints: 0 }));
@@ -120,5 +124,36 @@ describe("ChatMarkdownVideo", () => {
 
     const box = video.getBoundingClientRect();
     expect({ width: box.width, height: box.height }).toEqual({ width: 270, height: 480 });
+
+    // A different video in the same slot starts from its own size, not the last one's.
+    await screen.rerender(
+      <ChatMarkdownVideo
+        src="/asset/landscape.mp4"
+        alt="landscape"
+        copyMarkdown={undefined}
+        knownSize={{ width: 1920, height: 1080 }}
+      />,
+    );
+    const next = screen.getByLabelText("landscape").element().getBoundingClientRect();
+    expect({ width: next.width, height: next.height }).toEqual({ width: 414, height: 232.875 });
+  });
+
+  it("keeps a video's own ratio when Markdown gives only a width", async () => {
+    using _observer = stubGlobal("IntersectionObserver", HiddenIntersectionObserver);
+    await using screen = await render(
+      <ChatMarkdownVideo
+        src="/asset/portrait.mp4"
+        alt="portrait"
+        copyMarkdown={undefined}
+        style={authoredImageSizeStyle(200, undefined)}
+        knownSize={{ width: 1080, height: 1920 }}
+      />,
+    );
+
+    const box = screen.getByLabelText("portrait").element().getBoundingClientRect();
+    expect({ width: box.width, height: Math.round(box.height) }).toEqual({
+      width: 200,
+      height: 356,
+    });
   });
 });
