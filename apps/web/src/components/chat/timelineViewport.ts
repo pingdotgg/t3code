@@ -6,6 +6,7 @@ import {
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./composerFocusRedirect";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
+import type { LegendListRef } from "@legendapp/list/react";
 import { createUpwardScrollDetector, isTimelineScrollTarget } from "./timelineScrollTarget";
 
 /**
@@ -67,7 +68,10 @@ const DOWN_KEYS = new Set(["PageDown", "End", "ArrowDown", " "]);
  * Owns the timeline scroll node's input listeners for as long as the node is
  * mounted, and turns them into one navigation signal.
  */
-export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewport & {
+export function attachTimelineViewport(
+  scrollNode: HTMLElement,
+  list: LegendListRef,
+): TimelineViewport & {
   readonly dispose: () => void;
 } {
   const listeners = new Set<(navigation: TimelineNavigation) => void>();
@@ -113,17 +117,23 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
   };
   // Input inside an embedded frame reaches none of the listeners above, but
   // its scroll still chains out to the timeline.
-  const scrolledUp = createUpwardScrollDetector({
-    top: scrollNode.scrollTop,
-    height: scrollNode.scrollHeight,
+  const scrollPosition = () => ({
+    offset: scrollNode.scrollTop,
+    maxOffset: scrollNode.scrollHeight - scrollNode.clientHeight,
   });
+  const scrolledUp = createUpwardScrollDetector(scrollNode.scrollTop);
+  // The list scrolls itself to keep rows in place as rows above resize; that is not the reader.
+  // Its public listen types omit this signal, and the list's own listener may run after this.
+  const listen = list.getState().listen as unknown as (
+    signal: "scrollAdjust",
+    callback: () => void,
+  ) => () => void;
+  const stopListeningToListAdjust = listen("scrollAdjust", () =>
+    queueMicrotask(() => scrolledUp({ ...scrollPosition(), programmatic: true })),
+  );
   const handleScroll = () => {
     if (
-      scrolledUp({
-        top: scrollNode.scrollTop,
-        height: scrollNode.scrollHeight,
-        programmatic: programmaticHolds > 0,
-      }) &&
+      scrolledUp({ ...scrollPosition(), programmatic: programmaticHolds > 0 }) &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
         contentLength: scrollNode.scrollHeight,
@@ -165,6 +175,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
     dispose: () => {
       listeners.clear();
       followReleasedListeners.clear();
+      stopListeningToListAdjust();
       scrollNode.removeEventListener("scroll", handleScroll);
       scrollNode.removeEventListener("wheel", handleWheel);
       scrollNode.removeEventListener("touchmove", handleTouchMove);

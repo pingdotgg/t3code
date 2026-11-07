@@ -68,6 +68,7 @@ function createVisitScrollState(
     // thread switches. LegendList fires scroll events with isAtEnd=false while
     // initialScrollAtEnd is settling; hiding is always immediate.
     showScrollDebouncer: new Debouncer(() => showScrollToBottom(visit), { wait: 150 }),
+    repinEndTimer: null as number | null,
     positionedAnchor: null as MessageId | null,
     settledAnchor: null as MessageId | null,
     releaseAnchorScrollHold: null as (() => void) | null,
@@ -333,7 +334,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     // list lands short of the real end.
     requestAnimationFrame(() => {
       const list = legendListRef.current;
-      if (!list) return;
+      if (!list || readCurrentFollow().mode !== "following") return;
       void Promise.resolve(
         list.scrollToEnd?.({
           animated: animated && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -348,6 +349,16 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     });
   };
   const scrollToEndStable = useStableCallback(scrollToEnd);
+  const repinEnd = () => {
+    if (
+      readFollow().mode === "following" &&
+      timelineAnchorMessageId === null &&
+      resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false
+    ) {
+      scrollToEnd();
+    }
+  };
+  const repinEndStable = useStableCallback(repinEnd);
   // The list does not follow footer layout, so the resting composer cannot scroll it. Growth
   // above the composer (a new notice) would cover the last rows instead.
   const followedInsetRef = useRef(composerTimelineInset);
@@ -489,9 +500,18 @@ export function useTimelineFollow(input: TimelineFollowInput) {
 
   const onIsAtEndChange = (isAtEnd: boolean) => {
     const scroll = visitScroll();
+    if (scroll.repinEndTimer !== null) window.clearTimeout(scroll.repinEndTimer);
+    scroll.repinEndTimer = null;
     if (!isAtEnd && readFollow().mode === "following") {
       scroll.showScrollDebouncer.cancel();
       setShowScrollToBottom(false);
+      // LegendList re-pins only within one viewport of the end, so a follow scroll cut short
+      // further up (an instant correction cancels a smooth one) stays there. Every scroll
+      // event reports again, so this runs once scrolling stops short.
+      scroll.repinEndTimer = window.setTimeout(() => {
+        scroll.repinEndTimer = null;
+        if (visitScrollRef.current === scroll) repinEndStable();
+      }, 150);
       return;
     }
     const { before, after } = followStore.dispatch(visit, {

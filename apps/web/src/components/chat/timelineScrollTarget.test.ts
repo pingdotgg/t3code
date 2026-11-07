@@ -64,26 +64,36 @@ describe("timeline scroll targets", () => {
 });
 
 describe("timeline scroll follow opt-out", () => {
+  const at = (offset: number, maxOffset: number, programmatic = false) => ({
+    offset,
+    maxOffset,
+    programmatic,
+  });
+
   it("detects iframe-only upward scrolling after following streaming content", () => {
-    const scrolledUp = createUpwardScrollDetector({ top: 1000, height: 1500 });
-    expect(scrolledUp({ top: 1000, height: 1800 })).toBe(false);
-    expect(scrolledUp({ top: 1300, height: 1800 })).toBe(false);
-    expect(scrolledUp({ top: 1200, height: 1700 })).toBe(false);
+    const scrolledUp = createUpwardScrollDetector(1000);
+    expect(scrolledUp(at(1000, 1300))).toBe(false);
+    expect(scrolledUp(at(1300, 1300))).toBe(false);
+    // Content shrinking below the view pulls the scroll up to the new end.
+    expect(scrolledUp(at(1200, 1200))).toBe(false);
 
     // Sandboxed frames deliver no wheel or touch event to the parent timeline.
-    expect(scrolledUp({ top: 1199.5, height: 1700 })).toBe(false);
-    expect(scrolledUp({ top: 1199, height: 1700 })).toBe(false);
-    expect(scrolledUp({ top: 1198.5, height: 1700 })).toBe(true);
+    expect(scrolledUp(at(1199.5, 1200))).toBe(false);
+    expect(scrolledUp(at(1199, 1200))).toBe(false);
+    expect(scrolledUp(at(1198.5, 1200))).toBe(true);
+
+    // The new end explains only the distance down to it: jumping from the end to the top
+    // while a virtualized row remeasures 4px smaller.
+    const jumpedToTop = createUpwardScrollDetector(18040);
+    expect(jumpedToTop(at(0, 18036))).toBe(true);
   });
 
   it("preserves upward new-turn positioning, then detects the reader leaving that anchor", () => {
-    const scrolledUp = createUpwardScrollDetector({ top: 1400, height: 2400 });
+    const scrolledUp = createUpwardScrollDetector(1400);
     // The caller must distinguish its animated positioning from iframe scroll chaining.
-    const positioning = { top: 1200, height: 2400, programmatic: true };
-    expect(scrolledUp(positioning)).toBe(false);
-    expect(scrolledUp({ ...positioning, top: 1100 })).toBe(false);
+    expect(scrolledUp(at(1100, 1900, true))).toBe(false);
 
-    expect(scrolledUp({ top: 1100, height: 2400 })).toBe(false);
-    expect(scrolledUp({ top: 950, height: 2400 })).toBe(true);
+    expect(scrolledUp(at(1100, 1900))).toBe(false);
+    expect(scrolledUp(at(950, 1900))).toBe(true);
   });
 });

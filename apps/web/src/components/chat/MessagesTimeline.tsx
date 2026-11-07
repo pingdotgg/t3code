@@ -1139,7 +1139,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
     registerTimeline?.(scrollNode);
-    const viewport = scrollNode ? attachTimelineViewport(scrollNode) : null;
+    const viewport = list && scrollNode ? attachTimelineViewport(scrollNode, list) : null;
     viewportRef.current = viewport;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);

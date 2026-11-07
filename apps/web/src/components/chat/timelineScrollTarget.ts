@@ -29,19 +29,15 @@ export function isTimelineScrollTarget(
 }
 
 // Sandboxed iframe gestures are invisible to the parent; only their chained scroll arrives.
-export function createUpwardScrollDetector(initial: { top: number; height: number }) {
-  let baseline = initial;
-  return (next: { top: number; height: number; programmatic?: boolean }) => {
-    if (next.programmatic || next.height < baseline.height || next.top > baseline.top) {
-      baseline = next;
-      return false;
-    }
-    if (next.top < baseline.top - 1) {
-      baseline = next;
-      return true;
-    }
+export function createUpwardScrollDetector(initialOffset: number) {
+  let baseline = initialOffset;
+  return (next: { offset: number; maxOffset: number; programmatic: boolean }) => {
+    if (next.programmatic || next.offset > baseline) baseline = next.offset;
+    // Content shrinking below the view pulls the scroll up to the new end, and no further.
+    else baseline = Math.min(baseline, next.maxOffset);
     // A slow scroll can move under a pixel per event; let those moves add up.
-    baseline = { top: baseline.top, height: next.height };
-    return false;
+    if (next.offset >= baseline - 1) return false;
+    baseline = next.offset;
+    return true;
   };
 }
