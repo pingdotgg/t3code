@@ -1067,10 +1067,11 @@ const make = Effect.gen(function* () {
     const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
     const trySettle = Effect.gen(function* () {
       const sequence = yield* orchestrator.getThreadEventSequence(input.threadId);
-      const records = yield* getProjectThreadRecords(input, ["runs"]);
+      // A deferred move may land as this wakes; settling follows the thread like the wait does.
+      const records = yield* readThreadRecordsInAnyProject(input, ["runs"]);
       const following = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
       if (following.length > 0) {
-        const { messages } = yield* getProjectThreadRecords(input, ["messages"], {
+        const { messages } = yield* readThreadRecordsInAnyProject(input, ["messages"], {
           messageRunIds: following.map((candidate) => candidate.id),
           messageRoles: ["user"],
         });

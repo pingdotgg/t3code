@@ -563,6 +563,7 @@ it.effect.each([
   { status: "failed" as const, followUp: "none", settles: false },
   { status: "interrupted" as const, followUp: "none", settles: false },
   { status: "completed" as const, followUp: "notification", settles: true },
+  { status: "completed" as const, followUp: "moved", settles: true },
   { status: "completed" as const, followUp: "replayed-notification", settles: true },
   { status: "completed" as const, followUp: "delegated", settles: true },
   { status: "completed" as const, followUp: "failed-notification", settles: false },
@@ -575,11 +576,13 @@ it.effect.each([
     const threadId = ThreadId.make("thread:thread-management:settle-after-run");
     const runId = RunId.make("run:thread-management:settle-after-run");
     const followUpId = RunId.make(`${runId}:follow-up`);
+    const hasFollowUp = followUp !== "none" && followUp !== "moved";
     const subscribed = yield* Deferred.make<void>();
     const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
     const replayRejected = yield* Deferred.make<void>();
     let sequence = 0;
     let sequenceReads = 0;
+    let recordReads = 0;
     let rejectedCommandId: CommandId | undefined;
     const runs = [{ id: runId, ordinal: 1, status, userMessageId: MessageId.make("original") }];
     const nextRun = {
@@ -610,7 +613,15 @@ it.effect.each([
             Effect.sync(
               () =>
                 ({
-                  thread: { id: threadId, projectId, deletedAt: null },
+                  thread: {
+                    id: threadId,
+                    // A deferred move can land right after the wait's entry check.
+                    projectId:
+                      followUp === "moved" && recordReads++ > 0
+                        ? ProjectId.make("project:thread-management:settle-moved")
+                        : projectId,
+                    deletedAt: null,
+                  },
                   runs: raced ? [...runs, nextRun] : runs,
                   messages: [
                     { id: MessageId.make("original"), runId, role: "user" as const },
@@ -644,7 +655,7 @@ it.effect.each([
             ),
           dispatch: (command) =>
             Effect.gen(function* () {
-              if (followUp !== "none" && !raced) {
+              if (hasFollowUp && !raced) {
                 raced = true;
                 rejectedCommandId = command.commandId;
                 return yield* new Orchestrator.OrchestratorDispatchError({
@@ -675,7 +686,7 @@ it.effect.each([
     const fiber = yield* service
       .settleAfterRun({ projectId, threadId, runId })
       .pipe(Effect.forkChild);
-    if (followUp !== "none") {
+    if (hasFollowUp) {
       yield* Deferred.await(subscribed);
       expect(dispatched).toEqual([]);
       nextRun.status =
