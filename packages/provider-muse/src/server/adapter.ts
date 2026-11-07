@@ -254,6 +254,13 @@ const nativeRef = (nativeId: string) => ({
 const backgroundTaskId = (item: MuseItem) =>
   item.kind === "subagent" ? item.childSessionId || item.subagentId || item.itemId : item.itemId;
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);
+const REQUEST_NOTIFICATIONS = new Set([
+  "approval/requested",
+  "approval/updated",
+  "approval/resolved",
+  "userInput/requested",
+  "userInput/settled",
+]);
 const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/contextUsage",
   "session/tokenUsage",
@@ -1139,14 +1146,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       /**
        * A workflow child's approval is runless: the turn that started the workflow
        * may end long before the child asks, and T3 keeps a runless request on the
-       * thread until Muse settles it.
+       * thread until Muse settles it. So is a held wake's request while compaction
+       * waits for that wake's run to end.
        */
       const publishRequest = Effect.fnUntraced(function* (native: PendingRequest["native"]) {
         const child = native.type === "approval" && native.value.subagentOrigin !== undefined;
-        const turn = child ? undefined : active;
+        const runless =
+          child || (active?.compact === true && wake !== undefined && native.value.turnId === wake.nativeId);
+        const turn = runless ? undefined : active;
         if (
           !thread ||
-          (!child && !turn) ||
+          (!runless && !turn) ||
           native.value.sessionId !== nativeSessionId ||
           (turn && native.value.turnId && !owns(turn, native.value.turnId))
         )
@@ -1417,9 +1427,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         if (wake && active?.nativeId !== wake.nativeId) {
           const turnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
-          if (turnId === wake.nativeId && !(active?.compact && itemEvent?.kind === "compaction")) {
-            wake.events.push([method, data]);
-            return;
+          if (turnId === wake.nativeId) {
+            // Compaction waits for this run, so its requests must reach the user now.
+            if (active?.compact && REQUEST_NOTIFICATIONS.has(method))
+              return yield* handleRequestEvent(method, params, undefined);
+            if (!(active?.compact && itemEvent?.kind === "compaction")) {
+              wake.events.push([method, data]);
+              return;
+            }
           }
         }
         const turn = active;
@@ -2175,6 +2190,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           yield* updateSession("running");
           const held = compact ? undefined : wake;
           if (!compact) wake = undefined;
+          // Re-route what the wake buffered so requests it already raised are shown.
+          else if (wake)
+            for (const [method, data] of wake.events.splice(0))
+              yield* handleNotification(method, data).pipe(Effect.catch(failHost));
           if (continuation && !held) return yield* finish(turn, "completed");
           if (held && !continuation) turn.joined.add(held.nativeId);
           for (const [method, data] of held?.events ?? [])

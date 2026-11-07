@@ -1723,6 +1723,41 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect.each(["before compaction", "while compaction waits"] as const)(
+    "shows a held Muse run's approval raised $0 so compaction can retry",
+    (asked) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHeldWakeHarness(fake);
+        if (asked === "before compaction")
+          yield* fake.emit("approval/requested", approval("wake-1"));
+        fake.queueResponse(
+          "session/compact",
+          new MspError({
+            code: -32030,
+            message: "session/compact command rejected: run_active",
+            data: { kind: "commandRejected", reason: "run_active", retryable: false },
+          }),
+        );
+        yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
+        yield* fake.takeCall("session/compact");
+        if (asked === "while compaction waits")
+          yield* fake.emit("approval/requested", approval("wake-1"));
+        const shown = yield* harness.takeEvent(
+          "runtime_request.updated",
+          (event) => event.runtimeRequest.status === "pending",
+        );
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: shown.runtimeRequest.id,
+          decision: "accept",
+        });
+        yield* fake.takeCall("approval/decide");
+        yield* fake.emit("approval/resolved", { approvalId: "approval-1", turnId: "wake-1" });
+        yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
+        yield* fake.takeCall("session/compact");
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect.each(["before compaction", "during admission"] as const)(
     "keeps a Muse wake that started $0 when stopping a waiting compaction",
     (wakeStarted) =>
