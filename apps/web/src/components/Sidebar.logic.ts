@@ -3,6 +3,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   aggregatePipelineStepStatus,
+  pipelineAttentionTargets,
   pipelineProgressSegments,
   type PipelineNestable,
   type PipelineProgressStatus,
@@ -997,6 +998,13 @@ export function resolveSidebarPipelineStepStatus(
   run?: Pick<PipelineRunSummary, "status" | "currentStepIndex" | "steps"> | null,
 ): PipelineStepStatus | null {
   return aggregatePipelineStepStatus(steps, resolveSidebarThreadStatus, run);
+}
+
+/** Which of a pipeline's step threads need the user, and the one its parent's attention badge opens. */
+export function resolveSidebarPipelineAttention<
+  T extends SidebarThreadStatusInput & PipelineNestable & { readonly title: string },
+>(run: PipelineRunSummary | undefined, steps: readonly T[]) {
+  return pipelineAttentionTargets(run, steps, resolveSidebarThreadStatus);
 }
 
 /** One segment of a pipeline parent's progress bar, flat so row props compare by value. */

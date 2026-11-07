@@ -20,7 +20,9 @@ export function threadJumpTarget(
   let index = threadJumpIndex(command);
   if (index < 0) return null;
   for (const item of items) {
-    const thread = item.type === "v2-thread" ? item.item.thread : null;
+    // The earlier-attempts fold row carries its parent but opens nothing.
+    const thread =
+      item.type === "v2-thread" && item.item.earlierFold === undefined ? item.item.thread : null;
     if (thread !== null && index-- === 0) return thread;
   }
   return null;

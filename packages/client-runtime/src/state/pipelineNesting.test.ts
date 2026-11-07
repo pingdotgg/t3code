@@ -13,10 +13,14 @@ import {
   mergePipelineParentStatus,
   nestedPipelineStepLabel,
   nestPipelineSteps,
+  pipelineAttentionTargets,
   pipelineParentsOfSteps,
   pipelineProgressSegments,
+  pipelineShownSteps,
+  pipelineStepAttempts,
   pipelineStepLabel,
   pipelineStepsOfParents,
+  withPipelineExpanded,
 } from "./pipelineNesting.ts";
 
 const env = EnvironmentId.make("env-1");
@@ -397,5 +401,194 @@ describe("pipelineProgressSegments", () => {
       "Plan:completed:s1",
       "Build (attempt 2):completed:s3",
     ]);
+  });
+});
+
+describe("pipelineAttentionTargets and pipelineStepAttempts", () => {
+  const titled = (id: string, stepId: string, createdAt: string) => ({
+    ...step(id, "r1", stepId, createdAt),
+    title: `P · ${stepId}`,
+  });
+  const runOf = (
+    status: "running" | "paused",
+    currentStepIndex: number,
+    entries: ReadonlyArray<[string, string, string | null]>,
+    pauseReason: string | null = status === "paused" ? "awaiting_handoff" : null,
+  ) =>
+    ({
+      id: PipelineRunId.make("r1"),
+      status,
+      pauseReason,
+      currentStepIndex,
+      steps: entries.map(([stepId, entryStatus, childThreadId]) => ({
+        stepId,
+        name: stepId,
+        status: entryStatus,
+        childThreadId: childThreadId === null ? null : ThreadId.make(childThreadId),
+      })),
+    }) as unknown as PipelineRunSummary;
+  const threads = [
+    titled("s1", "plan", "2026-01-01T00:01:00Z"),
+    titled("s2", "build", "2026-01-01T00:02:00Z"),
+    titled("s3", "qa", "2026-01-01T00:03:00Z"),
+  ];
+  const summarize = (result: ReturnType<typeof pipelineAttentionTargets>) => ({
+    marked: [...result.attentionThreads],
+    target: result.target?.id ?? null,
+  });
+  const entries: Array<[string, string, string | null]> = [
+    ["plan", "completed", "s1"],
+    ["build", "completed", "s2"],
+    ["qa", "running", "s3"],
+    ["review", "pending", null],
+  ];
+
+  it.each([
+    {
+      name: "marks an idle thread of a run paused awaiting handoff",
+      run: runOf("paused", 2, entries),
+      status: () => "ready",
+      expected: { marked: [[`${env}:s3`, "input"]], target: "s3" },
+    },
+    {
+      name: "marks a failed step a paused run stopped at",
+      run: runOf(
+        "paused",
+        2,
+        entries.map((e) => (e[0] === "qa" ? ["qa", "failed", "s3"] : e)),
+      ),
+      status: () => "failed",
+      expected: { marked: [[`${env}:s3`, "input"]], target: "s3" },
+    },
+    {
+      name: "marks nothing while the paused step's thread works",
+      run: runOf("paused", 2, entries),
+      status: () => "working",
+      expected: { marked: [], target: null },
+    },
+    {
+      name: "targets an earlier step asking for approval unless the current step needs you",
+      run: runOf("running", 2, entries),
+      status: (s: { id: string }) => (s.id === "s1" ? "approval" : "working"),
+      expected: { marked: [[`${env}:s1`, "approval"]], target: "s1" },
+    },
+    {
+      name: "prefers the current step over an earlier one",
+      run: runOf("running", 2, entries),
+      status: (s: { id: string }) =>
+        s.id === "s1" ? "approval" : s.id === "s3" ? "input" : "ready",
+      expected: {
+        marked: [
+          [`${env}:s1`, "approval"],
+          [`${env}:s3`, "input"],
+        ],
+        target: "s3",
+      },
+    },
+    {
+      name: "marks no thread before a gated step that has none",
+      run: runOf("paused", 1, [
+        ["plan", "completed", "s1"],
+        ["build", "pending", null],
+      ]),
+      status: () => "ready",
+      expected: { marked: [], target: null },
+    },
+    {
+      name: "marks no older thread of a gated step the run is paused before",
+      run: runOf(
+        "paused",
+        1,
+        [
+          ["plan", "completed", "s1"],
+          ["build", "pending", null],
+          ["qa", "pending", null],
+        ],
+        "awaiting_continue",
+      ),
+      steps: threads,
+      status: () => "ready",
+      expected: { marked: [], target: null },
+    },
+    {
+      name: "ignores an earlier attempt asking for approval",
+      run: runOf("running", 2, entries),
+      steps: [titled("s0", "qa", "2026-01-01T00:00:30Z"), ...threads],
+      status: (s: { id: string }) => (s.id === "s0" ? "approval" : "working"),
+      expected: { marked: [], target: null },
+    },
+  ])("$name", ({ run, steps, status, expected }) => {
+    const started = steps ?? threads.filter((s) => run.steps.some((e) => e.childThreadId === s.id));
+    expect(summarize(pipelineAttentionTargets(run, started, status))).toEqual(expected);
+  });
+
+  it("marks the latest attempt with input in a finished run", () => {
+    const attempts = [...threads, titled("s4", "qa", "2026-01-01T00:04:00Z")];
+    const status = (s: { id: string }) => (s.id === "s3" || s.id === "s4" ? "input" : "ready");
+    expect(summarize(pipelineAttentionTargets(undefined, attempts, status))).toEqual({
+      marked: [[`${env}:s4`, "input"]],
+      target: "s4",
+    });
+  });
+
+  it("splits current from earlier attempts in run order and flags steps the run will redo", () => {
+    const rerun = runOf("paused", 0, [
+      ["plan", "running", "s5"],
+      ["build", "pending", null],
+      ["qa", "pending", null],
+    ]);
+    const all = [
+      ...threads,
+      titled("s4", "plan", "2026-01-01T00:04:00Z"),
+      titled("s5", "plan", "2026-01-01T00:05:00Z"),
+    ];
+    const result = pipelineStepAttempts(rerun, all);
+    expect(result.current.map((s) => s.id)).toEqual(["s5", "s2", "s3"]);
+    expect(result.earlier.map((e) => `${e.thread.id}#${e.attempt}`)).toEqual(["s1#1", "s4#2"]);
+    expect([...result.redoKeys].sort()).toEqual([`${env}:s2`, `${env}:s3`]);
+    expect(pipelineStepAttempts(undefined, all).current.map((s) => s.id)).toEqual([
+      "s5",
+      "s2",
+      "s3",
+    ]);
+  });
+
+  it("shows the open step when collapsed, even an earlier attempt, and folds the rest", () => {
+    const attempts = pipelineStepAttempts(undefined, [
+      titled("a1", "plan", "2026-01-01T00:01:00Z"),
+      titled("a2", "plan", "2026-01-01T00:02:00Z"),
+      titled("b1", "build", "2026-01-01T00:03:00Z"),
+    ]);
+    const shown = (expanded: boolean, foldExpanded: boolean, open: string | null) => {
+      const result = pipelineShownSteps(attempts, {
+        expanded,
+        foldExpanded,
+        isOpen: (thread) => thread.id === open,
+      });
+      return {
+        current: result.current.map((t) => t.id),
+        earlier: result.earlier.map((e) => e.thread.id),
+        foldCount: result.foldCount,
+      };
+    };
+    expect(shown(false, true, "a1")).toEqual({ current: [], earlier: ["a1"], foldCount: 0 });
+    expect(shown(false, false, "b1")).toEqual({ current: ["b1"], earlier: [], foldCount: 0 });
+    expect(shown(true, false, "a1")).toEqual({
+      current: ["a2", "b1"],
+      earlier: ["a1"],
+      foldCount: 1,
+    });
+    expect(shown(true, true, null)).toEqual({
+      current: ["a2", "b1"],
+      earlier: ["a1"],
+      foldCount: 1,
+    });
+  });
+
+  it("closes a run's earlier-attempts fold when the run collapses", () => {
+    const keys = withPipelineExpanded(["a", "b"], "b#earlier", true, 3);
+    expect(keys).toEqual(["a", "b", "b#earlier"]);
+    expect(withPipelineExpanded(keys, "c", true, 3)).toEqual(["b", "b#earlier", "c"]);
+    expect(withPipelineExpanded(keys, "b", false, 3)).toEqual(["a"]);
   });
 });

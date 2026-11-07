@@ -16,8 +16,12 @@ import {
   isPipelineGroupActive,
   livePipelineRunOf,
   nestPipelineSteps,
+  pipelineAttentionTargets,
+  pipelineEarlierFoldKey,
   pipelineParentsOfSteps,
   pipelineProgressSegments,
+  pipelineShownSteps,
+  pipelineStepAttempts,
   pipelineStepLabel,
   pipelineStepsOfParents,
   type PipelineLiveRuns,
@@ -412,10 +416,24 @@ export interface ThreadListV2Item {
   readonly nested?: boolean;
   /** Whether this is the last step of its pipeline. */
   readonly isLastStep?: boolean;
-  /** On a pipeline's parent: what its steps and live run need, for the parent to show. */
+  /** On a pipeline's parent: what its steps and live run need. On a step: what it needs, merged with its own status. */
   readonly stepStatus?: ReturnType<typeof resolveThreadListV2StepStatus>;
   /** On a pipeline step: its label under the parent. */
   readonly stepLabel?: string;
+  /** On a step of a live run that will redo it: its finished state is not news, so no unseen "Done". */
+  readonly suppressUnseenDone?: boolean;
+  /** On an earlier attempt of a step: its number, shown dimmed. */
+  readonly earlierAttempt?: number;
+  /** The fold row of a pipeline's earlier attempts, listed under its parent. `thread` is the parent. */
+  readonly earlierFold?: {
+    readonly foldKey: string;
+    readonly count: number;
+    readonly expanded: boolean;
+  };
+  /** On a pipeline's parent: the step its attention badge opens; null opens the parent. */
+  readonly attentionTarget?: EnvironmentThreadShell | null;
+  /** On a pipeline's parent: the name of `attentionTarget`, for the badge's label. */
+  readonly attentionLabel?: string;
   /** On a pipeline's parent: one progress bar segment per step, in run order. */
   readonly pipelineProgress?: ReadonlyArray<ThreadListV2PipelineSegment>;
   /** On a pipeline's parent with step rows: whether they all show. Collapsed, only the open step's does. */
@@ -540,6 +558,14 @@ export function threadListV2ListItemsAreEqual(
         previous.item.nested === item.item.nested &&
         previous.item.isLastStep === item.item.isLastStep &&
         previous.item.stepStatus === item.item.stepStatus &&
+        previous.item.stepLabel === item.item.stepLabel &&
+        previous.item.suppressUnseenDone === item.item.suppressUnseenDone &&
+        previous.item.earlierAttempt === item.item.earlierAttempt &&
+        previous.item.earlierFold?.foldKey === item.item.earlierFold?.foldKey &&
+        previous.item.earlierFold?.count === item.item.earlierFold?.count &&
+        previous.item.earlierFold?.expanded === item.item.earlierFold?.expanded &&
+        previous.item.attentionTarget === item.item.attentionTarget &&
+        previous.item.attentionLabel === item.item.attentionLabel &&
         previous.item.pipelineExpanded === item.item.pipelineExpanded &&
         samePipelineProgress(previous.item.pipelineProgress, item.item.pipelineProgress) &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
@@ -630,6 +656,7 @@ export function buildThreadListV2ListItems(input: {
     const snoozePresetMinute =
       !item.snoozed &&
       item.nested !== true &&
+      item.earlierFold === undefined &&
       input.snoozeLabelNow !== undefined &&
       (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
       canSnooze(item.thread, { now: input.snoozeLabelNow })
@@ -641,7 +668,7 @@ export function buildThreadListV2ListItems(input: {
         : undefined;
     return {
       type: "v2-thread",
-      key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
+      key: `v2-thread:${item.thread.environmentId}:${item.thread.id}${item.earlierFold ? "#earlier" : ""}`,
       item,
       snoozeWakeLabelText,
       timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
@@ -975,9 +1002,25 @@ export function buildThreadListV2Items(input: {
         ? pipelineProgressSegments(run, steps ?? [], resolveThreadListV2Status)
         : [];
     const expanded = expandedPipelines.has(key);
-    const shownSteps = expanded
-      ? steps
-      : steps?.filter((step) => `${step.environmentId}:${step.id}` === selectedThreadKey);
+    const isRun = thread.pipeline != null && thread.pipeline.stepId === null;
+    const attempts = steps === undefined ? undefined : pipelineStepAttempts(run, steps);
+    const attention = isRun
+      ? pipelineAttentionTargets(run, steps ?? [], resolveThreadListV2Status)
+      : undefined;
+    const foldKey = pipelineEarlierFoldKey(key);
+    const foldExpanded = expandedPipelines.has(foldKey);
+    const shown =
+      attempts === undefined
+        ? undefined
+        : pipelineShownSteps(attempts, {
+            expanded,
+            foldExpanded,
+            isOpen: (step) => `${step.environmentId}:${step.id}` === selectedThreadKey,
+          });
+    const attentionStepLabel =
+      attention?.target == null
+        ? undefined
+        : pipelineStepLabel(input.pipelineRuns, attention.target);
     items.push({
       thread,
       ...row,
@@ -991,9 +1034,14 @@ export function buildThreadListV2Items(input: {
             pipelineProgress: progress.map(({ stepId, status }) => ({ stepId, status })),
           }),
       ...(steps === undefined ? {} : { pipelineExpanded: expanded }),
+      ...(attention === undefined
+        ? {}
+        : { attentionTarget: attention.target, attentionLabel: attentionStepLabel }),
     });
-    shownSteps?.forEach((step, index) => {
-      items.push({
+    const stepItem = (step: EnvironmentThreadShell, earlierAttempt?: number): ThreadListV2Item => {
+      const stepKey = `${step.environmentId}:${step.id}`;
+      const attentionStatus = attention?.attentionThreads.get(stepKey);
+      return {
         thread: step,
         variant: "slim",
         snoozed: false,
@@ -1001,9 +1049,32 @@ export function buildThreadListV2Items(input: {
         wokeAt: null,
         isLast: false,
         nested: true,
-        isLastStep: index === shownSteps.length - 1,
         stepLabel: pipelineStepLabel(input.pipelineRuns, step),
-      });
+        ...(attentionStatus === undefined ? {} : { stepStatus: attentionStatus }),
+        ...(attempts?.redoKeys.has(stepKey) ? { suppressUnseenDone: true } : {}),
+        ...(earlierAttempt === undefined ? {} : { earlierAttempt }),
+      };
+    };
+    const stepItems = [
+      ...(shown?.current.map((step) => stepItem(step)) ?? []),
+      ...(shown !== undefined && shown.foldCount > 0
+        ? [
+            {
+              thread,
+              variant: "slim",
+              snoozed: false,
+              pinned: false,
+              wokeAt: null,
+              isLast: false,
+              nested: true,
+              earlierFold: { foldKey, count: shown.foldCount, expanded: foldExpanded },
+            } satisfies ThreadListV2Item,
+          ]
+        : []),
+      ...(shown?.earlier.map((entry) => stepItem(entry.thread, entry.attempt)) ?? []),
+    ];
+    stepItems.forEach((stepEntry, index) => {
+      items.push({ ...stepEntry, isLastStep: index === stepItems.length - 1 });
     });
   };
   for (const thread of applyPendingThreadOrder(nestedPinned.rows, "pinned", pending)) {

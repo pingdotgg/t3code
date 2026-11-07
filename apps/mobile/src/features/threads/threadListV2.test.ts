@@ -441,6 +441,79 @@ describe("buildThreadListV2Items", () => {
     expect(build(steps).items.map((item) => item.nested)).toEqual([undefined, undefined]);
   });
 
+  it("marks the step a paused run waits on and folds earlier attempts after a rerun", () => {
+    const run = { runId: "run-1" as never };
+    const flow = makeThread({
+      id: ThreadId.make("flow"),
+      title: "Flow: x",
+      pipeline: { ...run, stepId: null },
+    });
+    const step = (id: string, stepId: string, createdAt: string) =>
+      makeThread({
+        id: ThreadId.make(id),
+        title: `Flow · ${stepId}`,
+        createdAt,
+        pipeline: { ...run, stepId: stepId as never },
+      });
+    const threads = [
+      flow,
+      step("plan-1", "plan", "2026-06-01T00:01:00.000Z"),
+      step("build-1", "build", "2026-06-01T00:02:00.000Z"),
+      step("plan-2", "plan", "2026-06-01T00:03:00.000Z"),
+    ];
+    const pipelineRuns = indexPipelineLiveRuns([
+      {
+        environmentId,
+        runs: [
+          {
+            id: "run-1" as never,
+            status: "paused",
+            currentStepIndex: 0,
+            steps: [
+              { stepId: "plan", name: "Plan", status: "running", childThreadId: "plan-2" },
+              { stepId: "build", name: "Build", status: "pending", childThreadId: null },
+            ],
+          } as never,
+        ],
+      },
+    ]);
+    const build = (expandedPipelineKeys: string[]) =>
+      buildThreadListV2Items({
+        threads,
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+        pipelineRuns,
+        expandedPipelineKeys,
+      });
+    const folded = build([`${environmentId}:flow`]);
+    expect(
+      folded.items.map((item) => [
+        item.thread.id,
+        item.stepStatus ?? null,
+        item.suppressUnseenDone ?? false,
+        item.earlierFold?.count ?? null,
+      ]),
+    ).toEqual([
+      ["flow", "input", false, null],
+      ["plan-2", "input", false, null],
+      ["build-1", null, true, null],
+      ["flow", null, false, 1],
+    ]);
+    expect(folded.items[0]?.attentionTarget?.id).toBe("plan-2");
+    expect(folded.items[0]?.attentionLabel).toBe("Plan");
+
+    const open = build([`${environmentId}:flow`, `${environmentId}:flow#earlier`]);
+    expect(
+      open.items.slice(3).map((item) => [item.thread.id, item.earlierAttempt ?? null]),
+    ).toEqual([
+      ["flow", null],
+      ["plan-1", 1],
+    ]);
+    const listItems = buildThreadListV2ListItems({ items: open.items, pendingTasks: [] });
+    expect(threadJumpTarget(listItems, "thread.jump.4")?.id).toBe("plan-1");
+  });
+
   it("keeps a pipeline on the Working shelf while any step works", () => {
     const run = { runId: "run-1" as never };
     const flow = makeThread({

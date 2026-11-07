@@ -19,6 +19,7 @@ import {
   pipelineStepBreadcrumbTitle,
   pipelineStepPosition,
   pipelineRunNeedsAttention,
+  pipelineRunNeedsYou,
   threadWatchesPullRequest,
 } from "./pipelineRunPresentation.ts";
 
@@ -445,5 +446,82 @@ describe("createPipelineEscalationWatcher", () => {
         row({ type: "dynamic_tool", id: "x", status: "completed", toolName: "other" }),
       ]),
     ).toBe(false);
+  });
+});
+
+describe("pipelineRunNeedsYou", () => {
+  const run = (patch: Partial<PipelineRun>) =>
+    ({
+      ...makeRun({
+        status: "paused",
+        pauseReason: "awaiting_handoff",
+        currentStepIndex: 1,
+        stepStatuses: ["completed", "running", "pending"],
+      }),
+      ...patch,
+    }) as PipelineRun;
+  const withThreads = (base: PipelineRun, threadIds: ReadonlyArray<string | null>) =>
+    ({
+      ...base,
+      steps: base.steps.map((step, index) => ({
+        ...step,
+        childThreadId: threadIds[index] == null ? null : ThreadId.make(threadIds[index]!),
+      })),
+    }) as PipelineRun;
+  const shell = (id: string, stepId: string) => ({
+    id: ThreadId.make(id),
+    environmentId: "env" as never,
+    createdAt: "2026-01-01T00:00:00Z",
+    title: id,
+    pipeline: { runId: "r", stepId },
+  });
+  const threads = [shell("t0", "s0"), shell("t1", "s1")];
+
+  it.each([
+    {
+      name: "a step that ended without handing off",
+      run: withThreads(run({}), ["t0", "t1", null]),
+      status: () => "ready",
+      expected: { text: "Implement ended without handing off", threadId: "t1" },
+    },
+    {
+      name: "a failed step",
+      run: withThreads(run({ pauseReason: "step_failed" }), ["t0", "t1", null]),
+      status: () => "failed",
+      expected: { text: "Implement failed", threadId: "t1" },
+    },
+    {
+      name: "an earlier step asking for approval",
+      run: withThreads(run({ status: "running", pauseReason: null }), ["t0", "t1", null]),
+      status: (s: { id: string }) => (s.id === "t0" ? "approval" : "working"),
+      expected: { text: "Plan is asking for approval", threadId: "t0" },
+    },
+    {
+      name: "an earlier step's request while the paused step works again",
+      run: withThreads(run({}), ["t0", "t1", null]),
+      status: (s: { id: string }) => (s.id === "t0" ? "request" : "working"),
+      expected: { text: "Plan is waiting for your response", threadId: "t0" },
+    },
+    {
+      name: "a pause before a gated step with no thread",
+      run: withThreads(run({ pauseReason: "awaiting_continue", currentStepIndex: 2 }), [
+        "t0",
+        "t1",
+        null,
+      ]),
+      status: () => "ready",
+      expected: { text: "Paused before Review", threadId: null },
+    },
+    {
+      name: "a run that is working",
+      run: withThreads(run({ status: "running", pauseReason: null }), ["t0", "t1", null]),
+      status: () => "working",
+      expected: null,
+    },
+  ])("reads $name", ({ run: input, status, expected }) => {
+    const result = pipelineRunNeedsYou(input, threads, status);
+    expect(result === null ? null : { text: result.text, threadId: result.threadId }).toEqual(
+      expected,
+    );
   });
 });

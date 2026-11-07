@@ -87,7 +87,8 @@ in **Settings → Threads**; the run picks up the resumed turn's result.
 - **Refine before continuing.** When a run is paused, before a step or after a failure, keep
   chatting in the previous step's thread. **Continue** then passes that thread's latest answer on.
   A paused run is marked as needing attention in the sidebar, unless its step is waiting on a
-  pull request.
+  pull request. Tap the attention badge on a run to open the step that needs you. After a retry
+  or a rerun, the run lists each step once; earlier attempts are folded under it.
 - **Retry** runs a failed step again in a new thread, in the same workspace. When the run uses a
   T3 Code worktree, you can choose **Retry from step start**: it first puts the files back to how
   they were when the step began, then runs the step again. **Retry with current files** keeps

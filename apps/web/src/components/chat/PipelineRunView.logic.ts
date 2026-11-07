@@ -72,6 +72,8 @@ export function pipelineStepStatusDisplay(
   awaitingHandoff = false,
   /** The step's thread watches a pull request, so it is waiting rather than stuck. */
   watchingPullRequest = false,
+  /** The run is paused at this step: a failed or stopped one waits on the user. */
+  pausedAtStep = false,
 ): PipelineStepStatusDisplay {
   if (step.status === "running" && liveState !== null) {
     return {
@@ -85,7 +87,14 @@ export function pipelineStepStatusDisplay(
   if (step.status === "running" && awaitingHandoff) {
     return { label: "No handoff", tone: "attention" };
   }
-  return { label: pipelineStepStatusLabel(step), tone: "default" };
+  return {
+    label: pipelineStepStatusLabel(step),
+    tone:
+      pausedAtStep &&
+      (step.status === "failed" || step.status === "stopped" || step.status === "cancelled")
+        ? "attention"
+        : "default",
+  };
 }
 
 /** The run with the later `updatedAt`; a command's result can arrive before the subscription's. */

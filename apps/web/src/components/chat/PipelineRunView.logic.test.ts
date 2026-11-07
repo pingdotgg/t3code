@@ -49,6 +49,15 @@ describe("pipelineStepStatusDisplay", () => {
     );
   });
 
+  it("reads a failed or stopped step a paused run waits at as attention", () => {
+    for (const status of ["failed", "cancelled"] as const) {
+      expect(pipelineStepStatusDisplay({ status }, null, false, false, true).tone).toBe(
+        "attention",
+      );
+      expect(pipelineStepStatusDisplay({ status }, null).tone).toBe("default");
+    }
+  });
+
   it("shows one status: the thread's live state for a running step", () => {
     expect(pipelineStepStatusDisplay({ status: "running" }, "working")).toEqual({
       label: "Working",

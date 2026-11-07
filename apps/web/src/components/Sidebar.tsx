@@ -40,9 +40,13 @@ import {
   livePipelineRunOf,
   nestPipelineSteps,
   pipelineParentsOfSteps,
+  pipelineEarlierFoldKey,
+  pipelineShownSteps,
+  pipelineStepAttempts,
   pipelineStepLabel,
   pipelineStepsOfParents,
   type PipelineLiveRuns,
+  type PipelineStepAttempts,
 } from "@t3tools/client-runtime/state/pipeline-nesting";
 import {
   nextShownOrder,
@@ -200,6 +204,7 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
+  resolveSidebarPipelineAttention,
   resolveSidebarPipelineProgress,
   resolveSidebarPipelineStepStatus,
   resolveSidebarThreadSection,
@@ -584,10 +589,30 @@ function useSidebarThreads(input: {
   // keeping only the open step in view.
   const expandedPipelines = new Set(expandedPipelineThreadKeys);
   const shownPipelineStepsByParentKey = new Map<string, readonly EnvironmentThreadShell[]>();
+  const pipelineAttemptsByParentKey = new Map<
+    string,
+    {
+      readonly attempts: PipelineStepAttempts<EnvironmentThreadShell>;
+      readonly earlierExpanded: boolean;
+      readonly currentShown: number;
+      readonly foldCount: number;
+    }
+  >();
   for (const [parentKey, steps] of pipelineStepsByParentKey) {
-    const shown = expandedPipelines.has(parentKey)
-      ? steps
-      : steps.filter((step) => threadShellKey(step) === routeRowThreadKey);
+    const attempts = pipelineStepAttempts(livePipelineRunOf(pipelineLiveRuns, steps[0]!), steps);
+    const earlierExpanded = expandedPipelines.has(pipelineEarlierFoldKey(parentKey));
+    const shownSteps = pipelineShownSteps(attempts, {
+      expanded: expandedPipelines.has(parentKey),
+      foldExpanded: earlierExpanded,
+      isOpen: (step) => threadShellKey(step) === routeRowThreadKey,
+    });
+    const shown = [...shownSteps.current, ...shownSteps.earlier.map((entry) => entry.thread)];
+    pipelineAttemptsByParentKey.set(parentKey, {
+      attempts,
+      earlierExpanded,
+      currentShown: shownSteps.current.length,
+      foldCount: shownSteps.foldCount,
+    });
     if (shown.length > 0) shownPipelineStepsByParentKey.set(parentKey, shown);
   }
   const withStepsFrom =
@@ -648,6 +673,7 @@ function useSidebarThreads(input: {
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
     shownPipelineStepsByParentKey,
+    pipelineAttemptsByParentKey,
     expandedPipelines,
     setPipelineExpanded,
     projectFolders,
@@ -1449,6 +1475,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     pipelineStepsByParentKey,
     pipelineParentKeyByStepKey,
     shownPipelineStepsByParentKey,
+    pipelineAttemptsByParentKey,
     expandedPipelines,
     setPipelineExpanded,
     settledVisibleCount,
@@ -3579,6 +3606,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         };
                         const steps = pipelineStepsByParentKey.get(threadKey);
                         const liveRun = livePipelineRunOf(pipelineLiveRuns, thread);
+                        const isPipelineParent =
+                          thread.pipeline != null && thread.pipeline.stepId === null;
+                        const attention = isPipelineParent
+                          ? resolveSidebarPipelineAttention(liveRun, steps ?? EMPTY_THREADS)
+                          : undefined;
+                        const attemptInfo = pipelineAttemptsByParentKey.get(threadKey);
+                        const stepRowProps = (step: EnvironmentThreadShell) => {
+                          const stepKey = threadShellKey(step);
+                          const earlier = attemptInfo?.attempts.earlier.find(
+                            (entry) => threadShellKey(entry.thread) === stepKey,
+                          );
+                          return {
+                            ...rowProps(step, true),
+                            stepStatus: attention?.attentionThreads.get(stepKey) ?? null,
+                            suppressUnseenDone: attemptInfo?.attempts.redoKeys.has(stepKey),
+                            earlierAttempt: earlier?.attempt,
+                          };
+                        };
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -3605,7 +3650,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             )}
                             pipelineSteps={shownPipelineStepsByParentKey
                               .get(threadKey)
-                              ?.map((step) => rowProps(step, true))}
+                              ?.map(stepRowProps)}
+                            attentionThreadId={
+                              attention === undefined ? undefined : (attention.target?.id ?? null)
+                            }
+                            attentionLabel={
+                              attention?.target == null
+                                ? undefined
+                                : pipelineStepLabel(pipelineLiveRuns, attention.target)
+                            }
+                            pipelineEarlierCount={attemptInfo?.foldCount}
+                            pipelineEarlierExpanded={attemptInfo?.earlierExpanded}
+                            pipelineEarlierIndex={attemptInfo?.currentShown}
                             pipelineProgress={
                               thread.pipeline != null && thread.pipeline.stepId === null
                                 ? resolveSidebarPipelineProgress(liveRun, steps ?? EMPTY_THREADS)

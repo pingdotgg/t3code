@@ -423,6 +423,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             isLastStep={item.item.isLastStep}
             stepStatus={item.item.stepStatus}
             stepLabel={item.item.stepLabel}
+            suppressUnseenDone={item.item.suppressUnseenDone}
+            earlierAttempt={item.item.earlierAttempt}
+            earlierFold={item.item.earlierFold}
+            attentionTarget={item.item.attentionTarget}
+            attentionLabel={item.item.attentionLabel}
             pipelineProgress={item.item.pipelineProgress}
             pipelineExpanded={item.item.pipelineExpanded}
             onTogglePipelineSteps={togglePipelineExpanded}

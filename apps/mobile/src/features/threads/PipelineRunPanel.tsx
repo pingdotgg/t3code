@@ -13,12 +13,15 @@ import {
   pipelineAwaitingHandoffThreadId,
   pipelineRevisionAuthorLabel,
   pipelineRunNeedsAttention,
+  pipelineRunNeedsYou,
   pipelineRunStateLabel,
+  pipelineStepAwaitsHandoff,
   pipelineStepPosition,
   pipelineStepStatusLabel,
   stepName,
   threadWatchesPullRequest,
 } from "@t3tools/client-runtime/pipeline-run-presentation";
+import { pipelineRunStepShells } from "@t3tools/client-runtime/state/pipeline-nesting";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -35,8 +38,8 @@ import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { formatMessageTime } from "../../lib/time";
-import { useQuietThreadShell } from "../../state/entities";
-import { threadHasUnseenCompletion } from "./threadListV2";
+import { useQuietThreadShell, useQuietThreadShells } from "../../state/entities";
+import { resolveThreadListV2Status, threadHasUnseenCompletion } from "./threadListV2";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -54,6 +57,11 @@ const STEP_TONES: Record<PipelineStepTone, Omit<StatusTone, "label">> = {
   },
   danger: { pillClassName: "bg-danger", textClassName: "text-danger-foreground" },
   muted: { pillClassName: "bg-subtle", textClassName: "text-foreground-secondary" },
+};
+
+const ATTENTION_TONE: Omit<StatusTone, "label"> = {
+  pillClassName: "bg-warning",
+  textClassName: "text-warning-foreground",
 };
 
 function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
@@ -83,8 +91,7 @@ function runTone(run: PipelineRun, waitingOnPullRequest: boolean): StatusTone {
       }
       return {
         label: run.pauseReason === "awaiting_continue" ? "Paused" : "Needs attention",
-        pillClassName: "bg-warning",
-        textClassName: "text-warning-foreground",
+        ...ATTENTION_TONE,
       };
     case "completed":
       return { label: "Completed", ...STEP_TONES.success };
@@ -160,6 +167,7 @@ export function PipelineRunPanel(props: {
   const [expanded, setExpanded] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const openThread = useOpenLinkedThread();
+  const shells = useQuietThreadShells();
 
   const canContinue = useAtomValue(
     serverEnvironment.continuePipelineRun.permissionAtom(environmentId),
@@ -259,6 +267,12 @@ export function PipelineRunPanel(props: {
   const stepInput = { runId: run.id, stepIndex };
   const currentStepName = stepName(run, Math.min(stepIndex, run.steps.length - 1));
   const actionsVisible = actions.continue || actions.retry || actions.skip || actions.cancel;
+  const needsYou = pipelineRunNeedsYou(
+    run,
+    pipelineRunStepShells(shells, environmentId, run.id),
+    resolveThreadListV2Status,
+  );
+  const needsYouThreadId = needsYou?.threadId ?? null;
 
   return wrap(
     <>
@@ -291,6 +305,24 @@ export function PipelineRunPanel(props: {
           {pipelineRunStateLabel(run, waitingOnPullRequest)}
         </Text>
       </Pressable>
+      {needsYou !== null ? (
+        <View className="flex-row flex-wrap items-center gap-2 px-4">
+          <Text textRole="footnote" className="min-w-0 flex-1 font-t3-medium text-foreground">
+            {needsYou.text}
+          </Text>
+          {needsYouThreadId !== null ? (
+            <Button
+              label={`Open ${needsYou.stepName}`}
+              onPress={() =>
+                openThread({
+                  environmentId: String(environmentId),
+                  threadId: String(needsYouThreadId),
+                })
+              }
+            />
+          ) : null}
+        </View>
+      ) : null}
       {run.error ? (
         <Text textRole="footnote" className="px-4 text-danger-text">
           {run.error}
@@ -413,6 +445,7 @@ export function PipelineRunPanel(props: {
               run={run}
               step={step}
               current={step.index === stepIndex && run.status !== "completed"}
+              needsYou={needsYou?.threadId != null && needsYou.stepIndex === step.index}
               pauseBeforeEditable={
                 canSetPause && actions.canTogglePauseBefore(step.index) && busy === null
               }
@@ -449,6 +482,8 @@ function PipelineStepRow(props: {
   readonly run: PipelineRun;
   readonly step: PipelineRun["steps"][number];
   readonly current: boolean;
+  /** The step the run's "needs you" line points at. */
+  readonly needsYou: boolean;
   readonly pauseBeforeEditable: boolean;
   readonly canSendFeedback: boolean;
   readonly onSendFeedback: () => void;
@@ -465,7 +500,11 @@ function PipelineStepRow(props: {
   const childShell = useQuietThreadShell(
     childThreadId === null ? null : { environmentId: props.environmentId, threadId: childThreadId },
   );
-  const tone = STEP_TONES[pipelineStepTone(step.status)];
+  const tone = props.needsYou ? ATTENTION_TONE : STEP_TONES[pipelineStepTone(step.status)];
+  const statusLabel =
+    props.needsYou && step.status === "running" && pipelineStepAwaitsHandoff(run, step.index)
+      ? "No handoff"
+      : pipelineStepStatusLabel(step);
   const revisions = stepRevisions(run, step.index);
   const needsInput = childShell?.runtime?.status === "waiting";
   const details = [
@@ -483,7 +522,7 @@ function PipelineStepRow(props: {
         >
           {step.index + 1}. {name}
         </Text>
-        <StatusPill label={pipelineStepStatusLabel(step)} {...tone} size="compact" />
+        <StatusPill label={statusLabel} {...tone} size="compact" />
       </View>
       {details.length > 0 ? (
         <Text textRole="footnote" className="text-foreground-muted" numberOfLines={1}>
