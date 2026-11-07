@@ -142,7 +142,7 @@ const ORIGIN_INVALID_MESSAGES = {
   endpoint: "Invalid managed endpoint origin.",
   local: "Could not resolve local environment origin.",
   remote:
-    "T3 Connect can only be turned on from the machine running this environment. Run `t3 connect link` on that machine.",
+    "T3 Connect can only be turned on from the machine running this environment. On that machine, use Settings → Sharing & access or run `t3 connect link`.",
 } as const;
 
 export class CloudLinkRelayConfigInvalidError extends Schema.TaggedError<CloudLinkRelayConfigInvalidError>()(
