@@ -769,9 +769,13 @@ export function hubRoutes(
   const slug = model?.replace(/\[1m\]$/i, "");
   const listed = (account: UsageLimitSourceAccount) =>
     slug !== undefined && account.models?.includes(slug) === true;
-  return sources.some((source) => source.accounts.some(listed))
-    ? listed
-    : (account) => account.driver === driver;
+  const serving = new Set(
+    sources.flatMap((source) => source.accounts.filter(listed).map((account) => account.driver)),
+  );
+  // Model ids such as "opus" are aliases no hub lists, so no listing falls back to the driver.
+  if (serving.size === 0) return (account) => account.driver === driver;
+  // An account whose model list was unreadable may serve the model too.
+  return (account) => (account.models ? listed(account) : serving.has(account.driver));
 }
 
 export function collectProviderUsageLimits(
@@ -785,9 +789,13 @@ export function collectProviderUsageLimits(
   if (!selected) return null;
   // Only a proxied instance spends what its hub routes the model to, maybe another driver's accounts.
   const routes = hubRoutes(sources, selected.driver, isProxied(selected) ? model : null);
-  const driver =
-    sources.flatMap((source) => source.accounts).find(routes)?.driver ?? selected.driver;
-  if (!hasProviderUsageLimits(driver, providers, sources)) return null;
+  const drivers = new Set(
+    sources.flatMap((source) => source.accounts.filter(routes).map((account) => account.driver)),
+  );
+  if (drivers.size === 0) drivers.add(selected.driver);
+  if (![...drivers].some((driver) => hasProviderUsageLimits(driver, providers, sources))) {
+    return null;
+  }
   const resolveKey = accountKeyResolver([
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
@@ -798,7 +806,7 @@ export function collectProviderUsageLimits(
     { usage: NativeSnapshot; credits: NativeSnapshot | null }
   >();
   for (const provider of providersWithLimits(providers)) {
-    if (provider.driver !== driver || !provider.usageLimits) continue;
+    if (!drivers.has(provider.driver) || !provider.usageLimits) continue;
     const snapshot = { provider, limits: provider.usageLimits };
     const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);

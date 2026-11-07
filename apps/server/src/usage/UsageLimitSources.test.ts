@@ -224,4 +224,8 @@ it("waits for the first refill only when every pooled account of the driver is s
     "2026-11-06T13:00:00.000Z",
   );
   expect(UsageLimitSources.hubPoolResetAt(hub(routed), claude, null, now)).toBeNull();
+  const unlisted = account("unlisted", [session(30, "2026-11-06T15:00:00.000Z")]);
+  expect(
+    UsageLimitSources.hubPoolResetAt(hub([...routed, unlisted]), claude, "claude-opus-5-5", now),
+  ).toBeNull();
 });

@@ -1275,6 +1275,28 @@ describe("/usage-limits", () => {
         model,
       )?.accounts.map((account) => account.id);
     expect(ids(proxy, "gpt-5.6-sol[1m]")).toEqual(["codex", "hub:oss"]);
+    const both = [
+      {
+        ...routed[0]!,
+        accounts: [
+          ...routed[0]!.accounts,
+          {
+            id: "claude-hub",
+            driver: ProviderDriverKind.make("claudeAgent"),
+            models: ["gpt-5.6-sol"],
+            usageLimits: limits,
+          },
+        ],
+      },
+    ];
+    const reversed = [{ ...both[0]!, accounts: [...both[0]!.accounts].reverse() }];
+    for (const hubs of [both, reversed]) {
+      expect(
+        collectProviderUsageLimits(proxy.instanceId, [selected, proxy], hubs, now, "gpt-5.6-sol")
+          ?.accounts.map((account) => account.id)
+          .toSorted(),
+      ).toEqual(["codex", "hub:claude-hub", "hub:oss"]);
+    }
     expect(ids(selected, "gpt-5.6-sol")).toEqual(["codex", "hub:oss"]);
   });
 
