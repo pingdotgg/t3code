@@ -637,8 +637,11 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     path: string | null;
     line: number;
     requestId: number;
+    baselineRouteLine: number | null;
   } | null>(null);
-  const activeMarkJump = markJump?.path === relativePath ? markJump : null;
+  // Drop the mark jump once a same-file route line arrives so deep links are not overridden.
+  const activeMarkJump =
+    markJump?.path === relativePath && markJump.baselineRouteLine === routeLine ? markJump : null;
   const targetLine = activeMarkJump?.line ?? routeLine;
   const jumpRequestId = activeMarkJump?.requestId;
   const fileAccessSession = useEnvironmentQuery(
@@ -1051,6 +1054,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
                   path: relativePath,
                   line: mark.line,
                   requestId: current?.path === relativePath ? (current.requestId ?? 0) + 1 : 1,
+                  baselineRouteLine: routeLine,
                 })),
             },
           ];
