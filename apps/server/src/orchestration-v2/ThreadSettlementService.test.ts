@@ -565,7 +565,7 @@ interface HarnessOptions {
   ) => Effect.Effect<void>;
   readonly onCloseIdle?: () => Effect.Effect<void>;
   readonly deviceCloseError?: DeviceHostUnavailableError;
-  readonly withoutDeviceSessions?: boolean;
+  readonly deviceSessions?: ReadonlyArray<{ readonly hostId: string; readonly deviceId: string }>;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
 }
 
@@ -695,21 +695,22 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     Layer.mock(DeviceService.DeviceService)({
       sessionsForThread: (threadId) =>
         Effect.succeed(
-          options.withoutDeviceSessions
-            ? []
-            : [
-                {
-                  threadId,
-                  hostId: "local",
-                  deviceId: "emulator-5554",
-                  platform: "android" as const,
-                  openedAt: "2026-01-01T00:00:00.000Z",
-                },
-              ],
+          (options.deviceSessions ?? [{ hostId: "local", deviceId: "emulator-5554" }]).map(
+            (session) => ({
+              ...session,
+              threadId,
+              platform: "android" as const,
+              openedAt: "2026-01-01T00:00:00.000Z",
+            }),
+          ),
         ),
       close: (input) =>
         Ref.update(deviceCloses, (closes) => [...closes, input]).pipe(
-          Effect.andThen(options.deviceCloseError ?? Effect.void),
+          Effect.andThen(
+            options.deviceCloseError && options.deviceCloseError.hostId === input.hostId
+              ? Effect.fail(options.deviceCloseError)
+              : Effect.void,
+          ),
         ),
     }),
     Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
@@ -1526,14 +1527,14 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           const closes = yield* Ref.get(fixture.deviceCloses);
           assert.deepStrictEqual(
             closes.filter((close) => close.threadId === settled.id),
-            [{ threadId: settled.id }],
+            [{ threadId: settled.id, hostId: "local", deviceId: "emulator-5554" }],
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
   );
 
-  it.effect("runs the settle script when releasing the thread's devices fails", () =>
+  it.effect("releases the other devices and runs the settle script when one release fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const settled = appThread("reconnecting-host-thread", "settled", "/worktrees/thread");
@@ -1541,6 +1542,10 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           snapshot: makeSnapshot([]),
           currentThreads: [settled],
           existingWorktreePaths: ["/worktrees/thread"],
+          deviceSessions: [
+            { hostId: "ssh-host", deviceId: "remote-pixel" },
+            { hostId: "local", deviceId: "emulator-5554" },
+          ],
           deviceCloseError: new DeviceHostUnavailableError({
             hostId: "ssh-host",
             reason: "Device host is reconnecting. Retry close after it reconnects.",
@@ -1554,7 +1559,10 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
           const run = yield* Queue.take(fixture.scriptRuns);
           assert.strictEqual(run.threadId, settled.id);
-          assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), [{ threadId: settled.id }]);
+          assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), [
+            { threadId: settled.id, hostId: "ssh-host", deviceId: "remote-pixel" },
+            { threadId: settled.id, hostId: "local", deviceId: "emulator-5554" },
+          ]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1568,7 +1576,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           snapshot: makeSnapshot([]),
           currentThreads: [settled],
           existingWorktreePaths: ["/worktrees/deviceless"],
-          withoutDeviceSessions: true,
+          deviceSessions: [],
         });
 
         yield* Effect.gen(function* () {
