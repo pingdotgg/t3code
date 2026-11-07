@@ -14,6 +14,7 @@ import {
   type PreviewAutomationSelectInput,
   type PreviewAutomationSelectResult,
   type PreviewAutomationSnapshot,
+  type PreviewAutomationSnapshotMetadata,
   type PreviewAutomationTypeInput,
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
@@ -430,6 +431,37 @@ const pngSize = (base64: string) => {
   return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
 };
 
+export const jpegSize = (base64: string) => {
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.length < 4 || bytes.readUInt16BE(0) !== 0xffd8)
+    throw new Error("Invalid JPEG screenshot.");
+  let offset = 2;
+  while (offset < bytes.length) {
+    if (bytes[offset++] !== 0xff) throw new Error("Invalid JPEG screenshot.");
+    while (bytes[offset] === 0xff) offset++;
+    const marker = bytes[offset++];
+    if (marker === undefined || marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 2 > bytes.length) break;
+    const length = bytes.readUInt16BE(offset);
+    if (length < 2 || offset + length > bytes.length) break;
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+      if (length < 7) break;
+      const height = bytes.readUInt16BE(offset + 3);
+      const width = bytes.readUInt16BE(offset + 5);
+      if (width && height) return { width, height };
+      break;
+    }
+    offset += length;
+  }
+  throw new Error("Invalid JPEG screenshot.");
+};
+
+const scaledSize = (size: { readonly width: number; readonly height: number }, scale: number) =>
+  scale < 1
+    ? { width: Math.round(size.width * scale), height: Math.round(size.height * scale) }
+    : size;
+
 /**
  * A page's display ratio and CSS viewport, read in an isolated world since page script can
  * reassign `devicePixelRatio`, `innerWidth`, and `innerHeight` in its own, and its page zoom.
@@ -541,10 +573,7 @@ const renderingOf = async (input: SnapshotInput) => {
   };
 };
 
-const capture = async (
-  input: SnapshotInput,
-  deadline: number,
-): Promise<PreviewAutomationSnapshot> => {
+const capture = async (input: SnapshotInput, deadline: number, metadataOnly: boolean) => {
   const { renderScale, viewport } = await renderingOf(input);
   // A late metrics reply must not begin a capture after viewers have resumed.
   if (Date.now() >= deadline) throw tooBusy();
@@ -562,9 +591,12 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.cdp, { format: "png" }).then((png) =>
-      scale < 1 ? shrinkPng(input.cdp, png, scale) : png,
-    ),
+    // A cheap real frame still sizes the screenshot; computing it from metrics drifted from the PNG.
+    metadataOnly
+      ? captureViewport(input.cdp, { format: "jpeg", quality: 10 })
+      : captureViewport(input.cdp, { format: "png" }).then((png) =>
+          scale < 1 ? shrinkPng(input.cdp, png, scale) : png,
+        ),
   ]);
   void pageAndScreenshot.catch(constVoid);
   // Leaves time for the second read; a frame that never loads holds the tree until then.
@@ -610,18 +642,17 @@ const capture = async (
     consoleEntries: [...input.consoleEntries],
     networkEntries: [...input.networkEntries],
     actionTimeline: [...input.actionTimeline],
-    screenshot: {
-      mimeType: "image/png",
-      data,
-      ...pngSize(data),
-    },
+    // Reports the size the PNG path would have shrunk to.
+    screenshot: metadataOnly
+      ? scaledSize(jpegSize(data), scale)
+      : { mimeType: "image/png" as const, data, ...pngSize(data) },
   };
 };
 
 /** Snapshots begun per page; observers' snapshots aren't queued, so two can overlap. */
 const snapshotTurns = new WeakMap<Page, number>();
 
-export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationSnapshot> => {
+const runSnapshot = async (input: SnapshotInput, metadataOnly: boolean) => {
   const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
@@ -630,11 +661,11 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
   const turn = (snapshotTurns.get(input.page) ?? 0) + 1;
   snapshotTurns.set(input.page, turn);
   // Retry only before the deadline and the next snapshot, whose refs a later retry would revoke.
-  const captured = capture(input, deadline).catch((cause: unknown) =>
+  const captured = capture(input, deadline, metadataOnly).catch((cause: unknown) =>
     Date.now() < deadline &&
     snapshotTurns.get(input.page) === turn &&
     !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
-      ? capture(input, deadline)
+      ? capture(input, deadline, metadataOnly)
       : Promise.reject(cause),
   );
   try {
@@ -645,6 +676,12 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
     clearTimeout(timer);
   }
 };
+
+export const snapshot = (input: SnapshotInput) =>
+  runSnapshot(input, false) as Promise<PreviewAutomationSnapshot>;
+
+export const snapshotMetadata = (input: SnapshotInput) =>
+  runSnapshot(input, true) as Promise<PreviewAutomationSnapshotMetadata>;
 
 /** Return when a dialog opens; waiting for the action to finish would block until dialog resolution. */
 export const click = async (

@@ -20,6 +20,7 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
@@ -264,6 +265,57 @@ it.effect.each([
     ),
 );
 
+it.effect.each([
+  { save: false, includeImage: false },
+  { save: false, includeImage: true },
+  { save: true, includeImage: false },
+  { save: true, includeImage: true },
+])("preserves PNG output for snapshot options %#", (input) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* serveSnapshots("mcp-png-options", snapshotResult);
+      const result = yield* callSnapshot(input);
+      expect(result.isError).toBe(false);
+      const image = result.content.find((part) => part.type === "image");
+      expect(image?.type === "image" ? image.data : undefined).toEqual(
+        input.includeImage ? new Uint8Array(Buffer.from("png")) : undefined,
+      );
+      const content = result.structuredContent;
+      const path =
+        content && typeof content === "object" && "screenshotPath" in content
+          ? content.screenshotPath
+          : undefined;
+      if (input.save) {
+        expect(typeof path).toBe("string");
+        const fileSystem = yield* FileSystem.FileSystem;
+        expect(Array.from(yield* fileSystem.readFile(path as string))).toEqual(
+          Array.from(Buffer.from("png")),
+        );
+      } else {
+        expect(path).toBeUndefined();
+      }
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([{ includeImage: true }, { save: true }, { save: true, includeImage: true }])(
+  "rejects a metadata-only response when pixels are requested %#",
+  (input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* serveSnapshots("mcp-missing-pixels", {
+          ...snapshotResult,
+          screenshot: { width: 10, height: 5 },
+        });
+        const result = yield* callSnapshot(input);
+        expect(result.isError).toBe(true);
+        expect(result.content).toEqual([
+          { type: "text", text: expect.stringContaining("did not contain requested PNG pixels") },
+        ]);
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
 const layerRecordingTools = (calls: Array<unknown>) => {
   const RecordingToolkit = Toolkit.make(
     OrchestratorToolkit.tools.delegate_task,
@@ -396,7 +448,9 @@ it.effect.each([
           tabId: alternateTabId,
           threadId,
         });
-        expect(event.request.input).toEqual({});
+        expect(event.request.input).toEqual(
+          images && requests !== 7 ? {} : { pixelsRequired: false },
+        );
         return broker.respond({
           clientId: "mcp-image-option-client",
           connectionId: event.connectionId,
@@ -405,7 +459,8 @@ it.effect.each([
           result: {
             ...page,
             title: `Snapshot ${requests}`,
-            screenshot: { ...screenshot, data: png },
+            screenshot:
+              images || requests === 7 ? { ...screenshot, data: png } : { width: 1, height: 1 },
           },
         });
       }).pipe(Effect.forkScoped);

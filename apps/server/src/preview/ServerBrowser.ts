@@ -30,6 +30,7 @@ import {
   type PreviewAutomationScrollInput,
   type PreviewAutomationSelectInput,
   type PreviewAutomationSetColorSchemeInput,
+  type PreviewAutomationSnapshotInput,
   type PreviewAutomationStatus,
   type PreviewAutomationTypeInput,
   type PreviewAutomationUploadInput,
@@ -2237,11 +2238,11 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
+        const rendering = { ...tab, renderScale: tab.desktop ? "display" : RENDER_SCALE } as const;
         return withScreencastsPaused(tab, () =>
-          ServerBrowserPage.snapshot({
-            ...tab,
-            renderScale: tab.desktop ? "display" : RENDER_SCALE,
-          }),
+          (input as PreviewAutomationSnapshotInput).pixelsRequired === false
+            ? ServerBrowserPage.snapshotMetadata(rendering)
+            : ServerBrowserPage.snapshot(rendering),
         );
       }
       case "click": {
