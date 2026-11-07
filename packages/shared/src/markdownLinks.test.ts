@@ -38,6 +38,25 @@ describe("inlineCodeFilePathCandidate", () => {
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
+
+  // regression: #30757 an agent's shortened path does not become a file chip
+  it.each([
+    ["/tmp/claude-1000/...", null],
+    ["/tmp/claude-1000/…", null],
+    ["/tmp/claude-1000/.../scratchpad/notes.md", null],
+    ["src/…/main.ts", null],
+    ["/tmp/claude-1000/...:12", null],
+    ["C:\\Users\\me\\...\\notes.md", null],
+    ["/tmp/claude-1000/...#L42", null],
+    ["/tmp/claude-1000/%E2%80%A6/notes.md", null],
+    [
+      "/tmp/claude-1000/-home-me--t3-worktrees-proj-t3-abc123/scratchpad/notes.md",
+      "/tmp/claude-1000/-home-me--t3-worktrees-proj-t3-abc123/scratchpad/notes.md",
+    ],
+    ["../src/./main.ts", "../src/./main.ts"],
+  ])("links %s only when no segment is elided", (source, candidate) => {
+    expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
+  });
 });
 
 describe("parseMarkdownFileLink", () => {
