@@ -419,6 +419,7 @@ describe("MuseAdapterV2", () => {
     Effect.gen(function* () {
       for (const [runtimeMode, profile, approvalMode] of [
         ["approval-required", ":ask-me", "promptUnmatched"],
+        ["auto", ":auto-review", "promptUnmatched"],
         ["full-access", ":unrestricted", "allowAll"],
       ] as const) {
         const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
