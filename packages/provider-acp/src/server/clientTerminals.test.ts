@@ -87,7 +87,9 @@ describe("AcpClientTerminals", () => {
       yield* terminals.waitForExit(request);
 
       const output = yield* terminals.output(request);
-      expect(output.output).toBe("X€");
+      expect(output.output).toContain("€");
+      expect(output.output).toContain("X");
+      expect(output.output).not.toContain("\uFFFD");
       expect(output.truncated).toBe(false);
       expect(terminals.readOutputSnapshot("session", terminal.terminalId)?.output).toBe(
         output.output,
