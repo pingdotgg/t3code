@@ -50,6 +50,7 @@ import {
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
   deriveLockedProvider,
+  hasCompactableConversation,
   hasServerAcknowledgedLocalDispatch,
   waitForRevertedMessage,
 } from "./ChatView.logic";
@@ -400,6 +401,86 @@ describe("deriveCommittedServerUserMessageIds", () => {
     expect(deriveCommittedServerUserMessageIds(visibleTurnItems)).toEqual(
       new Set([turnStartId, steerId]),
     );
+  });
+});
+
+describe("hasCompactableConversation", () => {
+  const at = DateTime.makeUnsafe("2026-10-26T08:00:00.000Z");
+  const runId = RunId.make("run:thread:thread-1:ordinal:1");
+  const itemBase = (id: string, ordinal: number) => ({
+    id: TurnItemId.make(id),
+    threadId,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status: "completed" as const,
+    title: null,
+    startedAt: at,
+    completedAt: at,
+    updatedAt: at,
+  });
+  const userMessage = (text: string): OrchestrationV2ProjectedTurnItem => ({
+    position: 0,
+    visibility: "local",
+    sourceThreadId: threadId,
+    sourceItemId: TurnItemId.make("turn-item:user"),
+    item: {
+      ...itemBase("turn-item:user", 1),
+      createdBy: "user",
+      creationSource: "web",
+      type: "user_message",
+      messageId: MessageId.make("message-user"),
+      inputIntent: "turn_start",
+      text,
+      attachments: [],
+    },
+  });
+  const assistantMessage: OrchestrationV2ProjectedTurnItem = {
+    position: 1,
+    visibility: "local",
+    sourceThreadId: threadId,
+    sourceItemId: TurnItemId.make("turn-item:assistant"),
+    item: {
+      ...itemBase("turn-item:assistant", 2),
+      type: "assistant_message",
+      messageId: MessageId.make("message-assistant"),
+      text: "done",
+      streaming: false,
+    },
+  };
+
+  it("counts a user message beyond the loaded page", () => {
+    expect(
+      hasCompactableConversation({
+        visibleTurnItems: [assistantMessage],
+        hasMoreHistory: true,
+        latestUserMessageAt: "2026-10-26T08:00:00.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("stays unavailable when the thread never had a user message", () => {
+    expect(
+      hasCompactableConversation({
+        visibleTurnItems: [assistantMessage],
+        hasMoreHistory: true,
+        latestUserMessageAt: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not count a lone /compact on a fully loaded thread", () => {
+    expect(
+      hasCompactableConversation({
+        visibleTurnItems: [userMessage("/compact"), assistantMessage],
+        hasMoreHistory: false,
+        latestUserMessageAt: "2026-10-26T08:00:00.000Z",
+      }),
+    ).toBe(false);
   });
 });
 
