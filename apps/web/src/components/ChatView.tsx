@@ -1438,13 +1438,11 @@ export default function ChatView(props: ChatViewProps) {
   const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
   // Awaited background work parks runtime at idle; treat it like an active turn for
   // follow-up queueing so the composer does not look ready or hold a stuck send spinner.
+  // Keep this out of `isWorking`: useThreadLifecycle only presents the Waiting banner
+  // and its Stop action when the turn is not already working.
   const isWaitingOnBackgroundWork = backgroundWorkHoldsCompletion(pendingBackgroundTasks);
   const isWorking =
-    phase === "running" ||
-    isSendBusy ||
-    isCompacting ||
-    isWaitingOnBackgroundWork ||
-    runlessWorkStartedAt !== null;
+    phase === "running" || isSendBusy || isCompacting || runlessWorkStartedAt !== null;
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,

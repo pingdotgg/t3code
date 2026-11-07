@@ -17,6 +17,7 @@ import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Option from "effect/Option";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -66,6 +67,8 @@ function threadDetailToShell(
   const runtime = deriveThreadRuntime(projection);
   const pendingRequest =
     projection.runtimeRequests.find((request) => request.status === "pending") ?? null;
+  const latestBackgroundRun =
+    latestRun === null ? null : (projection.runs.find((run) => run.id === latestRun.runId) ?? null);
   return presentThreadShell(environmentId, {
     id: thread.id,
     projectId: thread.projectId,
@@ -94,6 +97,17 @@ function threadDetailToShell(
     latestVisibleMessage: null,
     latestUserMessageAt: latestUserMessageAt(projection),
     hasActionableProposedPlan: false,
+    // Detail fallbacks used to omit the roster; without it, Queue follow-ups start immediately.
+    pendingBackgroundTasks: [
+      ...derivePendingBackgroundWork({
+        latestRun: latestBackgroundRun,
+        providerThreads: projection.providerThreads,
+        turnItems: projection.turnItems,
+        activeProviderThreadId: thread.activeProviderThreadId,
+        runs: projection.runs,
+        pullRequests: thread.pullRequests,
+      }),
+    ],
     itemCount: projection.turnItems.length,
     visibleItemCount: projection.visibleTurnItems.length,
     createdAt: thread.createdAt,
