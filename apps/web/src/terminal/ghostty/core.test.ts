@@ -151,6 +151,8 @@ describe("GhosttyTerminalCore snapshots", () => {
       expect(send()).toBe(prompt);
       core.write("\x1b[?1049h");
       expect(send()).toBe(app);
+      core.write("\x1b[?1049l");
+      expect(send()).toBe(prompt);
     },
   );
 
