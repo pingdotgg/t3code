@@ -123,6 +123,20 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           expect(devCookies).toContainEqual(
             expect.stringMatching(/^t3_session_[^=]*=;.*Max-Age=0/),
           );
+          // regression: #26488 plaintext LAN deployments keep working, TLS ones get Secure cookies
+          expect(devCookies.filter((cookie) => /;\s*Secure/i.test(cookie))).toEqual([]);
+          const tlsResponse = await environmentA.handler(
+            postJson(
+              "/api/auth/browser-session",
+              { credential: DEV_TOKEN },
+              { "x-forwarded-proto": "https" },
+            ),
+            requestContext,
+          );
+          expect(tlsResponse.status).toBe(200);
+          const tlsCookies = tlsResponse.headers.getSetCookie();
+          expect(tlsCookies).toHaveLength(2);
+          for (const cookie of tlsCookies) expect(cookie).toMatch(/;\s*Secure/i);
           const devCookieHeader = devCookie?.split(";", 1)[0] ?? "";
           const environmentBSession = await environmentB.handler(
             new Request("http://127.0.0.1/api/auth/session", {
