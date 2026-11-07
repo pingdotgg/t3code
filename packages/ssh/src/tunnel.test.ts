@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import * as Config from "effect/Config";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -178,6 +179,7 @@ describe("ssh tunnel scripts", () => {
           const credential = mode === "archive" ? `paired-${serverVersion}` : "paired-dev";
           const fs = yield* FileSystem.FileSystem;
           const localSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const path = yield* Config.String("PATH").pipe(Config.withDefault(""));
           const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-pairing-" });
           for (const version of [serverVersion, ARCHIVE.archiveVersion]) {
             const runtime = `${home}/.t3/runtime/versions/${version}`;
@@ -229,7 +231,7 @@ describe("ssh tunnel scripts", () => {
                   if (script.includes("PAIRING_BASE_DIR=")) {
                     return yield* localSpawner.spawn(
                       ChildProcess.make("sh", ["-s"], {
-                        env: { HOME: home, PATH: process.env.PATH ?? "" },
+                        env: { HOME: home, PATH: path },
                         stdin: {
                           stream: Stream.make(new TextEncoder().encode(script)),
                           endOnDone: true,
@@ -278,7 +280,10 @@ describe("ssh tunnel scripts", () => {
             ),
             Effect.scoped,
           );
-        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        }).pipe(
+          Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          Effect.scoped,
+        ),
     );
   });
 
@@ -338,6 +343,7 @@ describe("ssh tunnel scripts", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Layer.succeed(HttpClient.HttpClient, testHttpClient),
           Layer.succeed(NetService.NetService, testNetService),
