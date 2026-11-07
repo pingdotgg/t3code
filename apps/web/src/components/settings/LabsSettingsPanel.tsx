@@ -22,6 +22,7 @@ export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
+        <ScrollingWorkspacesRow />
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
         <ToolCallVisibilityRow />
@@ -32,6 +33,26 @@ export function LabsSettingsPanel() {
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
+  );
+}
+
+function ScrollingWorkspacesRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("scrolling-workspaces")}
+      description="Panes scroll sideways instead of shrinking, and you can keep several workspaces with an overview, swipes and a layout tour. Splits, tabs and layout templates work either way."
+      control={
+        <Switch
+          checked={settings.scrollingWorkspacesEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ scrollingWorkspacesEnabled: Boolean(checked) })
+          }
+          aria-label="Scrolling workspaces"
+        />
+      }
+    />
   );
 }
 
