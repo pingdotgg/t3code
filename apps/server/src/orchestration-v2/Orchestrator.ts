@@ -20,6 +20,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  linkOriginIsFenced,
   type ChatAttachment,
   CommandId,
   type GuestMessageId,
@@ -7949,6 +7950,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
+      if (
+        command.projectId !== undefined &&
+        command.projectId !== parentProjection.thread.projectId
+      ) {
+        const targetProject = yield* projects
+          .get(command.projectId)
+          .pipe(mapDispatchError(command));
+        if (
+          Option.isNone(targetProject) ||
+          targetProject.value.deletedAt !== null ||
+          (parentProjection.thread.linkOrigin !== undefined &&
+            linkOriginIsFenced(parentProjection.thread.linkOrigin))
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Cannot delegate to a missing project or outside a fenced link.",
+          });
+        }
+      }
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
@@ -8024,6 +8045,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdBy: command.createdBy,
           creationSource: command.creationSource,
         }),
+        projectId: command.projectId ?? parentProjection.thread.projectId,
+        ...(command.projectId !== undefined &&
+        command.projectId !== parentProjection.thread.projectId
+          ? { branch: null, worktreePath: null, branchPullRequest: null }
+          : {}),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
         ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),

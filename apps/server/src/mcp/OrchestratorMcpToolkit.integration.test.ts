@@ -5,6 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  EventId,
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
@@ -28,6 +29,7 @@ import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer } from "effect/ai";
 
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -35,6 +37,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -203,6 +206,7 @@ describe("orchestrator MCP toolkit", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("delegated-task-status");
+        const destinationId = ProjectId.make("project:local-destination");
         const rawTranscript = yield* readDelegatedTaskStatusTranscript(result);
         const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
           materializeReplayTranscriptWorkspace(rawTranscript, cwd),
@@ -215,7 +219,7 @@ describe("orchestrator MCP toolkit", () => {
             runtimePolicyOverride: { cwd },
           },
           CodexOrchestratorReplayHarness,
-        );
+        ).pipe(Layer.provideMerge(ProviderContinuationRequests.layer));
         const layerOrchestration = Layer.merge(
           layerOrchestrator,
           ThreadManagementService.layer.pipe(
@@ -236,6 +240,7 @@ describe("orchestrator MCP toolkit", () => {
         const layerTest = layerOrchestratorToolkit.pipe(
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provideMerge(layerOrchestration),
+          Layer.provideMerge(ProjectStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
           Layer.provide(
             CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript).pipe(
               Layer.provide(McpProviderSessions.layer),
@@ -247,7 +252,16 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
           Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({
+                  id: destinationId,
+                  title: "Destination",
+                  workspaceRoot: cwd,
+                } as never),
+            }),
+          ),
           Layer.provideMerge(
             SecretRequests.layer.pipe(
               Layer.provide(layerMemorySecretStore),
@@ -262,6 +276,29 @@ describe("orchestrator MCP toolkit", () => {
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const server = yield* McpServer.McpServer;
+          const projects = yield* ProjectStore.ProjectStoreV2;
+          const at = "2026-11-03T00:00:00.000Z";
+          yield* projects.apply({
+            sequence: 1,
+            eventId: EventId.make("event:mcp-destination"),
+            aggregateKind: "project",
+            aggregateId: destinationId,
+            occurredAt: at,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "project.created",
+            payload: {
+              projectId: destinationId,
+              title: "Destination",
+              workspaceRoot: cwd,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: at,
+              updatedAt: at,
+            },
+          });
           const parentCreate = yield* orchestrator.dispatch({
             type: "thread.create",
             createdBy: "user",
@@ -333,10 +370,12 @@ describe("orchestrator MCP toolkit", () => {
           const delegatedCall = yield* invoke("delegate_task", {
             task: delegatedPrompt,
             target: {
+              projectId: destinationId,
               providerInstanceId: codexInstanceId,
               model: codexModel,
             },
             mode: "async",
+            isolation: "shared",
             clientRequestId: "delegate-codex-replay-1",
           });
           const delegatedStart = yield* decodeDelegateTaskResult(
@@ -364,6 +403,19 @@ describe("orchestrator MCP toolkit", () => {
                 }),
               ),
             );
+          const wakeRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const wake = yield* wakeRequests.take;
+          expect(wake.threadId).toBe(parentThreadId);
+          expect(wake.delivery).toBe("message_text");
+          const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+          const parentRun = parent.runs.find(
+            (run) => run.id === wake.delegatedCompletion?.parentRunId,
+          );
+          expect(parentRun?.delegatedCompletion?.delivery).toMatchObject({
+            messageId: wake.delegatedCompletion?.messageId,
+            generation: wake.delegatedCompletion?.generation,
+            taskIds: [delegatedStart.taskId],
+          });
           const delegatedStatusCall = yield* invoke("task_status", {
             taskId: delegatedStart.taskId,
           });
@@ -385,6 +437,9 @@ describe("orchestrator MCP toolkit", () => {
           const delegatedChild = yield* orchestrator.getThreadProjection(
             localChild(delegated.childThreadId),
           );
+          expect(delegatedChild.thread.projectId).toBe(destinationId);
+          expect(delegatedChild.thread.worktreePath).toBeNull();
+          expect(delegatedChild.thread.lineage.parentThreadId).toBe(parentThreadId);
           expect(delegatedChild.thread.lineage.relationshipToParent).toBe("subagent");
           expect(isProviderNativeSubagentThread(delegatedChild.thread)).toBe(false);
           const followupStartSequence = yield* orchestrator.getThreadEventSequence(
