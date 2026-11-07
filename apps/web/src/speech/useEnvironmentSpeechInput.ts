@@ -445,7 +445,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (controller.currentState.phase === "recording") void controller.stop();
   });
 
-  const start = useStableCallback(async (options?: { readonly setupOnly?: boolean }) => {
+  const start = useStableCallback(async () => {
     if (latestRef.current.input.disabled) return;
     if (!grantId) {
       if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
@@ -458,7 +458,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (!controller || !prepared) return;
     if (cloudProvider) {
       setLevel(0);
-      if (!options?.setupOnly) await controller.start();
+      await controller.start();
       return;
     }
     const stillCurrent = () =>
@@ -491,12 +491,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       });
       return;
     }
-    if (latestStatus.state === "missing-model" || options?.setupOnly) {
-      setSetup({
-        ...INITIAL_SETUP,
-        open: true,
-        step: latestStatus.state === "missing-model" ? 0 : 1,
-      });
+    if (latestStatus.state === "missing-model") {
+      setSetup({ ...INITIAL_SETUP, open: true });
       return;
     }
     setLevel(0);
