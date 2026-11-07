@@ -241,6 +241,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
+          showsImageThumbnails: attachments.some((attachment) =>
+            attachment.mimeType.startsWith("image/"),
+          ),
           text,
         });
         const title =
