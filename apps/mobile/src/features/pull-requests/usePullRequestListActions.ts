@@ -18,11 +18,23 @@ import {
   pullRequestActionLabel,
 } from "./pullRequestActions";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
+import {
+  pullRequestListRowActions,
+  scopedPullRequestListKey,
+  type EnvironmentPullRequestListEntry,
+  type PullRequestListRowAction,
+} from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
+
+const ROW_ACTION_IMAGES = {
+  ready: ["pencil", "edit"],
+  draft: ["pencil", "edit"],
+  close: ["xmark", "close"],
+  reopen: ["arrow.clockwise", "refresh"],
+} as const satisfies Record<PullRequestListRowAction, readonly [string, string]>;
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -30,6 +42,7 @@ export function usePullRequestListActions(
     entry: EnvironmentPullRequestListEntry,
     patch: Partial<EnvironmentPullRequestListEntry>,
   ) => void,
+  hostActions: ReadonlyMap<string, ReadonlySet<PullRequestAction>>,
 ) {
   const registry = use(RegistryContext);
   const selectDetail = useSelectWorkspaceDetail();
@@ -165,27 +178,16 @@ export function usePullRequestListActions(
               title: "Request review",
               image: Platform.OS === "ios" ? "person.badge.plus" : "person_add",
             },
-            {
-              id: entry.isDraft ? "ready" : "draft",
-              title: entry.isDraft ? "Mark ready for review" : "Convert to draft",
-              image: Platform.OS === "ios" ? "pencil" : "edit",
-            },
-            {
-              id: "close",
-              title: pullRequestActionLabel("close", terminology),
-              image: Platform.OS === "ios" ? "xmark" : "close",
-              attributes: { destructive: true },
-            },
           ]
-        : writableEnvironments.has(entry.environmentId) && entry.state === "closed"
-          ? [
-              {
-                id: "reopen",
-                title: pullRequestActionLabel("reopen", terminology),
-                image: Platform.OS === "ios" ? "arrow.clockwise" : "refresh",
-              },
-            ]
-          : []),
+        : []),
+      ...(writableEnvironments.has(entry.environmentId)
+        ? pullRequestListRowActions(entry, hostActions).map((action) => ({
+            id: action,
+            title: pullRequestActionLabel(action, terminology),
+            image: ROW_ACTION_IMAGES[action][Platform.OS === "ios" ? 0 : 1],
+            ...(action === "close" ? { attributes: { destructive: true } } : {}),
+          }))
+        : []),
       {
         id: "share",
         title: "Share…",
