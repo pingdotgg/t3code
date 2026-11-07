@@ -5,6 +5,7 @@ import {
   type ThemeColors,
 } from "./themePalettes.ts";
 import { EVENT_CODE_SHORTCUT_KEYS } from "./keybindings.ts";
+import { readableHtmlRenderColor } from "./htmlRenderColors.ts";
 
 export const HTML_RENDER_TOOL_NAME = "html_render";
 export const HTML_RENDER_MIN_HEIGHT = 80;
@@ -178,6 +179,15 @@ export function htmlRenderTheme(
   fonts: HtmlRenderFonts = HTML_RENDER_DEFAULT_FONTS,
 ): HtmlRenderTheme {
   const fixed = FIXED_COLORS[appearance];
+  const accent = readableHtmlRenderColor(colors.accent, colors.canvas, 3);
+  const accentForeground =
+    accent === colors.accent
+      ? colors.accentForeground
+      : readableHtmlRenderColor(colors.accentForeground, accent, 4.5);
+  const chart = [
+    accent,
+    ...fixed.chart.map((color) => readableHtmlRenderColor(color, colors.canvas, 3)),
+  ];
   return {
     appearance,
     variables: {
@@ -196,8 +206,8 @@ export function htmlRenderTheme(
       "--ring": colors.focus,
       "--primary": colors.messageAction,
       "--primary-foreground": colors.messageActionForeground,
-      "--accent": colors.accent,
-      "--accent-foreground": colors.accentForeground,
+      "--accent": accent,
+      "--accent-foreground": accentForeground,
       "--accent-surface": colors.accentSurface,
       "--accent-surface-foreground": colors.accentSurfaceForeground,
       "--destructive": colors.error,
@@ -212,8 +222,7 @@ export function htmlRenderTheme(
       "--info-foreground": fixed.infoForeground,
       "--code-background": colors.codeBackground,
       "--code-foreground": colors.codeForeground,
-      "--chart-1": colors.accent,
-      ...Object.fromEntries(fixed.chart.map((color, index) => [`--chart-${index + 2}`, color])),
+      ...Object.fromEntries(chart.map((color, index) => [`--chart-${index + 1}`, color])),
       "--radius": "0.625rem",
       "--font-sans": fonts.sans,
       "--font-mono": fonts.mono,
