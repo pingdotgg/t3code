@@ -20,6 +20,7 @@ const PreferenceFields = {
   newWorktreesStartFromOrigin: ServerSettings.fields.newWorktreesStartFromOrigin,
   enableProviderUpdateChecks: ServerSettings.fields.enableProviderUpdateChecks,
   backgroundActivity: Schema.Struct({ profile: BackgroundActivityProfileSelection }),
+  keepHostAwake: ServerSettings.fields.keepHostAwake,
   sourceControlWritingStyle: Schema.Struct({
     mode: Schema.String,
     followChangeRequestTemplates: Schema.Boolean,

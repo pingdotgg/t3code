@@ -81,6 +81,23 @@ A missing file is ignored; other read failures stop service startup.
 If the file contains credentials, restrict access to that file with `chmod 600`
 (for the default T3 home, `chmod 600 ~/.t3/service.env`).
 
+## Keep the host awake
+
+Choose **Keep host awake** in Settings > Maintenance, or the same setting in the
+mobile app, to stop the machine from going to sleep by itself:
+
+- **While agents work** holds the machine awake while any thread is working, and
+  lets it sleep again when they finish.
+- **Always** holds it awake for as long as T3 Code is running. Use this if you
+  want to reach the machine remotely at any time, or rely on scheduled tasks.
+
+The setting belongs to each environment, and applies to the machine running that
+environment's server. The display can still turn off, and closing a laptop lid can
+still put the machine to sleep. On a laptop, **Always** drains the battery faster.
+
+Linux needs `systemd-inhibit`. A server running in WSL cannot keep the Windows
+machine awake.
+
 ## Platform support
 
 Linux needs systemd user services. Setup enables lingering so T3 Code starts at
@@ -88,7 +105,7 @@ boot and keeps running after logout. If this needs administrator permission,
 setup prints a recovery command before changing the service.
 
 macOS starts the service when you log in and stops it when you log out. Keep the
-Mac logged in and awake for unattended remote access. Installing over SSH while
+Mac logged in and [awake](#keep-the-host-awake) for unattended remote access. Installing over SSH while
 nobody is logged in at the Mac's screen can fail at the final start step; the
 service is still installed and will start at the next login.
 
