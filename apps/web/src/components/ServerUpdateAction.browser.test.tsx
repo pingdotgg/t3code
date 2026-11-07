@@ -171,6 +171,17 @@ describe("ServerUpdateAction", () => {
     },
   );
 
+  it("does not update a desktop app when no confirmation dialog can be shown", async () => {
+    using _state = setup();
+    testState.updateServer.mockResolvedValue(success("desktop-app"));
+    await using screen = await renderAction({
+      selfUpdate: "desktop-managed",
+      desktopAppUpdate: true,
+    });
+    await click(screen, "Update");
+    expect(testState.updateServer).not.toHaveBeenCalled();
+  });
+
   it("disables the action once maintenance access is removed", async () => {
     using _state = setup();
     await using screen = await renderAction();
@@ -236,5 +247,25 @@ describe("ServerUpdatesAction", () => {
     expect(testState.toast).toHaveBeenCalledWith(
       expect.objectContaining({ type: "success", title: "Office updated" }),
     );
+  });
+
+  const withDesktop: ReadonlyArray<ServerUpdateTarget> = [
+    targets[0]!,
+    {
+      environmentId: "batch-desktop" as EnvironmentId,
+      serverLabel: "Studio",
+      selfUpdate: "desktop-managed",
+      desktopAppUpdate: true,
+      targetVersion: "0.0.31",
+    },
+  ];
+
+  it("does not update any machine when a desktop app needs a confirmation that cannot be shown", async () => {
+    using _state = setup();
+    testState.updateServer.mockResolvedValue(success());
+    await using screen = await mount(withDesktop);
+    await click(screen, "Update all");
+    expect(testState.updateServer).not.toHaveBeenCalled();
+    expect(button(screen, "Update all")!.disabled).toBe(false);
   });
 });

@@ -43,6 +43,7 @@ const UPDATE_STAGE_LABELS: Record<ServerUpdateStage, string> = {
   resuming: "Restarting…",
 };
 const pendingUpdateEnvironmentIds = new Set<EnvironmentId>();
+const DESKTOP_UPDATE_INTERRUPTION_WARNING = "Updates interrupt tasks and tool calls.";
 
 export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
   return UPDATE_STAGE_LABELS[stage];
@@ -199,10 +200,9 @@ export function ServerUpdatesAction({
       );
       const desktopTargets = available.filter((target) => target.selfUpdate === "desktop-managed");
       if (desktopTargets.length > 0) {
-        const confirmed =
-          (await requestConfirmDialog(
-            `Update the T3 Code desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}? They will close and relaunch on those machines.`,
-          )) ?? true;
+        const confirmed = await requestConfirmDialog(
+          `Update the T3 Code desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}?\n\n${DESKTOP_UPDATE_INTERRUPTION_WARNING}`,
+        );
         if (!confirmed) return;
       }
       await Promise.all(available.map((target) => update(target)));
@@ -305,10 +305,9 @@ export function ServerUpdateAction({
       return;
     }
     if (isDesktopAppUpdate) {
-      const confirmed =
-        (await requestConfirmDialog(
-          `Update the T3 Code desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
-        )) ?? true;
+      const confirmed = await requestConfirmDialog(
+        `Update the T3 Code desktop app that runs the ${serverLabel}?\n\n${DESKTOP_UPDATE_INTERRUPTION_WARNING}`,
+      );
       if (!confirmed) {
         return;
       }

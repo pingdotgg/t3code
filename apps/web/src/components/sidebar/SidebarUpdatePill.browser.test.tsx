@@ -1,10 +1,11 @@
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
 
 const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
@@ -139,5 +140,32 @@ describe("SidebarUpdatePill update everything", () => {
 
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect(document.activeElement).toBe(button.element()));
+  });
+
+  it("warns that an app restart interrupts work before any threads have loaded", async () => {
+    setup(null);
+    const studio = "studio" as EnvironmentId;
+    await using _screen = await render(
+      <UpdateEverythingDialog
+        open
+        onOpenChange={() => {}}
+        version={null}
+        providerCount={0}
+        rows={[
+          {
+            environmentId: studio,
+            label: "Studio",
+            app: "desktop-app",
+            skipped: null,
+            providers: [],
+          },
+        ]}
+        restarts={[{ environmentId: studio, continuesThreads: true }]}
+        onConfirm={() => {}}
+      />,
+    );
+    const dialog = page.getByRole("alertdialog");
+    await expect.element(dialog.getByText(/interrupt/i)).toBeVisible();
+    await expect.element(dialog).toHaveAccessibleDescription(/interrupt/i);
   });
 });
