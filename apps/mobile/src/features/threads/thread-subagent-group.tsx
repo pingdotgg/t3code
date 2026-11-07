@@ -149,14 +149,12 @@ export function ThreadSubagentGroup(props: {
           onPress={() => props.onToggleRow(props.anchorKey, props.anchorKey)}
           className="min-h-14 flex-row items-center gap-3 rounded-lg py-2 active:bg-subtle"
         >
-          <View className="flex-row items-center">
-            {agents.slice(0, 3).map((agent, index) => (
-              <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} config={configOf(agent.item)} />
-              </View>
+          <View className="flex-row items-center gap-0.5">
+            {agents.slice(0, 3).map((agent) => (
+              <SubagentAvatar key={agent.item.id} item={agent.item} config={configOf(agent.item)} />
             ))}
             {agents.length > 3 ? (
-              <View className="-ml-2 h-7 w-7 items-center justify-center rounded-full border border-border bg-card">
+              <View className="h-7 w-7 items-center justify-center rounded-full border border-border bg-card">
                 <Text className="text-2xs text-foreground-muted">+{agents.length - 3}</Text>
               </View>
             ) : null}
