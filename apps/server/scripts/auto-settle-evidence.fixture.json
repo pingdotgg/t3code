@@ -1,0 +1,32 @@
+{
+  "project": {
+    "projectId": "47be1b87-d49b-44e8-8f7b-aa2be797e745",
+    "title": "Settlement evidence",
+    "defaultModelSelection": null,
+    "scripts": []
+  },
+  "thread": {
+    "createdBy": "system",
+    "creationSource": "server",
+    "providerInstanceId": "codex",
+    "modelSelection": { "instanceId": "codex", "model": "gpt-6-astra" },
+    "runtimeMode": "full-access",
+    "interactionMode": "default",
+    "branch": null,
+    "worktreePath": null,
+    "pullRequests": [],
+    "activeProviderThreadId": null,
+    "forkedFrom": null,
+    "archivedAt": null,
+    "settledOverride": null,
+    "settledAt": null,
+    "snoozedUntil": null,
+    "snoozedAt": null,
+    "lastVisitedAt": null,
+    "deletedAt": null
+  },
+  "cases": [
+    { "suffix": "old", "ageDays": 2 },
+    { "suffix": "fresh", "ageDays": 0 }
+  ]
+}
