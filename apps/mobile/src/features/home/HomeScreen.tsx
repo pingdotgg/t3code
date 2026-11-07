@@ -335,7 +335,7 @@ export function HomeScreen(props: HomeScreenProps) {
       animated: false,
     });
   });
-  const swipeRowActivation = createSwipeRowActivation();
+  const swipeRowActivation = useRef(createSwipeRowActivation()).current;
   const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
     const state = listRef.current?.getState();
     if (state === undefined || !(state.end >= 0)) return;

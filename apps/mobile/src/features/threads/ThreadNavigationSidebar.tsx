@@ -26,6 +26,7 @@ import {
   Platform,
   StyleSheet,
   View,
+  type GestureResponderEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
@@ -133,7 +134,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef>(null);
   const sidebarScrollGesture = useNativeGesture();
-  const swipeRowActivation = createSwipeRowActivation();
+  const swipeRowActivation = useRef(createSwipeRowActivation()).current;
   const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
   useEffect(() => () => clearTimeout(activationTimerRef.current), []);
@@ -382,6 +383,13 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     onScroll: handleListScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
+  const trackListTouches = (event: GestureResponderEvent, started: boolean) => {
+    const { changedTouches, touches } = event.nativeEvent;
+    swipeRowActivation.trackTouches(
+      started ? changedTouches.map((touch) => String(touch.identifier)) : [],
+      touches.map((touch) => String(touch.identifier)),
+    );
+  };
   // Recycle equality needs project/search data for titles and favicons; keep the minute clock on items to limit updates.
   const listExtraData = useMemo(
     () => ({
@@ -662,6 +670,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 ]}
                 keyboardDismissMode="on-drag"
                 keyboardShouldPersistTaps="handled"
+                onTouchStart={(event) => trackListTouches(event, true)}
+                onTouchEnd={(event) => trackListTouches(event, false)}
+                onTouchCancel={(event) => trackListTouches(event, false)}
                 {...scrollGateHandlers}
                 recycleItems
                 scrollEventThrottle={16}
@@ -717,6 +728,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 }}
                 keyboardDismissMode="on-drag"
                 keyboardShouldPersistTaps="handled"
+                onTouchStart={(event) => trackListTouches(event, true)}
+                onTouchEnd={(event) => trackListTouches(event, false)}
+                onTouchCancel={(event) => trackListTouches(event, false)}
                 {...scrollGateHandlers}
                 recycleItems
                 scrollEventThrottle={16}
