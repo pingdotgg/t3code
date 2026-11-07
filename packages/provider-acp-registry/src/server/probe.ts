@@ -14,6 +14,7 @@ import {
 import { AcpRegistrySettings } from "../settings.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -644,7 +645,13 @@ export const readAcpRegistryGlmUsageLimits = Effect.fn("AcpRegistryProbe.readGlm
     effect.pipe(
       Effect.scoped,
       Effect.timeoutOrElse({ duration: GLM_USAGE_TIMEOUT, orElse: () => glmUsageReadFailed }),
+      Effect.tapCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("GLM usage read failed", cause),
+      ),
       Effect.catch(() => glmUsageReadFailed),
+      Effect.catchDefect(() => glmUsageReadFailed),
     ),
 );
 

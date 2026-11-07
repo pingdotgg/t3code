@@ -33,6 +33,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import { providerModelsFromSettings } from "@t3tools/provider-core/server/snapshotProbe";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
@@ -633,17 +634,23 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           );
     });
-    const readUsageLimits: AcpRegistryUsageLimitsReader = scopedGlmUsageLimitsReader({
-      instanceId,
-      displayName,
-      setAuthentication: (confirmed) => confirmedAuthentication.set(confirmed),
-      read: (input) =>
-        readAcpRegistryGlmUsageLimits(input).pipe(
-          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(SecureRandom.SecureRandom, random),
-        ),
-    });
+    const makeUsageLimitsReader = (onSignedOut: Effect.Effect<void>) =>
+      scopedGlmUsageLimitsReader({
+        instanceId,
+        displayName,
+        setAuthentication: (confirmed) =>
+          confirmedAuthentication
+            .set(confirmed)
+            .pipe(Effect.andThen(confirmed ? Effect.void : onSignedOut)),
+        read: (input) =>
+          readAcpRegistryGlmUsageLimits(input).pipe(
+            Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(SecureRandom.SecureRandom, random),
+          ),
+      });
+    const readUsageLimits = makeUsageLimitsReader(Effect.void);
+    const refreshScope = yield* Effect.scope;
     const checkProvider = checkAcpRegistryProvider({
       ...readinessInput,
       cwd: host.paths.cwd,
@@ -713,7 +720,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       return { provider: enriched, generation: cacheState.generation };
     });
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
-    const snapshot = yield* makeManagedServerProvider<
+    const snapshot: ManagedServerProvider = yield* makeManagedServerProvider<
       ProviderSnapshotSettings<AcpRegistrySettings>
     >({
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),
@@ -724,7 +731,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       checkProvider,
       ...(isZaiUsageLimitsInstance(effectiveConfig)
         ? {
-            checkUsageLimits: readUsageLimits({
+            // This read holds the refresh permit and republishes only limits, so a sign-out refreshes after it.
+            checkUsageLimits: makeUsageLimitsReader(
+              Effect.suspend(() =>
+                clearLiveState.pipe(
+                  Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+                  Effect.andThen(snapshot.refresh),
+                ),
+              ).pipe(Effect.forkIn(refreshScope), Effect.asVoid),
+            )({
               instanceId,
               settings: effectiveConfig,
               cwd: host.paths.cwd,
