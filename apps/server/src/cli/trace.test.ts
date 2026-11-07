@@ -72,3 +72,20 @@ it("prints durations that round up to a second in seconds", () => {
     .find((line) => line.startsWith("rpc"));
   assert.deepStrictEqual(row?.trim().split(/\s+/).slice(3, 6), ["999ms", "1s", "1s"]);
 });
+
+it("counts a single span and skipped line in the singular", () => {
+  const summarizer = makeTraceSpanSummary();
+  [span("rpc", 1, MINUTE_MS), "{not json"].forEach(summarizer.addLine);
+
+  const [header, skipped] = formatTraceSummary(summarizer.finish(), 25).split("\n");
+  assert.match(header!, /^1 span ended from /);
+  assert.strictEqual(skipped, "Skipped 1 line that is not a span.");
+});
+
+it("counts a single hidden span name in the singular", () => {
+  const summarizer = makeTraceSpanSummary();
+  [span("rpc", 1, MINUTE_MS), span("sql", 1, MINUTE_MS)].forEach(summarizer.addLine);
+
+  const output = formatTraceSummary(summarizer.finish(), 1).split("\n");
+  assert.strictEqual(output.at(-1), "1 more span name. Use --limit to show more.");
+});

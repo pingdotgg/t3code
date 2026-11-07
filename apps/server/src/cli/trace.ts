@@ -99,6 +99,12 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
   return { addLine, finish };
 }
 
+const countOf = (count: number, singular: string, plural: string) =>
+  `${count} ${count === 1 ? singular : plural}`;
+
+const skippedLinesNote = (count: number) =>
+  `Skipped ${countOf(count, "line that is not a span", "lines that are not spans")}.`;
+
 const formatMs = (ms: number) =>
   Math.round(ms) < 1_000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 100) / 10}s`;
 
@@ -127,10 +133,8 @@ export function formatTraceSummary(
   const widths = header.map((_, column) => Math.max(...table.map((row) => row[column]!.length)));
   const formatIso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
   return [
-    `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1).replace(/\.0+$/, "")} min).`,
-    ...(summary.skippedLineCount > 0
-      ? [`Skipped ${summary.skippedLineCount} lines that are not spans.`]
-      : []),
+    `${countOf(summary.spanCount, "span", "spans")} ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1).replace(/\.0+$/, "")} min).`,
+    ...(summary.skippedLineCount > 0 ? [skippedLinesNote(summary.skippedLineCount)] : []),
     "",
     ...table.map((row) =>
       row
@@ -140,7 +144,10 @@ export function formatTraceSummary(
         .join("  "),
     ),
     ...(summary.spans.length > limit
-      ? ["", `${summary.spans.length - limit} more span names. Use --limit to show more.`]
+      ? [
+          "",
+          `${countOf(summary.spans.length - limit, "more span name", "more span names")}. Use --limit to show more.`,
+        ]
       : []),
   ].join("\n");
 }
@@ -182,7 +189,7 @@ const traceSummaryCommand = Command.make("summary", {
 
       yield* Console.log(
         summary.spanCount === 0
-          ? `No spans found in ${traceFilePath} or its rotated files${sinceMs === undefined ? "" : " in that window"}.${summary.skippedLineCount > 0 ? ` Skipped ${summary.skippedLineCount} lines that are not spans.` : ""}`
+          ? `No spans found in ${traceFilePath} or its rotated files${sinceMs === undefined ? "" : " in that window"}.${summary.skippedLineCount > 0 ? ` ${skippedLinesNote(summary.skippedLineCount)}` : ""}`
           : formatTraceSummary(summary, flags.limit),
       );
     }),
