@@ -21,96 +21,15 @@ jobs:
           result-encoding: string
           script: |
             const managedLabels = [
-              {
-                name: "size:XS",
-                color: "0e8a16",
-                description: "0-9 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:S",
-                color: "5ebd3e",
-                description: "10-29 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:M",
-                color: "fbca04",
-                description: "30-99 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:L",
-                color: "fe7d37",
-                description: "100-499 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:XL",
-                color: "d93f0b",
-                description: "500-999 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:XXL",
-                color: "b60205",
-                description: "1,000+ effective changed lines (test files excluded in mixed PRs).",
-              },
+              { name: "size:XS" },
+              { name: "size:S" },
+              { name: "size:M" },
+              { name: "size:L" },
+              { name: "size:XL" },
+              { name: "size:XXL" },
             ];
 
             core.setOutput("labels_json", JSON.stringify(managedLabels));
-  sync-label-definitions:
-    name: Sync PR size label definitions
-    needs: prepare-config
-    if: github.event_name != 'pull_request_target'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - name: Ensure PR size labels exist
-        uses: actions/github-script@v8
-        env:
-          PR_SIZE_LABELS_JSON: ${{ needs.prepare-config.outputs.labels_json }}
-        with:
-          script: |
-            const managedLabels = JSON.parse(process.env.PR_SIZE_LABELS_JSON ?? "[]");
-
-            for (const label of managedLabels) {
-              try {
-                const { data: existing } = await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: label.name,
-                });
-
-                if (
-                  existing.color !== label.color ||
-                  (existing.description ?? "") !== label.description
-                ) {
-                  await github.rest.issues.updateLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    name: label.name,
-                    color: label.color,
-                    description: label.description,
-                  });
-                }
-              } catch (error) {
-                if (error.status !== 404) {
-                  throw error;
-                }
-
-                try {
-                  await github.rest.issues.createLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    name: label.name,
-                    color: label.color,
-                    description: label.description,
-                  });
-                } catch (createError) {
-                  if (createError.status !== 422) {
-                    throw createError;
-                  }
-                }
-              }
-            }
   label:
     name: Label PR size
     needs: prepare-config
