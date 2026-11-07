@@ -20,7 +20,19 @@ describe("resolvePlanFollowUpSubmission", () => {
         planMarkdown: "## Ship it\n\n- step 1\n",
       }),
     ).toEqual({
-      text: "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1",
+      text: "PLEASE IMPLEMENT THIS PLAN: Ship it",
+      interactionMode: "default",
+    });
+  });
+
+  it("falls back to a generic plan reference when the plan has no title", () => {
+    expect(
+      resolvePlanFollowUpSubmission({
+        draftText: "",
+        planMarkdown: "- step 1\n- step 2\n",
+      }),
+    ).toEqual({
+      text: "PLEASE IMPLEMENT THIS PLAN: the proposed plan",
       interactionMode: "default",
     });
   });

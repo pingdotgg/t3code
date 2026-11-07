@@ -1,4 +1,11 @@
-import { stripDisplayedPlanMarkdown, proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
+import {
+  buildPlanImplementationPrompt,
+  PLAN_IMPLEMENTATION_PROMPT_PREFIX,
+  stripDisplayedPlanMarkdown,
+  proposedPlanTitle,
+} from "@t3tools/shared/proposedPlanText";
+
+export { buildPlanImplementationPrompt, PLAN_IMPLEMENTATION_PROMPT_PREFIX };
 
 export function buildCollapsedProposedPlanPreviewMarkdown(
   planMarkdown: string,
@@ -49,12 +56,6 @@ function sanitizePlanFileSegment(input: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return sanitized.length > 0 ? sanitized : "plan";
-}
-
-export const PLAN_IMPLEMENTATION_PROMPT_PREFIX = "PLEASE IMPLEMENT THIS PLAN:\n";
-
-export function buildPlanImplementationPrompt(planMarkdown: string): string {
-  return `${PLAN_IMPLEMENTATION_PROMPT_PREFIX}${planMarkdown.trim()}`;
 }
 
 export function resolvePlanFollowUpSubmission(input: { draftText: string; planMarkdown: string }): {
