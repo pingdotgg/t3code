@@ -855,6 +855,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
             snapshot: snapshot.rateLimits.snapshot,
             rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
             resetCredits: snapshot.rateLimits.resetCredits,
+            accountId: snapshot.rateLimits.accountId,
             checkedAt,
           });
 
