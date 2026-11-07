@@ -23,10 +23,7 @@ import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ComposerTrigger } from "../../composer-logic";
 import type { DraftId } from "../../composerDraftStore";
 import { basenameOfPath } from "../../pierre-icons";
-import {
-  getProviderSkillsForSlashMenu,
-  getProviderSlashCommandsForSlashMenu,
-} from "@t3tools/client-runtime/providerSkills";
+import { getProviderSlashMenuEntries } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
@@ -274,14 +271,12 @@ export function useComposerMenuItems({
             ] as const)
           : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const slashMenuSkills = getProviderSkillsForSlashMenu(
+      const slashMenu = getProviderSlashMenuEntries(
         selectedProviderSkills,
+        selectedProviderSlashCommands,
         showSkillsInSlashMenu,
       );
-      const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
-        selectedProviderSlashCommands,
-        slashMenuSkills,
-      ).map((command) => ({
+      const providerSlashCommandItems = slashMenu.slashCommands.map((command) => ({
         id: `provider-slash-command:${selectedProvider}:${command.name}`,
         type: "provider-slash-command" as const,
         provider: selectedProvider,
@@ -290,7 +285,7 @@ export function useComposerMenuItems({
         description: command.description ?? command.input?.hint ?? "Run provider command",
       }));
       const query = composerTrigger.query.trim().toLowerCase();
-      const skillItems = slashMenuSkills.map((skill) => ({
+      const skillItems = slashMenu.skills.map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,
         type: "skill" as const,
         provider: selectedProvider,

@@ -42,21 +42,23 @@ export function isProviderSkillUserInvocable(
   return skill.enabled && skill.userInvocable !== false;
 }
 
-export function getProviderSkillsForSlashMenu(
+/**
+ * Providers such as Claude Code also advertise each skill as a native command;
+ * those commands are dropped whether or not the skills themselves are shown.
+ */
+export function getProviderSlashMenuEntries(
   skills: ReadonlyArray<ServerProviderSkill>,
-  showSkillsInSlashMenu: boolean,
-): ServerProviderSkill[] {
-  return showSkillsInSlashMenu
-    ? dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable))
-    : [];
-}
-
-export function getProviderSlashCommandsForSlashMenu(
   slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
-  visibleSkills: ReadonlyArray<ServerProviderSkill>,
-): ServerProviderSlashCommand[] {
-  const skillNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
-  return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
+  showSkillsInSlashMenu: boolean,
+): { skills: ServerProviderSkill[]; slashCommands: ServerProviderSlashCommand[] } {
+  const invocableSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
+  const skillNames = new Set(invocableSkills.map((skill) => skill.name.trim().toLowerCase()));
+  return {
+    skills: showSkillsInSlashMenu ? invocableSkills : [],
+    slashCommands: slashCommands.filter(
+      (command) => !skillNames.has(command.name.trim().toLowerCase()),
+    ),
+  };
 }
 
 export function resolveProviderSkillSourceKind(
