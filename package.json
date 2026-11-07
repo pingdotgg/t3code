@@ -30,6 +30,7 @@
     "tc": "vp run -r --cache --concurrency-limit 4 typecheck",
     "check:changed": "node scripts/check-changed.ts",
     "report:renders": "node scripts/render-metrics.ts",
+    "pr-merge-check": "node scripts/pr-merge-check.ts",
     "lint": "vp lint --report-unused-disable-directives",
     "knip": "knip --preprocessor ./scripts/knip-schemas.ts",
     "knip:check": "vp run knip:check:all",
