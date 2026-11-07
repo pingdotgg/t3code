@@ -53,13 +53,13 @@ import { tokenTypeSegments } from "./usage/usageBreakdown";
 import { UsageShareBar, type ShareSegment } from "./usage/UsageShareBar";
 
 const SPAN_BAR_CLASS: Record<TimingSpanKind, string> = {
-  queue: "bg-muted-foreground/45",
-  reasoning: "bg-muted-foreground/70",
-  assistant: "bg-foreground/70",
-  tool: "bg-foreground/85",
-  subagent: "bg-foreground/85",
-  wait: "bg-warning",
-  other: "bg-muted-foreground/55",
+  queue: "border-border/60 bg-foreground/15 text-foreground",
+  reasoning: "border-border/60 bg-foreground/20 text-foreground",
+  assistant: "border-black/10 bg-foreground/70 text-background",
+  tool: "border-black/10 bg-foreground/85 text-background",
+  subagent: "border-black/10 bg-foreground/85 text-background",
+  wait: "border-black/10 bg-warning text-background",
+  other: "border-border/60 bg-foreground/18 text-foreground",
 };
 
 const TURN_ROW_HEIGHT = 28;
@@ -546,7 +546,7 @@ function ContextOccupancyChart({
         role="img"
         aria-label={`Context occupancy peaked at ${meta}`}
         viewBox={`0 0 ${width} ${height}`}
-        className="h-16 w-full bg-muted/15"
+        className="h-16 w-full overflow-hidden rounded-md border border-border/50 bg-muted/15"
         preserveAspectRatio="none"
       >
         <path d={areaPath} className="fill-foreground/10" />
@@ -559,30 +559,24 @@ function ContextOccupancyChart({
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
         />
-        {series.points.map((point, index) => {
-          const selected = selectedRunId !== null && point.runId === selectedRunId;
-          const isCompaction = point.kind !== "turn";
-          const radius = selected ? 2.8 : isCompaction ? 2.2 : 1.6;
-          return (
-            <circle
-              key={`${point.kind}:${point.atMs}:${point.usedTokens}:${point.runId ?? ""}`}
-              cx={xForIndex(index)}
-              cy={yFor(point.usedTokens)}
-              r={radius}
-              className={
-                selected
-                  ? "fill-foreground"
-                  : point.kind === "compaction-after"
-                    ? "fill-background stroke-foreground/70"
-                    : point.kind === "compaction-before"
-                      ? "fill-warning"
-                      : "fill-foreground/70"
-              }
-              strokeWidth={point.kind === "compaction-after" ? 1.25 : undefined}
-              vectorEffect="non-scaling-stroke"
-            />
-          );
-        })}
+        {/* Markers omitted: preserveAspectRatio=none stretches circles into ovals. */}
+        {selectedRunId !== null
+          ? series.points.map((point, index) => {
+              if (point.runId !== selectedRunId) return null;
+              return (
+                <line
+                  key={`sel:${point.kind}:${point.atMs}`}
+                  x1={xForIndex(index)}
+                  x2={xForIndex(index)}
+                  y1={padTop}
+                  y2={height - padBottom}
+                  className="stroke-foreground/50"
+                  strokeWidth={1}
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            })
+          : null}
       </svg>
     </section>
   );
@@ -1050,7 +1044,7 @@ function FlameViewport({
                 "cursor-pointer hover:brightness-110",
                 node.kind === "turn"
                   ? "border-foreground/40 bg-card/90 font-medium text-foreground"
-                  : cn("border-black/10 text-background", SPAN_BAR_CLASS[node.kind]),
+                  : SPAN_BAR_CLASS[node.kind],
                 selected && "ring-2 ring-ring ring-offset-1 ring-offset-background",
               )}
               style={{
