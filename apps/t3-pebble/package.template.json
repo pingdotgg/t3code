@@ -1,0 +1,122 @@
+{
+  "name": "t3-pebble",
+  "author": "T3 Code",
+  "version": "1.0.0",
+  "keywords": [
+    "pebble-app"
+  ],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "T3 Code",
+    "uuid": "c409baea-cd10-437b-be46-f59452d877e8",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "action",
+      "thread",
+      "title",
+      "message",
+      "bytes",
+      "size",
+      "checksum",
+      "machine",
+      "directory",
+      "harness",
+      "age",
+      "item",
+      "summary",
+      "status"
+    ],
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "MENU_ICON",
+          "file": "images/icon.png",
+          "menuIcon": true
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_CODEX_BLACK",
+          "file": "images/providers/codex-black.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_CODEX_WHITE",
+          "file": "images/providers/codex-white.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_CLAUDE_BLACK",
+          "file": "images/providers/claude-black.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_CLAUDE_WHITE",
+          "file": "images/providers/claude-white.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_CURSOR_BLACK",
+          "file": "images/providers/cursor-black.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_CURSOR_WHITE",
+          "file": "images/providers/cursor-white.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_GROK_BLACK",
+          "file": "images/providers/grok-black.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_GROK_WHITE",
+          "file": "images/providers/grok-white.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_OPENCODE_BLACK",
+          "file": "images/providers/opencode-black.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_OPENCODE_WHITE",
+          "file": "images/providers/opencode-white.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_ANTIGRAVITY_BLACK",
+          "file": "images/providers/antigravity-black.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_ANTIGRAVITY_WHITE",
+          "file": "images/providers/antigravity-white.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_KIRO_BLACK",
+          "file": "images/providers/kiro-black.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "PROVIDER_KIRO_WHITE",
+          "file": "images/providers/kiro-white.png"
+        }
+      ]
+    },
+    "usesPermissions": [],
+    "capabilities": [
+      "configurable"
+    ]
+  }
+}
