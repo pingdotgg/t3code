@@ -78,3 +78,26 @@ export function pickStrippedWorkspaceMatch(
   const files = entries.filter((entry) => entry.kind === "file");
   return files.find((entry) => key(entry.path) === key(strippedPath))?.path ?? null;
 }
+
+// A project rooted above a repository gets repository-relative links ("docs/x.md"
+// for "repo/docs/x.md"). Take the shallowest file ending in that path; ties keep
+// search rank, like the basename lookup.
+export function pickNestedWorkspaceMatch(
+  relativePath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  if (isAbsolutePath(relativePath)) return null;
+  const caseInsensitive = isWindowsAbsolutePath(cwd);
+  const key = (path: string) => {
+    const normalized = path.replaceAll("\\", "/");
+    return caseInsensitive ? normalized.toLowerCase() : normalized;
+  };
+  const suffix = `/${key(relativePath).replace(/^\.\//, "")}`;
+  const depth = (path: string) => path.split(/[\\/]+/).length;
+  const matches = entries.filter(
+    (entry) => entry.kind === "file" && key(entry.path).endsWith(suffix),
+  );
+  const shallowest = Math.min(...matches.map((entry) => depth(entry.path)));
+  return matches.find((entry) => depth(entry.path) === shallowest)?.path ?? null;
+}

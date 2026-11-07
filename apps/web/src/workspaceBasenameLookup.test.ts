@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   claimWorkspaceBasenameLookup,
+  pickNestedWorkspaceMatch,
   pickWorkspaceBasenameMatch,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 
@@ -59,5 +60,59 @@ describe("claimWorkspaceBasenameLookup", () => {
 
     expect(second()).toBe(true);
     expect(first()).toBe(false);
+  });
+});
+
+describe("pickNestedWorkspaceMatch", () => {
+  const cwd = "/Users/dev/workspace";
+
+  it("finds a repository-relative path inside a nested repository", () => {
+    expect(
+      pickNestedWorkspaceMatch("docs/STATUS.md", cwd, [
+        { path: "repo/docs/STATUS-old.md", kind: "file" },
+        { path: "repo/docs/STATUS.md", kind: "file" },
+      ]),
+    ).toBe("repo/docs/STATUS.md");
+  });
+
+  it("prefers the shallowest copy over worktree copies deeper down", () => {
+    expect(
+      pickNestedWorkspaceMatch("docs/STATUS.md", cwd, [
+        { path: "worktrees/lane-a/docs/STATUS.md", kind: "file" },
+        { path: "repo/docs/STATUS.md", kind: "file" },
+        { path: "worktrees/lane-b/docs/STATUS.md", kind: "file" },
+      ]),
+    ).toBe("repo/docs/STATUS.md");
+  });
+
+  it("keeps search rank between equally shallow copies", () => {
+    expect(
+      pickNestedWorkspaceMatch("docs/STATUS.md", cwd, [
+        { path: "worktrees/lane-a/docs/STATUS.md", kind: "file" },
+        { path: "repo-a/docs/STATUS.md", kind: "file" },
+        { path: "repo-b/docs/STATUS.md", kind: "file" },
+      ]),
+    ).toBe("repo-a/docs/STATUS.md");
+  });
+
+  it("matches whole path segments only, and never directories", () => {
+    expect(
+      pickNestedWorkspaceMatch("docs/STATUS.md", cwd, [
+        { path: "repo/mydocs/STATUS.md", kind: "file" },
+        { path: "repo/docs/STATUS.md", kind: "directory" },
+      ]),
+    ).toBeNull();
+  });
+
+  it("folds case only for Windows workspaces", () => {
+    const entries = [{ path: "repo\\Docs\\Status.md", kind: "file" as const }];
+    expect(pickNestedWorkspaceMatch("docs/status.md", "C:\\work", entries)).toBe(
+      "repo\\Docs\\Status.md",
+    );
+    expect(pickNestedWorkspaceMatch("docs/status.md", cwd, entries)).toBeNull();
+  });
+
+  it("returns null when nothing matches", () => {
+    expect(pickNestedWorkspaceMatch("docs/STATUS.md", cwd, [])).toBeNull();
   });
 });
