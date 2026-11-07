@@ -31,6 +31,22 @@
           },
         };
         // BEGIN GENERATED THEME DATA
+        const resolveThemeSelectionAppearance = function resolveThemeSelectionAppearance(
+          selection,
+        ) {
+          const wanted =
+            selection.mode === "system"
+              ? selection.systemDark
+                ? "dark"
+                : "light"
+              : selection.mode;
+          if (wanted === null) return selection.baseAppearance;
+          return selection.hasHalf ||
+            selection.appearances === null ||
+            selection.appearances.includes(wanted)
+            ? wanted
+            : selection.baseAppearance;
+        };
         const themeSelectionStorage = function themeSelectionStorage(storage) {
           const key = "t3code:theme-selection:v1";
           const fields = {
@@ -355,23 +371,15 @@
               }
             }
           } catch {}
-          const themeMode = !isThemed
-            ? null
-            : appearanceMode === "system"
-              ? themeModes.includes(systemMode)
-                ? systemMode
-                : baseAppearance
-              : themeModes.includes(appearanceMode)
-                ? appearanceMode
-                : baseAppearance;
-          const isDark =
-            halfThemeId !== null
-              ? wantedMode === "dark"
-              : isThemed
-                ? themeMode === "dark"
-                : appearanceMode === "system"
-                  ? prefersDark
-                  : appearanceMode === "dark";
+          const selectedAppearance = resolveThemeSelectionAppearance({
+            mode: appearanceMode,
+            systemDark: prefersDark,
+            baseAppearance: legacyMode ?? baseAppearance,
+            appearances: themeModes,
+            hasHalf: halfThemeId !== null,
+          });
+          const themeMode = isThemed ? selectedAppearance : null;
+          const isDark = selectedAppearance === "dark";
           const effectiveIsThemed = halfThemeId !== null || isThemed;
           const effectiveThemeId = halfThemeId ?? themeId;
           const effectiveCustomTheme = halfThemeId !== null ? halfCustomTheme : customTheme;

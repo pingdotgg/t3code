@@ -67,3 +67,20 @@ export function themeSelectionStorage(storage: {
       fields[legacyKey] ? patch({ [legacyKey]: null }) : storage.removeItem(legacyKey),
   };
 }
+
+export function resolveThemeSelectionAppearance(selection: {
+  mode: "light" | "dark" | "system" | null;
+  systemDark: boolean;
+  baseAppearance: "light" | "dark";
+  appearances: ReadonlyArray<"light" | "dark"> | null;
+  hasHalf: boolean;
+}): "light" | "dark" {
+  const wanted =
+    selection.mode === "system" ? (selection.systemDark ? "dark" : "light") : selection.mode;
+  if (wanted === null) return selection.baseAppearance;
+  return selection.hasHalf ||
+    selection.appearances === null ||
+    selection.appearances.includes(wanted)
+    ? wanted
+    : selection.baseAppearance;
+}

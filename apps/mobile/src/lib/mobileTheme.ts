@@ -1,9 +1,16 @@
+import { resolveThemeDefinition as getThemeColorsForAppearance } from "@t3tools/shared/themeResolution";
+import {
+  themeRgbToOklch,
+  oklchToRgbUnclamped,
+  linearChannelToSrgb,
+  themeRelativeLuminance,
+  themeContrastRatio,
+} from "@t3tools/shared/themeResolution";
 import {
   BUILT_IN_THEMES,
   T3_CHAT_THEME,
   T3_CODE_LIGHT_THEME_COLORS,
   T3_CODE_DARK_THEME_COLORS,
-  getThemeColorsForAppearance,
   MOBILE_DEFAULT_THEME_ID,
   MOBILE_THEME_IDS as SHARED_MOBILE_THEME_IDS,
   type MobileThemeId as SharedMobileThemeId,
@@ -89,25 +96,18 @@ export function createMobileThemePairPatch(value: MobileThemeId) {
 
 const OKLCH_PATTERN = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/;
 
-function linearToSrgb(value: number): number {
-  const converted = value <= 0.0031308 ? 12.92 * value : 1.055 * value ** (1 / 2.4) - 0.055;
-  return Math.round(Math.min(1, Math.max(0, converted)) * 255);
-}
-
 function oklabToLinearSrgb(lightness: number, a: number, b: number) {
-  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
-  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
-  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
-  return [
-    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
-  ] as const;
+  const rgb = oklchToRgbUnclamped({
+    L: lightness,
+    C: Math.hypot(a, b),
+    h: (Math.atan2(b, a) * 180) / Math.PI,
+  });
+  return [rgb.r, rgb.g, rgb.b] as const;
 }
 
 function oklabToSrgb(lightness: number, a: number, b: number) {
   const [red, green, blue] = oklabToLinearSrgb(lightness, a, b);
-  return [linearToSrgb(red), linearToSrgb(green), linearToSrgb(blue)] as const;
+  return [linearChannelToSrgb(red), linearChannelToSrgb(green), linearChannelToSrgb(blue)] as const;
 }
 
 /** React Native does not accept OKLCH ColorValues, so palettes cross the app boundary as sRGB. */
@@ -170,26 +170,14 @@ export function flattenThemeColor(color: string, surface: string): string {
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function srgbToLinear(channel: number): number {
-  const value = channel / 255;
-  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+function srgbToOklab([r, g, b]: readonly [number, number, number]) {
+  const color = themeRgbToOklch({ r, g, b });
+  const hue = (color.h * Math.PI) / 180;
+  return [color.L, color.C * Math.cos(hue), color.C * Math.sin(hue)] as const;
 }
 
-function srgbToOklab(channels: readonly [number, number, number]) {
-  const [red = 0, green = 0, blue = 0] = channels.map(srgbToLinear);
-  const l = Math.cbrt(0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue);
-  const m = Math.cbrt(0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue);
-  const s = Math.cbrt(0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue);
-  return [
-    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
-    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
-    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
-  ] as const;
-}
-
-function relativeLuminance(channels: readonly [number, number, number]): number {
-  const [red, green, blue] = channels.map(srgbToLinear);
-  return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+function relativeLuminance([r, g, b]: readonly [number, number, number]): number {
+  return themeRelativeLuminance({ r, g, b });
 }
 
 export function isDarkThemeColor(color: string): boolean {
@@ -201,11 +189,9 @@ function contrastRatio(
   first: readonly [number, number, number],
   second: readonly [number, number, number],
 ): number {
-  const firstLuminance = relativeLuminance(first);
-  const secondLuminance = relativeLuminance(second);
-  return (
-    (Math.max(firstLuminance, secondLuminance) + 0.05) /
-    (Math.min(firstLuminance, secondLuminance) + 0.05)
+  return themeContrastRatio(
+    { r: first[0], g: first[1], b: first[2] },
+    { r: second[0], g: second[1], b: second[2] },
   );
 }
 
@@ -465,15 +451,14 @@ export function getMobileThemeVariables(
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
+  const presentation = BUILT_IN_THEMES.find((theme) => theme.id === themeId)?.presentation;
   const groupedCard =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? appearance === "light"
         ? colors.toolbarControlHover
         : colors.sidebarRowActive
-      : themeId === "t3-chat"
-        ? appearance === "light"
-          ? colors.toolbarControl
-          : colors.surface
+      : presentation?.nativeGroupedCard
+        ? colors[presentation.nativeGroupedCard[appearance]]
         : colors.muted;
   const mobileColors =
     themeId === DEFAULT_MOBILE_THEME_ID
@@ -492,9 +477,9 @@ export function getMobileThemeVariables(
     mobileColors,
     appearance,
     groupedCard,
-    themeId === "t3-chat" && appearance === "dark"
+    presentation?.nativeActionPair === "foreground-first" && appearance === "dark"
       ? [colors.messageActionForeground, colors.messageAction]
-      : themeId !== DEFAULT_MOBILE_THEME_ID && themeId !== "t3-chat"
+      : themeId !== DEFAULT_MOBILE_THEME_ID && presentation?.nativeActionPair !== "foreground-first"
         ? [colors.messageAction, colors.messageActionForeground]
         : undefined,
   );

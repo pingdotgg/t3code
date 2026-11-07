@@ -1,3 +1,4 @@
+import { resolveThemeSelectionAppearance } from "@t3tools/shared/themeSelection";
 import {
   parseThemeSource,
   resolveThemeSource,
@@ -968,6 +969,9 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   if (!root?.style) return;
 
   root.dataset.themeId = THEME_PREVIEW_ID;
+  delete root.dataset.themeInlineCode;
+  delete root.dataset.themeSidebarDivider;
+  delete root.dataset.themeGrainSize;
   root.classList.toggle("dark", appearance === "dark");
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
@@ -984,6 +988,15 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
 
   setThemePreviewAppearance(null);
   const palette = getThemeDefinition(theme);
+  const presentation = palette?.presentation;
+  for (const [key, value] of Object.entries({
+    themeInlineCode: presentation?.inlineCodeSurface,
+    themeSidebarDivider: presentation?.sidebarDivider,
+    themeGrainSize: presentation?.grainSize?.toString(),
+  })) {
+    if (value === undefined) delete root.dataset[key];
+    else root.dataset[key] = value;
+  }
 
   const mode = appearance ?? (palette ? (legacyThemeMode(theme) ?? palette.appearance) : "light");
   const colors = palette
@@ -1003,23 +1016,16 @@ export function resolveThemeAppearance(
   appearanceMode?: ThemePreferenceMode,
   halves?: ThemeHalves | null,
 ): "light" | "dark" {
-  const systemAppearance = systemDark ? "dark" : "light";
   const mode = appearanceMode ?? ((followSystem ?? theme === "system") ? "system" : null);
-  if (mode === "system") {
-    if (halves?.[systemAppearance]) return systemAppearance;
-    const definition = getThemeDefinition(theme);
-    return definition && getThemeColorsForMode(definition, systemAppearance) === null
-      ? definition.appearance
-      : systemAppearance;
-  }
-  if (mode === "light" || mode === "dark") {
-    if (halves?.[mode]) return mode;
-    const definition = getThemeDefinition(theme);
-    return definition && getThemeColorsForMode(definition, mode) === null
-      ? definition.appearance
-      : mode;
-  }
-  return getThemePreferenceMode(theme) ?? "light";
+  const definition = getThemeDefinition(theme);
+  const wanted = mode === "system" ? (systemDark ? "dark" : "light") : mode;
+  return resolveThemeSelectionAppearance({
+    mode,
+    systemDark,
+    baseAppearance: getThemePreferenceMode(theme) ?? "light",
+    appearances: definition ? getThemeModes(definition) : null,
+    hasHalf: wanted !== null && halves?.[wanted] !== undefined,
+  });
 }
 
 export function resolveDesktopTheme(

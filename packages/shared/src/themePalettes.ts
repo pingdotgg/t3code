@@ -109,6 +109,13 @@ export type ThemeDefinition = Readonly<{
   variants?: ThemeVariants;
   collection?: Readonly<{ id: string; label: string }>;
   sidebarArtwork?: boolean;
+  presentation?: Readonly<{
+    inlineCodeSurface?: "message";
+    sidebarDivider?: "palette";
+    grainSize?: 128;
+    nativeGroupedCard?: Readonly<Record<ThemeAppearance, ThemeColorRole>>;
+    nativeActionPair?: "foreground-first";
+  }>;
   managed?: boolean;
 }>;
 
@@ -237,6 +244,13 @@ export const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
 };
 
 export const T3_CHAT_THEME: ThemeDefinition = {
+  presentation: {
+    inlineCodeSurface: "message",
+    sidebarDivider: "palette",
+    grainSize: 128,
+    nativeGroupedCard: { light: "toolbarControl", dark: "surface" },
+    nativeActionPair: "foreground-first",
+  },
   id: "t3-chat",
   label: "T3 Chat",
   appearance: "light",
