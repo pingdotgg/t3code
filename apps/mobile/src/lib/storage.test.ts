@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => {
   const values = new Map<string, string>();
@@ -98,20 +98,27 @@ vi.mock("react-native", () => ({
   },
 }));
 
-import { loadPreferences, savePreferencesPatch } from "../persistence/imperative";
+let runtime: typeof import("./runtime").runtime;
+let storage: typeof import("../persistence/imperative");
 
 describe("mobile connection storage", () => {
-  beforeEach(() => {
+  // The preferences store caches per runtime, so each case gets a fresh one.
+  beforeEach(async () => {
     mocks.clear();
     vi.clearAllMocks();
+    vi.resetModules();
+    ({ runtime } = await import("./runtime"));
+    storage = await import("../persistence/imperative");
   });
+
+  afterEach(() => runtime.dispose());
 
   it("persists tab order locally and retains it when another preference changes", async () => {
     const navigationTabOrder = ["usage", "threads", "pullRequests"];
     const hiddenNavigationTabs = ["issues", "home"];
-    await savePreferencesPatch({ navigationTabOrder, hiddenNavigationTabs });
-    await savePreferencesPatch({ baseFontSize: 19 });
-    await expect(loadPreferences()).resolves.toEqual({
+    await storage.savePreferencesPatch({ navigationTabOrder, hiddenNavigationTabs });
+    await storage.savePreferencesPatch({ baseFontSize: 19 });
+    await expect(storage.loadPreferences()).resolves.toEqual({
       navigationTabOrder,
       hiddenNavigationTabs,
       baseFontSize: 19,
@@ -127,7 +134,7 @@ describe("mobile connection storage", () => {
       }),
       1,
     );
-    await expect(loadPreferences()).resolves.toEqual({
+    await expect(storage.loadPreferences()).resolves.toEqual({
       navigationTabOrder: ["usage", "threads"],
       hiddenNavigationTabs: ["home"],
       baseFontSize: 18,
@@ -138,12 +145,14 @@ describe("mobile connection storage", () => {
     mocks.setDatabaseFailures(true, true);
     await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 17 }));
 
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
+    await expect(storage.loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
   });
 
   it("falls back to secure storage when SQLite cannot save preferences", async () => {
     mocks.setDatabaseFailures(true, true);
-    await expect(savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual({ baseFontSize: 19 });
+    await expect(storage.savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual({
+      baseFontSize: 19,
+    });
     const fallback = JSON.parse(mocks.getStoredValue("t3code.preferences.fallback") ?? "") as {
       readonly payload: string;
       readonly updatedAt: number;
@@ -162,7 +171,7 @@ describe("mobile connection storage", () => {
       }),
     );
 
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 19 });
+    await expect(storage.loadPreferences()).resolves.toEqual({ baseFontSize: 19 });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 19 });
     expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
   });
@@ -177,7 +186,7 @@ describe("mobile connection storage", () => {
       }),
     );
 
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
+    await expect(storage.loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
     expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
   });
@@ -186,7 +195,7 @@ describe("mobile connection storage", () => {
     mocks.setPreferencesJson(JSON.stringify({ baseFontSize: 21 }), 30);
     await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 19 }));
 
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
+    await expect(storage.loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
   });
 });
