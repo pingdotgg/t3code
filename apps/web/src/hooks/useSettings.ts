@@ -442,6 +442,11 @@ export function useClientLayoutSettings(): LayoutSettings {
   return useClientSettings((settings) => settings.layout) ?? DEFAULT_LAYOUT_SETTINGS;
 }
 
+/** Labs › Scrolling workspaces: the niri parts of the layout. Off for everyone until turned on. */
+export function useScrollingWorkspacesEnabled(): boolean {
+  return useClientSettings((settings) => settings.scrollingWorkspacesEnabled);
+}
+
 function resolveEnvironmentIdentificationMode(input: {
   mode: EnvironmentIdentificationMode;
   settingsHydrated: boolean;

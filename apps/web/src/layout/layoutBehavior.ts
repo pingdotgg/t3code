@@ -20,6 +20,11 @@ export type {
 export type LayoutBehavior = Omit<LayoutSettings, "template"> & {
   /** The share a new terminal or side pane takes from its chat (Your layout). */
   readonly companionShares: Partial<Record<LayoutCompanionKind, number>>;
+  /**
+   * Labs › Scrolling workspaces. Off, `whenNoRoom` is always "always-shrink" and the
+   * workspace, overview and strip-scroll commands do nothing.
+   */
+  readonly scrollingWorkspaces: boolean;
 };
 
 const DEFAULT_LAYOUT_BEHAVIOR: LayoutBehavior = {
@@ -27,8 +32,9 @@ const DEFAULT_LAYOUT_BEHAVIOR: LayoutBehavior = {
   sidePanePlacement: "beside-chat",
   sidePaneOpensOn: "last-used",
   newTabPosition: "after-current",
-  whenNoRoom: "shrink-then-scroll",
+  whenNoRoom: "always-shrink",
   companionShares: {},
+  scrollingWorkspaces: false,
 };
 
 export const useLayoutBehaviorStore = create<{ behavior: LayoutBehavior }>(() => ({
@@ -43,4 +49,30 @@ export function useLayoutBehavior(): LayoutBehavior {
 /** For event handlers and store actions outside React. */
 export function getLayoutBehavior(): LayoutBehavior {
   return useLayoutBehaviorStore.getState().behavior;
+}
+
+/**
+ * The layout commands that only drive scrolling workspaces: switching, moving and
+ * overviewing workspaces, and centering a column on the strip. With the Labs toggle off
+ * they do nothing and are not listed in keybinding settings, the shortcut overlays or
+ * the command palette.
+ */
+const SCROLLING_WORKSPACE_COMMANDS: ReadonlySet<string> = new Set([
+  "layout.focusWorkspaceDown",
+  "layout.focusWorkspaceUp",
+  "layout.moveToWorkspaceDown",
+  "layout.moveToWorkspaceUp",
+  "layout.moveWorkspaceDown",
+  "layout.moveWorkspaceUp",
+  "layout.overview",
+  "layout.centerColumn",
+]);
+
+export function isScrollingWorkspaceCommand(command: string | null): boolean {
+  return command !== null && SCROLLING_WORKSPACE_COMMANDS.has(command);
+}
+
+/** Whether the Labs scrolling workspaces are on, for event handlers and store actions. */
+export function isScrollingWorkspacesEnabled(): boolean {
+  return useLayoutBehaviorStore.getState().behavior.scrollingWorkspaces;
 }
