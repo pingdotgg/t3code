@@ -3,9 +3,11 @@ import {
   isProviderWorkspaceSnapshotCurrent,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ModelSelection,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -57,6 +59,16 @@ export class ProviderRegistry extends Context.Service<
 
     readonly refresh: (
       provider?: ProviderDriverKind,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    readonly refreshUsage: (
+      instanceId?: ProviderInstanceId,
+      providers?: readonly ProviderDriverKind[],
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    readonly refreshUsageForModelSelection: (
+      primary: ModelSelection | null,
+      fallback: ModelSelection | null,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Unknown instance ids return the cached list without error. */
@@ -602,13 +614,17 @@ export const layer = Layer.effect(
         .getInstance(instance.instanceId)
         .pipe(Effect.map((current) => current === instance));
 
-    const refreshOneSource = Effect.fn("refreshOneSource")(function* (instance: ProviderInstance) {
+    const refreshOneSource = Effect.fn("refreshOneSource")(function* (
+      instance: ProviderInstance,
+      usage = false,
+    ) {
       const providerSource = buildSnapshotSource(instance);
       // Enrichment can publish a newer snapshot before refresh returns its pre-enrichment probe.
-      const probe = yield* providerSource.refresh.pipe(
-        Effect.andThen(providerSource.getSnapshot),
-        Effect.exit,
-      );
+      const probe = yield* (
+        usage
+          ? (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.orDie)
+          : providerSource.refresh
+      ).pipe(Effect.andThen(providerSource.getSnapshot), Effect.exit);
       // Settings can replace or remove the instance mid-probe; its late result or failure is stale.
       if (!(yield* isCurrentInstance(instance))) {
         return yield* Ref.get(providersRef);
@@ -617,6 +633,38 @@ export const layer = Layer.effect(
       return yield* correlateSnapshotWithSource(providerSource, nextProvider).pipe(
         Effect.flatMap(syncProvider),
       );
+    });
+
+    const refreshUsage = Effect.fn("ProviderRegistry.refreshUsage")(function* (
+      instanceId?: ProviderInstanceId,
+      providers?: readonly ProviderDriverKind[],
+    ) {
+      const instances = yield* instanceRegistry.listInstances;
+      yield* Effect.forEach(
+        instances.filter(
+          (instance) =>
+            (instanceId === undefined || instance.instanceId === instanceId) &&
+            (providers === undefined || providers.includes(instance.driverKind)),
+        ),
+        (instance) =>
+          refreshOneSource(instance, true).pipe(Effect.catchCause(recoverRefreshFailure)),
+        { concurrency: "unbounded" },
+      );
+      return yield* Ref.get(providersRef);
+    });
+
+    const refreshUsageForModelSelection = Effect.fn(
+      "ProviderRegistry.refreshUsageForModelSelection",
+    )(function* (primary: ModelSelection | null, fallback: ModelSelection | null) {
+      if (!primary || !fallback) return yield* Ref.get(providersRef);
+      const providers = yield* refreshUsage(primary.instanceId);
+      return exhaustedUsageWindow(
+        providers.find((provider) => provider.instanceId === primary.instanceId),
+        DateTime.toEpochMillis(yield* DateTime.now),
+        primary.model,
+      )
+        ? yield* refreshUsage(fallback.instanceId)
+        : providers;
     });
 
     type RefreshAllCompletion = Deferred.Deferred<ReadonlyArray<ServerProvider>>;
@@ -1071,6 +1119,17 @@ export const layer = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
+      refreshUsageForModelSelection: (primary, fallback) =>
+        refreshUsageForModelSelection(primary, fallback).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          // Launches wait at most as long as the client's new-thread bound, then use current snapshots.
+          Effect.timeoutOption(5_000),
+          Effect.flatMap(
+            Option.match({ onNone: () => Ref.get(providersRef), onSome: Effect.succeed }),
+          ),
+        ),
+      refreshUsage: (instanceId, providers) =>
+        refreshUsage(instanceId, providers).pipe(Effect.catchCause(recoverRefreshFailure)),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>

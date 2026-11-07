@@ -4,8 +4,11 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
@@ -16,12 +19,19 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProviderHost from "./ProviderHost.ts";
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
+import {
+  applyUsageLimitsUpdate,
+  resolveUsageLimitsAfterProbe,
+  UsagePolling,
+  UsageAfterReset,
+  UsageAccountReset,
+} from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+  readonly retainedUsageLimits?: ServerProvider["usageLimits"];
 }
 
 function withUsageLimits(
@@ -45,6 +55,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly checkUsageLimits?: Effect.Effect<ServerProvider["usageLimits"]>;
+  readonly getUsageRefreshKey?: Effect.Effect<string | undefined>;
   readonly invalidateUsageCache?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
@@ -61,8 +72,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   Scope.Scope | ProviderHost.ProviderHost
 > {
   const host = yield* ProviderHost.ProviderHost;
+  let usageRefreshAfter = 0;
   const refreshSemaphore = yield* Semaphore.make(1);
-  const usageRefreshQueued = yield* Ref.make<symbol | null>(null);
+  const usageRefreshQueued = yield* Ref.make<Deferred.Deferred<
+    Exit.Exit<void, ServerSettingsError>
+  > | null>(null);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
     PubSub.shutdown,
@@ -126,7 +140,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
-    options?: { readonly forceRefresh?: boolean },
+    options?: { readonly forceRefresh?: boolean; readonly usageRefreshKey?: string | undefined },
   ) {
     const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
@@ -150,7 +164,38 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
-    const probedSnapshot = yield* input.checkProvider;
+    const current = (yield* Ref.get(snapshotStateRef)).snapshot;
+    const accountReset = yield* UsageAccountReset;
+    if (
+      accountReset ||
+      (options?.usageRefreshKey !== undefined &&
+        options.usageRefreshKey !== current.auth.usageRefreshKey)
+    )
+      usageRefreshAfter = 0;
+    const now = yield* Clock.currentTimeMillis;
+    const pollingUsage =
+      (yield* UsagePolling) &&
+      ((yield* UsageAfterReset) ||
+        now >= usageRefreshAfter ||
+        current.usageLimits?.unavailable?.reason === "unsupported");
+    const probedSnapshot =
+      pollingUsage &&
+      input.checkUsageLimits &&
+      current.installed &&
+      current.status === "ready" &&
+      current.auth.status === "authenticated"
+        ? withUsageLimits(
+            options?.usageRefreshKey === undefined
+              ? current
+              : { ...current, auth: { ...current.auth, usageRefreshKey: options.usageRefreshKey } },
+            yield* input.checkUsageLimits,
+          )
+        : yield* input.checkProvider.pipe(Effect.provideService(UsagePolling, pollingUsage));
+    if (probedSnapshot.usageLimits?.externalUsage) {
+      usageRefreshAfter = 0;
+    } else if (probedSnapshot.usageLimits?.refreshAfter !== undefined) {
+      usageRefreshAfter = probedSnapshot.usageLimits.refreshAfter;
+    } else if (pollingUsage) usageRefreshAfter = (yield* Clock.currentTimeMillis) + 5 * 60_000;
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {
@@ -161,15 +206,47 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const previous = state.snapshot.auth;
         const differs = (a: string | undefined, b: string | undefined) =>
           a !== undefined && b !== undefined && a !== b;
-        const switchedAccount =
+        const previousLimits = state.retainedUsageLimits ?? state.snapshot.usageLimits;
+        const sameQuotaOwner =
+          previousLimits?.credentialFingerprint !== undefined &&
+          previousLimits.credentialFingerprint ===
+            probedSnapshot.usageLimits?.credentialFingerprint;
+        const changedUsageKey = differs(
+          probedSnapshot.auth.usageRefreshKey,
+          previous.usageRefreshKey,
+        );
+        const changedAccount =
+          accountReset ||
+          (probedSnapshot.auth.status === "authenticated" && previous.status !== "authenticated") ||
+          differs(probedSnapshot.auth.type, previous.type) ||
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
+        const switchedAccount =
+          changedAccount || (changedUsageKey && (!pollingUsage || !sameQuotaOwner));
+        // A health-only marker change cannot establish ownership of the selected quota credential.
+        const retainedUsageLimits =
+          !pollingUsage &&
+          !changedAccount &&
+          probedSnapshot.auth.status === "authenticated" &&
+          (changedUsageKey || state.retainedUsageLimits !== undefined) &&
+          previousLimits?.credentialFingerprint !== undefined
+            ? previousLimits
+            : undefined;
+        if (switchedAccount && !pollingUsage) usageRefreshAfter = 0;
         const usageLimits = switchedAccount
           ? probedSnapshot.usageLimits
           : resolveUsageLimitsAfterProbe({
-              published: state.snapshot.usageLimits,
-              probed: probedSnapshot.usageLimits,
+              published:
+                pollingUsage && sameQuotaOwner ? previousLimits : state.snapshot.usageLimits,
+              probed:
+                !pollingUsage &&
+                probedSnapshot.auth.status === "authenticated" &&
+                (probedSnapshot.usageLimits === undefined ||
+                  probedSnapshot.usageLimits.unavailable?.reason === "probeFailed") &&
+                state.snapshot.usageLimits
+                  ? state.snapshot.usageLimits
+                  : probedSnapshot.usageLimits,
             });
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
@@ -177,11 +254,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           workspaceId && !probedSnapshot.auth.workspaceId
             ? { ...probedSnapshot, auth: { ...probedSnapshot.auth, workspaceId } }
             : probedSnapshot,
-          usageLimits,
+          usageLimits === undefined || usageRefreshAfter === 0
+            ? usageLimits
+            : { ...usageLimits, refreshAfter: usageRefreshAfter },
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation },
+          { snapshot, enrichmentGeneration: generation, retainedUsageLimits },
         ] as const;
       },
     );
@@ -220,43 +299,58 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
 
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
-    const { snapshot } = yield* Ref.get(snapshotStateRef);
-    if (
-      !snapshot.enabled ||
-      !snapshot.usageLimits ||
-      snapshot.usageLimits.unavailable?.reason === "unsupported"
-    )
-      return;
     // An in-flight refresh may have read cached usage, so one refresh waits behind it.
-    const claim = Symbol();
-    const release = Ref.update(usageRefreshQueued, (queued) => (queued === claim ? null : queued));
     yield* Effect.uninterruptibleMask((restore) =>
-      Ref.modify(usageRefreshQueued, (queued) => [queued !== null, queued ?? claim]).pipe(
-        Effect.flatMap((held) =>
-          held
-            ? Effect.void
-            : restore(
-                refreshSemaphore.withPermits(1)(
-                  release.pipe(
-                    Effect.andThen(input.invalidateUsageCache ?? Effect.void),
-                    Effect.andThen(input.getSettings),
-                    Effect.flatMap((settings) =>
-                      applySnapshotBase(settings, { forceRefresh: true }),
-                    ),
-                  ),
-                ),
-              ).pipe(Effect.onInterrupt(() => release)),
-        ),
-      ),
+      Effect.gen(function* () {
+        while (true) {
+          const claim = yield* Deferred.make<Exit.Exit<void, ServerSettingsError>>();
+          const pending = yield* Ref.modify(
+            usageRefreshQueued,
+            (queued) => [queued, queued ?? claim] as const,
+          );
+          if (pending !== null) {
+            const completed = yield* restore(Deferred.await(pending));
+            // A cancelled owner cannot satisfy another caller's demand.
+            if (Exit.hasInterrupts(completed)) continue;
+            yield* completed;
+            return;
+          }
+          const release = Ref.update(usageRefreshQueued, (queued) =>
+            queued === claim ? null : queued,
+          );
+          yield* restore(
+            refreshSemaphore.withPermits(1)(
+              Effect.gen(function* () {
+                yield* release;
+                const settings = yield* input.getSettings;
+                const current = (yield* Ref.get(snapshotStateRef)).snapshot;
+                if (!current.enabled || current.usageLimits?.externalUsage) return;
+                const usageRefreshKey = yield* input.getUsageRefreshKey ?? Effect.undefined;
+                if (
+                  (usageRefreshKey === undefined ||
+                    usageRefreshKey === current.auth.usageRefreshKey) &&
+                  (yield* Clock.currentTimeMillis) < usageRefreshAfter &&
+                  current.usageLimits?.unavailable?.reason !== "unsupported" &&
+                  !(yield* UsageAfterReset) &&
+                  !(yield* UsageAccountReset) &&
+                  !input.haveSettingsChanged(yield* Ref.get(settingsRef), settings)
+                ) {
+                  return;
+                }
+                yield* input.invalidateUsageCache ?? Effect.void;
+                yield* applySnapshotBase(settings, { forceRefresh: true, usageRefreshKey }).pipe(
+                  Effect.provideService(UsagePolling, true),
+                );
+              }),
+            ),
+          ).pipe(
+            Effect.onExit((exit) => release.pipe(Effect.andThen(Deferred.succeed(claim, exit)))),
+          );
+          return;
+        }
+      }),
     );
   });
-
-  const needsUsageRecovery = (snapshot: ServerProvider) =>
-    input.checkUsageLimits !== undefined &&
-    snapshot.installed &&
-    snapshot.status === "ready" &&
-    snapshot.auth.status === "authenticated" &&
-    snapshot.usageLimits?.unavailable?.reason === "probeFailed";
 
   const needsProviderRefresh = (snapshot: ServerProvider) =>
     input.refreshOnInterval !== false &&
@@ -265,32 +359,16 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const refreshOnInterval = Effect.fn("ManagedServerProvider.refreshOnInterval")(function* () {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (!snapshot.enabled) return;
-    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
-      if (needsProviderRefresh(snapshot)) {
-        yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true });
-      }
-      return;
+    if (needsProviderRefresh(snapshot)) {
+      yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true });
     }
-    const probed = yield* input.checkUsageLimits;
-    const next = yield* Ref.modify(snapshotStateRef, (state) => {
-      const usageLimits = resolveUsageLimitsAfterProbe({
-        published: state.snapshot.usageLimits,
-        probed,
-      });
-      const snapshot = withUsageLimits(state.snapshot, usageLimits);
-      return [snapshot, { ...state, snapshot }] as const;
-    });
-    yield* PubSub.publish(changesPubSub, next);
   });
 
   const shouldRefreshOnInterval = Effect.gen(function* () {
     const state = yield* Ref.get(snapshotStateRef);
     // A disabled instance has nothing to probe; a periodic check would only
     // republish a snapshot that differs in checkedAt.
-    if (
-      !state.snapshot.enabled ||
-      (!needsUsageRecovery(state.snapshot) && !needsProviderRefresh(state.snapshot))
-    ) {
+    if (!state.snapshot.enabled || !needsProviderRefresh(state.snapshot)) {
       return false;
     }
     const instanceId = state.snapshot.instanceId;
@@ -331,7 +409,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   // retries, like the periodic and initial checks below.
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
     Effect.asVoid(applySnapshot(nextSettings)).pipe(Effect.ignoreCause({ log: true })),
-  ).pipe(Effect.forkScoped);
+  ).pipe(Effect.provideService(UsagePolling, false), Effect.forkScoped);
 
   yield* Effect.forever(
     getRefreshInterval.pipe(
@@ -360,9 +438,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       ),
       Effect.ignoreCause({ log: true }),
     ),
-  ).pipe(Effect.forkScoped);
+  ).pipe(Effect.provideService(UsagePolling, false), Effect.forkScoped);
 
   yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
+    Effect.provideService(UsagePolling, false),
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );

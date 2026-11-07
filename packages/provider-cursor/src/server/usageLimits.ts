@@ -1,3 +1,8 @@
+import {
+  usageResponseCheckedAt,
+  usageReadRefreshAfter,
+  UsageAccountIdentity,
+} from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import type { CursorSettings } from "../settings.ts";
 import { CURSOR_USAGE_WINDOWS } from "@t3tools/shared/usageLimits";
@@ -60,6 +65,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  let refreshAfter: number | undefined;
   return yield* Effect.gen(function* () {
     const endpoint = (
       settings.apiEndpoint?.trim() ||
@@ -67,6 +73,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
       DEFAULT_CURSOR_API_ENDPOINT
     ).replace(/\/$/, "");
     let token = environment.CURSOR_AUTH_TOKEN?.trim();
+    let usageIdentity: string | undefined;
     const apiKey = environment.CURSOR_API_KEY?.trim();
     if (!token && apiKey) {
       if (endpoint !== DEFAULT_CURSOR_API_ENDPOINT) {
@@ -76,26 +83,37 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
           message: "Cursor usage for an API key requires the default Cursor endpoint.",
         });
       }
+      usageIdentity = `cursor-api-key:${apiKey}`;
       token = yield* exchangeCursorApiKey(apiKey);
     }
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders({
-          "connect-protocol-version": "1",
-          "x-cursor-client-type": "cli",
-        }),
-        HttpClientRequest.bodyJsonUnsafe({}),
-      ),
-    );
+    const response = yield* client
+      .execute(
+        HttpClientRequest.post(
+          `${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`,
+        ).pipe(
+          HttpClientRequest.bearerToken(token),
+          HttpClientRequest.setHeaders({
+            "connect-protocol-version": "1",
+            "x-cursor-client-type": "cli",
+          }),
+          HttpClientRequest.bodyJsonUnsafe({}),
+        ),
+      )
+      .pipe(Effect.provideService(UsageAccountIdentity, usageIdentity));
+    refreshAfter = usageReadRefreshAfter(response);
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return cursorUsageResponseToLimits(body, checkedAt);
+    return cursorUsageResponseToLimits(body, usageResponseCheckedAt(response, checkedAt));
   }).pipe(
     Effect.timeout("10 seconds"),
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        refreshAfter ??= usageReadRefreshAfter(error);
+      }),
+    ),
     Effect.orElseSucceed(() =>
       makeUnavailableUsageLimits({
         checkedAt,
@@ -103,5 +121,9 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
         message: "Cursor could not read usage limits.",
       }),
     ),
+    Effect.map((limits) => ({
+      ...limits,
+      ...(refreshAfter !== undefined ? { refreshAfter } : {}),
+    })),
   );
 });

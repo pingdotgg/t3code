@@ -45,6 +45,7 @@ const clientLaunchHarness = (input: {
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly fallbackModel?: ModelSelection;
   readonly providers?: readonly ServerProvider[];
+  readonly refreshUsageForModelSelection?: ProviderRegistry.ProviderRegistry["Service"]["refreshUsageForModelSelection"];
   /** Where Settings saves a project's model; the legacy project field stays null. */
   readonly overrideModel?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
@@ -66,6 +67,8 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
+      refreshUsageForModelSelection:
+        input.refreshUsageForModelSelection ?? (() => Effect.succeed(input.providers ?? [])),
     }),
     ServerSettings.layerTest({
       fallbackModelSelection: input.fallbackModel ?? null,
@@ -601,7 +604,8 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
       runtimeModeCeiling: "full-access",
       launched,
       fallbackModel,
-      providers,
+      providers: providers.map((provider) => ({ ...provider, usageLimits: undefined })),
+      refreshUsageForModelSelection: () => Effect.succeed(providers),
     });
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(

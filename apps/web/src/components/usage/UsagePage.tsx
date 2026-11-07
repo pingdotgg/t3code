@@ -1,3 +1,4 @@
+import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -5,6 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
   USAGE_CONTRACT_VERSION,
+  ProviderDriverKind,
   type EnvironmentId,
   type UsageProviderKind,
   type UsageSummaryInput,
@@ -14,7 +16,11 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
+import {
+  refreshUsageLimits,
+  usageRefreshDeadline,
+  usageRefreshAccountKey,
+} from "@t3tools/client-runtime/state/usage";
 import {
   updatingProvidersLabel,
   usageEnvironmentProgress,
@@ -226,6 +232,10 @@ export function UsagePage() {
     reportFailure: false,
   });
 
+  const visibleDrivers = PROVIDER_ORDER.filter((provider) => !hiddenProviders.has(provider)).map(
+    (provider) => ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
+  );
+
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
   );
@@ -247,17 +257,52 @@ export function UsagePage() {
     if (nextMetric === "limits") setLimitsNow(Date.now());
     updatePreferences({ metric: nextMetric });
   };
-  const refreshLimits = (automatic = false) =>
+  const refreshLimits = () =>
     // Settled so the timestamp still advances when a refresh throws.
     settlePromise(() =>
       Promise.all(
-        Array.from(presentations, ([environmentId, presentation]) => {
+        Array.from(presentationsWithProviders, ([environmentId, presentation]) => {
           if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
             return refreshUsageLimits(
               environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
-              automatic,
+              () =>
+                refreshProviders({
+                  environmentId,
+                  input: {
+                    usage: true,
+                    usageProviders: visibleDrivers,
+                  },
+                }),
+              false,
+              JSON.stringify([
+                [...hiddenProviders].sort(),
+                usageRefreshAccountKey(
+                  presentation.serverConfig?.providers ?? [],
+                  null,
+                  null,
+                  presentation.connection.generation,
+                ),
+              ]),
+            ).then((response) =>
+              response !== undefined && AsyncResult.isSuccess(response)
+                ? usageRefreshDeadline(
+                    [
+                      ...response.value.providers
+                        .filter((provider) => visibleDrivers.includes(provider.driver))
+                        .map((provider) => provider.usageLimits),
+                      ...(
+                        appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))
+                          ?.usageLimitSources ?? []
+                      ).flatMap((source) =>
+                        source.accounts
+                          .filter((account) => visibleDrivers.includes(account.driver))
+                          .map((account) => account.usageLimits),
+                      ),
+                    ],
+                    response.value.serverTime,
+                  )
+                : undefined,
             );
           }
         }),
@@ -265,6 +310,10 @@ export function UsagePage() {
     ).then((result) => {
       setLimitsNow(Date.now());
       if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
+      const deadlines = result.value.filter(
+        (deadline): deadline is number => deadline !== undefined,
+      );
+      return deadlines.length ? Math.min(...deadlines) : undefined;
     });
   const onUsageKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (
@@ -332,12 +381,53 @@ export function UsagePage() {
     .sort()
     .join(",");
   const autoRefreshLimits = useEffectEvent(() => {
-    void refreshLimits(true);
+    return refreshLimits();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes provider limits from the server when the connected environment set changes
-  useEffect(() => {
-    if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
-  }, [showingLimits, connectedLimitsEnvironments]);
+  useLiveRefresh(() => autoRefreshLimits(), {
+    enabled:
+      showingLimits &&
+      connectedLimitsEnvironments !== "" &&
+      PROVIDER_ORDER.some((provider) => !hiddenProviders.has(provider)),
+    key: `usage-page:${connectedLimitsEnvironments}:${[...hiddenProviders].sort().join(",")}`,
+    refreshKeys: Array.from(presentationsWithProviders).flatMap(([environmentId, presentation]) =>
+      presentation.connection.phase === "connected" &&
+      presentation.serverConfig !== null &&
+      (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId))
+        ? [
+            ...visibleDrivers.map((driver) =>
+              JSON.stringify([
+                environmentId,
+                driver,
+                usageRefreshAccountKey(
+                  presentation.serverConfig?.providers ?? [],
+                  driver,
+                  null,
+                  presentation.connection.generation,
+                ),
+              ]),
+            ),
+            ...presentation.serverConfig.providers
+              .filter((provider) => visibleDrivers.includes(provider.driver))
+              .map((provider) =>
+                JSON.stringify([
+                  environmentId,
+                  provider.driver,
+                  provider.instanceId,
+                  usageRefreshAccountKey(
+                    presentation.serverConfig?.providers ?? [],
+                    provider.driver,
+                    provider.instanceId,
+                    presentation.connection.generation,
+                  ),
+                ]),
+              ),
+          ]
+        : [],
+    ),
+    refreshDeadline: (result) => (typeof result === "number" ? result : undefined),
+    refreshOnShow: true,
+    refreshWhileIdle: true,
+  });
 
   const days = enumerateDays(shownWindow.sinceDay, shownWindow.untilDay);
   const hours =
@@ -546,6 +636,7 @@ export function UsagePage() {
                 hiddenProviders={hiddenProviders}
                 refreshingUsage={refreshingUsage}
                 showChatGptSharing={showChatGptSharing}
+
                 onSelectModel={selectUsageModel}
               />
             )}

@@ -2,6 +2,7 @@ import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { useNewThreadUsage } from "../hooks/useNewThreadUsage";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
@@ -771,8 +772,8 @@ export default function ChatView(props: ChatViewProps) {
         fallbackDraftProject ?? undefined,
       ).settings.defaultModelSelection
     : null;
-  const draftModelResolution = draftThread
-    ? resolveNewThreadModelSelection({
+  const draftSelectionInput = draftThread
+    ? {
         defaultSelection:
           draftDefaultModelSelection ??
           resolveProjectDefaultProviderModelSelection(
@@ -780,12 +781,21 @@ export default function ChatView(props: ChatViewProps) {
             settings,
             draftThread.projectId,
           ),
+        explicitSelection: composerModelSelectionExplicit ? composerSelectedModelSelection : null,
         fallbackSelection: settings.fallbackModelSelection,
         providers: providersByEnvironment.get(draftThread.environmentId) ?? [],
         settings,
         projectId: draftThread.projectId,
         now: Date.parse(`${nowMinute}:00Z`),
-      })
+      }
+    : null;
+  const draftUsage = useNewThreadUsage(
+    draftThread?.environmentId ?? environmentId,
+    draftSelectionInput,
+    routeThreadKey,
+  );
+  const draftModelResolution = draftSelectionInput
+    ? resolveNewThreadModelSelection({ ...draftSelectionInput, providers: draftUsage.providers })
     : null;
   const draftFallback = draftModelResolution?.fallback ? draftModelResolution : null;
   const localDraftThread = draftThread
@@ -1406,6 +1416,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     threadKey: routeThreadKey,
     panelKey: usageLimitsKey,
+    visible: embedded || (!rightPanelMaximized && !rightPanelControlsInPanel),
     providerInstanceId: activeProviderInstanceId,
     providerDriver: activeProviderStatus?.driver ?? null,
     providers: providerStatuses,
@@ -2934,6 +2945,7 @@ export default function ChatView(props: ChatViewProps) {
     activeMessageCount,
     isServerThread,
     isLocalDraftThread,
+    prepareDraftSend: multipleModelSelections === null ? draftUsage.prepareSend : undefined,
     isGitRepo,
     phase,
     runtimeMode,
@@ -2953,7 +2965,7 @@ export default function ChatView(props: ChatViewProps) {
     isRevertingCheckpoint,
     threadDetailLoading,
     activeEnvironmentUnavailable,
-    isSendBusy,
+    isSendBusy: isSendBusy || draftUsage.pending,
     sendQueuesBehindSetup,
     isDraftHeroState,
     panelAnimationsActive,
@@ -3081,6 +3093,7 @@ export default function ChatView(props: ChatViewProps) {
     workLocallyResendDraftId === draftId &&
     isLocalDraftThread &&
     !isSendBusy &&
+    !draftUsage.pending &&
     !isRevertingCheckpoint &&
     !threadDetailLoading &&
     clientSettingsHydrated &&
@@ -3646,6 +3659,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isCompacting={isCompacting}
                                 canInterrupt={canInterruptRunningThread}
                                 isSendBusy={
+                                  draftUsage.pending ||
                                   (isSendBusy && !sendQueuesBehindSetup) ||
                                   (setupQueueSendThreadKey !== null &&
                                     setupQueueSendThreadKey === activeThreadKey) ||

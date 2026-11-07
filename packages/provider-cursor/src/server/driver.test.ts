@@ -70,17 +70,19 @@ it.layer(layerTest)("CursorDriver", (it) => {
     "persists browser credentials, uses them for chat, and closes the SDK session on logout",
     () =>
       Effect.gen(function* () {
+        let loginKey = "instance-browser-key";
+        let includeEmail = true;
         const login = vi.spyOn(Cursor.auth, "login").mockImplementation(async (options) => {
           options?.onLoginUrl?.("https://cursor.com/loginDeepControl?challenge=test-only");
           await options?.store?.save({
             version: 1,
             backendUrl: "https://api2.cursor.sh",
-            apiKey: "instance-browser-key",
+            apiKey: loginKey,
             createdAtMs: 0,
             apiKeyExpiresAtMs: 4_000_000_000_000,
-            email: "cursor@example.com",
+            ...(includeEmail ? { email: "cursor@example.com" } : {}),
           });
-          return { apiKey: "instance-browser-key", apiKeyExpiresAtMs: 4_000_000_000_000 };
+          return { apiKey: loginKey, apiKeyExpiresAtMs: 4_000_000_000_000 };
         });
         const requests: Array<{ url: string; authorization: string | undefined }> = [];
         const client = HttpClient.make((request) => {
@@ -93,7 +95,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
                   ? {
                       apiKeyName: "T3 Code",
                       createdAt: "2026-01-01T00:00:00.000Z",
-                      userEmail: "cursor@example.com",
+                      ...(includeEmail ? { userEmail: "cursor@example.com" } : {}),
                     }
                   : { items: [{ id: "auto", displayName: "Auto" }] },
               ),
@@ -153,6 +155,20 @@ it.layer(layerTest)("CursorDriver", (it) => {
           },
           setup: { canAuthenticate: true, canInstall: false },
         });
+        yield* instance.snapshot.applyUsageLimits({
+          checkedAt: "2026-04-10T00:00:01.000Z",
+          windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 70 }],
+        });
+        expect((yield* instance.snapshot.refresh).usageLimits?.windows[0]?.usedPercent).toBe(70);
+        loginKey = "replacement-browser-key";
+        includeEmail = false;
+        yield* instance.auth!.start("replacement-client");
+        yield* instance.auth!.subscribe("replacement-client").pipe(
+          Stream.filter((state) => state.phase === "succeeded"),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect((yield* instance.snapshot.getSnapshot).usageLimits?.windows ?? []).toEqual([]);
         const threadId = ThreadId.make("cursor-browser-thread");
         const modelSelection = { instanceId: input.instanceId, model: "auto" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -167,7 +183,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
           runtimePolicy,
         });
         yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
-        expect(openedKeys).toEqual(["instance-browser-key"]);
+        expect(openedKeys).toEqual(["replacement-browser-key"]);
         expect(closed).toBe(0);
         const recreated = yield* CursorDriver.create(input).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
@@ -181,7 +197,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
           (yield* Effect.exit(runtime.ensureThread({ threadId, modelSelection, runtimePolicy })))
             ._tag,
         ).toBe("Failure");
-        expect(openedKeys).toEqual(["instance-browser-key"]);
+        expect(openedKeys).toEqual(["replacement-browser-key"]);
         expect(closed).toBe(1);
       }).pipe(Effect.scoped),
   );

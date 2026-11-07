@@ -1,8 +1,12 @@
+import { UsagePolling, makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
+import * as CodexProvider from "./CodexProvider.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -468,6 +472,242 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.each(["workspace", "in-flight", "api-key", "sign-out"] as const)(
+    "tracks native Codex ownership across %s changes",
+    (transition) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const sharedHome = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(
+          path.join(sharedHome, "auth.json"),
+          JSON.stringify({ tokens: { account_id: "unrelated-shared-workspace" } }),
+        );
+        const authPath = path.join(home, "auth.json");
+        let workspace = "workspace-a";
+        let mode: "chatgpt" | "apiKey" | "signed-out" = "chatgpt";
+        const writeAccount = (next: string, issuedAt = 1) => {
+          workspace = next;
+          mode = "chatgpt";
+          return fs.writeFileString(
+            authPath,
+            JSON.stringify({
+              auth_mode: "chatgpt",
+              OPENAI_API_KEY: "unused-fixture-key",
+              tokens: {
+                account_id: workspace,
+                id_token: `header.${btoa(JSON.stringify({ "https://api.openai.com/auth": { user_id: "same-person" }, iat: issuedAt }))}.signature`,
+              },
+            }),
+          );
+        };
+        yield* writeAccount(workspace);
+        let quotaReads = 0;
+        let blocked = false;
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const probe: NonNullable<Parameters<typeof CodexProvider.checkCodexProviderStatus>[1]> = ({
+          skipNativeUsage,
+        }) =>
+          Effect.gen(function* () {
+            const captured = workspace;
+            const account =
+              mode === "chatgpt"
+                ? { type: "chatgpt" as const, email: "same@example.com", planType: "plus" }
+                : mode === "apiKey"
+                  ? { type: "apiKey" as const }
+                  : null;
+            if (!skipNativeUsage && mode === "chatgpt") {
+              quotaReads++;
+              if (blocked) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+            }
+            return {
+              account: { account, requiresOpenaiAuth: true },
+              ...(!skipNativeUsage && account?.type === "chatgpt"
+                ? {
+                    rateLimits: {
+                      snapshot: {
+                        primary: {
+                          usedPercent: captured === "workspace-a" ? 100 : 25,
+                          windowDurationMins: 300,
+                        },
+                      },
+                      resetCredits: undefined,
+                      accountId: captured,
+                    },
+                  }
+                : {}),
+              version: "0.0.0",
+              models: [],
+              skills: [],
+            };
+          });
+        const checkStatus = CodexProvider.checkCodexProviderStatus;
+        using _status = vi
+          .spyOn(CodexProvider, "checkCodexProviderStatus")
+          .mockImplementation((settings, _probe, env, managedAuth, skipUsage) =>
+            checkStatus(settings, probe, env, managedAuth, skipUsage),
+          );
+        const instanceId = ProviderInstanceId.make("codex-quota-owner");
+        const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+          drivers: [CodexDriver],
+          configMap: {
+            [instanceId]: {
+              driver: CodexDriver.driverKind,
+              enabled: true,
+              config: makeCodexConfig({
+                enabled: true,
+                binaryPath: "unused-codex",
+                homePath: sharedHome,
+                shadowHomePath: home,
+              }),
+            },
+          },
+        });
+        const instance = (yield* registry.getInstance(instanceId))!;
+        yield* instance.snapshot.refresh;
+        yield* instance.snapshot.refreshUsage!;
+        const first = yield* instance.snapshot.getSnapshot;
+        expect(first.usageLimits?.windows[0]?.usedPercent).toBe(100);
+        expect(quotaReads).toBe(1);
+        yield* writeAccount("workspace-a", 2);
+        yield* instance.snapshot.refreshUsage!;
+        expect(quotaReads).toBe(1);
+        yield* fs.writeFileString(authPath, "{");
+        yield* instance.snapshot.refreshUsage!;
+        expect(quotaReads).toBe(1);
+        expect((yield* instance.snapshot.getSnapshot).usageLimits?.windows[0]?.usedPercent).toBe(
+          100,
+        );
+        yield* writeAccount("workspace-a", 2);
+        if (transition === "workspace" || transition === "in-flight") {
+          if (transition === "in-flight") {
+            blocked = true;
+            yield* TestClock.adjust("5 minutes");
+            const pending = yield* instance.snapshot.refreshUsage!.pipe(Effect.forkChild);
+            yield* Deferred.await(started);
+            yield* writeAccount("workspace-b");
+            blocked = false;
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(pending);
+            const raced = yield* instance.snapshot.getSnapshot;
+            expect(raced.usageLimits?.windows ?? []).toEqual([]);
+            expect(raced.usageLimits?.refreshAfter).toBe(0);
+          } else yield* writeAccount("workspace-b");
+          yield* instance.snapshot.refreshUsage!;
+          const switched = yield* instance.snapshot.getSnapshot;
+          expect(switched.auth.workspaceId).toBe("workspace-b");
+          expect(switched.auth.usageRefreshKey).not.toBe(first.auth.usageRefreshKey);
+          expect(switched.usageLimits?.windows[0]?.usedPercent).toBe(25);
+          expect(quotaReads).toBe(transition === "in-flight" ? 3 : 2);
+          yield* writeAccount("workspace-c");
+          const health = yield* instance.snapshot.refresh;
+          expect(health.usageLimits?.windows ?? []).toEqual([]);
+          yield* instance.snapshot.refreshUsage!;
+          expect((yield* instance.snapshot.getSnapshot).auth.workspaceId).toBe("workspace-c");
+        } else {
+          mode = transition === "api-key" ? "apiKey" : "signed-out";
+          yield* fs.writeFileString(
+            authPath,
+            transition === "api-key" ? '{"OPENAI_API_KEY":"fixture-key"}' : "{}",
+          );
+          yield* instance.snapshot.refreshUsage!;
+          const changed = yield* instance.snapshot.getSnapshot;
+          expect(changed.usageLimits?.windows ?? []).toEqual([]);
+          expect(changed.auth.usageRefreshKey).not.toBe(first.auth.usageRefreshKey);
+          if (transition === "api-key") {
+            expect(changed.auth.type).toBe("apiKey");
+            expect(changed.usageLimits?.unavailable?.reason).toBe("unsupported");
+          } else expect(changed.auth.status).toBe("unauthenticated");
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("refreshes Claude quotas immediately after a local account switch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "claude-quota-account-" });
+      const binaryPath = writeFakeCli({
+        directory: path.join(home, "bin"),
+        name: "claude",
+        source: 'process.stdout.write("2.1.219");',
+      });
+      let account = "a";
+      const writeAccount = () =>
+        fs.writeFileString(
+          path.join(home, ".claude.json"),
+          JSON.stringify({
+            oauthAccount: {
+              organizationUuid: "shared-org",
+              accountUuid: account,
+              emailAddress: `${account}@example.com`,
+            },
+          }),
+        );
+      yield* writeAccount();
+      let quotaReads = 0;
+      using _query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: async () => ({
+              commands: [],
+              account: {
+                email: `${account}@example.com`,
+                subscriptionType: "pro",
+                tokenSource: "oauth",
+              },
+            }),
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
+              quotaReads++;
+              return {
+                rate_limits_available: true,
+                rate_limits: {
+                  five_hour: {
+                    utilization: account === "a" ? 100 : 25,
+                    resets_at: "2026-07-18T14:39:00Z",
+                  },
+                },
+              };
+            },
+          }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+      );
+      const instanceId = ProviderInstanceId.make("claude-quota-account-switch");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ClaudeDriver.driverKind,
+            enabled: true,
+            config: makeClaudeConfig({ enabled: true, binaryPath, homePath: home }),
+          },
+        },
+      });
+      const instance = (yield* registry.getInstance(instanceId))!;
+      yield* instance.snapshot.refresh;
+      yield* instance.snapshot.refreshUsage!;
+      const first = yield* instance.snapshot.getSnapshot;
+      expect(first.usageLimits?.windows[0]?.usedPercent).toBe(100);
+      expect(quotaReads).toBe(1);
+      yield* instance.snapshot.refreshUsage!;
+      expect(quotaReads).toBe(1);
+      account = "b";
+      yield* writeAccount();
+      yield* instance.snapshot.refreshUsage!;
+      const switched = yield* instance.snapshot.getSnapshot;
+      expect(switched.auth.email).toBe("b@example.com");
+      expect(switched.usageLimits?.windows[0]?.usedPercent).toBe(25);
+      expect(switched.auth.usageRefreshKey).not.toBe(first.auth.usageRefreshKey);
+      expect(quotaReads).toBe(2);
+      yield* instance.snapshot.refreshUsage!;
+      expect(quotaReads).toBe(2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>
     Effect.gen(function* () {
       if (yield* HostProcess.isWindows) return;
@@ -483,6 +723,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const claudeId = ProviderInstanceId.make("claude_probe_recovery");
       let probeCount = 0;
       let successfulProbeCount = 0;
+      let overrideAccount: string | undefined;
       let failProbe = false;
       const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
@@ -501,7 +742,10 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
                 ],
                 account: {
                   email:
-                    successfulProbeCount === 1 ? "account-a@example.com" : "account-b@example.com",
+                    overrideAccount ??
+                    (successfulProbeCount === 1
+                      ? "account-a@example.com"
+                      : "account-b@example.com"),
                   subscriptionType: "pro",
                   tokenSource: "oauth",
                 },
@@ -540,7 +784,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         auth: { status: "authenticated", email: "account-a@example.com", workspaceId: "org-a" },
         slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
       });
-      expect(first.usageLimits?.unavailable).toBeUndefined();
+      expect(first.usageLimits?.unavailable?.reason).toBe("probeFailed");
       expect(probeCount).toBe(1);
 
       yield* TestClock.adjust("1 second");
@@ -548,7 +792,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         accountConfigPath,
         JSON.stringify({ oauthAccount: { organizationUuid: "org-b" } }),
       );
-      yield* claude!.invalidateCaches ?? Effect.void;
       failProbe = true;
       const accountChangedFailure = yield* claude!.snapshot.refresh;
 
@@ -566,13 +809,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(failedProbeCount).toBeGreaterThan(1);
 
       failProbe = false;
+      yield* claude!.invalidateCaches ?? Effect.void;
       const recovered = yield* claude!.snapshot.refresh;
       expect(recovered).toMatchObject({
         status: "ready",
         auth: { status: "authenticated", email: "account-b@example.com", workspaceId: "org-b" },
         slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
       });
-      expect(recovered.usageLimits?.unavailable).toBeUndefined();
+      expect(recovered.usageLimits?.unavailable?.reason).toBe("probeFailed");
       const recoveredProbeCount = probeCount;
       expect(recoveredProbeCount).toBeGreaterThan(failedProbeCount);
 
@@ -591,15 +835,23 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(sameAccountFailureProbeCount).toBeGreaterThan(recoveredProbeCount);
 
       const repeatedFailure = yield* claude!.snapshot.refresh;
-      expect(repeatedFailure).toMatchObject({
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Claude Agent CLI failed while checking account status.",
-      });
-      expect(repeatedFailure.slashCommands).not.toEqual(
-        expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
-      );
-      expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
+      expect(repeatedFailure.auth).toEqual(sameAccountFailure.auth);
+      expect(repeatedFailure.slashCommands).toEqual(sameAccountFailure.slashCommands);
+      expect(probeCount).toBe(sameAccountFailureProbeCount);
+
+      failProbe = false;
+      overrideAccount = "account-a@example.com";
+      yield* claude!.invalidateCaches ?? Effect.void;
+      yield* claude!.snapshot.refresh;
+      yield* TestClock.adjust("1 minute");
+      yield* claude!.snapshot.refreshUsage!;
+      expect((yield* claude!.snapshot.getSnapshot).auth.email).toBe(overrideAccount);
+      yield* TestClock.adjust("4 minutes");
+      overrideAccount = "account-b@example.com";
+      const changedHealth = yield* claude!.snapshot.refresh;
+      expect(changedHealth.auth.email).toBe(overrideAccount);
+      yield* claude!.snapshot.refreshUsage!;
+      expect((yield* claude!.snapshot.getSnapshot).auth.email).toBe(overrideAccount);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -619,7 +871,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       );
       const client = HttpClient.make((request) =>
         Effect.gen(function* () {
-          if (request.url.endsWith("/api/oauth/usage")) {
+          if (new URL(request.url).pathname === "/api/oauth/usage") {
             return HttpClientResponse.fromWeb(
               request,
               Response.json({
@@ -638,6 +890,8 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           return HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }));
         }),
       );
+      const host = yield* ProviderHost.ProviderHost;
+      const usageHttpClient = yield* makeUsageHttpClient(client);
       const instanceId = ProviderInstanceId.make("claude_reset");
       const { registry } = yield* makeProviderInstanceRegistry({
         drivers: [ClaudeDriver],
@@ -658,10 +912,15 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             }),
           },
         },
-      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      }).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(ProviderHost.ProviderHost, { ...host, usageHttpClient }),
+      );
       const instance = yield* registry.getInstance(instanceId);
       expect(instance).toBeDefined();
-      const before = yield* instance!.snapshot.refresh;
+      const before = yield* instance!.snapshot.refresh.pipe(
+        Effect.provideService(UsagePolling, true),
+      );
       expect(before.usageLimits?.windows[0]?.usedPercent).toBe(100);
       expect(before.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
       const outcome = yield* instance!.consumeResetCredit!().pipe(Effect.result);
@@ -736,7 +995,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     const instance = yield* registry.getInstance(instanceId);
     expect(instance).toBeDefined();
     return {
-      refresh: instance!.snapshot.refresh,
+      refresh: instance!.snapshot.refresh.pipe(Effect.provideService(UsagePolling, true)),
       recover: fs.writeFileString(recovered, ""),
       probeLog: fs.readFileString(probeLog),
     };
@@ -745,8 +1004,8 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   for (const state of ["signed-out", "usage-failed"] as const) {
     it.effect.skipIf(windowsHost)(
       state === "signed-out"
-        ? "shows Claude usage on the first refresh after signing back in"
-        : "retries Claude usage on the first refresh after a failed usage read",
+        ? "refreshes Claude usage after signing back in and the cache expires"
+        : "caches a failed Claude usage probe until its normal refresh interval",
       () =>
         Effect.gen(function* () {
           const fixture = yield* makeClaudeCacheFixture(state);
@@ -759,7 +1018,13 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             expect(before.usageLimits?.unavailable?.reason).toBe("probeFailed");
           }
 
+          if (state === "usage-failed") {
+            const log = yield* fixture.probeLog;
+            yield* fixture.refresh;
+            expect(yield* fixture.probeLog).toBe(log);
+          }
           yield* fixture.recover;
+          yield* TestClock.adjust("5 minutes");
           const after = yield* fixture.refresh;
           expect(after.auth.status).toBe("authenticated");
           expect(after.usageLimits?.unavailable).toBeUndefined();

@@ -1,5 +1,7 @@
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { refreshNewThreadUsage } from "@t3tools/client-runtime/state/usage";
+import { serverEnvironment } from "../../state/server";
 import { useNowMinuteMs } from "../../lib/clock";
 import * as Dialog from "../../components/ui/Dialog";
 import React, { useEffect, useRef, useState } from "react";
@@ -196,7 +198,7 @@ type NewTaskFlowContextValue = {
     options?: {
       readonly currentCheckoutBranch?: string | null;
     },
-  ) => QueuedThreadMessage | null;
+  ) => Promise<QueuedThreadMessage | null>;
   readonly setPrompt: (value: string) => void;
   readonly replaceAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => void;
   /** Appends draft attachments; returns how many the live cap rejected. */
@@ -717,21 +719,43 @@ export function NewTaskFlowProvider(
     }
   };
 
-  const buildPendingTaskMessage = (
+  const buildPendingTaskMessage = async (
     metadata: TurnCommandMetadata,
     options?: { readonly currentCheckoutBranch?: string | null },
-  ): QueuedThreadMessage | null => {
+  ): Promise<QueuedThreadMessage | null> => {
     if (!selectedProject || !selectedProjectDraftKey) {
       return null;
     }
     const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
     const text = draft.text.trim();
-    const draftModelSelection =
-      resolveSelectableModelSelection(
-        selectedEnvironmentServerConfig,
-        draft.modelSelection ?? null,
-        selectedProject.id,
-      ) ?? selectedModel;
+    const savedSelection = resolveSelectableModelSelection(
+      selectedEnvironmentServerConfig,
+      draft.modelSelection ?? null,
+      selectedProject.id,
+    );
+    const selectionInput = {
+      defaultSelection: selectedDefaultModel,
+      explicitSelection:
+        savedSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
+      fallbackSelection: selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
+      providers: selectedEnvironmentServerConfig?.providers ?? [],
+      ...(selectedEnvironmentServerConfig
+        ? { settings: selectedEnvironmentServerConfig.settings }
+        : {}),
+      projectId: selectedProject.id,
+      now: Date.now(),
+    };
+    const providers = await refreshNewThreadUsage({
+      registry: appAtomRegistry,
+      server: serverEnvironment,
+      environmentId: selectedProject.environmentId,
+      input: selectionInput,
+    });
+    const refreshedSelection = resolveNewThreadModelSelection({
+      ...selectionInput,
+      providers,
+    }).selection;
+    const draftModelSelection = savedSelection ?? refreshedSelection;
     if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
       return null;
     }

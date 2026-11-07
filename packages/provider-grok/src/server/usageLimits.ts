@@ -1,5 +1,12 @@
+import {
+  UsageAccountIdentity,
+  usageResponseCheckedAt,
+  usageReadRefreshAfter,
+} from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -160,6 +167,7 @@ const readGrokCredential = Effect.fn("readGrokCredential")(function* (
 
 export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   environment: NodeJS.ProcessEnv = process.env,
+  includeUsage = true,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const probeFailed = makeUnavailableUsageLimits({
@@ -170,12 +178,38 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   const credential = yield* Effect.option(
     readGrokCredential(environment).pipe(Effect.timeout("10 seconds")),
   );
-  if (Option.isNone(credential)) return { email: undefined, usageLimits: probeFailed };
+  if (Option.isNone(credential))
+    return {
+      email: undefined,
+      usageLimits: probeFailed,
+      supportsUsageLimits: false,
+      usageRefreshKey: undefined,
+    };
   const email = credential.value?.email?.trim() || undefined;
   const token = credential.value?.key?.trim();
   if (!token) {
-    return { email, usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) };
+    return {
+      email,
+      usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+      supportsUsageLimits: false,
+      usageRefreshKey: "grok:unsupported",
+    };
   }
+  const digest = yield* Digest.Digest;
+  const credentialFingerprint = yield* digest
+    .digest(
+      Digest.sha256,
+      new TextEncoder().encode(email ? `grok\0account\0${email}` : `grok\0token\0${token}`),
+    )
+    .pipe(Effect.map(Hex.encode), Effect.orDie);
+  if (!includeUsage)
+    return {
+      email,
+      usageLimits: probeFailed,
+      supportsUsageLimits: true,
+      usageRefreshKey: credentialFingerprint,
+    };
+  let refreshAfter: number | undefined;
   const usageLimits = yield* Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
@@ -183,6 +217,7 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
         HttpClientRequest.bearerToken(token),
       ),
     );
+    refreshAfter = usageReadRefreshAfter(response);
     if (response.status === 403) {
       const { error } = yield* HttpClientResponse.schemaBodyJson(GrokErrorResponse)(response);
       // xAI refuses Grok Build while the account's privacy setting is a legacy mode.
@@ -197,10 +232,25 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
     const body = yield* HttpClientResponse.schemaBodyJson(GrokUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return grokUsageResponseToLimits(body, checkedAt);
+    return grokUsageResponseToLimits(body, usageResponseCheckedAt(response, checkedAt));
   }).pipe(
+    Effect.provideService(UsageAccountIdentity, credentialFingerprint),
     Effect.timeout("10 seconds"),
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        refreshAfter ??= usageReadRefreshAfter(error);
+      }),
+    ),
     Effect.orElseSucceed(() => probeFailed),
   );
-  return { email, usageLimits };
+  return {
+    email,
+    usageLimits: {
+      ...usageLimits,
+      credentialFingerprint,
+      ...(refreshAfter !== undefined ? { refreshAfter } : {}),
+    },
+    supportsUsageLimits: true,
+    usageRefreshKey: credentialFingerprint,
+  };
 });

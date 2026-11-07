@@ -4,11 +4,14 @@ import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+
+import { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
 
 import { makeAntigravityUsageProbe } from "./antigravityUsageLimits.ts";
 
@@ -57,12 +60,15 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     /** Per-host quota summaries; hosts not listed fall back to `summary`. */
     summaryByHost?: Record<string, unknown>;
     models?: unknown;
+    modelsStatus?: number;
     summaryStatus?: number;
+    usageRetryAfter?: string;
+    rotateAccessToken?: boolean;
     /** Per-host summary statuses; hosts not listed fall back to `summaryStatus`. */
     summaryStatusByHost?: Record<string, number>;
     tokenStatus?: number;
     refreshToken?: string;
-    userId?: string;
+    userId?: string | undefined;
     userInfoAt?: number;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "gemini-api-key";
@@ -85,6 +91,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     );
   if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
   const requests: Array<{ url: string; body: string }> = [];
+  let tokenNumber = 0;
   const http = HttpClient.make((request, url, _signal, fiber) =>
     Effect.sync(() => {
       const init = Context.getOrUndefined(fiber.context, FetchHttpClient.RequestInit);
@@ -93,16 +100,22 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
       requests.push({ url: request.url, body });
       if (request.url.endsWith("/token")) {
+        tokenNumber++;
         expect(new URLSearchParams(body).get("grant_type")).toBe("refresh_token");
         return HttpClientResponse.fromWeb(
           request,
           Response.json(
-            { access_token: "access-token", expires_in: 3600 },
+            {
+              access_token: options.rotateAccessToken ? `access-${tokenNumber}` : "access-token",
+              expires_in: 3600,
+            },
             { status: options.tokenStatus ?? 200 },
           ),
         );
       }
-      expect(request.headers.authorization).toBe("Bearer access-token");
+      expect(request.headers.authorization).toBe(
+        options.rotateAccessToken ? `Bearer access-${tokenNumber}` : "Bearer access-token",
+      );
       if (request.url.endsWith("/userinfo")) {
         return HttpClientResponse.fromWeb(
           request,
@@ -118,8 +131,11 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         request.url.endsWith(":retrieveUserQuotaSummary")
           ? Response.json(options.summaryByHost?.[url.host] ?? options.summary ?? summary, {
               status: options.summaryStatusByHost?.[url.host] ?? options.summaryStatus ?? 200,
+              headers: options.usageRetryAfter ? { "retry-after": options.usageRetryAfter } : {},
             })
-          : Response.json(options.models ?? { models: {} }),
+          : Response.json(options.models ?? { models: {} }, {
+              status: options.modelsStatus ?? 200,
+            }),
       );
     }).pipe(
       Effect.tap(() =>
@@ -132,11 +148,70 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
-  }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+  }).pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      options.usageRetryAfter ? yield* makeUsageHttpClient(http) : http,
+    ),
+  );
   return { ...usage, requests, writeToken, tokenPath };
 });
 
 describe("Antigravity subscription limits", () => {
+  it.effect.each(["available", "fails", "recovers"] as const)(
+    "retains account cooldowns through OAuth renewal (userinfo: %s)",
+    (discovery) =>
+      Effect.gen(function* () {
+        const options = {
+          rotateAccessToken: true,
+          usageRetryAfter: "600",
+          summaryStatus: 200,
+          userId: (discovery === "recovers" ? undefined : "google-account") as string | undefined,
+        };
+        const { probe, requests, writeToken } = yield* fixture(options);
+        const first = yield* probe;
+        const quotaCalls = () => requests.filter(({ url }) => url.includes("/v1internal:")).length;
+        expect(quotaCalls()).toBe(2);
+        yield* TestClock.adjust("4 minutes");
+        const cached = yield* probe;
+        expect(cached.checkedAt).toBe(first.checkedAt);
+        expect(first.refreshAfter).toBe(300_000);
+        expect(cached.refreshAfter).toBe(first.refreshAfter);
+        expect(cached.refreshAfter).toBeLessThan((yield* Clock.currentTimeMillis) + 300_000);
+        expect(quotaCalls()).toBe(2);
+        yield* TestClock.adjust("51 minutes");
+        options.summaryStatus = 429;
+        const limited = yield* probe;
+        expect(limited.credentialFingerprint).toBeDefined();
+        expect(limited.credentialFingerprint).toBe(first.credentialFingerprint);
+        expect(quotaCalls()).toBe(4);
+        yield* TestClock.adjust("5 minutes");
+        options.userId = discovery === "fails" ? undefined : "google-account";
+        const blockedRenewal = yield* probe;
+        expect(blockedRenewal.credentialFingerprint).toBe(first.credentialFingerprint);
+        expect(requests.filter(({ url }) => url.endsWith("/token"))).toHaveLength(2);
+        expect(quotaCalls()).toBe(4);
+        options.userId = "another-google-account";
+        yield* writeToken("another-refresh-token");
+        yield* probe;
+        expect(quotaCalls()).toBe(6);
+        options.userId = "google-account";
+        yield* writeToken("refresh-a");
+        yield* probe;
+        expect(quotaCalls()).toBe(6);
+        yield* TestClock.adjust("5 minutes");
+        yield* probe;
+        expect(quotaCalls()).toBe(8);
+        options.summaryStatus = 200;
+        yield* TestClock.adjust("10 minutes");
+        const recovered = yield* probe;
+        expect(recovered.unavailable).toBeUndefined();
+        options.summaryStatus = 503;
+        yield* TestClock.adjust("5 minutes");
+        expect((yield* probe).credentialFingerprint).toBe(recovered.credentialFingerprint);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   // Oracle: the 10:16 UTC payload and its narrow Workaround rule.
   it.effect("omits rolling resets for untouched summary buckets and keeps used Gemini resets", () =>
     Effect.gen(function* () {
@@ -500,15 +575,38 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("keeps one endpoint's quotas when the other fails", () =>
-    Effect.gen(function* () {
-      const { probe } = yield* fixture({
-        summaryStatusByHost: { "daily-cloudcode-pa.googleapis.com": 503 },
-      });
-      const limits = yield* probe;
-      expect(limits.unavailable).toBeUndefined();
-      expect(limits.windows).toHaveLength(4);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  it.effect.each(["one", "all"] as const)(
+    "preserves quota cache expiry when %s endpoints fail",
+    (failure) =>
+      Effect.gen(function* () {
+        const options = {
+          summaryStatusByHost: {
+            "daily-cloudcode-pa.googleapis.com": 503,
+            "cloudcode-pa.googleapis.com": failure === "all" ? 503 : 200,
+          },
+          modelsStatus: failure === "all" ? 503 : 200,
+          usageRetryAfter: "300",
+        };
+        const { probe, requests } = yield* fixture(options);
+        const limits = yield* probe;
+        expect(limits.unavailable?.reason).toBe(failure === "all" ? "probeFailed" : undefined);
+        expect(limits.windows).toHaveLength(failure === "all" ? 0 : 4);
+        expect(limits.refreshAfter).toBe(300_000);
+        const quotaCalls = () => requests.filter(({ url }) => url.includes("/v1internal:")).length;
+        const firstCalls = quotaCalls();
+        yield* TestClock.adjust("4 minutes");
+        expect((yield* probe).refreshAfter).toBe(300_000);
+        expect(quotaCalls()).toBe(firstCalls);
+        options.summaryStatusByHost["daily-cloudcode-pa.googleapis.com"] = 200;
+        options.summaryStatusByHost["cloudcode-pa.googleapis.com"] = 200;
+        options.modelsStatus = 200;
+        yield* TestClock.adjust("1 minute");
+        const recovered = yield* probe;
+        expect(recovered.unavailable).toBeUndefined();
+        expect(recovered.windows).toHaveLength(4);
+        expect(recovered.refreshAfter).toBe(600_000);
+        expect(quotaCalls()).toBe(firstCalls + 2);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("re-reads changed credentials and clears cached access after sign-out", () =>
@@ -598,11 +696,22 @@ describe("Antigravity subscription limits", () => {
 
   it.effect("returns a safe failure when OAuth refresh fails", () =>
     Effect.gen(function* () {
-      const { probe } = yield* fixture({ tokenStatus: 401 });
+      const options = { tokenStatus: 401, userId: "google-account" };
+      const { probe, writeToken } = yield* fixture(options);
       const limits = yield* probe;
       expect(limits.windows).toEqual([]);
       expect(limits.unavailable?.reason).toBe("probeFailed");
       expect(JSON.stringify(limits)).not.toMatch(/client-secret|refresh-a|access-token/);
+      expect(limits.credentialFingerprint).toBeUndefined();
+      options.tokenStatus = 200;
+      const successful = yield* probe;
+      yield* TestClock.adjust("60 minutes");
+      options.tokenStatus = 401;
+      const renewalFailure = yield* probe;
+      expect(renewalFailure.unavailable?.reason).toBe("probeFailed");
+      expect(renewalFailure.credentialFingerprint).toBe(successful.credentialFingerprint);
+      yield* writeToken("refresh-b");
+      expect((yield* probe).credentialFingerprint).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

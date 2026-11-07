@@ -1,4 +1,9 @@
 import {
+  UsagePolling,
+  UsageAccountReset,
+  makeUnavailableUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
+import {
   ProviderDriverKind,
   ProviderSetupError,
   type ServerProviderModel,
@@ -95,7 +100,8 @@ export const CursorDriver: ProviderDriver<
     const host = yield* ProviderHost.ProviderHost;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const httpClient = yield* HttpClient.HttpClient;
+    const httpClient =
+      (yield* ProviderHost.ProviderHost).usageHttpClient ?? (yield* HttpClient.HttpClient);
     const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -138,6 +144,7 @@ export const CursorDriver: ProviderDriver<
       credentialBinding: credentials.binding,
       onChanged: (signedIn): Effect.Effect<void, ProviderSetupError> =>
         snapshot.refresh.pipe(
+          Effect.provideService(UsageAccountReset, true),
           Effect.flatMap((provider) =>
             !signedIn || provider.auth.status === "authenticated"
               ? Effect.void
@@ -210,45 +217,61 @@ export const CursorDriver: ProviderDriver<
       auth.withAccess,
     );
 
-    const checkProvider = auth.readApiKey.pipe(
-      Effect.orElseSucceed(() => undefined),
-      Effect.flatMap((apiKey) =>
-        checkCursorProviderStatus(
-          effectiveConfig,
-          {
-            ...processEnv,
-            CURSOR_API_KEY: apiKey,
-          },
-          auth.usesApiKey ? "api-key" : "browser",
-        ).pipe(
-          Effect.filterOrElse(
-            (snapshot) =>
-              !(
-                effectiveConfig.enabled &&
-                snapshot.installed &&
-                snapshot.auth.status === "authenticated"
-              ),
-            (snapshot) =>
-              readCursorUsageLimits(effectiveConfig, {
-                ...processEnv,
-                CURSOR_API_KEY: apiKey,
-              }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
+    const checkProvider = Effect.flatMap(UsagePolling, (includeUsage) =>
+      auth.readApiKey.pipe(
+        Effect.orElseSucceed(() => undefined),
+        Effect.flatMap((apiKey) =>
+          checkCursorProviderStatus(
+            effectiveConfig,
+            {
+              ...processEnv,
+              CURSOR_API_KEY: apiKey,
+            },
+            auth.usesApiKey ? "api-key" : "browser",
+          ).pipe(
+            Effect.filterOrElse(
+              (snapshot) =>
+                !(
+                  includeUsage &&
+                  effectiveConfig.enabled &&
+                  snapshot.installed &&
+                  snapshot.auth.status === "authenticated"
+                ),
+              (snapshot) =>
+                readCursorUsageLimits(effectiveConfig, {
+                  ...processEnv,
+                  CURSOR_API_KEY: apiKey,
+                }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
+            ),
           ),
         ),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.map((provider) =>
+          !includeUsage &&
+          provider.usageLimits === undefined &&
+          provider.auth.status === "authenticated"
+            ? {
+                ...provider,
+                usageLimits: makeUnavailableUsageLimits({
+                  checkedAt: provider.checkedAt,
+                  reason: "probeFailed",
+                }),
+              }
+            : provider,
+        ),
+        Effect.map(stampSnapshot),
+        Effect.tap((provider) =>
+          Effect.sync(() => {
+            // A failed check lists only custom models, so keep the last loaded catalog.
+            if (provider.models.some((model) => !model.isCustom)) {
+              catalogModels = provider.models;
+            }
+          }),
+        ),
+        Effect.provide(CursorSdkCatalog.layer),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
       ),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.map(stampSnapshot),
-      Effect.tap((provider) =>
-        Effect.sync(() => {
-          // A failed check lists only custom models, so keep the last loaded catalog.
-          if (provider.models.some((model) => !model.isCustom)) {
-            catalogModels = provider.models;
-          }
-        }),
-      ),
-      Effect.provide(CursorSdkCatalog.layer),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);

@@ -358,61 +358,73 @@ it.layer(
   Layer.mergeAll(layerTestNodeServices, ServerSettingsModule.layerTest(), layerTestHttpClient),
 )("ProviderRegistry", (it) => {
   describe("checkCodexProviderStatus", () => {
-    it.effect("uses the app-server account and model list for provider status", () =>
-      Effect.gen(function* () {
-        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
-          Effect.succeed(
-            makeCodexProbeSnapshot({
-              skills: [
-                {
-                  name: "github:gh-fix-ci",
-                  path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
-                  enabled: true,
-                  displayName: "CI Debug",
-                  shortDescription: "Debug failing GitHub Actions checks",
-                },
-              ],
-            }),
-          ),
-        );
-        assert.strictEqual(status.status, "ready");
-        assert.strictEqual(status.installed, true);
-        assert.strictEqual(status.version, "1.0.0");
-        assert.strictEqual(status.auth.status, "authenticated");
-        assert.strictEqual(status.auth.type, "chatgpt");
-        assert.strictEqual(status.auth.label, "ChatGPT Pro 200 Subscription");
-        assert.strictEqual(status.auth.email, "test@example.com");
-        assert.deepStrictEqual(status.setup, { canAuthenticate: false, canInstall: false });
-        assert.deepStrictEqual(status.models, [
-          {
-            slug: "gpt-live-codex",
-            name: "GPT Live Codex",
-            isCustom: false,
-            capabilities: codexModelCapabilities,
-          },
-        ]);
-        assert.deepStrictEqual(status.skills, [
-          {
-            name: "github:gh-fix-ci",
-            path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
-            enabled: true,
-            displayName: "CI Debug",
-            shortDescription: "Debug failing GitHub Actions checks",
-          },
-        ]);
-        assert.deepStrictEqual(status.slashCommands.slice(1), [
-          {
-            name: "goal",
-            description: "Set a goal Codex keeps working toward until it is done",
-            input: { hint: "Objective, or pause, resume, clear" },
-          },
-          {
-            name: "feedback",
-            description: "Send this thread and Codex logs to OpenAI",
-            input: { hint: "Describe the issue (optional)" },
-          },
-        ]);
-      }),
+    it.effect.each([false, true])(
+      "uses the app-server account and model list with skipUsage=%s",
+      (skipUsage) =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(
+            defaultCodexSettings,
+            (input) => {
+              assert.strictEqual(input.skipNativeUsage, skipUsage ? true : undefined);
+              return Effect.succeed(
+                makeCodexProbeSnapshot({
+                  skills: [
+                    {
+                      name: "github:gh-fix-ci",
+                      path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
+                      enabled: true,
+                      displayName: "CI Debug",
+                      shortDescription: "Debug failing GitHub Actions checks",
+                    },
+                  ],
+                }),
+              );
+            },
+            undefined,
+            undefined,
+            skipUsage,
+          );
+          if (skipUsage) assert.strictEqual(status.usageLimits, undefined);
+          else assert.strictEqual(status.usageLimits?.unavailable?.reason, "probeFailed");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.supportsUsageLimits, true);
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.version, "1.0.0");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "chatgpt");
+          assert.strictEqual(status.auth.label, "ChatGPT Pro 200 Subscription");
+          assert.strictEqual(status.auth.email, "test@example.com");
+          assert.deepStrictEqual(status.setup, { canAuthenticate: false, canInstall: false });
+          assert.deepStrictEqual(status.models, [
+            {
+              slug: "gpt-live-codex",
+              name: "GPT Live Codex",
+              isCustom: false,
+              capabilities: codexModelCapabilities,
+            },
+          ]);
+          assert.deepStrictEqual(status.skills, [
+            {
+              name: "github:gh-fix-ci",
+              path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
+              enabled: true,
+              displayName: "CI Debug",
+              shortDescription: "Debug failing GitHub Actions checks",
+            },
+          ]);
+          assert.deepStrictEqual(status.slashCommands.slice(1), [
+            {
+              name: "goal",
+              description: "Set a goal Codex keeps working toward until it is done",
+              input: { hint: "Objective, or pause, resume, clear" },
+            },
+            {
+              name: "feedback",
+              description: "Send this thread and Codex logs to OpenAI",
+              input: { hint: "Describe the issue (optional)" },
+            },
+          ]);
+        }),
     );
 
     it.effect("labels the plan the usage read reports over the cached login plan", () =>
@@ -1489,12 +1501,15 @@ it.layer(
       );
     });
 
-    it.effect("invalidates model caches only for an explicit model refresh", () =>
+    it.effect("bounds quota reads and refreshes model caches explicitly", () =>
       Effect.gen(function* () {
         const forceRefreshCalls = yield* Ref.make(0);
-        const makeInstance = (name: string) =>
+        const makeInstance = (
+          name: string,
+          driver = ProviderDriverKind.make("codex"),
+          exhausted = false,
+        ) =>
           Effect.gen(function* () {
-            const driver = ProviderDriverKind.make("codex");
             const instanceId = ProviderInstanceId.make(name);
             const provider = {
               instanceId,
@@ -1508,8 +1523,17 @@ it.layer(
               models: [],
               slashCommands: [],
               skills: [],
+              usageLimits: {
+                checkedAt: "2026-06-10T00:00:00.000Z",
+                windows: exhausted
+                  ? [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }]
+                  : [],
+              },
             } as const satisfies ServerProvider;
             const invalidations = yield* Ref.make(0);
+            const usageReads = yield* Ref.make(0);
+            const usageEffect = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+            const sampledAt = yield* Ref.make<string>(provider.checkedAt);
             const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean>>([]);
             const instance = {
               instanceId,
@@ -1530,8 +1554,14 @@ it.layer(
                       }),
                     ),
                   ),
-                getSnapshot: Effect.succeed(provider),
+                getSnapshot: Ref.get(sampledAt).pipe(
+                  Effect.map((checkedAt) => ({ ...provider, checkedAt })),
+                ),
                 refresh: Effect.succeed(provider),
+                refreshUsage: Ref.update(usageReads, (count) => count + 1).pipe(
+                  Effect.andThen(Ref.get(usageEffect)),
+                  Effect.flatten,
+                ),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
@@ -1540,11 +1570,19 @@ it.layer(
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
             const takeMaintenanceReads = Ref.getAndSet(maintenanceReads, []);
-            return { instance, invalidations, takeMaintenanceReads };
+            return {
+              instance,
+              invalidations,
+              takeMaintenanceReads,
+              usageReads,
+              usageEffect,
+              sampledAt,
+            };
           });
-        const first = yield* makeInstance("codex_first");
+        const first = yield* makeInstance("codex_first", ProviderDriverKind.make("codex"), true);
         const second = yield* makeInstance("codex_second");
-        const instances = [first.instance, second.instance];
+        const other = yield* makeInstance("claude_other", ProviderDriverKind.make("claudeAgent"));
+        const instances = [first.instance, second.instance, other.instance];
         const layerInstanceRegistry = Layer.succeed(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           {
@@ -1569,6 +1607,7 @@ it.layer(
           ProviderLatestVersions.make([
             ["codex_first-package", "1.0.0"],
             ["codex_second-package", "1.0.0"],
+            ["claude_other-package", "1.0.0"],
           ]),
         );
         const readCachedVersion = (key: string) =>
@@ -1578,6 +1617,79 @@ it.layer(
 
         yield* Effect.gen(function* () {
           const registry = yield* ProviderRegistry.ProviderRegistry;
+          yield* registry.refreshUsage(undefined, [ProviderDriverKind.make("codex")]);
+          assert.strictEqual(yield* Ref.get(first.usageReads), 1);
+          assert.strictEqual(yield* Ref.get(second.usageReads), 1);
+          assert.strictEqual(yield* Ref.get(other.usageReads), 0);
+          yield* registry.refreshUsageForModelSelection(
+            { instanceId: first.instance.instanceId, model: "gpt-6.1-sol" },
+            { instanceId: other.instance.instanceId, model: "claude-haiku-5-5" },
+          );
+          assert.strictEqual(yield* Ref.get(first.usageReads), 2);
+          assert.strictEqual(yield* Ref.get(second.usageReads), 1);
+          assert.strictEqual(yield* Ref.get(other.usageReads), 1);
+          yield* registry.refreshUsageForModelSelection(
+            { instanceId: second.instance.instanceId, model: "gpt-6.1-sol" },
+            { instanceId: other.instance.instanceId, model: "claude-haiku-5-5" },
+          );
+          assert.strictEqual(yield* Ref.get(second.usageReads), 2);
+          assert.strictEqual(yield* Ref.get(other.usageReads), 1);
+
+          for (const stage of ["primary", "fallback"] as const) {
+            const started = yield* Deferred.make<void>();
+            const releasePrimary = yield* Deferred.make<void>();
+            const releaseFallback = yield* Deferred.make<void>();
+            const fallbackStarted = yield* Deferred.make<void>();
+            yield* Ref.set(
+              first.usageEffect,
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(
+                  stage === "primary"
+                    ? Deferred.await(releasePrimary)
+                    : Effect.sleep("3 seconds").pipe(
+                        Effect.andThen(Ref.set(first.sampledAt, "2026-06-10T00:05:00.000Z")),
+                      ),
+                ),
+              ),
+            );
+            yield* Ref.set(
+              other.usageEffect,
+              Deferred.succeed(fallbackStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFallback)),
+              ),
+            );
+            const finished = yield* Deferred.make<void>();
+            const waiting = yield* registry
+              .refreshUsageForModelSelection(
+                { instanceId: first.instance.instanceId, model: "gpt-6.1-sol" },
+                { instanceId: other.instance.instanceId, model: "claude-haiku-5-5" },
+              )
+              .pipe(
+                Effect.tap(() => Deferred.succeed(finished, undefined)),
+                Effect.forkChild,
+              );
+            yield* Deferred.await(started);
+            if (stage === "fallback") {
+              yield* TestClock.adjust("3 seconds");
+              yield* Deferred.await(fallbackStarted);
+            }
+            yield* TestClock.adjust(stage === "fallback" ? "2 seconds" : "5 seconds");
+            assert.isTrue(yield* Deferred.isDone(finished));
+            const latest = yield* Fiber.join(waiting);
+            assert.deepStrictEqual(latest, yield* registry.getProviders);
+            if (stage === "fallback")
+              assert.strictEqual(
+                latest.find((provider) => provider.instanceId === first.instance.instanceId)
+                  ?.checkedAt,
+                "2026-06-10T00:05:00.000Z",
+              );
+            yield* Ref.set(first.usageEffect, Effect.void);
+            yield* Ref.set(other.usageEffect, Effect.void);
+            yield* Deferred.succeed(releasePrimary, undefined);
+            yield* Deferred.succeed(releaseFallback, undefined);
+            yield* registry.refreshUsage(first.instance.instanceId);
+            yield* registry.refreshUsage(other.instance.instanceId);
+          }
 
           yield* registry.refreshInstance(first.instance.instanceId);
           yield* registry.refresh();

@@ -1,3 +1,5 @@
+import * as Clock from "effect/Clock";
+import { UsagePolling, UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -16,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
@@ -167,6 +170,13 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
   );
   const initialize = Deferred.succeed(initialProbe, initializeResult).pipe(
     Effect.andThen(initialUpdate),
+    Effect.andThen(
+      Effect.flatMap(UsagePolling, (visible) =>
+        visible && options.probeUsage
+          ? (provider.snapshot.refreshUsage ?? Effect.void).pipe(Effect.forkScoped)
+          : Effect.void,
+      ),
+    ),
     Effect.asVoid,
   );
   // Subscribe before the trigger; yield the returned pull to await the publish.
@@ -366,7 +376,13 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("publishes session metadata and native commands without another health probe", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeHarness();
+        let usageReads = 0;
+        const harness = yield* makeHarness({
+          probeUsage: Effect.sync(() => {
+            usageReads++;
+            return { checkedAt: "2026-01-01T00:00:00.000Z", windows: [] };
+          }),
+        });
         yield* harness.initialize;
         const nextReady = yield* Stream.toPull(
           harness.provider.snapshot.streamChanges.pipe(
@@ -384,6 +400,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           auth: { status: "authenticated", type: "oauth-personal" },
           supportsTextGeneration: true,
         });
+        expect(snapshot.usageLimits?.unavailable?.reason).toBe("probeFailed");
+        expect(usageReads).toBe(0);
         expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
         expect(snapshot.slashCommands).toEqual(expectedCommands);
         expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual(
@@ -531,15 +549,29 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("retains known account metadata when a local health check fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeHarness();
+        const limits: ServerProviderUsageLimits = {
+          checkedAt: "1970-01-01T00:00:00.000Z",
+          windows: [{ id: "gemini-5h", kind: "session", label: "Gemini", usedPercent: 25 }],
+        };
+        const usageReads = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          probeUsage: Ref.update(usageReads, (count) => count + 1).pipe(Effect.as(limits)),
+        });
         yield* harness.initialize;
         yield* harness.provider.onSessionStarted(started, "/workspace");
         yield* harness.provider.onAvailableCommands(commands, "/workspace");
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual({
+          ...limits,
+          refreshAfter: 300_000,
+        });
+        yield* TestClock.adjust("5 minutes");
         yield* Ref.set(
           harness.probe,
           Effect.fail(EffectAcpErrors.AcpRequestError.internalError("probe failed")),
         );
-        const snapshot = yield* harness.provider.snapshot.refresh;
+        yield* harness.provider.snapshot.refreshUsage!;
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
         expect(snapshot).toMatchObject({
           installed: true,
           status: "error",
@@ -548,6 +580,24 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
         expect(snapshot.slashCommands).toEqual(expectedCommands);
         expect(snapshot.workspaceSnapshots?.[0]?.cwd).toBe("/workspace");
+        expect(snapshot.usageLimits).toEqual({ ...limits, stale: true, refreshAfter: 600_000 });
+        const failedChecks = yield* Ref.get(harness.probeCalls);
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(harness.probeCalls)).toBe(failedChecks);
+        yield* TestClock.adjust("4 minutes");
+        expect((yield* harness.provider.snapshot.refresh).usageLimits?.refreshAfter).toBe(600_000);
+        const healthChecks = yield* Ref.get(harness.probeCalls);
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(harness.probeCalls)).toBe(healthChecks);
+        yield* TestClock.adjust("1 minute");
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(harness.probeCalls)).toBe(healthChecks + 1);
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual({
+          ...limits,
+          stale: true,
+          refreshAfter: 900_000,
+        });
+        expect(yield* Ref.get(usageReads)).toBe(1);
       }),
     ),
   );
@@ -710,9 +760,15 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           };
           const usage = yield* Ref.make(limits);
           const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
-          const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+          const published = yield* harness.nextPublish(
+            (snapshot) =>
+              snapshot.usageLimits !== undefined && snapshot.usageLimits.unavailable === undefined,
+          );
           yield* harness.initialize;
-          expect((yield* published)?.usageLimits).toEqual(limits);
+          expect((yield* published)?.usageLimits).toEqual({
+            ...limits,
+            refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
+          });
           // The second health check is the one the failed background read triggers.
           const checks = yield* Ref.make(0);
           const failedReadApplied = yield* Deferred.make<void>();
@@ -732,7 +788,11 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           });
           yield* harness.provider.snapshot.refresh;
           yield* Deferred.await(failedReadApplied);
-          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
+          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual({
+            ...limits,
+            refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
+            stale: true,
+          });
           yield* harness.provider.onSignedOut;
           expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
           yield* Ref.set(usage, {
@@ -746,6 +806,9 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           yield* harness.provider.snapshot.refresh;
           expect((yield* unsupported)?.usageLimits?.windows).toEqual([]);
         }),
+      ).pipe(
+        Effect.provideService(UsagePolling, true),
+        Effect.provideService(UsageAfterReset, true),
       ),
   );
 
@@ -776,7 +839,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* Fiber.join(refresh);
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
       }),
-    ),
+    ).pipe(Effect.provideService(UsagePolling, true), Effect.provideService(UsageAfterReset, true)),
   );
 
   it.effect("reports ready and starts sessions while one shared quota read is pending", () =>
@@ -791,15 +854,25 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             Effect.andThen(Deferred.await(readResult)),
           ),
         });
-        const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+        const published = yield* harness.nextPublish(
+          (snapshot) =>
+            snapshot.usageLimits !== undefined && snapshot.usageLimits.unavailable === undefined,
+        );
         yield* harness.initialize;
         yield* Deferred.await(readStarted);
         yield* harness.provider.onSessionStarted(started, "/workspace");
         yield* harness.provider.onSessionStarted(started, "/other");
         const ready = yield* harness.provider.snapshot.getSnapshot;
         expect(ready).toMatchObject({ status: "ready", auth: { status: "authenticated" } });
-        expect(ready.usageLimits).toBeUndefined();
+        expect(ready.usageLimits?.unavailable?.reason).toBe("probeFailed");
         expect(yield* Ref.get(reads)).toBe(1);
+        const demandFinished = yield* Deferred.make<void>();
+        const demand = yield* harness.provider.snapshot.refreshUsage!.pipe(
+          Effect.andThen(Deferred.succeed(demandFinished, undefined)),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Deferred.isDone(demandFinished)).toBe(false);
         const limits = {
           checkedAt: "2026-10-09T12:00:00.000Z",
           windows: [
@@ -807,9 +880,19 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           ],
         } satisfies ServerProviderUsageLimits;
         yield* Deferred.succeed(readResult, limits);
-        expect((yield* published)?.usageLimits).toEqual(limits);
+        yield* Fiber.join(demand);
+        expect((yield* published)?.usageLimits).toEqual({
+          ...limits,
+          refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
+        });
+        yield* TestClock.adjust("290 seconds");
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(reads)).toBe(1);
+        yield* TestClock.adjust("10 seconds");
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect(yield* Ref.get(reads)).toBe(2);
       }),
-    ),
+    ).pipe(Effect.provideService(UsagePolling, true)),
   );
 
   it.effect("a quota read for the previous account is dropped after a new sign-in", () =>
@@ -824,13 +907,19 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           Deferred.succeed(oldReadStarted, undefined).pipe(Effect.andThen(Effect.never)),
         );
         const harness = yield* makeHarness({ probeUsage: Ref.get(usage).pipe(Effect.flatten) });
-        const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+        const published = yield* harness.nextPublish(
+          (snapshot) =>
+            snapshot.usageLimits !== undefined && snapshot.usageLimits.unavailable === undefined,
+        );
         yield* harness.initialize;
         yield* Deferred.await(oldReadStarted);
         yield* Ref.set(usage, Effect.succeed(newLimits));
         yield* harness.provider.onSignedIn;
         yield* harness.provider.onSessionStarted(started);
-        expect((yield* published)?.usageLimits).toEqual(newLimits);
+        expect((yield* published)?.usageLimits).toEqual({
+          ...newLimits,
+          refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
+        });
         // Switching again must not republish the previous account's limits, even if the read fails.
         const failed = {
           checkedAt: "2026-10-09T12:02:00.000Z",
@@ -839,13 +928,16 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         } satisfies ServerProviderUsageLimits;
         yield* Ref.set(usage, Effect.succeed(failed));
         const republished = yield* harness.nextPublish(
-          (snapshot) => snapshot.usageLimits?.unavailable?.reason === "probeFailed",
+          (snapshot) => snapshot.usageLimits?.checkedAt === failed.checkedAt,
         );
-        yield* harness.provider.onSignedIn;
+        yield* harness.provider.onSignedIn.pipe(Effect.provideService(UsagePolling, false));
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
         yield* harness.provider.onSessionStarted(started);
-        expect((yield* republished)?.usageLimits).toEqual(failed);
+        expect((yield* republished)?.usageLimits).toEqual({
+          ...failed,
+          refreshAfter: (yield* Clock.currentTimeMillis) + 300_000,
+        });
       }),
-    ),
+    ).pipe(Effect.provideService(UsagePolling, true), Effect.provideService(UsageAfterReset, true)),
   );
 });

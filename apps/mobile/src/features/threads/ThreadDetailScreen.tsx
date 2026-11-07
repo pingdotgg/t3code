@@ -1,3 +1,4 @@
+import { useInstanceLimitsRefresh } from "../usage/useInstanceLimitsRefresh";
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
@@ -983,6 +984,18 @@ function ThreadDetailBody(
           usageLimitsPanel.now,
         )
       : null;
+  useInstanceLimitsRefresh(
+    appAtomRegistry,
+    props.environmentId,
+    props.selectedThread.modelSelection.instanceId,
+    props.serverConfig?.providers.find(
+      (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
+    )?.driver,
+    usageLimitsPanel !== null &&
+      (props.showContent ?? true) &&
+      activeUserInputRequestId === null &&
+      props.connectionStateLabel === "connected",
+  );
   const showUsageLimits = (report: UsageLimitsReport | null) =>
     setUsageLimitsPanel(
       report === null

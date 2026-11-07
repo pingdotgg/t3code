@@ -1,4 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
+import { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -106,7 +108,55 @@ describe("Cursor usage limits", () => {
     }),
   );
 
-  it.effect("exchanges an API key to read its account limits", () =>
+  it.effect.each([200, 429])(
+    "shares API-key readings and cooldowns across token exchanges (%s)",
+    (status) =>
+      Effect.gen(function* () {
+        let exchanges = 0;
+        let quotaCalls = 0;
+        const client = yield* makeUsageHttpClient(
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              if (request.url.endsWith("/auth/exchange_user_api_key")) {
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ accessToken: `token-${++exchanges}` }),
+                );
+              }
+              quotaCalls++;
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  { planUsage: { totalPercentUsed: 37 } },
+                  { status, headers: { "retry-after": "600" } },
+                ),
+              );
+            }),
+          ),
+        );
+        const read = (key: string) =>
+          readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_API_KEY: key }).pipe(
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+        const first = yield* read("key-a");
+        expect(quotaCalls).toBe(1);
+        yield* TestClock.adjust("4 minutes");
+        const cached = yield* read("key-a");
+        expect(exchanges).toBe(2);
+        expect(quotaCalls).toBe(1);
+        if (status === 200) expect(cached.checkedAt).toBe(first.checkedAt);
+        yield* TestClock.adjust("1 minute");
+        yield* read("key-a");
+        expect(quotaCalls).toBe(status === 200 ? 2 : 1);
+        yield* read("key-b");
+        expect(quotaCalls).toBe(status === 200 ? 3 : 2);
+        yield* TestClock.adjust("5 minutes");
+        yield* read("key-a");
+        expect(quotaCalls).toBe(status === 200 ? 4 : 3);
+      }),
+  );
+
+  it.effect("reads an API key's own account instead of a stored login", () =>
     Effect.gen(function* () {
       const requests: Array<readonly [string, string | undefined]> = [];
       const limits = yield* readCursorUsageLimits(

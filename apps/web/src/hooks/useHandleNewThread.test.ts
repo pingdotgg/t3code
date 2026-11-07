@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { RuntimeMode } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  ProviderDriverKind,
+  type ModelSelection,
+  type ServerProvider,
+  type RuntimeMode,
+} from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 
 const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: null) => void = () => undefined;
@@ -9,9 +16,14 @@ const testState = vi.hoisted(() => {
   let targetSettings = {
     defaultThreadEnvMode: "local" as "local" | "worktree" | null,
     newWorktreesStartFromOrigin: false,
-    defaultModelSelection: null,
+    defaultModelSelection: null as ModelSelection | null,
+    fallbackModelSelection: null as ModelSelection | null,
     defaultRuntimeMode: "full-access" as RuntimeMode,
+    providerInstances: {},
+    projectSettingsOverrides: {},
   };
+  let providers: ServerProvider[] = [];
+  const refreshProviders = vi.fn(async () => AsyncResult.success({ providers }));
   let storedDraft: {
     readonly draftId: string;
     readonly environmentId: string;
@@ -55,6 +67,19 @@ const testState = vi.hoisted(() => {
   return {
     completeProjectFileRead: (value: null) => completeProjectFileRead(value),
     draftStore,
+    refreshProviders,
+    get providers() {
+      return providers;
+    },
+    setDefaultModels(
+      primary: ModelSelection,
+      fallback: ModelSelection,
+      snapshots: ServerProvider[],
+    ) {
+      targetSettings.defaultModelSelection = primary;
+      targetSettings.fallbackModelSelection = fallback;
+      providers = snapshots;
+    },
     get projectFileRead() {
       return projectFileRead;
     },
@@ -100,8 +125,15 @@ const testState = vi.hoisted(() => {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
         defaultModelSelection: null,
+        fallbackModelSelection: null,
         defaultRuntimeMode: "full-access",
+        providerInstances: {},
+        projectSettingsOverrides: {},
       };
+      providers = [];
+      refreshProviders.mockReset();
+      refreshProviders.mockImplementation(async () => AsyncResult.success({ providers }));
+      draftStore.setModelSelection.mockClear();
       router.state.location.href = "/";
       router.navigate.mockClear();
       draftStore.setDraftThreadContext.mockClear();
@@ -126,7 +158,7 @@ const testServerConfigs = () =>
         },
       },
     ],
-    ["environment-ssh", { settings: testState.targetSettings }],
+    ["environment-ssh", { settings: testState.targetSettings, providers: testState.providers }],
   ]);
 
 vi.mock("../rpc/atomRegistry", () => ({
@@ -149,7 +181,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
-vi.mock("@t3tools/contracts", () => ({
+vi.mock("@t3tools/contracts", async (original) => ({
+  ...(await original<typeof import("@t3tools/contracts")>()),
   DEFAULT_RUNTIME_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
 }));
@@ -198,7 +231,9 @@ vi.mock("../composerDraftStore", () => {
 vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/chatThreadActions")>()),
   hasExplicitComposerModelSelection: () => false,
-  resolveNewThreadModelSelectionOverride: () => null,
+  resolveNewThreadModelSelectionOverride: (input: {
+    projectDefaultSelection: ModelSelection | null;
+  }) => input.projectDefaultSelection,
 }));
 vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
@@ -237,6 +272,9 @@ vi.mock("../state/presentation", () => ({
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
+  serverEnvironment: {
+    refreshProviders: { label: "refresh", run: () => testState.refreshProviders() },
+  },
 }));
 vi.mock("../threadRoutes", () => ({
   resolveThreadRouteTarget: () => testState.openDraftRoute,
@@ -365,3 +403,96 @@ describe("useNewThreadHandler", () => {
     expect(testState.router.navigate).toHaveBeenCalledOnce();
   });
 });
+
+it.each(["fresh", "primary-blocked", "fallback-blocked"] as const)(
+  "new-draft quota preflight: %s",
+  async (mode) => {
+    vi.useFakeTimers();
+    testState.reset(null);
+    const primary = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const fallback = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "sonnet" };
+    const providers: ServerProvider[] = [primary, fallback].map((selection) => ({
+      instanceId: selection.instanceId,
+      driver: ProviderDriverKind.make(selection === primary ? "codex" : "claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: "1",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    }));
+    testState.setDefaultModels(primary, fallback, providers);
+    const fresh = AsyncResult.success({
+      providers: providers.map((provider) => ({
+        ...provider,
+        usageLimits: {
+          checkedAt: provider.checkedAt,
+          windows: [
+            {
+              id: "session",
+              kind: "session" as const,
+              label: "Session",
+              usedPercent: provider.instanceId === primary.instanceId ? 100 : 10,
+            },
+          ],
+        },
+      })),
+    });
+    let completeFirst: (value: typeof fresh) => void = () => undefined;
+    let completeBlocked: (value: typeof fresh) => void = () => undefined;
+    const first = new Promise<typeof fresh>((resolve) => {
+      completeFirst = resolve;
+    });
+    const blocked = new Promise<typeof fresh>((resolve) => {
+      completeBlocked = resolve;
+    });
+    let calls = 0;
+    testState.refreshProviders.mockImplementation(async () => {
+      calls++;
+      if (mode === "primary-blocked") return blocked;
+      if (mode === "fallback-blocked") return calls === 1 ? first : blocked;
+      return fresh;
+    });
+    let finished = false;
+    const pending = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never).then((opened) => {
+      finished = true;
+      return opened;
+    });
+    testState.completeProjectFileRead(null);
+    try {
+      if (mode === "fallback-blocked") {
+        await vi.advanceTimersByTimeAsync(3_000);
+        completeFirst(fresh);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(testState.refreshProviders).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1_999);
+      } else {
+        await vi.advanceTimersByTimeAsync(4_999);
+      }
+      expect(finished).toBe(mode === "fresh");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(finished).toBe(true);
+      const opened = await pending;
+      expect(testState.draftStore.setModelSelection).toHaveBeenCalledWith(
+        opened?.draftId,
+        mode === "primary-blocked" ? primary : fallback,
+        { replaceOptions: true },
+      );
+      expect(vi.getTimerCount()).toBe(0);
+      completeBlocked(fresh);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(testState.refreshProviders).toHaveBeenCalledTimes(mode === "primary-blocked" ? 1 : 2);
+    } finally {
+      completeFirst(fresh);
+      completeBlocked(fresh);
+      await pending;
+      vi.useRealTimers();
+    }
+  },
+);

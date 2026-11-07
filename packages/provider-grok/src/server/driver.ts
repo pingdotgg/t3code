@@ -1,6 +1,8 @@
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { GrokSettings } from "../settings.ts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -94,6 +96,7 @@ export type GrokDriverEnv =
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
+  | Digest.Digest
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions
@@ -118,8 +121,10 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
     config,
   }) {
     const random = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const httpClient = yield* HttpClient.HttpClient;
+    const httpClient =
+      (yield* ProviderHost.ProviderHost).usageHttpClient ?? (yield* HttpClient.HttpClient);
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -168,29 +173,43 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
     );
     const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
-    const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
-      Effect.filterOrElse(
-        (snapshot) =>
-          !(
-            effectiveConfig.enabled &&
-            snapshot.installed &&
-            snapshot.auth.status === "authenticated"
-          ),
-        (snapshot) =>
-          readGrokAccount(processEnv).pipe(
-            Effect.map(({ email, usageLimits }) => ({
-              ...snapshot,
-              auth: email ? { ...snapshot.auth, email } : snapshot.auth,
-              usageLimits,
-            })),
-          ),
-      ),
-      Effect.map(stampIdentity),
+    const getUsageRefreshKey = readGrokAccount(processEnv, false).pipe(
+      Effect.map((account) => account.usageRefreshKey),
       Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(SecureRandom.SecureRandom, random),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(Digest.Digest, digest),
+    );
+
+    const checkProvider = Effect.flatMap(UsagePolling, (includeUsage) =>
+      checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
+        Effect.filterOrElse(
+          (snapshot) =>
+            !(
+              effectiveConfig.enabled &&
+              snapshot.installed &&
+              snapshot.auth.status === "authenticated"
+            ),
+          (snapshot) =>
+            readGrokAccount(processEnv, includeUsage).pipe(
+              Effect.map(({ email, usageLimits, supportsUsageLimits, usageRefreshKey }) => ({
+                ...snapshot,
+                auth: { ...snapshot.auth, ...(email ? { email } : {}), usageRefreshKey },
+                ...(includeUsage || usageLimits.unavailable?.reason === "unsupported"
+                  ? { usageLimits }
+                  : {}),
+                supportsUsageLimits,
+              })),
+            ),
+        ),
+        Effect.map(stampIdentity),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(SecureRandom.SecureRandom, random),
+        Effect.provideService(Digest.Digest, digest),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
     );
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
@@ -202,6 +221,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
       initialSnapshot: (settings) =>
         buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
+      getUsageRefreshKey,
       enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>

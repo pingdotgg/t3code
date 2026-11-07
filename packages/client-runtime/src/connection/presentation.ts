@@ -18,6 +18,7 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
+  readonly generation?: number;
 }
 
 /**
@@ -48,7 +49,7 @@ export function presentConnectionState(
         traceId: state.lastFailure?.traceId ?? null,
       };
     case "connected":
-      return { phase: "connected", error: null, traceId: null };
+      return { phase: "connected", error: null, traceId: null, generation: state.generation };
     case "backoff":
       return {
         phase: "reconnecting",

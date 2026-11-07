@@ -1,6 +1,13 @@
 import { minuteTick } from "@t3tools/client-runtime/clock";
 import { useSyncExternalStore } from "react";
 
-export function useNowMinute(): string {
-  return useSyncExternalStore(minuteTick.subscribe, minuteTick.getSnapshot, minuteTick.getSnapshot);
+const noSubscribe = () => () => {};
+const noSnapshot = () => "";
+
+export function useNowMinute(enabled = true): string {
+  return useSyncExternalStore(
+    enabled ? minuteTick.subscribe : noSubscribe,
+    enabled ? minuteTick.getSnapshot : noSnapshot,
+    enabled ? minuteTick.getSnapshot : noSnapshot,
+  );
 }

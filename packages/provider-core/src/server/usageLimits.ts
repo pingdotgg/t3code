@@ -1,8 +1,35 @@
+export {
+  makeUsageHttpClient,
+  usageRetryDelay,
+  usageResponseCheckedAt,
+  usageReadRefreshAfter,
+  UsageAccountIdentity,
+} from "./usageHttpClient.ts";
 import type {
   ProviderUsageLimitsUpdate,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+
+export const UsagePolling = Context.Reference<boolean>("t3/provider/UsagePolling", {
+  defaultValue: () => false,
+});
+
+export const UsageAccountReset = Context.Reference<boolean>("t3/provider/UsageAccountReset", {
+  defaultValue: () => false,
+});
+
+export const UsageAfterReset = Context.Reference<boolean>("t3/provider/UsageAfterReset", {
+  defaultValue: () => false,
+});
+
+export const UsageProviderFilter = Context.Reference<readonly string[] | undefined>(
+  "t3/provider/UsageProviderFilter",
+  {
+    defaultValue: () => undefined,
+  },
+);
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
@@ -83,6 +110,8 @@ export function applyUsageLimitsUpdate(input: {
     previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
+    ...(previous?.refreshAfter !== undefined ? { refreshAfter: previous.refreshAfter } : {}),
+    ...(previous?.stale ? { stale: true } : {}),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
   };
@@ -104,8 +133,13 @@ export function resolveUsageLimitsAfterProbe(input: {
   readonly probed: ServerProviderUsageLimits | undefined;
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
+  if (published?.credentialFingerprint !== probed?.credentialFingerprint) return probed;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
-    return published;
+    return {
+      ...published,
+      stale: true,
+      ...(probed.refreshAfter !== undefined ? { refreshAfter: probed.refreshAfter } : {}),
+    };
   }
   if (
     published &&

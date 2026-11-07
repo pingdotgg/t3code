@@ -4,6 +4,10 @@ import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { createEnvironmentSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthFilesystemReadScope,
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
   EnvironmentId,
   ProjectId,
   type VcsListRefsResult,
@@ -20,6 +24,7 @@ import type { ComposerDraft } from "../../state/use-composer-drafts";
 
 const mocks = vi.hoisted(() => ({
   projects: vi.fn(),
+  config: vi.fn(),
   status: vi.fn(),
   refs: vi.fn(),
   readFile: vi.fn(),
@@ -43,7 +48,7 @@ vi.mock("../../state/atom-registry", () => ({
 vi.mock("../../state/entities", () => ({
   useProjects: mocks.projects,
   useThreadShells: () => [],
-  useEnvironmentServerConfig: () => null,
+  useEnvironmentServerConfig: mocks.config,
   useServerConfigs: () => new Map(),
 }));
 vi.mock("../../state/vcs", () => ({
@@ -57,6 +62,14 @@ vi.mock("../../state/session", () => ({
 }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: mocks.presentation,
+}));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: {
+    refreshProviders: {
+      label: "refresh providers",
+      run: async () => AsyncResult.success({ providers: [] }),
+    },
+  },
 }));
 vi.mock("../../state/orchestration", () => ({ orchestrationEnvironment: {} }));
 vi.mock("../../state/threads", () => ({ olderSettledThreads: {}, threadFamilies: {} }));
@@ -132,6 +145,7 @@ function setup() {
   vi.clearAllMocks();
   const registry = AtomRegistry.make();
   mocks.registry.mockReturnValue(registry);
+  mocks.config.mockReturnValue(null);
   const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
   mocks.projects.mockReturnValue(projects);
   mocks.presentation.mockReturnValue({
@@ -365,3 +379,52 @@ it("uses cached repository capability and branch defaults while offline", async 
   expect(screen.current.draftKey).toBe(draftKey);
   expect(screen.current.selectedBranchName).toBe("main");
 });
+
+it.each(["removed", "disabled", "valid"] as const)(
+  "queues the displayed model when the saved pick is %s",
+  async (state) => {
+    using screen = setup();
+    const primary = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const saved = { instanceId: ProviderInstanceId.make("claude_work"), model: "sonnet" };
+    const providers: ServerProvider[] = [primary, ...(state === "removed" ? [] : [saved])].map(
+      (selection) => ({
+        instanceId: selection.instanceId,
+        driver: ProviderDriverKind.make(selection === primary ? "codex" : "claudeAgent"),
+        enabled: selection === primary || state !== "disabled",
+        installed: true,
+        version: "1",
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      }),
+    );
+    mocks.config.mockReturnValue({
+      providers,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        defaultModelSelection: primary,
+        providerInstances: {
+          [primary.instanceId]: { driver: "codex", config: {} },
+          [saved.instanceId]: { driver: "claudeAgent", config: { enabled: state !== "disabled" } },
+        },
+      },
+    });
+    await screen.render(true);
+    act(() => {
+      screen.current.setPrompt("hello");
+      mocks.writeSettings(screen.current.draftKey!, { modelSelection: saved });
+    });
+    const shown = state === "valid" ? saved : primary;
+    expect(screen.current.selectedModel).toEqual(shown);
+    const message = await screen.current.buildPendingTaskMessage({
+      commandId: "command",
+      messageId: "message",
+      threadId: "thread",
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    expect(message?.modelSelection).toEqual(shown);
+  },
+);

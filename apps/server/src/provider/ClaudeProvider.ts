@@ -366,6 +366,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeUsage = true,
+  discoverModels = true,
 ) => {
   const abort = new AbortController();
   const abortProbe = Effect.sync(() => {
@@ -379,7 +380,7 @@ const probeClaudeCapabilities = (
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
     // Workspace probes (no usage) discard models; the machine probe refreshes the shared cache.
-    const graceMs = includeUsage
+    const graceMs = discoverModels
       ? claudeGatewayDiscoveryGraceMs({
           ...claudeEnvironment,
           ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
@@ -395,7 +396,9 @@ const probeClaudeCapabilities = (
           options: buildClaudeCapabilitiesProbeQueryOptions({
             executablePath,
             abortController: abort,
-            environment: claudeEnvironment,
+            environment: includeUsage
+              ? claudeEnvironment
+              : { ...claudeEnvironment, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
             cwd,
             managedMcpConfig,
           }),
@@ -495,7 +498,9 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
   const probeResult = cwdExists
-    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
+    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false, false).pipe(
+        Effect.result,
+      )
     : undefined;
   const capabilities =
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;

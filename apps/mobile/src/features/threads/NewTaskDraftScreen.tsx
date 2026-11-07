@@ -643,14 +643,15 @@ export function NewTaskDraftScreen(props: {
       return null;
     }
 
-    const message = flow.buildPendingTaskMessage(creationMetadata, {
+    flow.setSubmitting(true);
+    const message = await flow.buildPendingTaskMessage(creationMetadata, {
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
     });
     if (!message) {
+      flow.setSubmitting(false);
       return null;
     }
     // Persist locally before clearing or leaving the draft; server setup runs on the thread.
-    flow.setSubmitting(true);
     const queued = await settlePromise(() => enqueueThreadOutboxMessage(message));
     flow.setSubmitting(false);
     if (AsyncResult.isFailure(queued)) {

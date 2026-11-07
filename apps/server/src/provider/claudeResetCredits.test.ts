@@ -1,5 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
+import { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
+import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -88,9 +93,83 @@ describe("claudeResetCreditsToContract", () => {
 });
 
 effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
+  it.effect.each(["organization-only", "account", "email"] as const)(
+    "isolates credentials unless a user identity is known (%s)",
+    (identity) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const first = yield* writeLogin;
+        const second = yield* writeLogin;
+        const oauthAccount = {
+          organizationUuid: "org-1",
+          ...(identity === "account" ? { accountUuid: "same-account" } : {}),
+          ...(identity === "email" ? { emailAddress: "same@example.test" } : {}),
+        };
+        for (const login of [first, second])
+          yield* fs.writeFileString(login.accountConfigPath, JSON.stringify({ oauthAccount }));
+        yield* fs.writeFileString(
+          path.join(second.configDir, ".credentials.json"),
+          JSON.stringify({ claudeAiOauth: { accessToken: "other-token" } }),
+        );
+        let reads = 0;
+        const client = yield* makeUsageHttpClient(
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              reads++;
+              const id =
+                request.headers.authorization === "Bearer oauth-token" ? "grant_a" : "grant_b";
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  cedar_ember: { eligible: true, next_grant_id: id, grants: [grant({ id })] },
+                }),
+              );
+            }),
+          ),
+        );
+        const read = (login: typeof first) =>
+          ClaudeResetCredits.readClaudeResetCredits(
+            login.configDir,
+            "2.1.0",
+            login.accountConfigPath,
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+        expect((yield* read(first))?.nextCreditId).toBe("grant_a");
+        expect((yield* read(second))?.nextCreditId).toBe(
+          identity === "organization-only" ? "grant_b" : "grant_a",
+        );
+        expect(reads).toBe(identity === "organization-only" ? 2 : 1);
+      }),
+  );
+
   it.effect("reads the grants with the CLI's request", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
+      const { configDir, accountConfigPath } = yield* writeLogin;
+      const fs = yield* FileSystem.FileSystem;
+      const initialIdentity =
+        yield* ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath);
+      yield* fs.writeFileString(
+        accountConfigPath,
+        '{"numStartups":42,"oauthAccount":{"organizationUuid":"org-1"}}',
+      );
+      expect(yield* ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath)).toBe(
+        initialIdentity,
+      );
+      yield* fs.writeFileString(
+        accountConfigPath,
+        '{"oauthAccount":{"organizationUuid":"org-1","accountUuid":"account-a","emailAddress":"a@example.test"}}',
+      );
+      const firstAccount = yield* ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath);
+      yield* fs.writeFileString(
+        accountConfigPath,
+        '{"oauthAccount":{"organizationUuid":"org-1","accountUuid":"account-b","emailAddress":"b@example.test"}}',
+      );
+      expect(yield* ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath)).not.toBe(
+        firstAccount,
+      );
       const client = HttpClient.make((request) => {
         expect(request.method).toBe("GET");
         expect(request.url).toBe("https://api.anthropic.com/api/oauth/usage");
@@ -136,7 +215,14 @@ const ClaimBody = Schema.fromJsonString(
 );
 const decodeClaimBody = Schema.decodeEffect(ClaimBody);
 
-const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requestId: "r-1" }) =>
+const consume = (
+  client: HttpClient.HttpClient,
+  ids: {
+    grantId: string;
+    requestId: string;
+    usageHttpClient?: Effect.Success<ReturnType<typeof makeUsageHttpClient>>;
+  } = { grantId: "grant_a", requestId: "r-1" },
+) =>
   Effect.gen(function* () {
     const login = yield* writeLogin;
     return yield* ClaudeResetCredits.consumeClaudeResetCredit({
@@ -151,6 +237,80 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
   });
 
 effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
+  it.effect("keeps a timed-out claim's request ID through a local usage cooldown", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const login = yield* writeLogin;
+      yield* (yield* FileSystem.FileSystem).writeFileString(
+        login.accountConfigPath,
+        '{"oauthAccount":{"organizationUuid":"org-1","accountUuid":"account-a"}}',
+      );
+      const started = yield* Deferred.make<void>();
+      const requestIds: string[] = [];
+      const client = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          if (new URL(request.url).pathname === "/api/oauth/usage") {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({}, { status: 429, headers: { "retry-after": "600" } }),
+            );
+          }
+          const body =
+            request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+          requestIds.push((yield* decodeClaimBody(body)).request_id);
+          if (requestIds.length === 1) {
+            yield* Deferred.succeed(started, undefined);
+            return yield* Effect.never;
+          }
+          return HttpClientResponse.fromWeb(request, Response.json({ result: "reset" }));
+        }).pipe(Effect.orDie),
+      );
+      const usageHttpClient = yield* makeUsageHttpClient(client);
+      const claim = () =>
+        redeem(
+          login.configDir,
+          (requestId) =>
+            ClaudeResetCredits.consumeClaudeResetCredit({
+              ...login,
+              version: "2.1.0",
+              grantId: "grant_a",
+              requestId,
+              usageHttpClient,
+            }).pipe(
+              Effect.provideService(HostProcess.Platform, "linux"),
+              Effect.provideService(HttpClient.HttpClient, client),
+            ),
+          ClaudeResetCredits.isSettledClaudeResetCreditFailure,
+        );
+      const pending = yield* claim().pipe(Effect.result, Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("25 seconds");
+      expect(yield* Fiber.join(pending)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "requestFailed" },
+      });
+      yield* ClaudeResetCredits.readClaudeResetCredits(login.configDir, "2.1.0").pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HttpClient.HttpClient, usageHttpClient),
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(login.configDir, ".credentials.json"),
+        '{"claudeAiOauth":{"accessToken":"renewed-token"}}',
+      );
+      for (const elapsed of ["0 minutes", "9 minutes"] as const) {
+        yield* TestClock.adjust(elapsed);
+        expect(yield* claim().pipe(Effect.result)).toMatchObject({ _tag: "Failure" });
+        expect(requestIds).toHaveLength(1);
+      }
+      yield* TestClock.adjust("1 minute");
+      expect(yield* claim()).toBe("reset");
+      expect(requestIds).toHaveLength(2);
+      expect(requestIds[1]).toBe(requestIds[0]);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
   it.effect("claims the grant for the organization", () =>
     Effect.gen(function* () {
       const client = HttpClient.make((request) =>

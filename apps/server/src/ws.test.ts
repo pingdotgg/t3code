@@ -1,3 +1,4 @@
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1116,6 +1117,10 @@ it.effect.each([
 
 it.effect("on-demand clients get provider config without workspace snapshots", () =>
   Effect.gen(function* () {
+    const refreshModes: boolean[] = [];
+    const reloaded: Array<ProviderInstanceId | undefined> = [];
+    const reloadModes: boolean[] = [];
+    let sourceRefreshes = 0;
     const instanceId = ProviderInstanceId.make("claudeAgent");
     const snapshotFor = (cwd: string, checkedAt: string) => ({
       cwd,
@@ -1163,6 +1168,27 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           Stream.tap(() => Queue.offer(pulled, undefined)),
         ),
         refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
+        refresh: () =>
+          Effect.map(UsagePolling, (usage) => {
+            refreshModes.push(usage);
+            return [provider];
+          }),
+        refreshInstance: () =>
+          Effect.map(UsagePolling, (usage) => {
+            refreshModes.push(usage);
+            return [provider];
+          }),
+        reloadSecretsAndRefresh: (id) =>
+          Effect.map(UsagePolling, (usage) => {
+            reloaded.push(id);
+            reloadModes.push(usage);
+            return [provider];
+          }),
+        refreshUsage: () =>
+          Effect.map(UsagePolling, (usage) => {
+            refreshModes.push(usage);
+            return [provider];
+          }),
       }),
       Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
         listInstances: Effect.sync(() => [
@@ -1180,6 +1206,9 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       }),
       Layer.mock(UsageLimitSources.UsageLimitSources)({
         current: Effect.succeed([]),
+        refresh: Effect.sync(() => {
+          sourceRefreshes++;
+        }),
         streamChanges: Stream.make([]),
       }),
       Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
@@ -1299,7 +1328,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       _tag: "Request",
       id: RpcMessage.RequestId("refresh"),
       tag: WS_METHODS.serverRefreshProviders,
-      payload: { instanceId, cwd: "/b", workspaceSnapshotsOnDemand: true },
+      payload: { instanceId, cwd: "/b", usage: false, workspaceSnapshotsOnDemand: true },
       headers: Headers.empty,
     });
     const refreshed = (yield* Queue.take(responses)) as {
@@ -1309,6 +1338,49 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       refreshed.providers.map((entry) => [entry.workspaceSnapshots, entry.slashCommands]),
       [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
     );
+    for (const [index, payload] of [{}, { usage: false }, { usage: true }].entries()) {
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId(`quota-refresh-${index}`),
+        tag: WS_METHODS.serverRefreshProviders,
+        payload,
+        headers: Headers.empty,
+      });
+      yield* Queue.take(responses);
+    }
+    assert.deepEqual(refreshModes, [false, true, false, true]);
+    assert.equal(sourceRefreshes, 2);
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("source-only-refresh"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { usage: false, usageSources: true, workspaceSnapshotsOnDemand: true },
+      headers: Headers.empty,
+    });
+    const sourceOnly = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.isUndefined(sourceOnly.providers[0]?.workspaceSnapshots);
+    assert.equal(sourceRefreshes, 3);
+    assert.deepEqual(refreshModes, [false, true, false, true]);
+    for (const [index, cwd] of [undefined, "/b"].entries()) {
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId(`secret-refresh-${index}`),
+        tag: WS_METHODS.serverRefreshProviders,
+        payload: { instanceId, reloadSecrets: true, ...(cwd === undefined ? {} : { cwd }) },
+        headers: Headers.empty,
+      });
+      yield* Queue.take(responses);
+      assert.deepEqual(reloaded, [instanceId]);
+      assert.deepEqual(reloadModes, [false]);
+      assert.deepEqual(
+        refreshModes,
+        cwd === undefined
+          ? [false, true, false, true, true]
+          : [false, true, false, true, true, false],
+      );
+    }
     // A failed scan still gives a client without the machine catalog its commands.
     scansCwd = true;
     yield* server.write(0, {

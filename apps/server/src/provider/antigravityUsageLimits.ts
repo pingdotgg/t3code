@@ -1,3 +1,8 @@
+import {
+  usageResponseCheckedAt,
+  usageReadRefreshAfter,
+  UsageAccountIdentity,
+} from "@t3tools/provider-core/server/usageLimits";
 import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
@@ -187,7 +192,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const client = yield* HttpClient.HttpClient;
   const crypto = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
@@ -196,6 +201,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
   let generation = 0;
+  const throttleIdentities = new Map<string, string>();
+  const quotaOwners = new Map<string, string>();
 
   const sha256 = (text: string) =>
     crypto
@@ -206,14 +213,25 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         ),
       );
 
-  const request = (request: HttpClientRequest.HttpClientRequest) =>
+  const request = (
+    request: HttpClientRequest.HttpClientRequest,
+    onSample?: (checkedAt: string, refreshAfter: number | undefined) => void,
+  ) =>
     client.execute(request).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
+      Effect.tap((response) =>
+        Effect.sync(() =>
+          onSample?.(usageResponseCheckedAt(response, ""), usageReadRefreshAfter(response)),
+        ),
+      ),
+      Effect.tapError((error) => Effect.sync(() => onSample?.("", usageReadRefreshAfter(error)))),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((response) => response.json),
       Effect.timeout("10 seconds"),
     );
-  const read = Effect.gen(function* () {
+  const read = Effect.fn("AntigravityUsageProbe.read")(function* (
+    onAccount: (account: string) => void,
+  ) {
     const startedGeneration = generation;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
@@ -231,11 +249,13 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const fingerprint = yield* sha256(
       `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
     );
+    if (cached?.fingerprint === fingerprint)
+      onAccount(quotaOwners.get(fingerprint) ?? cached.account);
     const now = yield* Clock.currentTimeMillis;
     let accessToken: string;
     let account: string;
     if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
-      cached = undefined;
+      const previousAccount = cached?.fingerprint === fingerprint ? cached.account : undefined;
       const refreshed = yield* request(
         HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
           HttpClientRequest.bodyUrlParams({
@@ -255,7 +275,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       ).pipe(
         Effect.flatMap(decodeUserInfo),
         Effect.flatMap((info) => sha256(`google-account\0${info.id}`)),
-        Effect.orElseSucceed(() => fingerprint),
+        Effect.orElseSucceed(() => previousAccount ?? fingerprint),
       );
       if (generation === startedGeneration) {
         cached = {
@@ -269,6 +289,13 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       accessToken = cached.accessToken;
       account = cached.account;
     }
+    // Google discovery can recover before quota access; failures still belong to the last sample.
+    const quotaOwner = quotaOwners.get(fingerprint) ?? account;
+    onAccount(quotaOwner);
+    const throttleIdentity = throttleIdentities.get(fingerprint) ?? account;
+    throttleIdentities.set(fingerprint, throttleIdentity);
+    const sampleTimes: string[] = [];
+    const sampleDeadlines: number[] = [];
     // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,
@@ -282,7 +309,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         (endpoint) =>
           Effect.gen(function* () {
             // Capture each request after auth, so refresh latency does not widen the tolerance.
-            const requestedAt = yield* Clock.currentTimeMillis;
+            let requestedAt = yield* Clock.currentTimeMillis;
             return yield* request(
               HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
                 HttpClientRequest.setHeaders({
@@ -293,7 +320,13 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
                   token.project_id ? { project: token.project_id } : {},
                 ),
               ),
+              (sampleAt, refreshAfter) => {
+                if (refreshAfter !== undefined) sampleDeadlines.push(refreshAfter);
+                if (sampleAt) requestedAt = Date.parse(sampleAt);
+                sampleTimes.push(sampleAt || DateTime.formatIso(DateTime.makeUnsafe(requestedAt)));
+              },
             ).pipe(
+              Effect.provideService(UsageAccountIdentity, `antigravity:${throttleIdentity}`),
               Effect.flatMap((response) => parse(response, requestedAt)),
               Effect.orElseSucceed(() => []),
             );
@@ -315,27 +348,45 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       : yield* fetchWindows("fetchAvailableModels", (response) =>
           decodeModels(response).pipe(Effect.map(modelWindows)),
         );
+    const refreshAfter = sampleDeadlines.length ? Math.min(...sampleDeadlines) : undefined;
     if (windows.length === 0) {
-      return makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "probeFailed",
-        message: "Antigravity did not return usable quota information.",
-      });
-    }
-    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: account };
-  });
-  const probe = read.pipe(
-    Effect.timeout("30 seconds"),
-    Effect.catch(() =>
-      Effect.gen(function* () {
-        return makeUnavailableUsageLimits({
-          checkedAt: DateTime.formatIso(yield* DateTime.now),
+      return {
+        ...makeUnavailableUsageLimits({
+          checkedAt,
           reason: "probeFailed",
-          message: "Could not read Antigravity limits. Refresh provider status to retry.",
-        });
-      }),
-    ),
-  );
+          message: "Antigravity did not return usable quota information.",
+        }),
+        credentialFingerprint: quotaOwner,
+        ...(refreshAfter !== undefined ? { refreshAfter } : {}),
+      };
+    }
+    if (generation === startedGeneration) quotaOwners.set(fingerprint, account);
+    return {
+      ...makeUsageLimits({ checkedAt: sampleTimes.toSorted()[0] ?? checkedAt, windows }),
+      credentialFingerprint: account,
+      ...(refreshAfter !== undefined ? { refreshAfter } : {}),
+    };
+  });
+  const probe = Effect.gen(function* () {
+    let credentialFingerprint: string | undefined;
+    return yield* read((account) => {
+      credentialFingerprint = account;
+    }).pipe(
+      Effect.timeout("30 seconds"),
+      Effect.catch(() =>
+        Effect.gen(function* () {
+          return {
+            ...makeUnavailableUsageLimits({
+              checkedAt: DateTime.formatIso(yield* DateTime.now),
+              reason: "probeFailed",
+              message: "Could not read Antigravity limits. Refresh provider status to retry.",
+            }),
+            ...(credentialFingerprint ? { credentialFingerprint } : {}),
+          };
+        }),
+      ),
+    );
+  });
   return {
     probe,
     clear: Effect.sync(() => {

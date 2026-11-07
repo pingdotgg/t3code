@@ -1,8 +1,11 @@
+import { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+import { HttpClient } from "effect/http";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderCredentialError } from "@t3tools/provider-core/server/errors";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -22,7 +25,12 @@ export const layer = Layer.effect(
     const secrets = yield* ServerSecretStore.ServerSecretStore;
     const digest = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
+    const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
+    const usageHttpClient = Option.isSome(httpClient)
+      ? yield* makeUsageHttpClient(httpClient.value)
+      : undefined;
     return ProviderHost.ProviderHost.of({
+      ...(usageHttpClient ? { usageHttpClient } : {}),
       paths: {
         cwd: config.cwd,
         baseDir: config.baseDir,

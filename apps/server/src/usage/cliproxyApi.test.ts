@@ -54,7 +54,11 @@ function fixture(
         id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
       }
     >;
-    upstream?: (request: RequestBody) => { status: number; body: unknown };
+    upstream?: (request: RequestBody) => {
+      status: number;
+      body: unknown;
+      headers?: Record<string, string[]>;
+    };
     cooldownStatus?: number;
   } = {},
 ) {
@@ -106,7 +110,11 @@ function fixture(
       };
       return HttpClientResponse.fromWeb(
         request,
-        Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
+        Response.json({
+          status_code: upstream.status,
+          body: encodeJson(upstream.body),
+          header: "headers" in upstream ? upstream.headers : undefined,
+        }),
       );
     }),
   );
@@ -194,6 +202,65 @@ describe("CLIProxyAPI hub failures", () => {
 });
 
 describe("CLIProxyAPI built-in management API", () => {
+  it.effect.each([429, 503])(
+    "paces filtered Claude accounts, caches responses, and shares HTTP %s cooldowns",
+    (status) =>
+      Effect.gen(function* () {
+        let limited = false;
+        const test = fixture({
+          accounts: accounts.map((account) => ({ ...account, provider: "claude" })),
+          upstream: () =>
+            limited
+              ? { status, body: {}, headers: { "Retry-After": ["420"] } }
+              : { status: 200, body: { five_hour: { utilization: 25, resets_at: null } } },
+        });
+        const api = yield* test.api;
+        expect(yield* api.readAccounts(config, ["codex"])).toEqual([]);
+        const first = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(first.map((account) => account.usageLimits.windows[0]?.usedPercent)).toEqual([
+          25, 25,
+        ]);
+        yield* TestClock.adjust("1 minute");
+        const cached = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(cached.map((account) => account.usageLimits.checkedAt)).toEqual(
+          first.map((account) => account.usageLimits.checkedAt),
+        );
+        expect(cached.map((account) => account.usageLimits.refreshAfter)).toEqual([
+          300_000, 300_000,
+        ]);
+        expect(
+          test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
+        ).toHaveLength(2);
+        limited = true;
+        yield* TestClock.adjust("4 minutes");
+        const stale = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(stale.map((account) => account.usageLimits.unavailable?.reason)).toEqual([
+          "probeFailed",
+          "probeFailed",
+        ]);
+        expect(stale.map((account) => account.usageLimits.refreshAfter)).toEqual([
+          720_000, 720_000,
+        ]);
+        yield* TestClock.adjust("5 minutes");
+        const cooling = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(cooling.map((account) => account.usageLimits.refreshAfter)).toEqual([
+          720_000, 720_000,
+        ]);
+        expect(
+          test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
+        ).toHaveLength(4);
+        limited = false;
+        yield* TestClock.adjust("2 minutes");
+        const recovered = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(recovered.map((account) => account.usageLimits.windows[0]?.usedPercent)).toEqual([
+          25, 25,
+        ]);
+        expect(
+          test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
+        ).toHaveLength(6);
+      }),
+  );
+
   it.effect(
     "reads both accounts and their earliest unexpired credits without plugin endpoints",
     () =>
@@ -433,28 +500,99 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
+  it.effect.each(["reset", "already_redeemed", "no_credit"] as const)(
+    "pins redemption and clears the correct routing cooldown after %s",
+    (code) =>
+      Effect.gen(function* () {
+        let consumed = false;
+        const test = fixture({
+          upstream: (request) => {
+            if (request.url?.endsWith("/consume")) {
+              consumed = true;
+              return { status: 200, body: { code } };
+            }
+            if (request.auth_index === "a" || consumed) return { status: 503, body: {} };
+            if (request.url?.endsWith("/rate-limit-reset-credits"))
+              return { status: 200, body: { credits: [credit("credit-b")] } };
+            return {
+              status: 200,
+              body: { plan_type: "pro", rate_limit: { primary_window: { used_percent: 80 } } },
+            };
+          },
+        });
+        const api = yield* test.api;
+        const initial = yield* api.readAccounts(config);
+        expect(initial[1]?.usageLimits.resetCredits?.nextCreditId).toBe("credit-b");
+        const outcome =
+          code === "reset" ? "reset" : code === "already_redeemed" ? "alreadyRedeemed" : "noCredit";
+        expect(yield* api.consume(config, "second.json", "credit-b")).toEqual({ outcome });
+        expect(yield* api.consume(config, "second.json", "credit-b")).toEqual({ outcome });
+        const redemptions = test.requests.filter((request) =>
+          request.body?.url?.endsWith("/consume"),
+        );
+        expect(redemptions).toHaveLength(2);
+        expect(redemptions[0]?.body?.data).toBe(redemptions[1]?.body?.data);
+        expect(redemptions[0]?.body?.data).toBe(
+          encodeJson({
+            redeem_request_id: "519d5243-011a-5b7b-91f3-44d85f095705",
+            credit_id: "credit-b",
+          }),
+        );
+        expect(
+          test.requests
+            .filter((request) => request.path.endsWith("/reset-quota"))
+            .map((request) => request.body?.auth_index),
+        ).toEqual(code === "no_credit" ? [] : ["b", "b"]);
+        yield* api.readAccounts(config);
+        expect(
+          test.requests.filter(
+            (request) => request.body?.auth_index === "a" && request.body.url?.endsWith("/usage"),
+          ),
+        ).toHaveLength(1);
+        yield* TestClock.adjust("5 minutes");
+        yield* api.readAccounts(config);
+        expect(
+          test.requests.filter(
+            (request) => request.body?.auth_index === "a" && request.body.url?.endsWith("/usage"),
+          ),
+        ).toHaveLength(2);
+      }),
+  );
+
+  it.effect("drops only the disproven credit balance after no_credit", () =>
     Effect.gen(function* () {
-      const test = fixture();
+      let consumed = false;
+      const test = fixture({
+        upstream: (request) => {
+          if (request.url?.endsWith("/consume")) {
+            consumed = true;
+            return { status: 200, body: { code: "no_credit" } };
+          }
+          if (request.url?.endsWith("/rate-limit-reset-credits")) {
+            return request.auth_index === "b"
+              ? { status: 503, body: {} }
+              : { status: 200, body: { credits: consumed ? [] : [credit("first")] } };
+          }
+          return { status: 200, body: { plan_type: "pro", rate_limit: null } };
+        },
+      });
       const api = yield* test.api;
-      expect(yield* api.consume(config, "second.json", "credit-b")).toEqual({ outcome: "reset" });
-      expect(yield* api.consume(config, "second.json", "credit-b")).toEqual({ outcome: "reset" });
-      const redemptions = test.requests.filter((request) =>
-        request.body?.url?.endsWith("/consume"),
+      const initial = yield* api.readAccounts(config);
+      expect(initial[0]?.usageLimits.resetCredits?.availableCount).toBe(1);
+      expect(yield* api.consume(config, "first.json", "first")).toEqual({ outcome: "noCredit" });
+      const refreshed = yield* api.readAccounts(config);
+      expect(refreshed[0]?.usageLimits.resetCredits?.availableCount).toBe(0);
+      expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(
+        0,
       );
-      expect(redemptions).toHaveLength(2);
-      expect(redemptions[0]?.body?.data).toBe(redemptions[1]?.body?.data);
-      expect(redemptions[0]?.body?.data).toBe(
-        encodeJson({
-          redeem_request_id: "519d5243-011a-5b7b-91f3-44d85f095705",
-          credit_id: "credit-b",
-        }),
+      expect(test.requests.filter((request) => request.body?.url?.endsWith("/usage"))).toHaveLength(
+        2,
       );
       expect(
         test.requests
-          .filter((request) => request.path.endsWith("/reset-quota"))
+          .filter((request) => request.body?.url?.endsWith("/rate-limit-reset-credits"))
           .map((request) => request.body?.auth_index),
-      ).toEqual(["b", "b"]);
+      ).toEqual(["a", "b", "a"]);
     }),
   );
 

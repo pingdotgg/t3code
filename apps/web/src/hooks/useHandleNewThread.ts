@@ -38,7 +38,8 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
-import { environmentServerConfigsAtom } from "../state/server";
+import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
+import { refreshNewThreadUsage } from "@t3tools/client-runtime/state/usage";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
@@ -75,7 +76,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     return resolveThreadRouteTarget(currentRouteParams);
   };
 
-  return (
+  return async (
     projectRef: ScopedProjectRef,
     options?: {
       branch?: string | null;
@@ -147,7 +148,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       project,
     );
     const configuredDefaultModelSelection = projectSettings.settings.defaultModelSelection ?? null;
-    const fallbackResolution = resolveNewThreadModelSelection({
+    const selectionInput = {
       defaultSelection:
         configuredDefaultModelSelection ??
         (carryModelSelection || useComposerDraftStore.getState().stickyActiveProvider !== null
@@ -162,7 +163,15 @@ export function createNewThreadHandler(router: AnyRouter) {
       settings: targetServerSettings,
       projectId: projectRef.projectId,
       now: Date.now(),
+    };
+    const providers = await refreshNewThreadUsage({
+      registry: appAtomRegistry,
+      server: serverEnvironment,
+      environmentId: projectRef.environmentId,
+      input: selectionInput,
     });
+    if (abandonedSinceRequest()) return null;
+    const fallbackResolution = resolveNewThreadModelSelection({ ...selectionInput, providers });
     const projectDefaultModelSelection = fallbackResolution.fallback
       ? fallbackResolution.selection
       : configuredDefaultModelSelection;

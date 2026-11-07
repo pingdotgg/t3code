@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
@@ -39,6 +40,7 @@ const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 
 it.effect("reads Go limits with the instance's XDG credentials and preserves reset times", () =>
   Effect.gen(function* () {
+    const pathService = yield* Path.Path;
     const resetsAt = "2026-09-17T12:00:00.000Z";
     const limits = yield* readOpenCodeGoUsageLimits({
       enabled: true,
@@ -49,7 +51,7 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
         FileSystem.FileSystem,
         FileSystem.makeNoop({
           readFileString: (path) => {
-            NodeAssert.equal(path, "/instance/data/opencode/auth.json");
+            NodeAssert.equal(path, pathService.normalize("/instance/data/opencode/auth.json"));
             return Effect.succeed(
               JSON.stringify({ "opencode-go": { type: "api", key: "instance-key" } }),
             );
@@ -75,7 +77,6 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
     NodeAssert.equal(limits.unavailable, undefined);
     NodeAssert.equal(
@@ -94,7 +95,7 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
         { kind: "monthly", usedPercent: 100, reset: resetsAt },
       ],
     );
-  }),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(
@@ -220,10 +221,7 @@ it.effect(
           consoleStatus === 500 ? "probeFailed" : undefined,
         );
         NodeAssert.equal(limits.windows.length, consoleStatus === 500 ? 0 : 3);
-        NodeAssert.equal(
-          limits.credentialFingerprint,
-          consoleStatus === 500 ? undefined : fingerprints.get(requested.at(-1)!),
-        );
+        NodeAssert.equal(limits.credentialFingerprint, fingerprints.get(requested.at(-1)!));
       }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
@@ -350,7 +348,12 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
         Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
       NodeAssert.equal(limits.unavailable?.reason, reason);
-      NodeAssert.equal(limits.credentialFingerprint, undefined);
+      NodeAssert.equal(
+        limits.credentialFingerprint,
+        status === 403
+          ? undefined
+          : "85649de18e63305548b6407e185f708483727ee6189cc4bc9512ddb17e23e776",
+      );
       NodeAssert.deepEqual(limits.windows, []);
     }
   }),

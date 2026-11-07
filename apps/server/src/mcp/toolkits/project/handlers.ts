@@ -196,7 +196,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 defaultSelection: projectDefaults.defaultModelSelection,
                 fallbackSelection: projectDefaults.fallbackModelSelection,
                 providers: yield* ProviderRegistry.ProviderRegistry.pipe(
-                  Effect.flatMap((registry) => registry.getProviders),
+                  Effect.flatMap((registry) =>
+                    registry.refreshUsageForModelSelection(
+                      projectDefaults.defaultModelSelection,
+                      projectDefaults.fallbackModelSelection,
+                    ),
+                  ),
                 ),
                 settings: projectDefaults,
                 projectId,

@@ -1,8 +1,9 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { hasProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,12 +11,15 @@ import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { GrokDriver } from "./driver.ts";
+import * as GrokStatus from "./status.ts";
+import * as GrokUsage from "./usageLimits.ts";
 import { resolveLatestProviderVersion } from "@t3tools/provider-core/server/maintenanceResolver";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -172,6 +176,162 @@ it.layer(layerTest)("GrokDriver", (it) => {
       );
     });
   }
+
+  it.effect.each(["subscription", "api-key", "custom-auth", "missing-token", "key-only"] as const)(
+    "keeps health-only usage capability accurate for %s",
+    (mode) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const config = GrokDriver.defaultConfig();
+          let customAuth = false;
+          const readAccount = GrokUsage.readGrokAccount;
+          using _account = vi
+            .spyOn(GrokUsage, "readGrokAccount")
+            .mockImplementation((environment, includeUsage) =>
+              Effect.suspend(() =>
+                readAccount(
+                  {
+                    ...environment,
+                    ...(customAuth ? { GROK_OIDC_ISSUER: "https://custom.test" } : {}),
+                  },
+                  includeUsage,
+                ),
+              ),
+            );
+          const initial = yield* GrokStatus.buildInitialGrokProviderSnapshot(config);
+          using _status = vi.spyOn(GrokStatus, "checkGrokProviderStatus").mockReturnValue(
+            Effect.succeed({
+              ...initial,
+              enabled: true,
+              installed: true,
+              status: "ready",
+              auth: { status: "authenticated", type: "cached_token" },
+            }),
+          );
+          const fs = yield* FileSystem.FileSystem;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-usage-" });
+          const writeCredential = (key: string) =>
+            fs.writeFileString(
+              `${home}/auth.json`,
+              JSON.stringify({ "https://accounts.x.ai/sign-in": { key } }),
+            );
+          if (mode === "key-only") yield* writeCredential("test-token");
+          let requests = 0;
+          const instance = yield* GrokDriver.create({
+            instanceId: ProviderInstanceId.make("grok-usage"),
+            displayName: "Grok test",
+            enabled: true,
+            config,
+            environment: [
+              { name: "GROK_HOME", value: home, sensitive: false },
+              { name: "XAI_API_KEY", value: mode === "api-key" ? "api-key" : "", sensitive: true },
+              {
+                name: "GROK_OIDC_ISSUER",
+                value: mode === "custom-auth" ? "https://custom.test" : "",
+                sensitive: false,
+              },
+              {
+                name: "GROK_AUTH",
+                value:
+                  mode === "key-only"
+                    ? ""
+                    : JSON.stringify({
+                        "https://accounts.x.ai/sign-in": {
+                          key: mode === "missing-token" ? "" : "test-token",
+                          email: "account@example.com",
+                        },
+                      }),
+                sensitive: true,
+              },
+            ],
+          }).pipe(
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                requests += 1;
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    mode === "key-only"
+                      ? Response.json({
+                          config: {
+                            creditUsagePercent:
+                              request.headers.authorization === "Bearer test-token" ? 80 : 25,
+                          },
+                        })
+                      : new Response(null, { status: 503 }),
+                  ),
+                );
+              }),
+            ),
+          );
+          const health = yield* instance.snapshot.refresh;
+          const supported = mode === "subscription" || mode === "key-only";
+          expect(health.auth.email).toBe(
+            mode === "api-key" || mode === "custom-auth" || mode === "key-only"
+              ? undefined
+              : "account@example.com",
+          );
+          expect(health.supportsUsageLimits).toBe(supported);
+          expect(hasProviderUsageLimits(health.driver, [health], [])).toBe(true);
+          if (supported) expect(health.usageLimits).toBeUndefined();
+          else expect(health.usageLimits?.unavailable?.reason).toBe("unsupported");
+          expect(requests).toBe(0);
+          yield* instance.snapshot.refreshUsage!;
+          const usage = yield* instance.snapshot.getSnapshot;
+          expect(usage.usageLimits?.unavailable?.reason).toBe(
+            mode === "key-only" ? undefined : supported ? "probeFailed" : "unsupported",
+          );
+          expect(requests).toBe(supported ? 1 : 0);
+          if (mode === "key-only") {
+            expect(usage.usageLimits?.windows[0]?.usedPercent).toBe(80);
+            yield* writeCredential("account-b");
+            const changed = yield* instance.snapshot.refresh;
+            expect(requests).toBe(1);
+            expect(changed.auth.usageRefreshKey).not.toBe(health.auth.usageRefreshKey);
+            expect(changed.usageLimits?.windows.length ?? 0).toBe(0);
+            yield* instance.snapshot.refreshUsage!;
+            const fresh = yield* instance.snapshot.getSnapshot;
+            expect(requests).toBe(2);
+            expect(fresh.usageLimits?.windows[0]?.usedPercent).toBe(25);
+            yield* writeCredential("account-c");
+            yield* instance.snapshot.refreshUsage!;
+            expect(requests).toBe(3);
+            expect((yield* instance.snapshot.getSnapshot).auth.usageRefreshKey).not.toBe(
+              fresh.auth.usageRefreshKey,
+            );
+            let expectedRequests = requests;
+            for (const contents of [
+              "{}",
+              JSON.stringify({
+                "https://accounts.x.ai/sign-in": { auth_mode: "api_key", key: "api-key" },
+              }),
+            ]) {
+              const previous = yield* instance.snapshot.getSnapshot;
+              yield* fs.writeFileString(`${home}/auth.json`, contents);
+              yield* instance.snapshot.refreshUsage!;
+              const removed = yield* instance.snapshot.getSnapshot;
+              expect(removed.auth.usageRefreshKey).toBeDefined();
+              expect(removed.auth.usageRefreshKey).not.toBe(previous.auth.usageRefreshKey);
+              expect(removed.usageLimits?.windows).toEqual([]);
+              expect(removed.usageLimits?.unavailable?.reason).toBe("unsupported");
+              expect(requests).toBe(expectedRequests);
+              yield* writeCredential("account-c");
+              yield* instance.snapshot.refreshUsage!;
+              expectedRequests += 1;
+              expect(requests).toBe(expectedRequests);
+            }
+            customAuth = true;
+            const unsupported = yield* instance.snapshot.refresh;
+            expect(unsupported.auth.type).toBe("cached_token");
+            expect(unsupported.supportsUsageLimits).toBe(false);
+            expect(unsupported.usageLimits?.windows).toEqual([]);
+            expect(unsupported.usageLimits?.unavailable?.reason).toBe("unsupported");
+            expect(requests).toBe(expectedRequests);
+          }
+        }),
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
+  );
 
   it.effect("stays manual-only when the configured executable does not exist", () =>
     Effect.gen(function* () {

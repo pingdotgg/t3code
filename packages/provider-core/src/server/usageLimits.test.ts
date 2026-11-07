@@ -106,6 +106,24 @@ describe("resolveUsageLimitsAfterProbe", () => {
       windows: live.windows,
     });
 
+    const identifiedLive = { ...live, credentialFingerprint: "account-a" };
+    const sameAccount = { ...probed, credentialFingerprint: "account-a" };
+    const switchedAccount = { ...probed, credentialFingerprint: "account-b" };
+    expect(
+      resolveUsageLimitsAfterProbe({ published: identifiedLive, probed: sameAccount }),
+    ).toEqual({
+      ...sameAccount,
+      checkedAt: live.checkedAt,
+      windows: live.windows,
+    });
+    expect(
+      resolveUsageLimitsAfterProbe({ published: identifiedLive, probed: switchedAccount }),
+    ).toBe(switchedAccount);
+
+    expect(resolveUsageLimitsAfterProbe({ published: live, probed: switchedAccount })).toBe(
+      switchedAccount,
+    );
+
     const sameTime = { ...probed, checkedAt: live.checkedAt };
     const newer = { ...probed, checkedAt: "2026-09-03T12:00:06.000Z" };
     expect(resolveUsageLimitsAfterProbe({ published: live, probed: sameTime })).toEqual(sameTime);
@@ -115,7 +133,30 @@ describe("resolveUsageLimitsAfterProbe", () => {
   it("keeps the last good windows through a failed probe but not an unsupported one", () => {
     const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };
-    expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
+    expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toEqual({
+      ...published,
+      stale: true,
+    });
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: { ...published, credentialFingerprint: "account-a" },
+        probed: failed,
+      }),
+    ).toBe(failed);
+    const sameAccountFailure = { ...failed, credentialFingerprint: "account-a" };
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: { ...published, credentialFingerprint: "account-a" },
+        probed: sameAccountFailure,
+      }),
+    ).toEqual({ ...published, credentialFingerprint: "account-a", stale: true });
+    const otherAccountFailure = { ...failed, credentialFingerprint: "account-b" };
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: { ...published, credentialFingerprint: "account-a" },
+        probed: otherAccountFailure,
+      }),
+    ).toBe(otherAccountFailure);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
   });

@@ -1,5 +1,8 @@
 import {
-  DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+  resolveUsageLimitsAfterProbe,
+  UsageProviderFilter,
+} from "@t3tools/provider-core/server/usageLimits";
+import {
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
@@ -9,10 +12,8 @@ import {
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
-import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
@@ -21,7 +22,6 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
@@ -61,7 +61,6 @@ export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
-  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const readManagementKey = Effect.fn("UsageLimitSources.readManagementKey")(function* (
     config: UsageLimitSourceConfig,
   ) {
@@ -74,6 +73,15 @@ export const make = Effect.gen(function* () {
     PubSub.shutdown,
   );
 
+  const sourceCacheKey = (
+    id: UsageLimitSourceId,
+    config: UsageLimitSourceConfig,
+    managementKey: string,
+  ) => `${id}\0${config.url}\0${managementKey}`;
+  const lastGoodSources = new Map<
+    string,
+    readonly UsageLimitSourceSnapshot["accounts"][number][]
+  >();
   const readSource = Effect.fn("UsageLimitSources.readSource")(function* (
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
@@ -84,28 +92,76 @@ export const make = Effect.gen(function* () {
     if (managementKey.length === 0) {
       return { ...base, accounts: [], error: missingManagementKey(config) };
     }
+    const accountKey = sourceCacheKey(id, config, managementKey);
+    const providers = yield* UsageProviderFilter;
     const accounts = yield* api
-      .readAccounts({ url: config.url, managementKey })
+      .readAccounts({ url: config.url, managementKey }, providers)
       .pipe(Effect.result);
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
-      return { ...base, accounts: [], error: accounts.failure.detail };
+      const refreshAfter = DateTime.toEpochMillis(yield* DateTime.now) + 5 * 60_000;
+      const retained = (lastGoodSources.get(accountKey) ?? []).map((account) => ({
+        ...account,
+        usageLimits: {
+          ...account.usageLimits,
+          stale: true,
+          refreshAfter: Math.max(refreshAfter, account.usageLimits.refreshAfter ?? 0),
+        },
+      }));
+      lastGoodSources.set(accountKey, retained);
+      return { ...base, accounts: retained, error: accounts.failure.detail };
     }
-    return { ...base, accounts: accounts.success };
+    const retained =
+      providers === undefined
+        ? []
+        : (lastGoodSources.get(accountKey) ?? []).filter(
+            (account) => !providers.includes(account.driver),
+          );
+    const previous = lastGoodSources.get(accountKey) ?? [];
+    const merged = [
+      ...retained,
+      ...accounts.success.map((account) => ({
+        ...account,
+        usageLimits:
+          resolveUsageLimitsAfterProbe({
+            published: previous.find(
+              (prior) => prior.id === account.id && prior.driver === account.driver,
+            )?.usageLimits,
+            probed: account.usageLimits,
+          }) ?? account.usageLimits,
+      })),
+    ];
+    lastGoodSources.set(accountKey, merged);
+    return { ...base, accounts: merged };
   });
 
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
     next: ReadonlyArray<UsageLimitSourceSnapshot>,
   ) {
+    // Hub routing fingerprints identify local retention ownership, not a shared credential.
+    const snapshots = next.map((source) => ({
+      ...source,
+      accounts: source.accounts.map((account) => {
+        const { credentialFingerprint: _credentialFingerprint, ...usageLimits } =
+          account.usageLimits;
+        return { ...account, usageLimits };
+      }),
+    }));
     const changed = yield* Ref.modify(stateRef, (previous) =>
-      Equal.equals(previous, next) ? [false, previous] : [true, next],
+      Equal.equals(previous, snapshots) ? [false, previous] : [true, snapshots],
     );
-    if (changed) yield* PubSub.publish(changes, next);
+    if (changed) yield* PubSub.publish(changes, snapshots);
   });
 
   // Serialize refreshes so slow old-settings reads cannot resurrect removed sources after newer refreshes.
   const refreshLock = yield* Semaphore.make(1);
   const refresh = Effect.gen(function* () {
+    const providers = yield* UsageProviderFilter;
+    if (
+      providers !== undefined &&
+      !providers.some((driver) => driver === "codex" || driver === "claudeAgent")
+    )
+      return;
     const settings = yield* settingsService.getSettings.pipe(
       Effect.orElseSucceed((): ServerSettings | null => null),
     );
@@ -142,40 +198,36 @@ export const make = Effect.gen(function* () {
       input.accountId,
       input.creditId,
     );
+    if (
+      result.outcome === "reset" ||
+      result.outcome === "alreadyRedeemed" ||
+      result.outcome === "noCredit"
+    ) {
+      const cacheKey = sourceCacheKey(input.sourceId, config, managementKey);
+      const retained = lastGoodSources.get(cacheKey);
+      if (retained)
+        lastGoodSources.set(
+          cacheKey,
+          retained.map((account) => {
+            if (account.id !== input.accountId || account.driver !== "codex") return account;
+            const { resetCredits: _resetCredits, ...usageLimits } = account.usageLimits;
+            return { ...account, usageLimits };
+          }),
+        );
+    }
     const snapshot = yield* readSource(input.sourceId, config);
     const previous = yield* Ref.get(stateRef);
     yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
     return result;
   }, refreshLock.withPermits(1));
 
+  yield* refresh.pipe(Effect.forkScoped);
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
     Stream.changes,
     Stream.runForEach(() => refresh),
     Effect.forkScoped,
   );
-
-  const interval = settingsService.getSettings.pipe(
-    Effect.map(
-      (settings) => resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
-    ),
-    Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
-  );
-  yield* Effect.forever(
-    interval.pipe(
-      Effect.flatMap((wait) => Effect.sleep(Duration.isPositive(wait) ? wait : "60 seconds")),
-      Effect.andThen(interval),
-      Effect.flatMap((current) =>
-        Duration.isPositive(current)
-          ? backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })
-          : Effect.succeed(false),
-      ),
-      Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
-      Effect.ignoreCause({ log: true }),
-    ),
-  ).pipe(Effect.forkScoped);
-
-  yield* refresh.pipe(Effect.forkScoped);
 
   return {
     current: Ref.get(stateRef),
