@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   deleted: vi.fn(),
   download: vi.fn(),
   copy: vi.fn(),
+  write: vi.fn(),
   share: vi.fn(),
   shareFromSource: vi.fn(),
   available: vi.fn(),
@@ -56,6 +57,10 @@ vi.mock("expo-file-system", () => {
     async copy(destination: File): Promise<void> {
       await mocks.copy(this.uri, destination.uri);
     }
+
+    write(content: Uint8Array): Promise<void> {
+      return mocks.write(this.uri, content);
+    }
   }
 
   return { Directory, File, Paths: { cache: "file:///cache" } };
@@ -74,6 +79,7 @@ vi.mock("./shareFileFromSource", () => ({ shareFileFromSource: mocks.shareFromSo
 import {
   downloadAndShareAttachment,
   downloadAttachmentForPreview,
+  shareGeneratedAttachment,
   shareLocalAttachment,
 } from "./attachmentDownload";
 import { isForegroundHandoffActive } from "./foreground-handoff";
@@ -92,12 +98,14 @@ beforeEach(() => {
   mocks.deleted.mockReset();
   mocks.download.mockReset();
   mocks.copy.mockReset();
+  mocks.write.mockReset();
   mocks.share.mockReset();
   mocks.shareFromSource.mockReset();
   mocks.available.mockReset();
   mocks.uuid.mockReset();
   mocks.download.mockImplementation(async (_url: string, file: { uri: string }) => file);
   mocks.copy.mockResolvedValue(undefined);
+  mocks.write.mockResolvedValue(undefined);
   mocks.share.mockResolvedValue(undefined);
   mocks.shareFromSource.mockResolvedValue(undefined);
   mocks.available.mockResolvedValue(true);
@@ -340,6 +348,21 @@ describe("attachment preview files", () => {
     expect(mocks.deleted).not.toHaveBeenCalled();
     copied.resolve();
     await task;
+    expect(mocks.share).not.toHaveBeenCalled();
+    expect(mocks.deleted).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shareGeneratedAttachment", () => {
+  it("does not open the share sheet when writing the file fails", async () => {
+    mocks.write.mockRejectedValue(new Error("No space left on device"));
+    await expect(
+      shareGeneratedAttachment({
+        bytes: new Uint8Array([1, 2, 3]),
+        attachment: input.attachment,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("No space left on device");
     expect(mocks.share).not.toHaveBeenCalled();
     expect(mocks.deleted).toHaveBeenCalledTimes(1);
   });

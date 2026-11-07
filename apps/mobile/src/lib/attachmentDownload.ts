@@ -295,7 +295,7 @@ export async function shareGeneratedAttachment(input: {
   const cached = await createCachedAttachmentFile(input.attachment);
   try {
     if (input.signal.aborted) return false;
-    cached.file.write(input.bytes);
+    await cached.file.write(input.bytes);
     await cached.preview.share(input.signal);
     return true;
   } finally {
