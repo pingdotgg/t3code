@@ -204,6 +204,7 @@ function threadDetailBodyFingerprint(props: ThreadDetailScreenProps): readonly u
     props.canSwitchThreadProvider,
     props.offersSideChat,
     props.showContent,
+    props.showFeed,
     props.selectedThreadFeed,
   ];
 }

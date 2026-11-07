@@ -31,6 +31,7 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import {
+  useFocusEffect,
   useNavigation,
   useRoute,
   type RouteProp,
@@ -43,6 +44,7 @@ import {
   createContext,
   startTransition,
   use,
+  useCallback,
   useEffect,
   useEffectEvent,
   useRef,
@@ -1333,12 +1335,22 @@ export function ExistingThreadSettingsRouteScreen({
 }: StaticScreenProps<ExistingThreadSettingsRouteParams>) {
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
   const [catalogReady, setCatalogReady] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- paints sheet chrome before buildModelOptions fills the catalog
-  useEffect(() => {
-    startTransition(() => {
-      setCatalogReady(true);
-    });
-  }, []);
+  // Focus arms early in the sheet transition; wait past presentation settle before the catalog wave.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const timer = setTimeout(() => {
+        if (cancelled) return;
+        startTransition(() => {
+          setCatalogReady(true);
+        });
+      }, 800);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }, []),
+  );
   // Reads the same environmentId/threadId params as the Thread route beneath it.
   const { selectedThread, selectedThreadDetailRef, selectedEnvironmentRuntime } =
     useThreadSelection();
@@ -1364,7 +1376,7 @@ export function ExistingThreadSettingsRouteScreen({
   })
     ? undefined
     : modelSelection.instanceId;
-  // Defer the catalog build so the nested AppBar can present with the push.
+  // Defer the catalog build so settle can quiet on sheet chrome first (tip-v1: ~480ms q50).
   const modelOptions = catalogReady
     ? buildModelOptions(
         serverConfig,
@@ -1427,12 +1439,21 @@ export function NewTaskThreadSettingsRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
   const [catalogReady, setCatalogReady] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- paints sheet chrome before the model catalog fills in
-  useEffect(() => {
-    startTransition(() => {
-      setCatalogReady(true);
-    });
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const timer = setTimeout(() => {
+        if (cancelled) return;
+        startTransition(() => {
+          setCatalogReady(true);
+        });
+      }, 800);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }, []),
+  );
   const prompt = useComposerDraft(flow.draftKey).text;
   const optionDescriptors = catalogReady
     ? resolveProviderOptionDescriptors({
