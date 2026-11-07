@@ -4873,14 +4873,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   );
   // Reloaded at each turn and steer so downloaded manifest updates apply without a release.
   let modelCatalog = yield* loadModelCatalog;
-  // Results report the window Claude Code compacts against; outside the catalog it is the only source.
-  const reportedContextWindows = new Map<string, number>();
-  const claudeContextWindow = (modelSelection: ModelSelection): number | null =>
-    resolveClaudeCatalogContextWindowTokens(modelCatalog, modelSelection) ??
-    reportedContextWindows.get(
-      compileClaudeModelSelection(modelSelection, modelCatalog).apiModelId,
-    ) ??
-    null;
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
   };
@@ -5162,6 +5154,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // Wake buffers replay result frames, so ledger growth is measured once on arrival.
         const resultLedgerUsage = new WeakMap<SDKMessage, ClaudeLedgerUsage>();
         const resultsReportingNewContextWindow = new WeakSet<SDKMessage>();
+        // Results report the window this session's Claude process enforces, which outranks the
+        // catalog: user and project settings such as CLAUDE_CODE_DISABLE_1M_CONTEXT shrink it, and
+        // outside the catalog it is the only source. Other sessions may load other settings.
+        const reportedContextWindows = new Map<string, number>();
+        const claudeContextWindow = (modelSelection: ModelSelection): number | null =>
+          reportedContextWindows.get(
+            compileClaudeModelSelection(modelSelection, modelCatalog).apiModelId,
+          ) ??
+          resolveClaudeCatalogContextWindowTokens(modelCatalog, modelSelection) ??
+          null;
         // A worktree handoff changes the project settings even within one session.
         let bypassCache: { cwd: string | null; availability: ClaudeBypassAvailability } | null =
           null;
