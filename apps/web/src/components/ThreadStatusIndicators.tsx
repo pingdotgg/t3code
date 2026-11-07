@@ -16,7 +16,7 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { FolderGit2Icon, TerminalIcon } from "lucide-react";
+import { ArrowUpRightIcon, FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
@@ -389,6 +389,12 @@ function ThreadPullRequestMiniListItem({
       <span className="shrink-0 font-mono tabular-nums">#{number}</span>
       <span className="min-w-0 truncate text-foreground/75">{title}</span>
       {children}
+      {onOpenPullRequest ? (
+        <ArrowUpRightIcon
+          aria-hidden
+          className={cn("size-3 shrink-0 text-muted-foreground", children == null && "ml-auto")}
+        />
+      ) : null}
     </>
   );
   return (
