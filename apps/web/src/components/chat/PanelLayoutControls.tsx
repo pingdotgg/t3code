@@ -4,6 +4,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { isElectron } from "~/env";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -184,7 +185,12 @@ export function WorkspaceTitlebarControls(props: {
 }) {
   return (
     <div
-      className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      className={cn(
+        "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        isElectron &&
+          props.rightPanelOpen &&
+          "wco:top-(--workspace-topbar-height) wco:right-[calc(env(safe-area-inset-right)+0.75rem)]",
+      )}
       data-workspace-titlebar-controls
     >
       {props.showMaximizeControl ? (
