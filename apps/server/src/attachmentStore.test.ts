@@ -123,7 +123,7 @@ describe("attachmentStore", () => {
     }
   });
 
-  it("removes expired pending and partial files without touching thread attachments", () => {
+  it("removes expired pending and partial files without touching thread attachments", async () => {
     const attachmentsDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-attachment-sweep-"),
     );
@@ -136,17 +136,29 @@ describe("attachmentStore", () => {
       const sidecarPath = `${pendingFilePath}.txt`;
       const threadPath = NodePath.join(attachmentsDir, `thread-1-${uuid}.png`);
       const partialPath = NodePath.join(attachmentsDir, `${uuid}.part`);
+      const recentTimeSeconds = (now - 30 * 60 * 1000) / 1000;
+      const recentUuid = "00000000-0000-4000-8000-000000000003";
+      const recentPendingPath = NodePath.join(attachmentsDir, `pending-${recentUuid}.png`);
+      const recentPartialPath = NodePath.join(attachmentsDir, `${recentUuid}.part`);
       for (const filePath of [pendingPath, pendingFilePath, sidecarPath, threadPath, partialPath]) {
         NodeFS.writeFileSync(filePath, Buffer.from("pixels"));
         NodeFS.utimesSync(filePath, oldTimeSeconds, oldTimeSeconds);
       }
+      for (const filePath of [recentPendingPath, recentPartialPath]) {
+        NodeFS.writeFileSync(filePath, Buffer.from("pixels"));
+        NodeFS.utimesSync(filePath, recentTimeSeconds, recentTimeSeconds);
+      }
 
-      expect(sweepStalePendingAttachments({ attachmentsDir, nowMs: now })).toEqual({ deleted: 4 });
+      expect(await sweepStalePendingAttachments({ attachmentsDir, nowMs: now })).toEqual({
+        deleted: 4,
+      });
       expect(NodeFS.existsSync(pendingPath)).toBe(false);
       expect(NodeFS.existsSync(pendingFilePath)).toBe(false);
       expect(NodeFS.existsSync(sidecarPath)).toBe(false);
       expect(NodeFS.existsSync(partialPath)).toBe(false);
       expect(NodeFS.existsSync(threadPath)).toBe(true);
+      expect(NodeFS.existsSync(recentPendingPath)).toBe(true);
+      expect(NodeFS.existsSync(recentPartialPath)).toBe(true);
     } finally {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
