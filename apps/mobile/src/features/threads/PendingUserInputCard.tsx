@@ -155,7 +155,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   // iOS only UIKit's implicit first-responder scroll does, and not reliably on devices.
   const scrollRef = useAnimatedRef<ScrollView>();
   const scrollOffset = useScrollOffset(scrollRef);
-  const viewportHeightRef = useRef(0);
   const viewportSettle = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revealFocusedInput = () => {
     const scrollView = scrollRef.current;
@@ -164,17 +163,19 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     if (!scrollView || !content || !input) return;
     // Fails without calling back when the focused input is outside this list.
     input.measureLayout(content, (_x, top, _width, height) => {
-      const offset = deriveRevealScrollOffset({
-        top,
-        height,
-        viewportHeight: viewportHeightRef.current,
-        offset: scrollOffset.get(),
+      // onLayout can trail the keyboard resize applied on the UI thread; measure the list now.
+      scrollView.measure((_viewportX, _viewportY, _viewportWidth, viewportHeight) => {
+        const offset = deriveRevealScrollOffset({
+          top,
+          height,
+          viewportHeight,
+          offset: scrollOffset.get(),
+        });
+        if (offset !== null) scrollView.scrollTo({ y: offset, animated: true });
       });
-      if (offset !== null) scrollView.scrollTo({ y: offset, animated: true });
     });
   };
-  const handleScrollLayout = (event: LayoutChangeEvent) => {
-    viewportHeightRef.current = event.nativeEvent.layout.height;
+  const handleScrollLayout = () => {
     if (viewportSettle.current !== null) clearTimeout(viewportSettle.current);
     viewportSettle.current = setTimeout(() => {
       viewportSettle.current = null;
