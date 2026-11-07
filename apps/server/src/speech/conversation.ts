@@ -1,7 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   encodeSpeechAudioFrame,
-  SPEECH_CONVERSATION_PATH,
+  VOICE_CONVERSATION_PATH,
   SPEECH_MAX_OPTIONS_BYTES,
   SPEECH_STREAM_MAX_CHUNK_BYTES,
   SpeechConversationCommand,
@@ -209,7 +209,7 @@ export const speechConversationRouteLayer = Layer.unwrap(
     const tts = yield* TextToSpeech.TextToSpeech;
     return HttpRouter.add(
       "GET",
-      SPEECH_CONVERSATION_PATH,
+      VOICE_CONVERSATION_PATH,
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const session = yield* auth

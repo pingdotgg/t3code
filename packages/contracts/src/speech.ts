@@ -292,8 +292,6 @@ export const SpeechStreamEvent = Schema.Union([
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
 
-export const SPEECH_CONVERSATION_PATH = "/ws/voice/conversation";
-
 const TurnSilenceMs = Schema.Int.check(Schema.isBetween({ minimum: 300, maximum: 10_000 }));
 
 export const SpeechConversationCommand = Schema.Union([
