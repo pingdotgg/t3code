@@ -254,6 +254,15 @@ describe("sourceControlClients.recognizeRemote", () => {
     expect(kindOfRemote("https://bitbucket.gitlab.example/o/r")).toBe("gitlab");
     expect(kindOfRemote("https://bitbucket.visualstudio.com/p/_git/r")).toBe("azure-devops");
     expect(kindOfRemote("git@git.cafe:pingdotgg/t3code.git")).toBe("gitcafe");
+    for (const remote of [
+      "git@tangled.org:alice.example/repo",
+      "https://tangled.org/alice.example/repo.git",
+      "https://knot1.tangled.sh/alice.example/repo",
+      "ssh://git@knot.tangled.org/alice.example/repo.git",
+      "git@tangled.org:did:plc:abc123",
+    ]) {
+      expect(kindOfRemote(remote), remote).toBe("tangled");
+    }
   });
 
   it("reads a remote no host claims as an unknown host, and a local path as no host", () => {
@@ -389,5 +398,21 @@ describe("appSignInTargetForRemote", () => {
   it("skips hosts the app is not registered on", () => {
     expect(appSignInTargetForRemote("https://ghe.acme.test/acme/web.git")).toBeNull();
     expect(appSignInTargetForRemote("https://gitlab.com/acme/web.git")).toBeNull();
+  });
+
+  it("gives Tangled its own hostnames even though Forgejo claims /pulls/ everywhere", () => {
+    const kindOf = (url: string) => sourceControlClients.findByChangeRequestUrl(url)?.kind;
+    expect(kindOf("https://tangled.org/acme.example/web/pulls/7")).toBe("tangled");
+    expect(kindOf("https://knot1.tangled.sh/acme.example/web/pulls/7")).toBe("tangled");
+    // A knot the appview does not serve still falls through to the host that claims any domain.
+    expect(kindOf("https://forge.example/acme/web/pulls/7")).toBe("forgejo");
+  });
+
+  it("offers Tangled no change request actions, because no server provider backs them", () => {
+    expect(sourceControlClients.get("tangled").changeRequestActions.size).toBe(0);
+    // `tg pr checkout` takes a record key, not the number a pull request URL shows.
+    expect(
+      sourceControlClients.get("tangled").checkoutCommand({ number: 7, headBranch: "f" }),
+    ).toBeNull();
   });
 });

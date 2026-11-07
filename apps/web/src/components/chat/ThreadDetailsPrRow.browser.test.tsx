@@ -103,6 +103,46 @@ vi.mock(import("../ui/toast"), async (original) => {
 import { act, render as renderUi } from "../../../test/render";
 import { useUiStateStore } from "~/uiStateStore";
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
+import { ThreadDetailsPrRows } from "./ThreadDetailsPrRows";
+
+it("keeps linked pull requests accessible when the displayed branch has no pull request", async () => {
+  await using screen = await setup();
+  const onOpenLink = vi.fn();
+  await screen.rerender(
+    <ThreadDetailsPrRows
+      threadRef={{
+        environmentId: EnvironmentId.make("environment"),
+        threadId: ThreadId.make("thread"),
+      }}
+      environmentId={EnvironmentId.make("environment")}
+      row={null}
+      currentLink={null}
+      links={[
+        {
+          host: "github.com",
+          repository: "owner/repo",
+          number: 1,
+          url: "https://github.com/owner/repo/pull/1",
+          source: "manual",
+          linkedAt: "2026-11-03T00:00:00Z",
+          snapshot: null,
+          stack: null,
+        },
+      ]}
+      onOpenLink={onOpenLink}
+    />,
+  );
+  await screen.getByRole("button", { name: "Show 1 more", exact: true }).click();
+  await screen
+    .getByRole("button", { name: "https://github.com/owner/repo/pull/1", exact: true })
+    .click();
+  expect(onOpenLink).toHaveBeenCalledWith(
+    expect.anything(),
+    "https://github.com/owner/repo/pull/1",
+  );
+  await screen.getByRole("button", { name: "Show less", exact: true }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).not.toContain("#1"));
+});
 
 it("merges with the last selected merge method", async () => {
   await using screen = await setup();

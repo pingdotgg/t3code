@@ -68,8 +68,11 @@ export function ThreadDetailsPrRows({
   links,
   currentLink,
   onOpenLink,
-  ...row
-}: ComponentProps<typeof ThreadDetailsPrRow> & {
+  environmentId,
+  row,
+}: {
+  environmentId: EnvironmentId;
+  row: ComponentProps<typeof ThreadDetailsPrRow> | null;
   threadRef: ScopedThreadRef;
   links: ReadonlyArray<ThreadPullRequestLink>;
   currentLink: ThreadPullRequestLink | null;
@@ -91,13 +94,21 @@ export function ThreadDetailsPrRows({
               watching: false,
             },
           });
-  const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
-  const rest =
-    currentLink === null
-      ? []
-      : pipe(visibleThreadPullRequests(links), resolveThreadPullRequestChains, pullRequestListLines)
-          .map((line) => line.link)
-          .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
+  const currentRow =
+    row === null ? null : (
+      <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />
+    );
+  const rest = pipe(
+    visibleThreadPullRequests(links),
+    resolveThreadPullRequestChains,
+    pullRequestListLines,
+  )
+    .map((line) => line.link)
+    .filter(
+      (link) =>
+        currentLink === null ||
+        threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink),
+    );
   if (rest.length === 0) return currentRow;
 
   return (
@@ -108,10 +119,10 @@ export function ThreadDetailsPrRows({
           {rest.map((link) => (
             <ThreadDetailsPrLinkRow
               key={threadPullRequestKeyOf(link)}
-              environmentId={row.environmentId}
+              environmentId={environmentId}
               link={link}
               onOpen={(event) => onOpenLink(event, link.url)}
-              onActed={row.onActed}
+              onActed={row?.onActed}
               onStopWatching={stopWatching(link)}
             />
           ))}

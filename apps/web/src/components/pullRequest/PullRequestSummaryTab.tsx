@@ -997,12 +997,21 @@ export function PullRequestSummaryTab({
           <>
             {detail.commentsTruncated ? (
               <p className="mb-2 rounded-md border border-warning/30 bg-warning-surface px-2 py-1.5 text-xs">
-                This conversation is only partially loaded. {commentCount} comment
-                {commentCount === 1 ? " is" : "s are"} loaded; open it on the host to read the rest.
+                {commentCount === 0 ? (
+                  "Comments are not available here. Open this pull request on the host to read them."
+                ) : (
+                  <>
+                    This conversation is only partially loaded. {commentCount} comment
+                    {commentCount === 1 ? " is" : "s are"} loaded; open it on the host to read the
+                    rest.
+                  </>
+                )}
               </p>
             ) : null}
             {items.length === 0 ? (
-              <p className="py-2 text-xs text-muted-foreground">No comments yet.</p>
+              detail.commentCount > 0 || detail.commentsTruncated ? null : (
+                <p className="py-2 text-xs text-muted-foreground">No comments yet.</p>
+              )
             ) : filteredItems.length === 0 ? (
               <p className="py-2 text-xs text-muted-foreground">
                 {filteredOutCount === 1

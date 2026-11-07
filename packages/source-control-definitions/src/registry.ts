@@ -4,6 +4,7 @@ import { makeSourceControlDefinitionRegistry } from "@t3tools/source-control-cor
 import * as Forgejo from "@t3tools/source-control-forgejo/shared/definition";
 import * as GitCafe from "@t3tools/source-control-gitcafe/shared/definition";
 import * as GitHub from "@t3tools/source-control-github/shared/definition";
+import * as Tangled from "@t3tools/source-control-tangled/shared/definition";
 import * as GitLab from "@t3tools/source-control-gitlab/shared/definition";
 
 export { canonicalizePullRequestUrl as canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-gitcafe/shared/definition";
@@ -18,14 +19,20 @@ export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegist
     GitHub.definition,
     GitLab.definition,
     GitCafe.definition,
+    Tangled.definition,
     Forgejo.definition,
     Bitbucket.definition,
     AzureDevOps.definition,
   ],
   {
-    claimChangeRequestUrlsFirst: [GitCafe.definition.kind, AzureDevOps.definition.kind],
+    claimChangeRequestUrlsFirst: [
+      GitCafe.definition.kind,
+      Tangled.definition.kind,
+      AzureDevOps.definition.kind,
+    ],
     recognizeRemotesIn: [
       GitCafe.definition.kind,
+      Tangled.definition.kind,
       Forgejo.definition.kind,
       GitHub.definition.kind,
       GitLab.definition.kind,
