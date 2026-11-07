@@ -29,6 +29,7 @@ import {
   alertForActivityRows,
   attentionTransitionRows,
   hiddenEnvironmentIds,
+  sameEnvironmentIds,
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -200,6 +201,7 @@ const make = Effect.gen(function* () {
       if (!target) return;
       const preferences = decodePreferences(target.preferences_json);
       if (Option.isNone(preferences)) return;
+      const currentHiddenEnvironmentIds = hiddenEnvironmentIds(preferences.value);
 
       // Re-read at consumption to honor current links, tokens, preferences, and thread states.
       const states = preferences.value.liveActivitiesEnabled
@@ -288,7 +290,14 @@ const make = Effect.gen(function* () {
       }
       const displayedAggregate = preferences.value.liveActivitiesEnabled ? aggregate : null;
       const active = (displayedAggregate?.activeCount ?? 0) > 0;
-      if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
+      if (
+        !displayedAggregate &&
+        !alert &&
+        !previousAggregate &&
+        job.state !== null &&
+        sameEnvironmentIds(target.last_hidden_environment_ids, currentHiddenEnvironmentIds)
+      )
+        return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",
         device_id: job.deviceId,
@@ -334,9 +343,7 @@ const make = Effect.gen(function* () {
           kind: active ? "live_activity_update" : "live_activity_end",
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
           aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
-          hiddenEnvironmentIds: preferences.value.liveActivitiesEnabled
-            ? hiddenEnvironmentIds(preferences.value)
-            : null,
+          hiddenEnvironmentIds: currentHiddenEnvironmentIds,
           deliveredAt: DateTime.formatIso(now),
         });
       }

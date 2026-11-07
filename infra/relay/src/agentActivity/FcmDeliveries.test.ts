@@ -395,6 +395,22 @@ describe("Android delivery routing", () => {
       h.current.target.preferences_json = encodeJson(preferences);
       yield* delivery.process(otherJob);
       expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+
+      h.current.target.preferences_json = encodeJson({
+        ...preferences,
+        liveActivitiesEnabled: false,
+        disabledEnvironmentIds: [state.environmentId, other.environmentId],
+      });
+      yield* delivery.process({ ...h.job, state: null, replay: true });
+      h.current.target.preferences_json = encodeJson({
+        ...preferences,
+        liveActivitiesEnabled: false,
+      });
+      yield* delivery.process(otherJob);
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      h.current.otherStates = [{ ...other, phase: "completed" }];
+      yield* delivery.process({ ...otherJob, state: h.current.otherStates[0]! });
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(2);
     }).pipe(Effect.provide(h.layer));
   });
 
