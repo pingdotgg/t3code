@@ -177,9 +177,16 @@ export function describeMcpElicitation(
   };
 }
 
+const ONE_TIME_APPROVAL_CHOICE =
+  /^(?:once|accept|approve|allow)(?:[_\s-]*(?:once(?:[_\s-]*only)?|this[_\s-]*time))?$/i;
+// Confirmation forms (e.g. mongodb-mcp-server's required "Yes"/"No" enum) ask
+// for consent with a plain affirmative instead of an allow-once choice.
+const ONE_TIME_CONFIRMATION_CHOICE = /^(?:yes|confirm|proceed|continue|ok(?:ay)?)$/i;
+
 export function toMcpElicitationResponse(
   payload: McpElicitationResponseInput,
   decision: ProviderApprovalDecision,
+  responseOptions?: { readonly acceptConfirmationChoices?: boolean },
 ): EffectCodexSchema.McpServerElicitationRequestResponse {
   if (decision === "decline" || decision === "cancel") {
     return { action: decision };
@@ -203,9 +210,11 @@ export function toMcpElicitationResponse(
     const chosenOption = options.find((option) =>
       persist
         ? mcpElicitationPersistenceDecision(option.value) === decision
-        : /^(?:once|accept|approve|allow)(?:[_\s-]*(?:once(?:[_\s-]*only)?|this[_\s-]*time))?$/i.test(
-            option.value.trim(),
-          ) && mcpElicitationPersistenceDecision(option.value) === null,
+        : (ONE_TIME_APPROVAL_CHOICE.test(option.value.trim()) ||
+            (responseOptions?.acceptConfirmationChoices === true &&
+              !isMcpElicitationPersistenceField(key, field) &&
+              ONE_TIME_CONFIRMATION_CHOICE.test(option.value.trim()))) &&
+          mcpElicitationPersistenceDecision(option.value) === null,
     );
     if (chosenOption) {
       content[key] = chosenOption.value;
