@@ -82,7 +82,7 @@ describe("queued edit draft key", () => {
   it("keeps the environment readable so attachment uploads still resolve it", () => {
     const key = queuedEditDraftKey("env-1:thread-9", "run-3");
 
-    expect(composerDraftEnvironmentId(key, [])).toBe("env-1");
+    expect(composerDraftEnvironmentId(key, [EnvironmentId.make("env-1")], [])).toBe("env-1");
   });
 });
 

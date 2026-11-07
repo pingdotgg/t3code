@@ -171,7 +171,7 @@ describe("V2 environment commands", () => {
         const saved = commands.find((command) => command.type === "queued-run.edit");
         if (supported) expect(saved).toHaveProperty("editId", acquired.editId);
         else expect(saved).not.toHaveProperty("editId");
-      }).pipe(Effect.provide(layerTestCrypto)),
+      }).pipe(Effect.provide(layerTestRandom)),
   );
   it.effect("distinguishes sending a selected queued message from resuming queue order", () =>
     Effect.gen(function* () {
