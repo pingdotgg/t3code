@@ -365,6 +365,69 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each<{
+    readonly title: string;
+    readonly size?: number;
+    readonly values: (page: number) => ReadonlyArray<unknown>;
+    readonly read: (
+      api: BitbucketPullRequestApi.BitbucketPullRequestApi["Service"],
+    ) => Effect.Effect<unknown, BitbucketPullRequestApi.BitbucketPullRequestApiError>;
+    readonly expected: unknown;
+  }>([
+    {
+      title: "diffstat walk at its bound and takes the file count from Bitbucket's total",
+      size: 3000,
+      values: () => [{ lines_added: 2, lines_removed: 1 }],
+      read: (api) => api.getDiffStat({ repository: "acme/web", number: 7 }),
+      expected: { additions: 20, deletions: 10, changedFiles: 3000 },
+    },
+    {
+      title: "diffstat walk at its bound and counts the files it read when no total comes",
+      values: () => [{ lines_added: 2, lines_removed: 1 }],
+      read: (api) => api.getDiffStat({ repository: "acme/web", number: 7 }),
+      expected: { additions: 20, deletions: 10, changedFiles: 10 },
+    },
+    {
+      title: "commit walk at its bound and keeps the newest commits oldest first",
+      values: (page) => [{ hash: `c${page}`, message: "m", date: "2026-07-01T00:00:00Z" }],
+      read: (api) =>
+        api
+          .listCommits({ repository: "acme/web", number: 7 })
+          .pipe(Effect.map((commits) => commits.map((commit) => commit.oid))),
+      expected: Array.from({ length: 10 }, (_, index) => `c${10 - index}`),
+    },
+    {
+      title: "status walk at its bound",
+      values: (page) => [{ key: `k${page}`, name: `n${page}`, state: "SUCCESSFUL" }],
+      read: (api) =>
+        api
+          .listChecks({ repository: "acme/web", number: 7 })
+          .pipe(Effect.map((checks) => checks.map((check) => check.name))),
+      expected: Array.from({ length: 10 }, (_, index) => `n${index + 1}`),
+    },
+  ])("stops the $title", ({ size, values, read, expected }) =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((request) => {
+        const page = Number(
+          new URL(request.url, "https://api.bitbucket.org").searchParams.get("page") ?? "1",
+        );
+        return Effect.succeed(
+          response(
+            JSON.stringify({
+              values: values(page),
+              size: page === 1 ? size : undefined,
+              ...(page < 30 ? { next: `https://api.bitbucket.org/2.0/next?page=${page + 1}` } : {}),
+            }),
+          ),
+        );
+      });
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      expect(yield* read(api)).toEqual(expected);
+      assert.strictEqual(mockedRequest.mock.calls.length, 10);
+    }),
+  );
+
   it.effect("reassembles a thread from the flat comment list, replies included", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(

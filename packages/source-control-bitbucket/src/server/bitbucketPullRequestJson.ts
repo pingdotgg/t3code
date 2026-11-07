@@ -513,6 +513,7 @@ export interface BitbucketDiffStat {
 }
 
 export interface BitbucketDiffStatPage extends BitbucketDiffStat {
+  readonly size: number | null;
   readonly next: string | null;
 }
 
@@ -537,6 +538,7 @@ export function decodeDiffstatJson(
     additions,
     deletions,
     changedFiles,
+    size: decoded.success.size ?? null,
     next: trimmed(decoded.success.next),
   });
 }

@@ -462,23 +462,25 @@ export const make = Effect.gen(function* () {
     readonly decode: (
       body: string,
     ) => Result.Result<{ readonly items: ReadonlyArray<A>; readonly next: string | null }, unknown>;
-    readonly items: ReadonlyArray<A>;
+    readonly page: number;
+    readonly pages: ReadonlyArray<ReadonlyArray<A>>;
     /** Each commit page is oldest-first. */
     readonly prepend: boolean;
   }): Effect.Effect<ReadonlyArray<A>, BitbucketPullRequestApiError> =>
     readPage({ operation: input.operation, url: input.url, decode: input.decode }).pipe(
       Effect.flatMap((page) => {
-        const items = input.prepend
-          ? [...page.items, ...input.items]
-          : [...input.items, ...page.items];
-        return page.next === null
-          ? Effect.succeed(items)
-          : itemPages({ ...input, url: page.next, items });
+        const pages = [...input.pages, page.items];
+        if (page.next !== null && input.page < CONVERSATION_PAGES) {
+          return itemPages({ ...input, url: page.next, page: input.page + 1, pages });
+        }
+        return Effect.succeed((input.prepend ? pages.toReversed() : pages).flat());
       }),
     );
 
   const diffStatPages = (input: {
     readonly url: string;
+    readonly page: number;
+    readonly size: number | null;
     readonly totals: BitbucketDiffStat;
   }): Effect.Effect<BitbucketDiffStat, BitbucketPullRequestApiError> =>
     readPage({ operation: "getDiffStat", url: input.url, decode: decodeDiffstatJson }).pipe(
@@ -488,9 +490,13 @@ export const make = Effect.gen(function* () {
           deletions: input.totals.deletions + page.deletions,
           changedFiles: input.totals.changedFiles + page.changedFiles,
         };
-        return page.next === null
-          ? Effect.succeed(totals)
-          : diffStatPages({ url: page.next, totals });
+        if (page.next === null) return Effect.succeed(totals);
+        // `size`, the full file count, is optional on every page; line totals stay a lower bound.
+        const size = input.size ?? page.size;
+        if (input.page < CONVERSATION_PAGES) {
+          return diffStatPages({ url: page.next, page: input.page + 1, size, totals });
+        }
+        return Effect.succeed({ ...totals, changedFiles: size ?? totals.changedFiles });
       }),
     );
 
@@ -630,6 +636,8 @@ export const make = Effect.gen(function* () {
       return withRepository(input.repository, (path) =>
         diffStatPages({
           url: `${path}/pullrequests/${input.number}/diffstat?pagelen=${MAX_PAGE_SIZE}`,
+          page: 1,
+          size: null,
           totals: { additions: 0, deletions: 0, changedFiles: 0 },
         }),
       );
@@ -662,7 +670,8 @@ export const make = Effect.gen(function* () {
           operation: "listCommits",
           url: `${path}/pullrequests/${input.number}/commits?pagelen=${CONVERSATION_PAGE_SIZE}`,
           decode: decodeCommitsJson,
-          items: [],
+          page: 1,
+          pages: [],
           prepend: true,
         }),
       );
@@ -674,7 +683,8 @@ export const make = Effect.gen(function* () {
           operation: "listChecks",
           url: `${path}/pullrequests/${input.number}/statuses?pagelen=${CONVERSATION_PAGE_SIZE}`,
           decode: decodeStatusesJson,
-          items: [],
+          page: 1,
+          pages: [],
           prepend: false,
         }).pipe(Effect.map(sortChecks)),
       );
