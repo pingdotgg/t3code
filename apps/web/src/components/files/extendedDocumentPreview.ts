@@ -3,6 +3,7 @@ import {
   IMAGE_DIMENSIONS_HEADER_BYTES,
   readImageDimensions,
 } from "@t3tools/shared/imageDimensions";
+import { terminalOutputPlainText } from "@t3tools/shared/terminalOutput";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { decodeHTMLAttribute, decodeHTMLStrict as decodeEntities } from "entities";
 import type JSZip from "jszip";
@@ -423,6 +424,12 @@ function notebookText(value: unknown, limit = 256_000): string {
   if (result.length > limit) throw new Error("A notebook cell is too large to preview.");
   return result;
 }
+// Jupyter shows each traceback entry as its own line and colors it with ANSI escapes.
+function notebookTraceback(value: unknown): unknown {
+  return Array.isArray(value)
+    ? terminalOutputPlainText(value.filter((line) => typeof line === "string").join("\n"))
+    : value;
+}
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   if (bytes.byteLength > 8 * 1024 * 1024)
     throw new Error("Notebook preview limited to files under 8 MB.");
@@ -454,7 +461,9 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
           return {
             kind: "text" as const,
-            text: notebookText(output.text ?? data["text/plain"] ?? output.traceback),
+            text: notebookText(
+              output.text ?? data["text/plain"] ?? notebookTraceback(output.traceback),
+            ),
           };
         })
         .filter((output) => output.text.trim().length > 0),
