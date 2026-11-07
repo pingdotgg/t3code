@@ -402,6 +402,38 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("keeps Codex's banner, prompt, and error text out of the failure detail", () =>
+    withFakeCodexEnv(
+      {
+        output: "",
+        exitCode: 1,
+        stderr: [
+          "OpenAI Codex v0.160.0",
+          "--------",
+          "user",
+          "Remove default shapes from characters",
+          "ERROR: Reconnecting... 5/5",
+          "ERROR: unexpected status 401 Unauthorized: Missing bearer authentication",
+        ].join("\n"),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration
+            .generateBranchName({
+              cwd: process.cwd(),
+              message: "Remove default shapes from characters",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            })
+            .pipe(Effect.flip);
+          expect(error.detail).toBe("Codex CLI command failed with code 1.");
+          expect(error.detail).not.toContain("Unauthorized");
+          expect(error.cause).toEqual(
+            new Error("unexpected status 401 Unauthorized: Missing bearer authentication"),
+          );
+        }),
+    ),
+  );
+
   it.effect("keeps plugins and apps off over launch args that turn them on", () =>
     withFakeCodexEnv(
       {
