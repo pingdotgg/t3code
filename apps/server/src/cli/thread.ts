@@ -209,6 +209,7 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel, { quietLogs: flags.json });
+  const minimumLogLevel = flags.json ? "Error" : config.logLevel;
   return yield* Effect.gen(function* () {
     const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
@@ -236,12 +237,11 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
     return yield* run(makeThreadTools(session, origin));
   }).pipe(
     Effect.scoped,
+    Effect.provideService(References.MinimumLogLevel, minimumLogLevel),
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(
-          Layer.succeed(References.MinimumLogLevel, flags.json ? "Error" : config.logLevel),
-        ),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
     ),
   );
