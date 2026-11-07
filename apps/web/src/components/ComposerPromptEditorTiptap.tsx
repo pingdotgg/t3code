@@ -1259,7 +1259,7 @@ function ComposerPromptEditorTiptapInner(
           return handled;
         },
         handleTextInput: (view, from, to, text) => {
-          if (literalText || view.composing || text.length !== 1) return false;
+          if (!richText || view.composing || text.length !== 1) return false;
           const closer = SURROUND_CLOSE[text];
           const { selection } = view.state;
           // Compose preedit updates replace a range even without a user selection.

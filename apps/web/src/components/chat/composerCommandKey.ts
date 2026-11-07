@@ -36,6 +36,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 export function composerCommandKeyHandler(input: {
   readonly keybindings: ChatComposerProps["keybindings"];
   readonly sendShortcut: ChatComposerProps["settings"]["sendShortcut"];
+  readonly composerRichTextEnabled: ChatComposerProps["settings"]["composerRichTextEnabled"];
   readonly routeKind: ChatComposerProps["routeKind"];
   readonly phase: ChatComposerProps["phase"];
   readonly isCompacting: boolean;
@@ -88,6 +89,7 @@ export function composerCommandKeyHandler(input: {
   const {
     keybindings,
     sendShortcut,
+    composerRichTextEnabled,
     routeKind,
     phase,
     isCompacting,
@@ -183,7 +185,7 @@ export function composerCommandKeyHandler(input: {
     event: KeyboardEvent,
     listEdit: (value: string, start: number, end: number) => ComposerListEdit | null,
   ): boolean => {
-    if (isLiteralPendingAnswer || event.isComposing) return false;
+    if (!composerRichTextEnabled || isLiteralPendingAnswer || event.isComposing) return false;
     const selection = composerEditorRef.current?.readSelectionRange();
     const snapshot = readComposerSnapshot();
     if (!selection || selection.start !== selection.end || snapshot.value !== promptRef.current) {

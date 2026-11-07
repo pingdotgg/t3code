@@ -28,6 +28,11 @@ Some styled text containing or touching literal Markdown characters, such as a
 bold `path\` or `2*3`, keeps its styling without showing markers. Use formatting
 shortcuts or turn off rich text to edit the formatting of those ranges.
 
+Turn off **Settings → Chat → Rich text composer** to write plain text without
+automatic formatting, list continuation or nesting, or wrapping selected text
+in formatting markers. Your **Send shortcut** still controls when Enter sends
+or starts a new line.
+
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
 on an empty line moves out one level, then leaves it; **Tab** nests a list item
 under the one above and **Shift+Tab** moves it back out. In a code block, Enter
