@@ -22,6 +22,11 @@ const NONE_LOADING: ReadonlySet<UsageProviderKind> = new Set();
 
 export type UsageChartMetric = "tokens" | "cost";
 
+export function formatChartDay(day: string, days: readonly string[]): string {
+  const label = formatDayShort(day);
+  return days[0]?.slice(0, 4) !== days.at(-1)?.slice(0, 4) ? `${label}, ${day.slice(0, 4)}` : label;
+}
+
 interface UsageProviderChartProps {
   readonly providers: readonly UsageProviderKind[];
   readonly loadingProviders?: ReadonlySet<UsageProviderKind>;
@@ -436,7 +441,9 @@ export function UsageProviderChart({
     cn("transition-opacity", loading && "opacity-40 delay-150");
   const format = metric === "tokens" ? formatTokens : formatUsd;
   const formatPeriod = (period: string) =>
-    resolution === "hour" ? formatHourShort(period, timeZone, hour12) : formatDayShort(period);
+    resolution === "hour"
+      ? formatHourShort(period, timeZone, hour12)
+      : formatChartDay(period, days);
   const formatTooltipPeriod = (period: string) =>
     resolution === "hour" && referenceTime !== undefined
       ? formatRelativeHourShort(period, referenceTime, timeZone, hour12)

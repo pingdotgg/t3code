@@ -921,14 +921,20 @@ describe("Usage shortcuts", () => {
     },
   );
 
-  it("matches shifted number keys for periods and only on Usage", () => {
-    const shortcut = event({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
+  it.each([
+    ["!", "Digit1", "usage.period.day"],
+    ["@", "Digit2", "usage.period.week"],
+    ["#", "Digit3", "usage.period.month"],
+    ["$", "Digit4", "usage.period.quarter"],
+    ["%", "Digit5", "usage.period.all"],
+  ])("matches shifted %s for %s only on Usage", (key, code, command) => {
+    const shortcut = event({ key, code, ctrlKey: true, shiftKey: true });
     assert.strictEqual(
       resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
         platform: "Linux",
         context: { usagePageOpen: true },
       }),
-      "usage.period.day",
+      command,
     );
     assert.isNull(
       resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {

@@ -3107,6 +3107,63 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live(
+    "reuses old live transcripts across all-time refreshes without retaining deleted history",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-12-01T00:00:00Z"));
+        const { transcript, settings, home } = yield* setup;
+        const lastWrite = Date.parse("2026-08-01T10:00:00Z") / 1000;
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+          await NodeFSP.utimes(transcript, lastWrite, lastWrite);
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const allTime = {
+            ...WINDOW,
+            sinceDay: UsageDay.make("1970-01-01"),
+            untilDay: UsageDay.make("2026-12-01"),
+          };
+          const open = vi.spyOn(NodeFSP, "open");
+          yield* Effect.addFinalizer(() => Effect.sync(() => open.mockRestore()));
+          open.mockClear();
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(allTime)), 5);
+          assert.isTrue(open.mock.calls.some(([path]) => path === transcript));
+
+          open.mockClear();
+          for (const sinceDay of ["2026-11-02", "2026-09-03"]) {
+            const recent = { ...allTime, sinceDay: UsageDay.make(sinceDay) };
+            assert.deepStrictEqual((yield* service.readSummary(recent)).buckets, []);
+          }
+          assert.strictEqual(
+            totalOutputTokens(yield* service.readSummary({ ...allTime, awaitRefresh: true })),
+            5,
+          );
+          assert.isFalse(open.mock.calls.some(([path]) => path === transcript));
+
+          yield* Effect.promise(async () => {
+            await NodeFSP.appendFile(transcript, claudeLine(2, 7));
+            await NodeFSP.utimes(transcript, lastWrite + 86400, lastWrite + 86400);
+          });
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(allTime)), 12);
+          yield* Effect.promise(async () => {
+            await NodeFSP.writeFile(transcript, claudeLine(3, 9));
+            await NodeFSP.utimes(transcript, lastWrite + 172800, lastWrite + 172800);
+          });
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(allTime)), 9);
+
+          yield* Effect.promise(() => NodeFSP.rm(transcript));
+          assert.deepStrictEqual((yield* service.readSummary(allTime)).buckets, []);
+          yield* service.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          assert.deepStrictEqual((yield* restarted.readSummary(allTime)).buckets, []);
+        }).pipe(
+          Effect.provide(layerService({ prefix: "usage-service-all-time-test", home, settings })),
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.live("reports saved usage of a removed directory only for windows it reaches", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse("2026-08-12T00:00:00Z"));
