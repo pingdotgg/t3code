@@ -175,6 +175,14 @@ const policies = (): ReadonlyArray<Policy> => [
       { kind: "text", name: "ProviderInstances", label: "Provider settings JSON", json: true },
     ],
   },
+  {
+    id: "AllowedAcpAgents",
+    title: "Allowed ACP agents (JSON)",
+    help: 'ACP Registry agents that may run, as a JSON list of IDs such as ["devin"]. Users cannot set their own launch command for an ACP agent.',
+    elements: [
+      { kind: "text", name: "AllowedAcpAgents", label: "Allowed ACP agents JSON", json: true },
+    ],
+  },
 ];
 
 const escapeXml = (text: string) =>

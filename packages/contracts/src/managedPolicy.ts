@@ -37,6 +37,8 @@ export const ManagedProviderLimits = Schema.Struct({
   /** Only these drivers run; instances of any other driver show as unavailable. */
   allowedDrivers: Schema.optionalKey(Schema.NonEmptyArray(ProviderDriverKind)),
   instances: Schema.optionalKey(Schema.Record(ProviderDriverKind, ManagedProviderInstance)),
+  /** Only these ACP Registry agents run, and users cannot set their own launch command. */
+  allowedAcpAgents: Schema.optionalKey(Schema.NonEmptyArray(TrimmedNonEmptyString)),
 });
 export type ManagedProviderLimits = typeof ManagedProviderLimits.Type;
 
@@ -99,6 +101,8 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
     Schema.Struct({
       /** Absent means every driver is allowed. */
       allowedDrivers: Schema.optionalKey(Schema.NonEmptyArray(ProviderDriverKind)),
+      /** Absent means every ACP Registry agent is allowed. */
+      allowedAcpAgents: Schema.optionalKey(Schema.NonEmptyArray(TrimmedNonEmptyString)),
       /**
        * Per driver, the instance fields users cannot change, as dot paths into the instance
        * envelope: `config.binaryPath`, `config.launchArgs`, `environment.<NAME>`. A bare
@@ -234,6 +238,28 @@ export function isManagedDriverAllowed(
 ): boolean {
   const allowed = summary?.limits?.providers?.allowedDrivers;
   return allowed === undefined || allowed.includes(driver);
+}
+
+/** Why `agentId` may not run from the ACP Registry on an environment, or undefined when it may. */
+export function managedAcpAgentDenial(summary: ManagedPolicySummary | undefined, agentId: string) {
+  const allowed = summary?.limits?.providers?.allowedAcpAgents;
+  return summary === undefined || allowed === undefined || allowed.includes(agentId)
+    ? undefined
+    : managedPolicyDeniedMessage(summary.organization, `the ACP agent ${agentId}`);
+}
+
+/** Why local ACP commands may not run on an environment, or undefined when they may. */
+export function managedLocalAcpCommandDenial(summary: ManagedPolicySummary | undefined) {
+  return summary?.limits?.providers?.allowedAcpAgents === undefined
+    ? undefined
+    : managedPolicyDeniedMessage(summary.organization, "local ACP commands");
+}
+
+/** What ACP settings show while the policy limits agents, or undefined when it does not. */
+export function managedAcpAgentsNotice(summary: ManagedPolicySummary | undefined) {
+  return summary?.limits?.providers?.allowedAcpAgents === undefined
+    ? undefined
+    : `${summary.organization} chooses which ACP agents run here, so local commands and executable overrides are turned off.`;
 }
 
 /** Why updates are unavailable on an environment with `summary`, or undefined when allowed. */
