@@ -1132,7 +1132,6 @@ export function createServerEnvironmentAtoms<R, E>(
         Object.keys(aliases)
           .sort()
           .map((model) => [model, aliases[model]]),
-        settings?.cursorKeychainUsageEnabled ?? false,
       ]);
     }).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
   );
@@ -1268,6 +1267,10 @@ export function createServerEnvironmentAtoms<R, E>(
     cancelProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-cancel",
       tag: WS_METHODS.providerAuthCancel,
+    }),
+    removeProviderAuthMethod: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:provider:auth-remove-method",
+      tag: WS_METHODS.providerAuthRemoveMethod,
     }),
     logoutProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-logout",
