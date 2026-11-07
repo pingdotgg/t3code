@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import {
   effectiveSnoozed,
+  settledThreadLabel,
   snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -623,10 +624,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         onAction={() => void handleUnsnoozeActiveThreadStable()}
       />
     )
-  ) : activeThreadSettled ? (
+  ) : activeThreadSettled && activeThreadShell ? (
     <ThreadStatusLine
       icon={<CheckCircle2Icon />}
-      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt)}` : "Settled"}
+      label={settledThreadLabel(
+        activeThreadShell,
+        settledAt ? formatRelativeTimeLabel(settledAt) : null,
+      )}
       clockMinute={nowMinute}
       actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
       actionDisabled={!canOperateThread || isUnsettling}

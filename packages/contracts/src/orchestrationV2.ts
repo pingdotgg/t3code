@@ -441,6 +441,25 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+export const OrchestrationV2ThreadSettleReason = Schema.Union([
+  Schema.Struct({ type: Schema.Literals(["user", "agent"]) }),
+  Schema.Struct({
+    type: Schema.Literal("pull-request"),
+    state: Schema.Literals(["merged", "closed"]),
+    number: PositiveInt,
+    /** Names the host and repository; reasons recorded without it fall back to the current link. */
+    url: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({ type: Schema.Literal("inactive"), days: Schema.Number }),
+]);
+export type OrchestrationV2ThreadSettleReason = typeof OrchestrationV2ThreadSettleReason.Type;
+
+// Every settle writes it and unsettling leaves it on the thread; shells carry it only while settled.
+// Absent on threads settled before reasons existed; a reason this build cannot read becomes null.
+const LenientThreadSettleReason = Schema.NullOr(OrchestrationV2ThreadSettleReason).pipe(
+  Schema.catchDecoding(() => Effect.succeedSome(null)),
+);
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -480,6 +499,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   settledAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  settleReason: Schema.optional(LenientThreadSettleReason),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2139,6 +2159,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
   settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
   settledAt: Schema.NullOr(Schema.DateTimeUtc),
+  settleReason: Schema.optional(LenientThreadSettleReason),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2978,6 +2999,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     expectedLatestRunId: Schema.optional(RunId),
     settledAt: Schema.optional(Schema.DateTimeUtc),
+    /** Defaults to user. */
+    reason: Schema.optional(OrchestrationV2ThreadSettleReason),
   }),
   /** Rejects changes since snapshotAt or any explicit settled override to preserve user actions. */
   Schema.Struct({
@@ -2986,6 +3009,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     snapshotAt: Schema.DateTimeUtc,
     settledAt: Schema.optional(Schema.DateTimeUtc),
+    reason: Schema.optional(OrchestrationV2ThreadSettleReason),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),

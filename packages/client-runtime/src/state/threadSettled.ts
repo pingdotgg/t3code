@@ -2,6 +2,8 @@
 import * as DateTime from "effect/DateTime";
 import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
 
+import { sourceControlClients } from "../sourceControlClients.ts";
+import { resolveThreadCurrentPullRequestLink } from "../threadPullRequests.ts";
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 
 interface SettlementRunLike {
@@ -357,6 +359,76 @@ export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: s
   if (remainingMs < HOUR_MS) return `${Math.max(1, Math.ceil(remainingMs / 60_000))}m`;
   if (remainingMs < DAY_MS) return `${Math.ceil(remainingMs / HOUR_MS)}h`;
   return `${Math.ceil(remainingMs / DAY_MS)}d`;
+}
+
+/**
+ * A settled thread's status line, e.g. "Settled 49m ago: PR #12 merged". The timeline above can
+ * end on the watch's last update before the merge, so this says what ended it. `when` is the
+ * relative settledAt, or null where the line shows none. An idle settle omits it: its settledAt is
+ * the last activity, days before the settle.
+ */
+export function settledThreadLabel(
+  thread: Pick<EnvironmentThreadShell, "settleReason" | "pullRequests">,
+  when: string | null,
+): string {
+  const reason = thread.settleReason ?? null;
+  const link = resolveThreadCurrentPullRequestLink(thread.pullRequests);
+  const linkTerm =
+    (link && sourceControlClients.findByChangeRequestUrl(link.url)?.changeRequest.shortLabel) ??
+    "PR";
+  const state = link?.snapshot?.state;
+  const ended =
+    link !== null && (state === "merged" || state === "closed")
+      ? {
+          term: linkTerm,
+          host: link.host,
+          repository: link.repository,
+          number: link.number,
+          state,
+        }
+      : null;
+  const settledBy = reason?.type === "pull-request" ? reason : null;
+  const settledByUrl =
+    settledBy?.url === undefined ? null : sourceControlClients.parseChangeRequestUrl(settledBy.url);
+  const cause =
+    settledBy === null
+      ? null
+      : {
+          term: settledByUrl?.definition.changeRequest.shortLabel ?? linkTerm,
+          host: settledByUrl?.link.host ?? null,
+          repository: settledByUrl?.link.repository ?? null,
+          number: settledBy.number,
+          state: settledBy.state,
+        };
+  const sameChangeRequest =
+    cause !== null &&
+    ended !== null &&
+    (settledBy?.url === undefined || link === null
+      ? cause.number === ended.number && cause.state === ended.state
+      : sourceControlClients.isSameChangeRequest(settledBy.url, link.url));
+  // Two different pull requests with one number need their repositories, and their hosts when
+  // the repositories match too, to tell them apart.
+  const qualify = !sameChangeRequest && cause !== null && cause.number === ended?.number;
+  const withHost = qualify && cause?.repository === ended?.repository;
+  const describe = (pr: NonNullable<typeof cause>) => {
+    const repository =
+      !qualify || pr.repository === null
+        ? ""
+        : withHost && pr.host !== null
+          ? `${pr.host}/${pr.repository}`
+          : pr.repository;
+    return `${pr.term} ${repository}#${pr.number} ${pr.state}`;
+  };
+  const head =
+    reason?.type === "inactive"
+      ? `Settled after ${reason.days} idle ${reason.days === 1 ? "day" : "days"}`
+      : [
+          "Settled",
+          reason?.type === "user" ? " by you" : reason?.type === "agent" ? " by an agent" : "",
+          when === null ? "" : ` ${when}`,
+          cause === null ? "" : `: ${describe(cause)}`,
+        ].join("");
+  return ended === null || sameChangeRequest ? head : `${head} · ${describe(ended)}`;
 }
 
 export type CustomSnoozeInput =

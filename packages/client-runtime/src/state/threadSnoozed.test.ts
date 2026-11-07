@@ -2,6 +2,7 @@
 import * as DateTime from "effect/DateTime";
 import { RuntimeRequestId } from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
@@ -12,6 +13,7 @@ import {
   hasQueuedTurnStart,
   pickSnoozePreset,
   resolveSnoozePresets,
+  settledThreadLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
@@ -502,4 +504,131 @@ it("dismisses a wake at its timestamp without hiding a later wake", () => {
   expect(isThreadWokeUnseen(state)).toBe(true);
   expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake })).toBe(false);
   expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake, wokeAt: NOW })).toBe(true);
+});
+
+describe("settledThreadLabel", () => {
+  const link = (
+    state: "open" | "merged" | "closed",
+    url = "https://github.com/owner/repo/pull/12",
+  ): ThreadPullRequestLink => ({
+    host: new URL(url).host,
+    repository: new URL(url).pathname.split("/").slice(1, 3).join("/"),
+    number: Number(url.split("/").at(-1)),
+    url,
+    source: "agent",
+    linkedAt: SNOOZED_AT,
+    snapshot: {
+      state,
+      title: "Change",
+      headBranch: "feature",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: NOW,
+      syncedAt: NOW,
+      mergedAt: state === "merged" ? NOW : null,
+      closedAt: state === "open" ? null : NOW,
+    },
+    stack: null,
+  });
+  const mergedByReason = {
+    type: "pull-request",
+    state: "merged",
+    number: 12,
+    url: "https://github.com/owner/repo/pull/12",
+  } as const;
+
+  it.each([
+    [
+      "an old settle without a reason, after the PR merged",
+      null,
+      [link("merged")],
+      "49m ago",
+      "Settled 49m ago · PR #12 merged",
+    ],
+    [
+      "the merge it settled on",
+      mergedByReason,
+      [link("merged")],
+      "49m ago",
+      "Settled 49m ago: PR #12 merged",
+    ],
+    [
+      "a merge found by branch, with no link",
+      mergedByReason,
+      [],
+      "49m ago",
+      "Settled 49m ago: PR #12 merged",
+    ],
+    [
+      "the PR it settled on when a later merged PR is the current one",
+      mergedByReason,
+      [link("merged", "https://github.com/owner/repo/pull/13"), link("merged")],
+      "49m ago",
+      "Settled 49m ago: PR #12 merged · PR #13 merged",
+    ],
+    [
+      "a GitLab cause while the current link is on GitHub",
+      {
+        type: "pull-request",
+        state: "merged",
+        number: 7,
+        url: "https://gitlab.com/owner/repo/-/merge_requests/7",
+      } as const,
+      [link("merged")],
+      "49m ago",
+      "Settled 49m ago: MR #7 merged · PR #12 merged",
+    ],
+    [
+      "two repositories that share a number",
+      { ...mergedByReason, url: "https://github.com/acme/api/pull/12" },
+      [link("merged", "https://github.com/acme/web/pull/12")],
+      "49m ago",
+      "Settled 49m ago: PR acme/api#12 merged · PR acme/web#12 merged",
+    ],
+    [
+      "one repository and number on two hosts",
+      { ...mergedByReason, url: "https://github.com/acme/api/pull/12" },
+      [link("merged", "https://git.example.com/acme/api/pull/12")],
+      "49m ago",
+      "Settled 49m ago: PR github.com/acme/api#12 merged · PR git.example.com/acme/api#12 merged",
+    ],
+    [
+      "a GitLab merge request, from a reason recorded without its URL",
+      { type: "pull-request", state: "merged", number: 7 } as const,
+      [link("merged", "https://gitlab.com/owner/repo/-/merge_requests/7")],
+      null,
+      "Settled: MR #7 merged",
+    ],
+    ["an old settle without a reason or a PR", null, [], "49m ago", "Settled 49m ago"],
+    [
+      "inactivity",
+      { type: "inactive", days: 1 } as const,
+      [],
+      "2d ago",
+      "Settled after 1 idle day",
+    ],
+    [
+      "inactivity after the PR closed",
+      { type: "inactive", days: 3 } as const,
+      [link("closed")],
+      "4d ago",
+      "Settled after 3 idle days · PR #12 closed",
+    ],
+    [
+      "the user, with the PR still open",
+      { type: "user" } as const,
+      [link("open")],
+      "5m ago",
+      "Settled by you 5m ago",
+    ],
+    [
+      "an agent, after the PR closed",
+      { type: "agent" } as const,
+      [link("closed")],
+      null,
+      "Settled by an agent · PR #12 closed",
+    ],
+  ])("names %s", (_name, settleReason, pullRequests, when, expected) => {
+    expect(settledThreadLabel({ settleReason, pullRequests }, when)).toBe(expected);
+  });
 });

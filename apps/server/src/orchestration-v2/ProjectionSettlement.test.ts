@@ -24,7 +24,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   isAutoSettlementCandidate,
   isSnoozed,
-  resolveAutoSettlementAt,
+  resolveAutoSettlement,
 } from "./ThreadSettlementService.ts";
 
 const layerSql = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
@@ -344,8 +344,8 @@ it.effect(
           autoSettleOnMerge: false,
         };
         assert.deepEqual(
-          resolveAutoSettlementAt({ ...settings, thread: candidate }),
-          resolveAutoSettlementAt({
+          resolveAutoSettlement({ ...settings, thread: candidate }),
+          resolveAutoSettlement({
             ...settings,
             thread: {
               ...expected,
