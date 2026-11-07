@@ -1,23 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - hashes inputs with node:crypto and sizes the budget with node:os.
-// Runs CI's fast checks for this branch's changes: format and lint of the
-// changed files, knip, generated GraphQL operations, typecheck of the affected
-// packages and their dependents, the test files beside the changed files, and
-// the cross-file checks those miss (agent context budget, React Compiler
-// coverage of the changed client files).
-// A dependency change also gets the unused-patch install check below. CI still
-// runs the full test suites and the jobs listed in the summary.
-//
-//   vp run check:changed                  compare against the closest merge base with any remote main
-//   vp run check:changed <ref>            compare against the merge base with <ref>
-//   vp run check:changed --concurrency 1  run the steps one at a time
-//
-// Uncommitted and untracked files count. Affected packages come from
-// .github/scripts/ci-changes.cjs, the same mapping CI uses to gate its jobs.
-// The steps run side by side within a budget derived from the machine's cores
-// and available memory, and each prints its output when it finishes. A step
-// running past the timeout is killed with its process group and reported as
-// TIMEOUT. A rerun on exactly the files of the last passing run prints that
-// run's summary.
+// Runs CI's fast checks for this branch's changes, as docs/operations/development.md § Checks
+// describes. Uncommitted and untracked files count, and a dependency change also gets the
+// unused-patch install check below. CI still runs the full suites and the jobs the summary lists.
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
