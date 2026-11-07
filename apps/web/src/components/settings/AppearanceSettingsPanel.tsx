@@ -291,6 +291,32 @@ export function AppearanceSettingsPanel() {
         />
         <ThreadDetailsItemsRow />
         <SettingsRow
+          {...searchableSetting("thread-details-open-by-default")}
+          description="Show thread details on threads where you haven't opened or closed them yet."
+          resetAction={
+            settings.threadDetailsOpenByDefault !==
+            DEFAULT_UNIFIED_SETTINGS.threadDetailsOpenByDefault ? (
+              <SettingResetButton
+                label="thread details default"
+                onClick={() =>
+                  updateSettings({
+                    threadDetailsOpenByDefault: DEFAULT_UNIFIED_SETTINGS.threadDetailsOpenByDefault,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.threadDetailsOpenByDefault}
+              onCheckedChange={(checked) =>
+                updateSettings({ threadDetailsOpenByDefault: Boolean(checked) })
+              }
+              aria-label="Open thread details by default"
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("effort-display")}
           description="Show reasoning effort in the composer as its name, such as High, or as bars."
           resetAction={

@@ -5,6 +5,7 @@ import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-action
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { resolveExplicitDiffOpenOnActivate } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { getClientSettings } from "../../hooks/useSettings";
 import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect } from "react";
@@ -231,17 +232,19 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const toggleThreadPanel = () => {
     if (!activeThreadRef) return;
     const store = useRightPanelStore.getState();
+    const { threadDetailsOpenByDefault } = getClientSettings();
     if (threadPanelPresentation === "inline") {
       const open = selectThreadPanelOpen(
         store.threadPanelVisibilityByThreadKey,
         activeThreadRef,
         "inline",
+        threadDetailsOpenByDefault,
       );
       if (!open) requestWorkspaceFocus({ area: "details" });
       else if (document.activeElement?.closest('[data-workspace-area="details"]'))
         requestWorkspaceContentFocus();
     }
-    store.toggleThreadPanel(activeThreadRef, threadPanelPresentation);
+    store.toggleThreadPanel(activeThreadRef, threadPanelPresentation, threadDetailsOpenByDefault);
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
   const toggleRightPanelMaximized = () => {
