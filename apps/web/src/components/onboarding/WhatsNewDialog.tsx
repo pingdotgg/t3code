@@ -132,7 +132,8 @@ function WhatsNewDialog({
       switch (guide.id) {
         case "new-lesson":
         case "quiz-cards":
-        case "question-cards": {
+        case "question-cards":
+        case "answer-types": {
           const button = document.querySelector<HTMLButtonElement>('[aria-label="New lesson"]');
           if (button) button.click();
           else openCommandPalette({ query: "New lesson" });

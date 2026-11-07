@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   answeredCardIds,
+  blankAnswerRight,
+  blanksAnswerMessage,
   cardAnswerMessage,
+  numberAnswerMessage,
+  numberAnswerRight,
   quizAnswerGrade,
   quizAnswerMessage,
   quizCardProblem,
   readQuizCard,
   readQuestionCard,
+  parseNumberAnswer,
   shuffledQuizOptions,
   type QuizCard,
 } from "./quizCard.ts";
@@ -41,6 +46,65 @@ describe("quiz cards", () => {
     });
     expect(readQuestionCard({ question: " " })).toBeUndefined();
     expect(readQuestionCard({ question: "x".repeat(2001) })).toBeUndefined();
+    expect(
+      readQuestionCard({
+        question: "___ + ___",
+        blanks: [{ answers: ["x"] }, { answers: ["y", " z "] }],
+      }),
+    ).toEqual({
+      question: "___ + ___",
+      blanks: [{ answers: ["x"] }, { answers: ["y", "z"] }],
+    });
+    expect(
+      readQuestionCard({ question: "___", blanks: [{ answers: ["x"] }, { answers: ["y"] }] }),
+    ).toBeUndefined();
+    expect(
+      readQuestionCard({
+        question: "Q",
+        blanks: [{ answers: ["x"] }],
+        number: { answer: 1, tolerance: 0 },
+      }),
+    ).toBeUndefined();
+    expect(
+      readQuestionCard({ question: "Q", number: { answer: 1, tolerance: -1 } }),
+    ).toBeUndefined();
+    expect(
+      readQuestionCard({ question: "Q", number: { answer: Number.NaN, tolerance: 0 } }),
+    ).toBeUndefined();
+    expect(
+      readQuestionCard({ question: "Q", number: { answer: 1, tolerance: 0, unit: " m " } }),
+    ).toEqual({
+      question: "Q",
+      number: { answer: 1, tolerance: 0, unit: "m" },
+    });
+    expect(
+      readQuestionCard({ question: "Q", number: { answer: 1, tolerance: 0, unit: "" } }),
+    ).toEqual({ question: "Q", number: { answer: 1, tolerance: 0 } });
+    expect(
+      readQuestionCard({
+        question: "漢".repeat(1990) + " ___",
+        blanks: [{ answers: ["漢", "字", "語", "文"].map((char) => char.repeat(100)) }],
+      }),
+    ).toBeUndefined();
+  });
+  it("grades blank and number answers", () => {
+    const blank = { answers: ["Ohm's law", " ohm's   law "] };
+    expect(blankAnswerRight(blank, " OHM'S law ")).toBe(true);
+    expect(blankAnswerRight(blank, "Kirchhoff's law")).toBe(false);
+    expect(numberAnswerRight({ answer: 10, tolerance: 1 }, "9")).toBe(true);
+    expect(numberAnswerRight({ answer: 10, tolerance: 1 }, "11")).toBe(true);
+    expect(numberAnswerRight({ answer: 10, tolerance: 1 }, "8.9")).toBe(false);
+    expect(numberAnswerRight({ answer: 0.1 + 0.2, tolerance: 0 }, "0.3")).toBe(true);
+    expect(numberAnswerRight({ answer: 9.81, tolerance: 0 }, "9,81")).toBe(true);
+    expect(parseNumberAnswer("6.67e-11")).toBe(6.67e-11);
+    expect(parseNumberAnswer(" ")).toBeUndefined();
+    expect(numberAnswerRight({ answer: 1, tolerance: 0 }, "garbage")).toBe(false);
+    expect(numberAnswerRight({ answer: 6.67e-11, tolerance: 0 }, "0")).toBe(false);
+    expect(numberAnswerRight({ answer: 1000, tolerance: 0 }, "1,000")).toBe(true);
+    expect(numberAnswerRight({ answer: -5, tolerance: 0 }, "\u22125")).toBe(true);
+    expect(blankAnswerRight({ answers: ["m"] }, "M")).toBe(false);
+    expect(blankAnswerRight({ answers: ["mPa"] }, "MPa")).toBe(false);
+    expect(blankAnswerRight({ answers: ["acceleration"] }, "Acceleration")).toBe(true);
   });
   it("validates options and bounds", () => {
     expect(quizCardProblem({ ...card, answer: "All of the above" })).toBeDefined();
@@ -102,6 +166,20 @@ describe("quiz cards", () => {
     );
     expect(quizAnswerMessage({ answer: null, correct: false, thinking: "unsure" })).toBe(
       "Quiz answer: I don't know. My thinking: unsure",
+    );
+    const question = {
+      question: "___ + ___",
+      blanks: [{ answers: ["m"] }, { answers: ["g"] }],
+    } as const;
+    expect(blanksAnswerMessage({ answers: ["m", "x"], card: question, thinking: "units" })).toBe(
+      'Blanks answer: 1. "m", right; 2. "x", wrong. My thinking: units',
+    );
+    const number = {
+      question: "Speed?",
+      number: { answer: 9.8, tolerance: 0.1, unit: "m/s²" },
+    } as const;
+    expect(numberAnswerMessage({ answer: "9.8", card: number })).toBe(
+      'Number answer: "9.8 m/s²", right.',
     );
   });
   it("reads the grade back from an answer message", () => {

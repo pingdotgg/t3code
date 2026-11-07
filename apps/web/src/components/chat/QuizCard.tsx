@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  blankAnswerRight,
   cardAnswerMessage,
+  blanksAnswerMessage,
+  numberAnswerMessage,
+  numberAnswerExpected,
+  numberAnswerRight,
+  parseNumberAnswer,
   quizAnswerMessage,
   shuffledQuizOptions,
   type LessonCard,
   type QuizCard as QuizCardData,
+  type QuestionCard,
 } from "@t3tools/shared/quizCard";
 import {
   SpeechTextField,
@@ -17,6 +24,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { Button } from "../ui/button";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 import { Textarea } from "../ui/textarea";
+import { Input } from "../ui/input";
 
 const focusedCardSeeds = new Set<string>();
 // The virtualized timeline unmounts a card scrolled out of view; keep the learner's draft.
@@ -75,7 +83,7 @@ function ThinkingField(props: {
   readonly value: string;
   readonly onChange: (value: string) => void;
   readonly disabled: boolean;
-  readonly focusTarget: "textarea" | "radio";
+  readonly focusTarget: "textarea" | "radio" | "answer";
   readonly children: (speech: TextFieldSpeech | undefined) => ReactNode;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -103,7 +111,9 @@ function ThinkingField(props: {
         ? document.querySelector<HTMLElement>(
             `${selector} [role="radio"], ${selector} input[type="radio"]`,
           )
-        : textareaRef.current;
+        : focusTarget === "answer"
+          ? document.querySelector<HTMLElement>(`${selector} [data-card-answer]`)
+          : textareaRef.current;
     target?.focus({ preventScroll: false });
   }, [focusTarget, seed]);
   const render = (speech?: TextFieldSpeech) => (
@@ -146,35 +156,110 @@ function ThinkingField(props: {
 }
 
 function OpenQuestionCard(props: {
-  readonly card: { readonly question: string };
+  readonly card: QuestionCard;
   readonly seed: string;
   readonly answered: boolean;
   readonly environmentId: EnvironmentId | undefined;
   readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
 }) {
   const [thinking, setThinking] = useThinkingDraft(props.seed);
+  const blankCount = props.card.blanks?.length ?? 0;
+  const [answers, setAnswers] = useState(() => Array.from({ length: blankCount }, () => ""));
+  const [numberAnswer, setNumberAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [skipped, setSkipped] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const revealed = props.answered || submitted;
-  const send = async (text: string) => {
+  const numberRight =
+    props.card.number !== undefined && numberAnswerRight(props.card.number, numberAnswer);
+  const isStructured = props.card.blanks !== undefined || props.card.number !== undefined;
+  const answerReady =
+    props.card.blanks !== undefined
+      ? answers.every((answer) => answer.trim().length > 0)
+      : props.card.number !== undefined && parseNumberAnswer(numberAnswer) !== undefined;
+  const send = async (text: string, skip = false) => {
     if (sending || revealed || props.onSendMessage === undefined || text.length === 0) return;
     setSending(true);
     setError(null);
     try {
       await props.onSendMessage(cardAnswerMessage(text, props.seed));
+      setSkipped(skip);
       setSubmitted(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not send your answer.");
     }
     setSending(false);
   };
+  const submitStructured = (speech: TextFieldSpeech | undefined) => {
+    submitThinking(speech, thinking, (submittedThinking) => {
+      const text =
+        props.card.blanks !== undefined
+          ? blanksAnswerMessage({ answers, card: props.card, thinking: submittedThinking })
+          : numberAnswerMessage({
+              answer: numberAnswer.trim(),
+              card: props.card,
+              thinking: submittedThinking,
+            });
+      void send(text);
+    });
+  };
+  const renderQuestion = () => {
+    if (props.card.blanks === undefined)
+      return <p className="font-medium">{props.card.question}</p>;
+    const parts = props.card.question.split(/_{3,}/g);
+    return (
+      <p className="font-medium leading-9">
+        {parts.map((part, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- fixed segments of an immutable card
+          <span key={index}>
+            {part}
+            {index < props.card.blanks!.length ? (
+              <Input
+                data-card-answer={index === 0 ? true : undefined}
+                aria-label={`Blank ${index + 1}`}
+                value={answers[index] ?? ""}
+                onChange={(event) =>
+                  setAnswers((current) =>
+                    current.map((answer, item) => (item === index ? event.target.value : answer)),
+                  )
+                }
+                disabled={revealed || sending}
+                size="sm"
+                className="mx-1 inline-block w-32 align-middle"
+              />
+            ) : null}
+          </span>
+        ))}
+      </p>
+    );
+  };
   return (
     <div
       data-quiz-card-seed={props.seed}
       className="min-w-0 rounded-lg border border-border bg-card p-4 text-card-foreground"
     >
-      <p className="font-medium">{props.card.question}</p>
+      {renderQuestion()}
+      {props.card.number !== undefined ? (
+        <div className="mt-3 flex items-center gap-2">
+          <Input
+            data-card-answer
+            aria-label="Your answer"
+            inputMode="decimal"
+            type="text"
+            value={numberAnswer}
+            onChange={(event) => setNumberAnswer(event.target.value)}
+            disabled={revealed || sending}
+            className="w-40"
+          />
+          {props.card.number.unit ? <span>{props.card.number.unit}</span> : null}
+          {numberAnswer.trim() && parseNumberAnswer(numberAnswer) === undefined ? (
+            <span className="text-sm text-muted-foreground">
+              Enter a number, like 9.8 or 6.7e-11
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {props.onSendMessage === undefined && !revealed ? (
         <p className="mt-3 text-sm text-muted-foreground">Answer in the chat</p>
       ) : null}
@@ -186,17 +271,23 @@ function OpenQuestionCard(props: {
             value={thinking}
             onChange={setThinking}
             disabled={sending}
-            focusTarget="textarea"
+            focusTarget={isStructured ? "answer" : "textarea"}
           >
             {(speech) => (
               <div className="mt-3 flex gap-2">
                 <Button
                   type="button"
-                  onClick={() => submitThinking(speech, thinking, (text) => void send(text.trim()))}
+                  onClick={() =>
+                    isStructured
+                      ? submitStructured(speech)
+                      : submitThinking(speech, thinking, (text) => void send(text.trim()))
+                  }
                   disabled={
                     sending ||
                     speech?.preparing ||
-                    (!speech?.blocksSubmission && thinking.trim().length === 0)
+                    (isStructured
+                      ? !answerReady
+                      : !speech?.blocksSubmission && thinking.trim().length === 0)
                   }
                 >
                   Send
@@ -204,7 +295,7 @@ function OpenQuestionCard(props: {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => void send("I don't know.")}
+                  onClick={() => void send("I don't know.", true)}
                   disabled={sending}
                 >
                   I don't know
@@ -219,7 +310,53 @@ function OpenQuestionCard(props: {
           ) : null}
         </>
       ) : null}
-      {revealed ? <p className="mt-4 text-sm">Answered.</p> : null}
+      {revealed ? (
+        <div className="mt-4 space-y-2 text-sm">
+          {skipped ? (
+            <p>I don't know.</p>
+          ) : props.card.blanks ? (
+            props.answered && !submitted ? (
+              <>
+                <p>Answered.</p>
+                {props.card.blanks.map((blank, index) => (
+                  // oxlint-disable-next-line react/no-array-index-key -- blanks of an immutable card
+                  <p key={index}>
+                    Blank {index + 1}: {blank.answers.join(" / ")}
+                  </p>
+                ))}
+              </>
+            ) : (
+              props.card.blanks.map((blank, index) => {
+                const right = blankAnswerRight(blank, answers[index] ?? "");
+                return (
+                  <p
+                    // oxlint-disable-next-line react/no-array-index-key -- blanks of an immutable card
+                    key={index}
+                    className={right ? "text-success" : "text-destructive"}
+                  >
+                    Blank {index + 1}: {right ? "Right." : "Wrong."} Accepted:{" "}
+                    {blank.answers.join(" / ")}
+                  </p>
+                );
+              })
+            )
+          ) : props.card.number ? (
+            props.answered && !submitted ? (
+              <>
+                <p>Answered.</p>
+                <p>Expected {numberAnswerExpected(props.card.number)}</p>
+              </>
+            ) : (
+              <p className={numberRight ? "text-success" : "text-destructive"}>
+                {numberRight ? "Right." : "Wrong."} Expected{" "}
+                {numberAnswerExpected(props.card.number)}
+              </p>
+            )
+          ) : (
+            <p>Answered.</p>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

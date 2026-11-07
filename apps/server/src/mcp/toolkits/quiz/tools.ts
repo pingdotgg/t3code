@@ -35,8 +35,33 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
-const QuestionCardInput = Schema.Struct({
+export const QuestionCardInput = Schema.Struct({
   question: Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))),
+  blanks: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        answers: Schema.Array(Schema.String.pipe(Schema.check(Schema.isMaxLength(100)))).check(
+          Schema.isMinLength(1),
+          Schema.isMaxLength(4),
+        ),
+      }),
+    )
+      .check(Schema.isMinLength(1), Schema.isMaxLength(6))
+      .annotate({
+        description:
+          "Set when the answer is a specific word, term, symbol or formula piece: one entry per ___ in the question, with every accepted form. The app gives one input per blank and marks each.",
+      }),
+  ),
+  number: Schema.optional(
+    Schema.Struct({
+      answer: Schema.Number.pipe(Schema.check(Schema.isFinite())),
+      tolerance: Schema.Number.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+      unit: Schema.optional(Schema.String.pipe(Schema.check(Schema.isMaxLength(40)))),
+    }).annotate({
+      description:
+        "Set whenever the answer is a number (a calculation, count or measured value): the app gives a number input with the unit beside it and marks it right within tolerance, an absolute amount in the answer's unit.",
+    }),
+  ),
 });
 
 const QuestionCardTool = Tool.make(QUESTION_CARD_TOOL_NAME, {

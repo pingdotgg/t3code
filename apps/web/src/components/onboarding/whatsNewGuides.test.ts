@@ -30,6 +30,7 @@ describe("resolveWhatsNewGuides", () => {
       "what-you-know",
       "quiz-cards",
       "question-cards",
+      "answer-types",
       "chat-sync",
     ]);
   });

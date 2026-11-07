@@ -167,6 +167,20 @@ it("keeps valid quiz cards and drops invalid cards", () => {
       output: { questionCard: { question: "Q" } },
     }),
   ).toEqual({ question: "Q" });
+  expect(
+    lessonCardFromToolItem({
+      toolName: "question_card",
+      output: {
+        questionCard: { question: "Speed?", number: { answer: 9.8, tolerance: 0.1, unit: "m/s" } },
+      },
+    }),
+  ).toEqual({ question: "Speed?", number: { answer: 9.8, tolerance: 0.1, unit: "m/s" } });
+  expect(
+    lessonCardFromToolItem({
+      toolName: "question_card",
+      output: { questionCard: { question: "___", blanks: [{ answers: ["x"] }] } },
+    }),
+  ).toEqual({ question: "___", blanks: [{ answers: ["x"] }] });
 });
 
 describe("toolOutputIndicatesFailure", () => {
