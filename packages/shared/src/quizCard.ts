@@ -270,6 +270,10 @@ export function cardAnswerMessage(text: string, cardId: string) {
   return `${text}\n\n(card ${cardId})`;
 }
 
+export function withoutCardAnswerTag(text: string) {
+  return text.replace(CARD_ANSWER_TAG, "");
+}
+
 export function answeredCardIds(
   messages: Iterable<{ readonly role: string; readonly text: string }>,
 ): ReadonlySet<string> {
