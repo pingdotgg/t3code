@@ -1,3 +1,4 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { SquarePenIcon, XIcon } from "lucide-react";
@@ -143,6 +144,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
+  disabledEnvironmentIds: ReadonlySet<EnvironmentId>;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
@@ -186,6 +188,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       ) {
         continue;
       }
+      if (props.disabledEnvironmentIds.has(session.environmentId)) continue;
       if (draftKey === props.routeDraftId) {
         if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
           rows.push(frozenActive.row);

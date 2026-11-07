@@ -9,6 +9,7 @@ import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
   resolveSidebarProjectScopeKey,
+  resolveSidebarProjectScopeKeys,
   getSidebarProjectSettingsKey,
 } from "./sidebarProjectGrouping";
 import type { Project } from "./types";
@@ -301,4 +302,51 @@ describe("environment grouping", () => {
     });
     expect(entries.map((entry) => entry.group.displayName)).toEqual(["pinned", "current", "other"]);
   });
+});
+
+it("keeps visible selected projects and grouped clones when environment filtering hides another selection", () => {
+  const groups = buildSidebarProjectSnapshots({
+    projects: [
+      makeProject({ id: ProjectId.make("local"), title: "local", workspaceRoot: "/local/only" }),
+      makeProject({
+        id: ProjectId.make("remote"),
+        title: "remote",
+        workspaceRoot: "/remote/only",
+        environmentId: remoteEnvironmentId,
+      }),
+      makeProject({ id: ProjectId.make("shared-local"), repositoryIdentity }),
+      makeProject({
+        id: ProjectId.make("shared-remote"),
+        repositoryIdentity,
+        environmentId: remoteEnvironmentId,
+      }),
+    ],
+    settings: defaultGroupingSettings,
+    primaryEnvironmentId,
+    resolveEnvironmentLabel: () => null,
+  });
+  const keys = groups.map((group) => group.projectKey);
+  const local = groups.find((group) => group.displayName === "local")!.projectKey;
+  const remote = groups.find((group) => group.displayName === "remote")!.projectKey;
+  const shared = repositoryIdentity.canonicalKey;
+  for (const [disabled, expected] of [
+    [[], keys],
+    [[remoteEnvironmentId], [local, shared]],
+    [[primaryEnvironmentId], [remote, shared]],
+    [[primaryEnvironmentId, remoteEnvironmentId], []],
+  ] as const) {
+    const resolved = resolveSidebarProjectScopeKeys({
+      groups,
+      keys,
+      disabledEnvironmentIds: new Set(disabled),
+    });
+    expect(new Set(resolved)).toEqual(new Set(expected));
+  }
+  expect(
+    resolveSidebarProjectScopeKeys({
+      groups,
+      keys: ["not-loaded"],
+      disabledEnvironmentIds: new Set([remoteEnvironmentId]),
+    }),
+  ).toEqual(["not-loaded"]);
 });

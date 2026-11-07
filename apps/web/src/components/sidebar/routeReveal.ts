@@ -1,3 +1,4 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useRef } from "react";
 
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
@@ -55,6 +56,7 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly routeKey: string | null;
   readonly isSearching: boolean;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly disabledEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly findThread: (key: string) => T | undefined;
 }): { readonly pendingKey: string | null; readonly widensScope: boolean } {
@@ -65,8 +67,10 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   const thread = pendingKey === null || isSearching ? undefined : findThread(pendingKey);
   const widensScope =
     thread !== undefined &&
-    scopedProjectKeys !== null &&
-    filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent).length === 0 &&
+    (input.disabledEnvironmentIds?.has(thread.environmentId) === true ||
+      (scopedProjectKeys !== null &&
+        filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent).length ===
+          0)) &&
     filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent).length === 1;
   return { pendingKey, widensScope };
 }
