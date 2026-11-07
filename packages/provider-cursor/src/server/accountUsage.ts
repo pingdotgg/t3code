@@ -1,5 +1,5 @@
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -58,9 +58,10 @@ const billedEventIdentity = (...fields: readonly unknown[]) => JSON.stringify(fi
 
 const textEncoder = new TextEncoder();
 
-const accountHash = Effect.fn("accountHash")(function* (value: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(yield* crypto.digest("SHA-256", textEncoder.encode(value)));
+// Untraced: each usage scan hashes every billed event.
+const accountHash = Effect.fnUntraced(function* (value: string) {
+  const digest = yield* Digest.Digest;
+  return Hex.encode(yield* digest.digest(Digest.sha256, textEncoder.encode(value)));
 });
 
 function canonicalJson(value: unknown): string {
@@ -104,7 +105,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
 ): Effect.fn.Return<
   CursorAccountUsageReadResult,
   never,
-  FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
+  FileSystem.FileSystem | Digest.Digest | HttpClient.HttpClient
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;

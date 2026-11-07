@@ -19,6 +19,7 @@ export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
   | "/settings/diagnostics"
+  | "/settings/voice"
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
@@ -107,6 +108,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/maintenance": "Maintenance",
   "/settings/labs": "Labs",
   "/settings/about": "About",
+  "/settings/voice": "Voice",
   "/settings/archived": "Archive",
 };
 
@@ -123,6 +125,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/chat",
       "/settings/diffs",
       "/settings/keybindings",
+      "/settings/voice",
       "/settings/snap-shot",
     ],
   },
@@ -466,6 +469,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "tool-call-visibility",
+    title: "Tool calls in chat",
+    to: "/settings/labs",
+    searchTerms: [
+      "beta hide tool calls commands edits searches work log activity quiet chat zen final answers only",
+    ],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",
@@ -485,6 +496,104 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     scope: "environment",
     searchTerms: ["beta alpha simlock callstack simulator emulator ios android pool lease gateway"],
+  },
+  {
+    id: "voice-transcription-destination",
+    title: "Transcribe with",
+    to: "/settings/voice",
+    searchTerms: [
+      "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter",
+    ],
+  },
+  {
+    id: "voice-microphone",
+    title: "Microphone",
+    to: "/settings/voice",
+    searchTerms: ["mic input audio device"],
+  },
+  {
+    id: "dictation-shortcut-mode",
+    title: "Dictation shortcut",
+    to: "/settings/voice",
+    searchTerms: ["speech voice keyboard hotkey hold toggle auto"],
+  },
+  {
+    id: "speech-language",
+    title: "Transcription language",
+    to: "/settings/voice",
+    searchTerms: ["speech voice translate english auto detect"],
+  },
+  {
+    id: "speech-dictionary",
+    title: "Dictionary",
+    to: "/settings/voice",
+    searchTerms: ["speech voice transcription vocabulary names glossary alias"],
+  },
+  {
+    id: "speech-project-dictionary",
+    title: "Project dictionary",
+    to: "/settings/voice",
+    scope: "project-defaults",
+    searchTerms: [
+      "speech voice transcription vocabulary shared dictionary team environment glossary",
+    ],
+  },
+  {
+    id: "speech-post-processing-model",
+    title: "Cleanup model",
+    to: "/settings/voice",
+    scope: "environment",
+    searchTerms: ["speech voice transcript cleanup provider model post-processing"],
+  },
+  {
+    id: "speech-correction-word",
+    title: "Correction cue",
+    to: "/settings/voice",
+    searchTerms: ["speech voice cleanup sorry scratch that fix mistake"],
+  },
+  {
+    id: "speech-silence-filtering",
+    title: "Silence filtering",
+    to: "/settings/voice",
+    searchTerms: ["voice speech vad silero pauses noise"],
+  },
+  {
+    id: "remove-filler-words",
+    title: "Remove filler words",
+    to: "/settings/voice",
+    searchTerms: ["voice speech transcription hesitation um uh cleanup"],
+  },
+  {
+    id: "speech-post-processing",
+    title: "Clean up transcripts with a provider",
+    to: "/settings/voice",
+    searchTerms: ["speech transcription polish clean provider prompt post-processing"],
+  },
+  {
+    id: "speech-models",
+    title: "Transcription models",
+    to: "/settings/voice",
+    searchTerms: [
+      "speech voice stt download whisper parakeet canary moonshine accuracy speed benchmark languages",
+    ],
+  },
+  {
+    id: "speech-hardware",
+    title: "Transcription hardware and model unloading",
+    to: "/settings/voice",
+    searchTerms: ["speech voice stt advanced gpu cpu acceleration memory unload idle"],
+  },
+  {
+    id: "microphone-test",
+    title: "Test microphone",
+    to: "/settings/voice",
+    searchTerms: ["test mic audio playback loopback record input level"],
+  },
+  {
+    id: "transcription-test",
+    title: "Test model",
+    to: "/settings/voice",
+    searchTerms: ["test voice speech model transcription recognition"],
   },
   {
     id: "auto-settle-inactive-threads",
@@ -604,7 +713,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/maintenance",
-    searchTerms: ["installed cli versions newer available codex claude cursor grok fx opencode"],
+    searchTerms: [
+      "installed cli versions newer available codex claude cursor grok fx kiro opencode",
+    ],
     scope: "environment-defaults",
   },
   {
@@ -652,6 +763,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     scope: "environment-defaults",
     searchTerms: ["base directory folder browser path home"],
+  },
+  {
+    id: "ghq-clone-layout",
+    title: "Clone into host folders",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["ghq clone destination host owner repository root layout"],
   },
   {
     id: "unpin-confirmation",
@@ -806,7 +924,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Providers",
     to: "/settings/providers",
     searchTerms: [
-      "agents cli codex claude cursor grok fx opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory codex_home shadow home endpoint arguments environment variables display name accent color custom favorite hidden auto compact native sessions import resume",
+      "agents cli codex claude cursor grok fx kiro opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory codex_home shadow home endpoint arguments environment variables display name accent color custom favorite hidden auto compact native sessions import resume",
     ],
   },
   {
@@ -1193,6 +1311,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/diagnostics": "environment",
   "/settings/projects": "project",
   "/settings/general": null,
+  "/settings/voice": null,
   "/settings/appearance": null,
   "/settings/chat": null,
   "/settings/diffs": null,

@@ -30,13 +30,14 @@ import {
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
 import { useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, RefreshControl, View } from "react-native";
+import { RefreshControl, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { AppText as Text } from "../../components/ui/AppText";
+import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -48,10 +49,6 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
-import { Menu } from "../../components/ui/Menu";
-import { SymbolView } from "../../components/ui/AppSymbol";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
 
@@ -99,7 +96,9 @@ function UsageScreen(props: {
   }
   const { view } = selection;
   const setView = (view: UsageView) => setSelection({ params: props.tabParam, view });
-  const [width, setWidth] = useState(0);
+  const [measuredWidth, setWidth] = useState(0);
+  // A workspace pane knows its width in the render that resizes it; measuring lags a frame.
+  const width = useWorkspaceSettledContentWidth() ?? measuredWidth;
   const wide = width >= WIDE_WIDTH;
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
@@ -196,27 +195,6 @@ function UsageScreen(props: {
   );
 
   const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
-  const filterIcon =
-    selectedEnvironmentIds === null
-      ? "line.3.horizontal.decrease"
-      : "line.3.horizontal.decrease.circle.fill";
-  const environmentActions = [
-    {
-      id: "all",
-      title: "All environments",
-      subtitle: undefined,
-      state: selectedEnvironmentIds === null ? ("on" as const) : ("off" as const),
-    },
-    ...environments.map((environment) => ({
-      id: environment.environmentId,
-      title: environment.label,
-      subtitle: usageEnvironmentStatus(environment, refreshingUsage),
-      state:
-        selectedEnvironmentIds === null || selectedEnvironmentIds.has(environment.environmentId)
-          ? ("on" as const)
-          : ("off" as const),
-    })),
-  ];
   const selectEnvironment = (value: string) => {
     if (value === "all") {
       setSelectedEnvironmentIds(null);
@@ -225,59 +203,36 @@ function UsageScreen(props: {
     const id = EnvironmentId.make(value);
     setSelectedEnvironmentIds((selected) => toggleUsageEnvironment(selected, environments, id));
   };
-  const environmentFilter = showEnvironmentFilter ? (
-    <Menu
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel="Filter usage environments"
-      title="Environments"
-      actions={environmentActions}
-      onPressAction={({ nativeEvent }) => selectEnvironment(nativeEvent.event)}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Filter usage environments"
-        className={cn(
-          "items-center justify-center rounded-full",
-          Platform.OS === "ios" ? "size-[28px]" : "size-[44px]",
-        )}
-      >
-        <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />
-      </Pressable>
-    </Menu>
-  ) : null;
+  const environmentMenu = {
+    title: "Filter usage environments",
+    icon:
+      selectedEnvironmentIds === null
+        ? ("line.3.horizontal.decrease" as const)
+        : ("line.3.horizontal.decrease.circle.fill" as const),
+    items: [
+      {
+        id: "all",
+        title: "All environments",
+        selected: selectedEnvironmentIds === null,
+        onPress: () => selectEnvironment("all"),
+      },
+      ...environments.map((environment) => ({
+        id: environment.environmentId,
+        title: environment.label,
+        subtitle: usageEnvironmentStatus(environment, refreshingUsage),
+        selected:
+          selectedEnvironmentIds === null || selectedEnvironmentIds.has(environment.environmentId),
+        onPress: () => selectEnvironment(environment.environmentId),
+      })),
+    ],
+  };
 
   return (
-    <SettingsScreen title="Usage" trailing={environmentFilter} workspaceRoot={props.workspace}>
-      {Platform.OS === "ios" ? (
-        <NativeStackScreenOptions
-          optionsVersion={JSON.stringify({ showEnvironmentFilter, filterIcon, environmentActions })}
-          options={{
-            // A native menu item, unlike a custom view, moves into the Duo's vertical bar.
-            unstable_headerRightItems: () =>
-              showEnvironmentFilter
-                ? [
-                    withNativeGlassHeaderItem({
-                      accessibilityLabel: "Filter usage environments",
-                      icon: { name: filterIcon, type: "sfSymbol" },
-                      label: "",
-                      type: "menu",
-                      menu: {
-                        title: "Environments",
-                        items: environmentActions.map((action) => ({
-                          type: "action" as const,
-                          label: action.title,
-                          description: action.subtitle,
-                          state: action.state === "on" ? ("on" as const) : undefined,
-                          onPress: () => selectEnvironment(action.id),
-                        })),
-                      },
-                    }),
-                  ]
-                : [],
-          }}
-        />
-      ) : null}
+    <SettingsScreen
+      title="Usage"
+      menus={showEnvironmentFilter ? [environmentMenu] : undefined}
+      workspaceRoot={props.workspace}
+    >
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
