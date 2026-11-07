@@ -8,9 +8,14 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_GET_CHANNEL,
+  PASSKEY_CANCEL_CHANNEL,
+} from "./GuestProtocol.ts";
 import type { PasskeyBackend, PasskeyCeremonyContext } from "./PasskeyBackend.ts";
 import { macPasskeyBackend } from "./PasskeyBackendMac.ts";
+import { linuxPasskeyBackend } from "./PasskeyBackendLinux.ts";
 import type { PasskeyCeremonyResult } from "./PasskeyBridge.ts";
 
 const PasskeyPackageMetadata = Schema.Struct({
@@ -128,7 +133,22 @@ const make = Effect.gen(function* () {
           )
       : undefined;
   const keychainAccessGroup = metadata?.touchIdKeychainAccessGroup;
-  const backend = metadata?.browserPasskeys === true ? backendFor(environment.platform) : undefined;
+  const linuxHelper =
+    environment.platform === "linux"
+      ? environment.isPackaged
+        ? environment.path.join(environment.resourcesPath, "phone-passkeys", "t3-phone-passkeys")
+        : environment.path.join(
+            environment.rootDir,
+            "native/phone-passkeys/target/debug/t3-phone-passkeys",
+          )
+      : undefined;
+  const backend =
+    linuxHelper !== undefined &&
+    (yield* fileSystem.exists(linuxHelper).pipe(Effect.orElseSucceed(() => false)))
+      ? linuxPasskeyBackend(linuxHelper)
+      : metadata?.browserPasskeys === true
+        ? backendFor(environment.platform)
+        : undefined;
   const bridgeEnabled = backend !== undefined;
   const sessionsWithHandlers = new WeakSet<Session>();
 
@@ -154,10 +174,19 @@ const make = Effect.gen(function* () {
     },
     attachGuest: (guest) => {
       if (backend === undefined) return () => {};
-      let ceremonyPending = false;
+      let active: { readonly controller: AbortController; readonly requestId: string } | undefined;
+      const cancel = () => active?.controller.abort();
+      const onNavigation = (
+        event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+      ) => {
+        if (event.isMainFrame && !event.isSameDocument) cancel();
+      };
+      guest.on("did-start-navigation", onNavigation);
+      guest.on("destroyed", cancel);
       const serve = async (
         event: IpcMainInvokeEvent,
         publicKey: { readonly timeout?: unknown } | undefined,
+        requestId: unknown,
         ceremony: (context: PasskeyCeremonyContext) => Promise<PasskeyCeremonyResult>,
       ): Promise<PasskeyCeremonyResult> => {
         // Only the guest's main frame runs the bridge preload.
@@ -165,7 +194,12 @@ const make = Effect.gen(function* () {
         if (!frame || frame !== guest.mainFrame) return notAllowed;
         // The page shares the preload's JS world; read the frame's committed origin before any await/navigation.
         const origin = frame.origin;
-        if (!isTrustworthyOrigin(origin) || ceremonyPending || !guest.isFocused()) {
+        if (
+          !isTrustworthyOrigin(origin) ||
+          active !== undefined ||
+          !guest.isFocused() ||
+          typeof requestId !== "string"
+        ) {
           return notAllowed;
         }
         if (typeof publicKey !== "object" || publicKey === null) {
@@ -176,10 +210,16 @@ const make = Effect.gen(function* () {
           : null;
         if (!host || host.isDestroyed()) return notAllowed;
 
-        ceremonyPending = true;
+        const controller = new AbortController();
+        active = { controller, requestId };
         try {
           const result = await withDeadline(
-            ceremony({ origin, nativeWindowHandle: host.getNativeWindowHandle() }),
+            ceremony({
+              origin,
+              nativeWindowHandle: host.getNativeWindowHandle(),
+              window: host,
+              signal: controller.signal,
+            }),
             ceremonyDeadline(publicKey.timeout),
           );
           // A credential minted for a document that navigated away belongs to nobody.
@@ -189,21 +229,33 @@ const make = Effect.gen(function* () {
         } catch {
           return notAllowed;
         } finally {
-          ceremonyPending = false;
+          controller.abort();
+          active = undefined;
         }
       };
       const detach = () => {
+        cancel();
+        guest.removeListener("did-start-navigation", onNavigation);
+        guest.removeListener("destroyed", cancel);
         guest.ipc.removeHandler(PASSKEY_CREATE_CHANNEL);
         guest.ipc.removeHandler(PASSKEY_GET_CHANNEL);
+        guest.ipc.removeHandler(PASSKEY_CANCEL_CHANNEL);
       };
-      detach();
+      guest.ipc.removeHandler(PASSKEY_CREATE_CHANNEL);
+      guest.ipc.removeHandler(PASSKEY_GET_CHANNEL);
+      guest.ipc.removeHandler(PASSKEY_CANCEL_CHANNEL);
+      guest.ipc.handle(PASSKEY_CANCEL_CHANNEL, (event, _publicKey, requestId: unknown) => {
+        if (event.senderFrame === guest.mainFrame && active?.requestId === requestId) cancel();
+      });
       guest.ipc.handle(
         PASSKEY_CREATE_CHANNEL,
-        (event, publicKey: PublicKeyCredentialCreationOptions) =>
-          serve(event, publicKey, (context) => backend.create(publicKey, context)),
+        (event, publicKey: PublicKeyCredentialCreationOptions, requestId: unknown) =>
+          serve(event, publicKey, requestId, (context) => backend.create(publicKey, context)),
       );
-      guest.ipc.handle(PASSKEY_GET_CHANNEL, (event, publicKey: PublicKeyCredentialRequestOptions) =>
-        serve(event, publicKey, (context) => backend.get(publicKey, context)),
+      guest.ipc.handle(
+        PASSKEY_GET_CHANNEL,
+        (event, publicKey: PublicKeyCredentialRequestOptions, requestId: unknown) =>
+          serve(event, publicKey, requestId, (context) => backend.get(publicKey, context)),
       );
       return detach;
     },

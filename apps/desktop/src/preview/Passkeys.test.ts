@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 
 const electron = vi.hoisted(() => ({
@@ -21,30 +22,55 @@ vi.mock("electron", () => ({
 vi.mock("electron-webauthn", () => webauthn);
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_GET_CHANNEL,
+  PASSKEY_CANCEL_CHANNEL,
+} from "./GuestProtocol.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
-const layerFor = (packageJson: object, isPackaged = true) =>
+const layerFor = (
+  packageJson: object,
+  isPackaged = true,
+  platform: NodeJS.Platform = "darwin",
+  helperAvailable: boolean | "unreadable" = true,
+) =>
   PreviewPasskeys.layer.pipe(
     Layer.provide(
       Layer.succeed(
         DesktopEnvironment.DesktopEnvironment,
         DesktopEnvironment.DesktopEnvironment.of({
-          platform: "darwin",
+          platform,
           isPackaged,
           appRoot: "/app",
+          resourcesPath: "/resources",
+          rootDir: "/repo",
           path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
         } as DesktopEnvironment.DesktopEnvironment["Service"]),
       ),
     ),
     Layer.provide(
       FileSystem.layerNoop({
+        exists: () =>
+          helperAvailable === "unreadable"
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "access",
+                }),
+              )
+            : Effect.succeed(helperAvailable),
         readFileString: () => Effect.succeed(JSON.stringify(packageJson)),
       }),
     ),
   );
 
-type Handler = (event: { readonly senderFrame: object | null }, publicKey: unknown) => unknown;
+type Handler = (
+  event: { readonly senderFrame: object | null },
+  publicKey: unknown,
+  requestId: string,
+) => unknown;
 
 const makeGuest = (origin = "https://accounts.example.com") => {
   const handlers = new Map<string, Handler>();
@@ -54,13 +80,19 @@ const makeGuest = (origin = "https://accounts.example.com") => {
     mainFrame,
     hostWebContents: {},
     isFocused: () => state.focused,
+    on: vi.fn(),
+    removeListener: vi.fn(),
     ipc: {
       handle: (channel: string, handler: Handler) => handlers.set(channel, handler),
       removeHandler: (channel: string) => handlers.delete(channel),
     },
   };
-  const call = (channel: string, publicKey: unknown, senderFrame: object | null = mainFrame) =>
-    Effect.promise(async () => handlers.get(channel)?.({ senderFrame }, publicKey));
+  const call = (
+    channel: string,
+    publicKey: unknown,
+    senderFrame: object | null = mainFrame,
+    requestId = "request",
+  ) => Effect.promise(async () => handlers.get(channel)?.({ senderFrame }, publicKey, requestId));
   return { guest: guest as unknown as Electron.WebContents, mainFrame, handlers, state, call };
 };
 
@@ -259,9 +291,19 @@ describe("PreviewPasskeys", () => {
         ceremonyStarted.resolve();
         return new Promise((resolve) => (finish = resolve));
       });
-      const first = yield* Effect.forkChild(page.call(PASSKEY_GET_CHANNEL, publicKey));
+      using abort = vi.spyOn(AbortController.prototype, "abort");
+      const first = yield* Effect.forkChild(
+        page.call(PASSKEY_GET_CHANNEL, publicKey, page.mainFrame, "active"),
+      );
       yield* Effect.promise(() => ceremonyStarted.promise);
-      assert.deepStrictEqual(yield* page.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
+      assert.deepStrictEqual(
+        yield* page.call(PASSKEY_GET_CHANNEL, publicKey, page.mainFrame, "overlapping"),
+        notAllowed,
+      );
+      yield* page.call(PASSKEY_CANCEL_CHANNEL, null, page.mainFrame, "overlapping");
+      assert.strictEqual(abort.mock.calls.length, 0);
+      yield* page.call(PASSKEY_CANCEL_CHANNEL, null, page.mainFrame, "active");
+      assert.strictEqual(abort.mock.calls.length, 1);
 
       page.mainFrame.origin = "https://other.example";
       finish({ success: true, data: { credentialId: "AQ" } });
@@ -269,7 +311,7 @@ describe("PreviewPasskeys", () => {
     }).pipe(Effect.provide(bridgeLayer)),
   );
 
-  it.effect("turns each path on only for builds signed for it", () =>
+  it.effect("enables each platform's available passkey backend", () =>
     Effect.gen(function* () {
       const entitled = yield* PreviewPasskeys.PreviewPasskeys.pipe(
         Effect.provide(
@@ -301,6 +343,19 @@ describe("PreviewPasskeys", () => {
       yield* unpackaged.configure;
       assert.strictEqual(electron.configureWebAuthn.mock.calls.length, 1);
       assert.isFalse(unpackaged.bridgeEnabled);
+
+      const linux = yield* PreviewPasskeys.PreviewPasskeys.pipe(
+        Effect.provide(layerFor({}, false, "linux")),
+      );
+      assert.isTrue(linux.bridgeEnabled);
+      const noLinuxHelper = yield* PreviewPasskeys.PreviewPasskeys.pipe(
+        Effect.provide(layerFor({}, false, "linux", false)),
+      );
+      assert.isFalse(noLinuxHelper.bridgeEnabled);
+      const unreadableLinuxHelper = yield* PreviewPasskeys.PreviewPasskeys.pipe(
+        Effect.provide(layerFor({}, false, "linux", "unreadable")),
+      );
+      assert.isFalse(unreadableLinuxHelper.bridgeEnabled);
     }),
   );
 
