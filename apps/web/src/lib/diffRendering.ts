@@ -1,7 +1,10 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { buildPatchCacheKey, fnv1a32, FNV_OFFSET_BASIS_32 } from "@t3tools/shared/String";
 import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
+
+export { fnv1a32 } from "@t3tools/shared/String";
 
 // Light mode uses a darker pierre-light so syntax stays readable on every code surface.
 export const DIFF_THEME_NAMES = {
@@ -13,30 +16,6 @@ export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NA
 
 export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
   return DIFF_THEME_NAMES[theme];
-}
-
-const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
-const FNV_PRIME_32 = 0x01000193;
-const SECONDARY_HASH_SEED = 0x9e3779b9;
-const SECONDARY_HASH_MULTIPLIER = 0x85ebca6b;
-
-export function fnv1a32(
-  input: string,
-  seed = FNV_OFFSET_BASIS_32,
-  multiplier = FNV_PRIME_32,
-): number {
-  let hash = seed >>> 0;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, multiplier) >>> 0;
-  }
-  return hash >>> 0;
-}
-
-function buildPatchCacheKey(patch: string, scope = "diff-panel"): string {
-  const primary = fnv1a32(patch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
-  const secondary = fnv1a32(patch, SECONDARY_HASH_SEED, SECONDARY_HASH_MULTIPLIER).toString(36);
-  return `${scope}:${patch.length}:${primary}:${secondary}`;
 }
 
 export type RenderablePatch =
