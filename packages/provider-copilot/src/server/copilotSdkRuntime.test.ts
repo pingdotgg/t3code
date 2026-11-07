@@ -467,6 +467,12 @@ it("lets an investigation run plain git reads and read the checkout, and nothing
     shell("git diff --outp=/tmp/x"),
     shell("git diff -o /tmp/x"),
     shell("git diff --ext-diff"),
+    shell("git diff --no-index /etc/passwd /dev/null"),
+    shell("git diff /etc/passwd README.md"),
+    shell("git diff ../secret README.md"),
+    shell("git diff -- ../secret README.md"),
+    shell("git diff ~/secret README.md"),
+    shell("git diff -O/etc/passwd"),
     shell("git log --textconv"),
     shell("git diff | sh"),
     shell("git diff; rm -rf ."),
@@ -488,19 +494,42 @@ it("lets an investigation run plain git reads and read the checkout, and nothing
 });
 
 // Copilot skips the permission request for these, so the hook alone stops them.
-it("refuses tool calls Copilot would run without asking", () => {
-  const decide = (toolName: string, toolArgs: unknown) =>
-    copilotInvestigationToolDecision({ toolName, toolArgs }, "/repo").permissionDecision;
+it("refuses tool calls Copilot would run without asking", async () => {
+  const links: Record<string, string> = { "/repo/out": "/etc/passwd" };
+  const decide = async (toolName: string, toolArgs: unknown) =>
+    (
+      await copilotInvestigationToolDecision(
+        { toolName, toolArgs },
+        "/repo",
+        async (path) => links[path] ?? path,
+      )
+    ).permissionDecision;
 
-  assert.strictEqual(decide("bash", { command: "git log --oneline a..HEAD" }), "allow");
-  assert.strictEqual(decide("view", { path: "/repo/a.ts" }), "allow");
-  assert.strictEqual(decide("grep", { pattern: "x" }), "allow");
-  assert.strictEqual(decide("bash", { command: "git diff --output=leak.txt" }), "deny");
-  assert.strictEqual(decide("bash", { command: "ls" }), "deny");
-  assert.strictEqual(decide("bash", {}), "deny");
-  assert.strictEqual(decide("grep", { pattern: "x", path: "/etc" }), "deny");
-  assert.strictEqual(decide("view", { path: "/repo/../secrets" }), "deny");
-  assert.strictEqual(decide("edit", { path: "/repo/a.ts" }), "deny");
+  for (const [toolName, toolArgs, expected] of [
+    ["bash", { command: "git log --oneline a..HEAD" }, "allow"],
+    ["view", { path: "/repo/a.ts" }, "allow"],
+    ["grep", { pattern: "x" }, "allow"],
+    ["grep", { pattern: "x", paths: "src", output_mode: "content", "-n": true }, "allow"],
+    ["grep", { pattern: "../not-a-path", glob: "**/*.ts" }, "allow"],
+    ["glob", { pattern: "src/**/*.ts" }, "allow"],
+    ["bash", { command: "git diff --output=leak.txt" }, "deny"],
+    ["bash", { command: "git diff ../secret a.ts" }, "deny"],
+    ["bash", { command: "ls" }, "deny"],
+    ["bash", {}, "deny"],
+    ["grep", { pattern: "x", path: "/etc" }, "deny"],
+    ["grep", { pattern: "x", glob: "../**" }, "deny"],
+    ["glob", { pattern: "/etc/*" }, "deny"],
+    ["glob", { pattern: "{a,/etc}/*" }, "deny"],
+    ["glob", { pattern: "../*" }, "deny"],
+    ["view", { path: "/repo/../secrets" }, "deny"],
+    ["view", { path: "/repo/out" }, "deny"],
+    ["grep", { pattern: "x", paths: "out" }, "deny"],
+    ["grep", { pattern: "x", paths: ["src", "out"] }, "deny"],
+    ["grep", { pattern: "x", somethingNew: "/etc" }, "deny"],
+    ["edit", { path: "/repo/a.ts" }, "deny"],
+  ] as const) {
+    assert.strictEqual(await decide(toolName, toolArgs), expected, JSON.stringify(toolArgs));
+  }
 });
 
 it("rejects a permission unless an allow option was selected", () => {

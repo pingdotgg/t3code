@@ -9,6 +9,9 @@ import {
   type SessionConfig,
   type SessionEvent,
 } from "@github/copilot-sdk";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The SDK calls its hooks outside any Effect runtime.
+import * as NodeFSP from "node:fs/promises";
+
 import type { AcpSessionRuntimeOptions } from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as Deferred from "effect/Deferred";
@@ -250,30 +253,69 @@ function wrapSession(session: Awaited<ReturnType<CopilotClient["createSession"]>
 
 const INVESTIGATION_TOOLS = ["view", "grep", "glob", "bash"];
 const READ_ONLY_GIT_COMMAND = /^git (?:diff|log|show)(?: [\w./:@^~=+,%-]+)*$/;
-// Git accepts abbreviated long options, so `--outp=x` has to fail like `--output=x`.
-const UNSAFE_GIT_OPTION = /^(?:-o|--ou|--ex|--te)/;
+// An allow list: git has too many options that write or read files, and new ones keep arriving.
+const SAFE_GIT_OPTION =
+  /^(?:--|-p|-s|-n\d*|-\d+|-U\d+|-w|--patch|--no-patch|--stat|--numstat|--shortstat|--summary|--name-only|--name-status|--oneline|--(?:format|pretty)=[\w%:.,+-]*|--max-count=\d+|--unified=\d+|--diff-filter=[A-Za-z]+|--reverse|--no-merges|--first-parent|--follow|--cached|--staged|--no-color|--no-renames)$/;
 const INVESTIGATION_FEEDBACK =
-  "Read-only: only plain git diff, git log, and git show run, without pipes, and only files in this checkout can be read.";
+  "Read-only: only plain git diff, git log, and git show run, with common options and no pipes, and only files in this checkout can be read.";
+
+// `git diff` compares files anywhere once a path leaves the checkout, even without `--no-index`.
+const staysInCheckout = (word: string) =>
+  !word.startsWith("/") && !word.startsWith("~") && !word.split("/").includes("..");
 
 const isReadOnlyGitCommand = (command: string) =>
   READ_ONLY_GIT_COMMAND.test(command) &&
-  !command.split(" ").some((word) => UNSAFE_GIT_OPTION.test(word));
+  command
+    .split(" ")
+    .slice(2)
+    .every((word) => (word.startsWith("-") ? SAFE_GIT_OPTION.test(word) : staysInCheckout(word)));
+
+// Any other text argument counts as a path, so an argument we have not seen fails closed.
+const NON_PATH_TOOL_ARGS = new Set(["pattern", "glob", "output_mode", "type", "description"]);
+
+const isCheckoutPattern = (pattern: string) =>
+  !pattern.includes("..") && !/(?:^|[{,])\s*[/~]/.test(pattern);
+
+/** A change request can add a symlink out of the checkout, so its real path has to be inside. */
+async function resolvesInsideDirectory(
+  directory: string,
+  path: string,
+  resolvePath: (path: string) => Promise<string>,
+) {
+  if (!isInsideDirectory(directory, path)) return false;
+  try {
+    const [root, target] = await Promise.all([
+      resolvePath(directory),
+      resolvePath(path.startsWith("/") ? path : `${directory}/${path}`),
+    ]);
+    return isInsideDirectory(root, target);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The enforcement point: Copilot runs commands it considers read-only, `git diff --output`
  * included, without a permission request, but this hook sees every tool call.
  */
-export function copilotInvestigationToolDecision(
+export async function copilotInvestigationToolDecision(
   input: { readonly toolName: string; readonly toolArgs: unknown },
   cwd: string,
+  resolvePath: (path: string) => Promise<string> = NodeFSP.realpath,
 ) {
   const args = record(input.toolArgs);
-  const path = stringField(args, "path");
+  const glob = stringField(args, input.toolName === "glob" ? "pattern" : "glob");
+  const paths = Object.entries(args ?? {}).flatMap(([name, value]) =>
+    NON_PATH_TOOL_ARGS.has(name) ? [] : [value].flat().filter((item) => typeof item === "string"),
+  );
   const allowed =
     input.toolName === "bash"
       ? isReadOnlyGitCommand(stringField(args, "command") ?? "")
       : INVESTIGATION_TOOLS.includes(input.toolName) &&
-        (path === undefined || isInsideDirectory(cwd, path));
+        (glob === undefined || isCheckoutPattern(glob)) &&
+        (
+          await Promise.all(paths.map((path) => resolvesInsideDirectory(cwd, path, resolvePath)))
+        ).every(Boolean);
   return allowed
     ? ({ permissionDecision: "allow" } as const)
     : ({ permissionDecision: "deny", permissionDecisionReason: INVESTIGATION_FEEDBACK } as const);
