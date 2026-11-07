@@ -3360,7 +3360,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const preserveDisclosurePosition = (anchorKey: string | null) => {
     const list = listRef.current;
-    if (anchorKey !== null) list?.anchorVisibleContent({ key: anchorKey });
+    if (anchorKey !== null) {
+      list?.cancelScroll();
+      list?.anchorVisibleContent({ key: anchorKey });
+    }
     if (list && anchorKey && !reduceMotion) {
       const state = list.getState();
       const anchorIndex = state.indexByKey(anchorKey);
