@@ -189,7 +189,7 @@ export type ServerBrowserViewerOutput =
       readonly y: number;
       readonly editable: boolean;
     }
-  | { readonly _tag: "clipboard"; readonly text: string }
+  | { readonly _tag: "clipboard"; readonly text: string; readonly requireGesture?: boolean }
   | {
       readonly _tag: "pointer";
       readonly phase: "move" | "click";
@@ -423,10 +423,34 @@ const editingCommand = (key: string, modifiers: number) => {
 
 const CLIPBOARD_TEXT_LIMIT = 1024 * 1024;
 const CLIPBOARD_WORLD = "t3-preview-clipboard";
-// Chromium shares its clipboard across contexts; capture real copy/cut keys in a page-inaccessible world instead.
+// This is only a text signal; the isolated world accepts it during a trusted click,
+// and only viewer input reads it. There is no binding reply or user activation.
+const CLIPBOARD_WRITE_SCRIPT = `(() => {
+  if (typeof Clipboard === "undefined") return;
+  const writeText = Clipboard.prototype.writeText;
+  const emit = dispatchEvent.bind(globalThis);
+  const Signal = CustomEvent;
+  const apply = Reflect.apply;
+  Clipboard.prototype.writeText = function(text) {
+    const result = apply(writeText, this, [text]);
+    if (typeof text === "string")
+      emit(new Signal("t3-preview-copy-text", { detail: text.slice(0, ${CLIPBOARD_TEXT_LIMIT}) }));
+    return result;
+  };
+})();`;
+// Chromium shares its clipboard across contexts; capture event text instead.
 const CLIPBOARD_SCRIPT = `(() => {
   let keying = false;
+  let click = null;
   let copied = "";
+  addEventListener("click", (event) => {
+    if (event.isTrusted) click = event;
+  }, true);
+  // eventPhase returns to NONE even when propagation is stopped. Timers cannot reuse a click.
+  const clicking = () => click !== null && click.isTrusted && click.eventPhase !== Event.NONE;
+  addEventListener("t3-preview-copy-text", (event) => {
+    if (clicking() && typeof event.detail === "string") record(event.detail);
+  });
   // The same Ctrl or Cmd + C or X that editingCommand sends as copy or cut.
   addEventListener("keydown", (event) => {
     if (!event.isTrusted || event.altKey || event.ctrlKey === event.metaKey) return;
@@ -449,11 +473,11 @@ const CLIPBOARD_SCRIPT = `(() => {
   // Capturing at window runs before page handlers can stop the event, and
   // before cut removes the selection.
   const snapshot = (event) => {
-    if (keying && event.isTrusted) record(selection());
+    if ((keying || clicking()) && event.isTrusted) record(selection());
   };
   // Bubbling back to window picks up text a page handler set instead.
   const replace = (event) => {
-    if (keying && event.isTrusted && event.defaultPrevented) record(event.clipboardData?.getData("text/plain"));
+    if ((keying || clicking()) && event.isTrusted && event.defaultPrevented) record(event.clipboardData?.getData("text/plain"));
   };
   for (const type of ["copy", "cut"]) {
     addEventListener(type, snapshot, true);
@@ -1275,6 +1299,10 @@ const make = Effect.gen(function* () {
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
       source: CLIPBOARD_SCRIPT,
       worldName: CLIPBOARD_WORLD,
+      runImmediately: true,
+    });
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: CLIPBOARD_WRITE_SCRIPT,
       runImmediately: true,
     });
   };
@@ -2399,6 +2427,8 @@ const make = Effect.gen(function* () {
         const button = ["none", "left", "middle", "right"].includes(String(message.button))
           ? (message.button as "none" | "left" | "middle" | "right")
           : "none";
+        const copying = !tab.desktop && action === "up" && button === "left";
+        if (copying) await takeCopiedText(tab);
         await session.send("Input.dispatchMouseEvent", {
           type,
           x: num(message.x),
@@ -2408,6 +2438,10 @@ const make = Effect.gen(function* () {
           clickCount: num(message.clickCount, type === "mouseMoved" ? 0 : 1),
           modifiers,
         });
+        if (copying) {
+          const copied = await takeCopiedText(tab);
+          if (copied) viewer.push({ _tag: "clipboard", text: copied, requireGesture: true });
+        }
         if (button !== "none") {
           if (action === "down")
             viewer.pressedButtons.set(button, { x: num(message.x), y: num(message.y) });

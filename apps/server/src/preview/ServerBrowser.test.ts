@@ -133,6 +133,13 @@ function makeSession(
         if (focusedFrame) focusedFrame.copy = keyCopy || focusedFrame.copy;
         else pageCopy = keyCopy || pageCopy;
       }
+      if (
+        method === "Input.dispatchMouseEvent" &&
+        (input as { type?: string }).type === "mouseReleased"
+      ) {
+        if (focusedFrame) focusedFrame.copy = clickCopy || focusedFrame.copy;
+        else pageCopy = clickCopy || pageCopy;
+      }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
         const value = frame ? frame.copy : pageCopy;
         if (frame) frame.copy = "";
@@ -302,6 +309,7 @@ const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
 let keyCopy = "";
+let clickCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
 let pageSetupFailure: Error | null = null;
@@ -456,6 +464,7 @@ beforeEach(() => {
   initialNavigation = null;
   pageCopy = "";
   keyCopy = "";
+  clickCopy = "";
   focusedFrame = null;
   desktopTabs.clear();
   shownDesktopTabs.clear();
@@ -1287,7 +1296,85 @@ it.effect.each([
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("only the controlling viewer's copy and cut keys reach its clipboard", () =>
+it.live("clipboard capture expires with the trusted click, even when propagation stops", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* ready;
+      const session = contexts[0]!.sessions[0]!;
+      const scripts = session.send.mock.calls.flatMap(([method, input]) =>
+        method === "Page.addScriptToEvaluateOnNewDocument"
+          ? [input as { source: string; worldName?: string }]
+          : [],
+      );
+      const listeners = new Map<string, Array<(event: object) => void>>();
+      const dispatch = (type: string, event: object) => {
+        for (const listener of listeners.get(type) ?? []) listener(event);
+      };
+      const world = (values: object) =>
+        NodeVM.createContext({
+          Event: { NONE: 0 },
+          addEventListener: (type: string, listener: (event: object) => void) => {
+            listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+          },
+          ...values,
+        });
+      const isolated = world({
+        document: { activeElement: null, getSelection: () => "selected" },
+        HTMLInputElement: String,
+        HTMLTextAreaElement: String,
+      });
+      const main = world({
+        Clipboard: class {
+          writeText() {
+            return Promise.resolve();
+          }
+        },
+        CustomEvent: class {
+          readonly type: string;
+          readonly detail: string;
+          constructor(type: string, options: { detail: string }) {
+            this.type = type;
+            this.detail = options.detail;
+          }
+        },
+        dispatchEvent: (event: { type: string }) => dispatch(event.type, event),
+      });
+      for (const script of scripts)
+        NodeVM.runInContext(script.source, script.worldName ? isolated : main);
+      const take = () => NodeVM.runInContext("takeCopy()", isolated);
+      const write = () => NodeVM.runInContext('new Clipboard().writeText("button")', main);
+      expect(NodeVM.runInContext("typeof takeCopy", main)).toBe("undefined");
+      const click = { isTrusted: true, eventPhase: 1 };
+      dispatch("click", click);
+      yield* Effect.promise(write);
+      expect(take()).toBe("button");
+      dispatch("copy", { isTrusted: true });
+      expect(take()).toBe("selected");
+      dispatch("copy", {
+        isTrusted: true,
+        defaultPrevented: true,
+        clipboardData: { getData: () => "override" },
+      });
+      expect(take()).toBe("override");
+      click.eventPhase = 0;
+      yield* Effect.promise(write);
+      dispatch("copy", { isTrusted: true });
+      expect(take()).toBe("");
+      click.isTrusted = false;
+      click.eventPhase = 1;
+      dispatch("click", click);
+      yield* Effect.promise(write);
+      dispatch("t3-preview-copy-text", { detail: "redispatched from a timer" });
+      expect(take()).toBe("");
+      dispatch("click", { isTrusted: false, eventPhase: 1 });
+      yield* Effect.promise(write);
+      dispatch("t3-preview-copy-text", { detail: "forged outside a click" });
+      expect(take()).toBe("");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("only the controlling viewer's copy keys and clicks offer clipboard text", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
@@ -1318,6 +1405,19 @@ it.live("only the controlling viewer's copy and cut keys reach its clipboard", (
       pageCopy = "left over";
       keyCopy = "";
       yield* viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 });
+      expect(yield* clipboard(viewer.output)).toEqual([]);
+      clickCopy = "button copy";
+      yield* watcher.input({ type: "mouse", action: "up", button: "left", x: 10, y: 10 });
+      expect(yield* clipboard(watcher.output)).toEqual([]);
+      yield* viewer.input({ type: "mouse", action: "down", button: "left", x: 10, y: 10 });
+      expect(yield* clipboard(viewer.output)).toEqual([]);
+      yield* viewer.input({ type: "mouse", action: "up", button: "left", x: 10, y: 10 });
+      expect(yield* clipboard(viewer.output)).toEqual([
+        { _tag: "clipboard", text: "button copy", requireGesture: true },
+      ]);
+      clickCopy = "";
+      pageCopy = "stale agent click";
+      yield* viewer.input({ type: "mouse", action: "up", button: "left", x: 10, y: 10 });
       expect(yield* clipboard(viewer.output)).toEqual([]);
       expect(yield* clipboard(watcher.output)).toEqual([]);
     }),

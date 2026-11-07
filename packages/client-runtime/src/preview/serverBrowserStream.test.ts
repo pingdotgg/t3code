@@ -134,6 +134,29 @@ describe("preview stream control", () => {
   });
 });
 
+describe("preview stream clipboard", () => {
+  beforeEach(() => vi.stubGlobal("WebSocket", FakeSocket));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("preserves the local gesture requirement for pointer copies", () => {
+    const onClipboard = vi.fn();
+    const client = createPreviewStreamClient(target, {
+      onFrame: vi.fn(),
+      onClipboard,
+      onViewport: vi.fn(),
+      onConnectedChange: vi.fn(),
+      onUnauthorized: vi.fn(),
+    });
+    FakeSocket.current.message(
+      JSON.stringify({ type: "clipboard", text: "button", requireGesture: true }),
+    );
+    expect(onClipboard).toHaveBeenLastCalledWith("button", true);
+    FakeSocket.current.message(JSON.stringify({ type: "clipboard", text: "keys" }));
+    expect(onClipboard).toHaveBeenLastCalledWith("keys", false);
+    client.stop();
+  });
+});
+
 describe("preview stream downloads", () => {
   beforeEach(() => vi.stubGlobal("WebSocket", FakeSocket));
   afterEach(() => vi.unstubAllGlobals());

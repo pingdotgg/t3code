@@ -103,23 +103,27 @@ const pressedButtonOf = (buttons: number): PreviewStreamMouseButton =>
 const historyDeltaOf = (button: number): -1 | 1 | null =>
   button === 3 ? -1 : button === 4 ? 1 : null;
 
-/** Browsers may refuse a write that arrives after the key press; a toast button is a fresh gesture. */
-async function copyPageText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const id = toastManager.add({
-      type: "info",
-      title: "The page copied text",
-      actionProps: {
-        children: "Copy",
-        onClick: () => {
-          toastManager.close(id);
-          void navigator.clipboard.writeText(text).catch(() => undefined);
-        },
-      },
-    });
+/** A local Copy click also works when the relay arrives without browser activation. */
+async function copyPageText(text: string, requireGesture: boolean) {
+  if (!requireGesture) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Offer a fresh local gesture when the browser refused the relayed key.
+    }
   }
+  const id = toastManager.add({
+    type: "info",
+    title: "The page copied text",
+    actionProps: {
+      children: "Copy",
+      onClick: () => {
+        toastManager.close(id);
+        void navigator.clipboard.writeText(text).catch(() => undefined);
+      },
+    },
+  });
 }
 
 function offerDownload(download: PreviewStreamDownload) {
@@ -396,7 +400,7 @@ export function ServerBrowserSurface(props: {
           const placed = placeAgentCursor(pointer, canvasRef.current, viewportRef.current);
           if (placed) setAgentCursor(placed);
         },
-        onClipboard: (text) => void copyPageText(text),
+        onClipboard: (text, requireGesture) => void copyPageText(text, requireGesture),
         onDownload: offerDownload,
         onPopup: popupOpened,
         onFileChooser: setFileChooser,
