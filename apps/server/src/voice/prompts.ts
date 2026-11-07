@@ -15,7 +15,7 @@ Answer with JSON: {"action", "speech", "task"}.
 
 "speech" is read aloud: plain words, no markdown, code, lists, or links, and at most two sentences. The user's words come from speech recognition, so they may lack final punctuation or contain misheard words; read them generously.
 
-A message that starts with "[Agent" reports the agent's work. Reply with what the user needs to know in at most two sentences, then a short question if one helps.`;
+A message that starts with "[Agent" reports the agent's work. Answer it with "reply": what the user needs to know in at most two sentences, then a short question if one helps. Never delegate or note in answer to the agent; wait for the user to ask.`;
 
 export type FrontInput =
   | { readonly type: "user"; readonly text: string }

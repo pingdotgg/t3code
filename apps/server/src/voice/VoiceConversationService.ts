@@ -222,7 +222,8 @@ const make = Effect.gen(function* () {
         Effect.ensuring(
           Effect.suspend(() => {
             runs.delete(runId);
-            return refresh.pipe(Effect.andThen(think));
+            // Thinking first, so the call never reports listening on its way to a readback.
+            return think.pipe(Effect.andThen(refresh));
           }),
         ),
         Effect.forkIn(scope),
@@ -236,6 +237,8 @@ const make = Effect.gen(function* () {
       const speech = limitSpeech(decision.speech);
       if (speech) yield* speaker.speak(speech);
       const said = inputs.flatMap((input) => (input.type === "user" ? [input.text] : [])).join(" ");
+      // Only the user starts work: acting on a bare agent result would loop run after run.
+      if (!said) return;
       if (decision.action === "note") yield* deliverNote(decision.task?.trim() || said);
       if (decision.action !== "delegate") return;
       const text = delegationText({ words: said, task: decision.task, notes: notes.splice(0) });
@@ -266,7 +269,7 @@ const make = Effect.gen(function* () {
         Effect.ensuring(
           Effect.suspend(() => {
             if (thinking?.inputs === inputs) thinking = undefined;
-            return refresh.pipe(Effect.andThen(think));
+            return think.pipe(Effect.andThen(refresh));
           }),
         ),
         Effect.forkIn(scope),

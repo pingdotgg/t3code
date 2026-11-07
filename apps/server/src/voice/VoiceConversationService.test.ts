@@ -463,28 +463,42 @@ it.effect("lets the voice's own echo through without a cut", () =>
   }).pipe(Effect.scoped),
 );
 
-it.effect("delegates work, follows the run, and reads back a short summary", () =>
+it.effect("delegates work, follows the run, and only reads back what it finds", () =>
   Effect.gen(function* () {
     const test = yield* harness("delegate", ["Fixed the flaky test in auth.test.ts. All 12 pass."]);
     yield* Effect.gen(function* () {
-      const { until, say, pause } = yield* test.call();
+      const { voice, until, say, pause, rendered } = yield* test.call();
       yield* say("fix the flaky auth test");
       yield* test.decide({
         action: "delegate",
         speech: "On it.",
         task: "Fix the flaky auth test.",
       });
-      yield* test.decide({ action: "reply", speech: "The auth test is fixed and all 12 pass." });
+      // A result is read back, never acted on, even when the front asks to delegate.
+      yield* test.decide({
+        action: "delegate",
+        speech: "The auth test is fixed and all 12 pass.",
+        task: "Open a pull request.",
+      });
       yield* pause(1500);
       const delegated = yield* until((output) => output.type === "delegated");
       assert.deepStrictEqual(spoken(delegated), ["On it."]);
-      yield* until((output) => output.type === "speak" && output.text.startsWith("The auth"));
+      yield* rendered(1, 1);
+      yield* voice.played(1, 2000);
+      const readback = yield* until(
+        (output) => output.type === "speak" && output.text.startsWith("The auth"),
+      );
+      assert.isFalse(readback.some(isState("listening")));
       const event = delegated.at(-1);
       assert.strictEqual(event?.type === "delegated" && event.text, test.prompts[0]);
       assert.deepStrictEqual(
         lastUser(test.asked[1]!),
         "[Agent finished]\nFixed the flaky test in auth.test.ts. All 12 pass.",
       );
+      yield* rendered(2, 1);
+      const after = yield* Effect.andThen(voice.played(2, 9000), until(isState("listening")));
+      assert.isFalse(after.some((output) => output.type === "delegated"));
+      assert.strictEqual(test.prompts.length, 1);
     }).pipe(Effect.provide(test.layer));
   }).pipe(Effect.scoped),
 );
