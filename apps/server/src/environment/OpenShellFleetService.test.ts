@@ -50,6 +50,45 @@ const fleetOnSettings = {
   openshell: { gatewayUrl: "https://gateway.example.test", managingInstance: true },
 } as const;
 
+/** Secret store mock: fails its first `count` reads, then answers empty. */
+const flakySecrets = (failures: number) => {
+  let calls = 0;
+  const secrets = Layer.mock(ServerSecretStore.ServerSecretStore)({
+    get: () => {
+      calls += 1;
+      return calls <= failures
+        ? Effect.fail(
+            new ServerSecretStore.SecretStoreReadError({
+              resource: "openshell-gateway-credential",
+              cause: "locked in this test",
+            }),
+          )
+        : Effect.succeedNone;
+    },
+    getOrCreateRandom: (name: string) =>
+      Effect.succeed(new TextEncoder().encode(`random-for-${name}`)),
+  });
+  return { secrets, calls: () => calls };
+};
+
+const alwaysFailingSecrets = () => {
+  let calls = 0;
+  const secrets = Layer.mock(ServerSecretStore.ServerSecretStore)({
+    get: () => {
+      calls += 1;
+      return Effect.fail(
+        new ServerSecretStore.SecretStoreReadError({
+          resource: "openshell-gateway-credential",
+          cause: "locked in this test",
+        }),
+      );
+    },
+    getOrCreateRandom: (name: string) =>
+      Effect.succeed(new TextEncoder().encode(`random-for-${name}`)),
+  });
+  return { secrets, calls: () => calls };
+};
+
 const managingEnvironment = Layer.succeed(
   ServerEnvironment.ServerEnvironment,
   ServerEnvironment.ServerEnvironment.of({
@@ -86,7 +125,11 @@ describe("OpenShellFleetService", () => {
           Effect.provide(
             layerFleet(
               settingsContext,
-              Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),
+              Layer.mock(ServerSecretStore.ServerSecretStore)({
+                get: () => Effect.succeedNone,
+                getOrCreateRandom: (name: string) =>
+                  Effect.succeed(new TextEncoder().encode(`random-for-${name}`)),
+              }),
             ),
           ),
         );
@@ -106,15 +149,7 @@ describe("OpenShellFleetService", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const settingsContext = yield* Layer.build(ServerSettings.layerTest(fleetOnSettings));
-        const secrets = Layer.mock(ServerSecretStore.ServerSecretStore)({
-          get: () =>
-            Effect.fail(
-              new ServerSecretStore.SecretStoreReadError({
-                resource: "openshell-gateway-credential",
-                cause: "locked in this test",
-              }),
-            ),
-        });
+        const { secrets } = alwaysFailingSecrets();
         const fleetFor = () =>
           OpenShellFleetService.OpenShellFleetService.pipe(
             Effect.provide(layerFleet(settingsContext, secrets)),
@@ -141,6 +176,50 @@ describe("OpenShellFleetService", () => {
           operation: "list",
           message: "The fleet operation failed.",
         });
+      }),
+    ),
+  );
+
+  it.effect("retries a transient init failure on the next call instead of caching it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settingsContext = yield* Layer.build(ServerSettings.layerTest(fleetOnSettings));
+        const { secrets, calls } = flakySecrets(1);
+        const fleet = yield* OpenShellFleetService.OpenShellFleetService.pipe(
+          Effect.provide(layerFleet(settingsContext, secrets)),
+        );
+
+        const firstError = yield* fleet.listWorkers({}).pipe(Effect.flip);
+        expect(firstError).toBeInstanceOf(OpenShellFleetService.OpenShellFleetOperationFailed);
+
+        // The same service instance builds the driver on the retry: a failure
+        // was never cached, so the second call gets a working driver.
+        expect(yield* fleet.listWorkers({})).toEqual([]);
+        expect(calls()).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("labels an operation's init failure with that operation, not an earlier caller's", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settingsContext = yield* Layer.build(ServerSettings.layerTest(fleetOnSettings));
+        const { secrets } = alwaysFailingSecrets();
+        const fleet = yield* OpenShellFleetService.OpenShellFleetService.pipe(
+          Effect.provide(layerFleet(settingsContext, secrets)),
+        );
+
+        const spawnError = yield* fleet
+          .spawnWorker({ runtimeModeCeiling: "approval-required", workerClass: "ephemeral" })
+          .pipe(Effect.flip);
+        expect(spawnError).toMatchObject({ operation: "spawn" });
+
+        // A failed init leaves nothing cached, so the next operation rebuilds
+        // and labels the failure with its own operation.
+        const removeError = yield* fleet
+          .removeWorker({ targetEnvironmentId: EnvironmentId.make("environment-worker-1") })
+          .pipe(Effect.flip);
+        expect(removeError).toMatchObject({ operation: "remove" });
       }),
     ),
   );

@@ -326,6 +326,52 @@ describe("OpenShellGatewayDriver.spawn", () => {
     expect((await index.list()).length).toBe(1);
   });
 
+  it("keeps the sandbox when the existence lookup fails", async () => {
+    const { client, recording, sandboxes } = fakeClient({
+      policyError: new Error("policy rejected"),
+    });
+    const driver = makeDriver({
+      client: {
+        ...client,
+        get: async () => {
+          throw new Error("gateway unreachable");
+        },
+      },
+      settings: DEFAULT_SETTINGS,
+    });
+    const error = await spawnEphemeral(driver).then(
+      () => null,
+      (cause: { message?: string }) => cause,
+    );
+    expect(error?.message).toContain("it is unknown whether");
+    expect(recording.deleteCalls).toEqual([]); // an unreachable gateway says nothing
+    expect(sandboxes.size).toBe(1);
+  });
+
+  it("derives the fallback spawn key from the injected provider across restarts", async () => {
+    const durableKey = async () => "durable-fallback-key";
+    const spawnWithoutKey = async () => {
+      const driver = makeDriver({
+        settings: DEFAULT_SETTINGS,
+        fallbackIdempotencyKey: durableKey,
+      });
+      return await driver.spawn({ workerClass: "ephemeral" }, {});
+    };
+    const first = await spawnWithoutKey();
+    // A second "process" (fresh collaborators, same durable provider) must
+    // converge on the same sandbox, never mint a second worker for the key.
+    const second = await spawnWithoutKey();
+    expect(second.sandbox.name).toBe(first.sandbox.name);
+    expect(first.sandbox.name).toMatch(/^t3-worker-[0-9a-f]{12}$/);
+  });
+
+  it("mints distinct fallback keys when nothing durable is injected", async () => {
+    const driver = makeDriver({ settings: DEFAULT_SETTINGS });
+    const first = await driver.spawn({ workerClass: "ephemeral" }, {});
+    const second = await driver.spawn({ workerClass: "ephemeral" }, {});
+    expect(second.sandbox.name).not.toBe(first.sandbox.name);
+  });
+
   it("registers the worker and exchanges the bootstrap credential after ready", async () => {
     const { client } = fakeClient();
     const { registrar, registrations, exchanges } = fakeRegistrar();
@@ -477,8 +523,14 @@ describe("OpenShellGatewayDriver.remove", () => {
     const index = memoryFleetWorkerIndex();
     const driver = makeDriver({ client, settings: DEFAULT_SETTINGS, index });
     const spawned = await spawnEphemeral(driver);
+    await index.setState(spawned.environmentId, "ready", "an older, unrelated failure");
     const result = await driver.remove(spawned.environmentId);
     expect(result.outcome).toBe("refused");
+    // The refusal carries the drain's own fresh reason, verbatim, not the row's
+    // stale pre-drain error.
+    expect(result.reason).toBe(
+      "No drain executor is configured; nothing was drained, so the sandbox is kept.",
+    );
     expect(recording.deleteCalls).toEqual([]);
   });
 

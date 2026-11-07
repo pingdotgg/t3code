@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseDeleteOutcome, parseWorkerPairingMaterial } from "./gatewayClient.ts";
+import {
+  isSandboxNotFoundError,
+  parseDeleteOutcome,
+  parseWorkerPairingMaterial,
+} from "./gatewayClient.ts";
 
 const valid = JSON.stringify({
   environmentId: "environment-worker-1",
@@ -50,5 +54,24 @@ describe("parseDeleteOutcome", () => {
   it("throws on an unreadable shape", () => {
     expect(() => parseDeleteOutcome(42)).toThrow();
     expect(() => parseDeleteOutcome({})).toThrow();
+  });
+});
+
+describe("isSandboxNotFoundError", () => {
+  it("counts only confirmed absence answers", () => {
+    expect(isSandboxNotFoundError(Object.assign(new Error("no sandbox"), { status: 404 }))).toBe(
+      true,
+    );
+    expect(isSandboxNotFoundError({ statusCode: 404 })).toBe(true);
+    expect(isSandboxNotFoundError({ code: "not_found" })).toBe(true);
+    expect(isSandboxNotFoundError(new Error("GET /sandbox/x answered 404"))).toBe(true);
+    expect(isSandboxNotFoundError(new Error("sandbox not found"))).toBe(true);
+  });
+
+  it("treats transport and other failures as presence unknown", () => {
+    expect(isSandboxNotFoundError(new Error("network unreachable"))).toBe(false);
+    expect(isSandboxNotFoundError({ status: 500 })).toBe(false);
+    expect(isSandboxNotFoundError({ status: 403 })).toBe(false);
+    expect(isSandboxNotFoundError(undefined)).toBe(false);
   });
 });

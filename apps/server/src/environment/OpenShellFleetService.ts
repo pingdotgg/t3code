@@ -16,6 +16,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as Path from "effect/Path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -47,6 +48,8 @@ import * as PeerEnvironmentRegistry from "../peer/PeerEnvironmentRegistry.ts";
 
 /** ServerSecretStore slot holding the gateway credential (spec section 4.2). */
 const GATEWAY_CREDENTIAL_SLOT = "openshell-gateway-credential";
+/** ServerSecretStore slot holding the driver's durable spawn fallback key. */
+const FALLBACK_KEY_SLOT = "openshell-fleet-fallback-id";
 
 const isDriverError = Schema.is(OpenShellGatewayDriverError);
 
@@ -264,6 +267,13 @@ const make = Effect.gen(function* () {
     const { gatewayUrl, openshell } = yield* gatewaySettings;
     const credential = yield* gatewayCredential(operation);
     const client = yield* openClient(operation, gatewayUrl, credential);
+    // A spawn that omits a client id falls back to this durable key, so a
+    // restart cannot mint a key an earlier process already used and hijack
+    // that worker's sandbox.
+    const durableFallbackKey = secrets.getOrCreateRandom(FALLBACK_KEY_SLOT, 32).pipe(
+      Effect.map(Hex.encode),
+      Effect.mapError((cause) => failed(operation, cause)),
+    );
     const context = yield* Effect.context<never>();
     // The driver's collaborators are Promise-shaped because the OpenShell SDK
     // is; they run these Effects on the surrounding services rather than a
@@ -308,6 +318,7 @@ const make = Effect.gen(function* () {
       registrar,
       index,
       drainExecutor: yield* drainFor(client),
+      fallbackIdempotencyKey: () => run(durableFallbackKey),
     });
   });
 
@@ -318,8 +329,12 @@ const make = Effect.gen(function* () {
     const cached = yield* Ref.get(cachedDriver);
     if (Option.isSome(cached)) return yield* cached.value;
     const built = yield* Effect.cached(buildDriver(operation));
+    // Build first: the cached wrapper itself never fails, so without this run a
+    // failed init would be stored here and replayed forever. Only a success is
+    // cached, so a transient failure is retried with the next call's operation.
+    const driver = yield* built;
     yield* Ref.set(cachedDriver, Option.some(built));
-    return yield* built;
+    return driver;
   });
 
   const spawnWorker: OpenShellFleetService["Service"]["spawnWorker"] = Effect.fn(
