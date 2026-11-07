@@ -1,5 +1,6 @@
 import {
   BoxGeometry,
+  BufferAttribute,
   Group,
   Mesh,
   MeshBasicMaterial,
@@ -8,7 +9,11 @@ import {
   Texture,
 } from "three";
 import { expect, it, vi } from "vite-plus/test";
-import { createImportedPhoneScene, disposeDeviceModel } from "./modelScene.ts";
+import {
+  bakeDisplayTransforms,
+  createImportedPhoneScene,
+  disposeDeviceModel,
+} from "./modelScene.ts";
 import { phoneDisplayLayout } from "./phoneScene.ts";
 
 function asset() {
@@ -67,4 +72,24 @@ it("rejects missing and incorrectly normalized displays before changing their ma
   ).toThrow("one device-screen");
   disposeDeviceModel(root);
   texture.dispose();
+});
+
+it("accepts a quantized display once loading bakes its node transform", () => {
+  const { root, screen } = asset();
+  // KHR_mesh_quantization stores normalized shorts and moves their scale and offset onto the node.
+  const position = screen.geometry.getAttribute("position");
+  const shorts = new Int16Array(position.count * 3);
+  for (let i = 0; i < position.count; i++)
+    for (let c = 0; c < 3; c++)
+      shorts[i * 3 + c] = Math.round(
+        ((position.getComponent(i, c) - (c === 2 ? 0.043 : 0)) / 1.1) * 32767,
+      );
+  screen.geometry.setAttribute("position", new BufferAttribute(shorts, 3, true));
+  screen.position.z = 0.043;
+  screen.scale.setScalar(1.1);
+  bakeDisplayTransforms(root);
+  expect(screen.geometry.getAttribute("position").array).toBeInstanceOf(Float32Array);
+  const phone = createImportedPhoneScene(root, new Texture(), phoneDisplayLayout(null, 1206, 2622));
+  expect(screen.geometry.getAttribute("uv").getX(0)).toBeCloseTo(0, 3);
+  phone.dispose();
 });
