@@ -1,6 +1,5 @@
 import type {
   DesktopHostTelemetrySnapshot,
-  HostPowerSnapshot,
   ResourceMonitorSnapshotEvent,
   ResourceTelemetryHealth,
   ResourceTelemetryHistoryInput,
@@ -21,6 +20,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import * as DesktopTelemetryReceiver from "./DesktopTelemetryReceiver.ts";
 import {
   emptyTelemetryCounters,
@@ -85,21 +85,6 @@ interface LiveTelemetryState {
   readonly scope: Option.Option<Scope.Closeable>;
 }
 
-function unknownPower(updatedAt: DateTime.Utc): HostPowerSnapshot {
-  return {
-    source: "unknown",
-    idle: "unknown",
-    idleSeconds: null,
-    locked: "unknown",
-    suspended: false,
-    onBattery: "unknown",
-    lowPowerMode: "unknown",
-    thermalState: "unknown",
-    stale: true,
-    updatedAt,
-  };
-}
-
 function buildHealth(input: {
   readonly native: NativeTelemetryClient.NativeTelemetryClientHealth;
   readonly desktop: DesktopTelemetryReceiver.DesktopTelemetryReceiverHealth;
@@ -142,6 +127,7 @@ function buildHealth(input: {
 export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
   const nativeClient = yield* NativeTelemetryClient.NativeTelemetryClient;
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
+  const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
   const mutex = yield* Semaphore.make(1);
   const changes = yield* PubSub.sliding<ResourceTelemetrySnapshot>(8);
@@ -177,13 +163,14 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
     counters: emptyTelemetryCounters(),
     updatePrevious: false,
   });
+  const initialHostPower = yield* hostPowerMonitor.snapshot;
   const initialSnapshot: ResourceTelemetrySnapshot = {
     readAt: initialReadAt,
     sampleIntervalMs: initialNativeHealth.sampleIntervalMs,
     processes: initialMerge.processes,
     groups: initialMerge.groups,
     power: Option.match(initialDesktop, {
-      onNone: () => unknownPower(initialReadAt),
+      onNone: () => initialHostPower,
       onSome: (desktop) => desktop.power,
     }),
     speedLimitPercent: Option.flatMap(initialDesktop, (desktop) => desktop.speedLimitPercent),
@@ -290,13 +277,14 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           updatePrevious: input.updatePrevious,
         });
         const readAt = DateTime.makeUnsafe(merged.sampledAtMs);
+        const hostPower = yield* hostPowerMonitor.snapshot;
         const snapshot: ResourceTelemetrySnapshot = {
           readAt,
           sampleIntervalMs: nativeHealth.sampleIntervalMs,
           processes: merged.processes,
           groups: merged.groups,
           power: Option.match(desktopSnapshot, {
-            onNone: () => unknownPower(readAt),
+            onNone: () => hostPower,
             onSome: (desktop) => desktop.power,
           }),
           speedLimitPercent: Option.match(desktopSnapshot, {
@@ -353,6 +341,17 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
 
   yield* desktopSubscription.changes.pipe(
     Stream.runForEach((snapshot) => ingestDesktop(snapshot)),
+    Effect.forkScoped,
+  );
+  yield* hostPowerMonitor.streamChanges.pipe(
+    Stream.runForEach((power) =>
+      Effect.gen(function* () {
+        yield* nativeClient.setHostPowerState(power).pipe(Effect.ignore);
+        const current = yield* Ref.get(state);
+        if (Option.isSome(current.desktopSnapshot)) return;
+        yield* rebuild({ updatePrevious: false, publishWhenLive: true });
+      }),
+    ),
     Effect.forkScoped,
   );
 

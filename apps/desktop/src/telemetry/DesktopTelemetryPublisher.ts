@@ -208,16 +208,18 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
         const sampledAt = yield* DateTime.now;
         const sampledAtUnixMs = DateTime.toEpochMillis(sampledAt);
         const demand = (yield* Ref.get(diagnosticsDemandSources)).size > 0;
-        const [currentPower, idleSeconds, systemIdleState, onBattery, metrics] = yield* Effect.all(
-          [
-            Ref.get(powerState),
-            powerMonitor.getSystemIdleTime,
-            powerMonitor.getSystemIdleState(IDLE_THRESHOLD_SECONDS),
-            powerMonitor.isOnBatteryPower,
-            electronApp.getAppMetrics,
-          ],
-          { concurrency: "unbounded" },
-        );
+        const [currentPower, idleSeconds, systemIdleState, onBattery, batteryPercent, metrics] =
+          yield* Effect.all(
+            [
+              Ref.get(powerState),
+              powerMonitor.getSystemIdleTime,
+              powerMonitor.getSystemIdleState(IDLE_THRESHOLD_SECONDS),
+              powerMonitor.isOnBatteryPower,
+              powerMonitor.getBatteryPercent,
+              electronApp.getAppMetrics,
+            ],
+            { concurrency: "unbounded" },
+          );
         // One Electron sampler preserves the shared CPU measurement interval.
         yield* rendererHistory.recordMetrics(metrics);
         const polledLocked =
@@ -268,6 +270,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
             locked: observedPower.locked,
             suspended: observedPower.suspended,
             onBattery: observedPower.onBattery,
+            ...(batteryPercent === null ? {} : { batteryPercent }),
             lowPowerMode: "unknown",
             thermalState: observedPower.thermalState,
             stale: false,

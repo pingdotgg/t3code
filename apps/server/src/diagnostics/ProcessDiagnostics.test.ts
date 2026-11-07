@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
@@ -62,7 +63,14 @@ function layerTelemetryFor(
       })
     : DesktopTelemetryReceiver.layerTest();
   return ResourceTelemetry.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerNative, layerDesktop, ResourceAttribution.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerNative,
+        layerDesktop,
+        ResourceAttribution.layer,
+        Layer.effect(HostPowerMonitor.HostPowerMonitor, HostPowerMonitor.make()),
+      ),
+    ),
   );
 }
 

@@ -42,6 +42,7 @@ function samePowerState(left: HostPowerSnapshot, right: HostPowerSnapshot): bool
     left.locked === right.locked &&
     left.suspended === right.suspended &&
     left.onBattery === right.onBattery &&
+    left.batteryPercent === right.batteryPercent &&
     left.lowPowerMode === right.lowPowerMode &&
     left.thermalState === right.thermalState &&
     left.stale === right.stale

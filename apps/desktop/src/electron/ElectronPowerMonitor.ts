@@ -1,3 +1,5 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { readHostBatteryPercent } from "@t3tools/shared/readHostBatteryPercent";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,6 +14,7 @@ export class ElectronPowerMonitor extends Context.Service<
   ElectronPowerMonitor,
   {
     readonly isOnBatteryPower: Effect.Effect<boolean>;
+    readonly getBatteryPercent: Effect.Effect<number | null>;
     readonly getSystemIdleTime: Effect.Effect<number>;
     readonly getSystemIdleState: (idleThresholdSeconds: number) => Effect.Effect<ElectronIdleState>;
     readonly getCurrentThermalState: Effect.Effect<ElectronThermalState>;
@@ -78,6 +81,7 @@ const onSpeedLimitChange: ElectronPowerMonitor["Service"]["onSpeedLimitChange"] 
 /** @public */
 export const make = ElectronPowerMonitor.of({
   isOnBatteryPower: Effect.sync(() => Electron.powerMonitor.isOnBatteryPower()),
+  getBatteryPercent: Effect.sync(() => readHostBatteryPercent(HostProcess.Platform.defaultValue())),
   getSystemIdleTime: Effect.sync(() => Electron.powerMonitor.getSystemIdleTime()),
   getSystemIdleState: Effect.fn("ElectronPowerMonitor.getSystemIdleState")(
     function (idleThresholdSeconds) {

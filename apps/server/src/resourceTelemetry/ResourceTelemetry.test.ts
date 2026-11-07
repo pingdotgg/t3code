@@ -14,10 +14,13 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import * as DesktopTelemetryReceiver from "./DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
 import * as ResourceTelemetry from "./ResourceTelemetry.ts";
+
+const layerHostPower = Layer.effect(HostPowerMonitor.HostPowerMonitor, HostPowerMonitor.make());
 
 // ResourceTelemetry classifies process.pid as the server, so fixture PIDs are
 // offsets from it. Fixed PIDs collide whenever the test worker is assigned one.
@@ -185,6 +188,7 @@ describe("ResourceTelemetry", () => {
             NativeTelemetryClient.layerTest({ readHistory: () => Effect.succeed(samples) }),
             DesktopTelemetryReceiver.layerTest(),
             ResourceAttribution.layer,
+            layerHostPower,
           ),
         ),
       );
@@ -255,7 +259,9 @@ describe("ResourceTelemetry", () => {
           latest: Effect.succeedSome(desktop),
         });
         const layerTelemetry = ResourceTelemetry.layer.pipe(
-          Layer.provide(Layer.mergeAll(layerNative, layerDesktop, ResourceAttribution.layer)),
+          Layer.provide(
+            Layer.mergeAll(layerNative, layerDesktop, ResourceAttribution.layer, layerHostPower),
+          ),
         );
 
         const snapshot = yield* Effect.gen(function* () {
@@ -307,6 +313,7 @@ describe("ResourceTelemetry", () => {
               layerNative,
               DesktopTelemetryReceiver.layerTest(),
               ResourceAttribution.layer,
+              layerHostPower,
             ),
           ),
         );
@@ -377,7 +384,9 @@ describe("ResourceTelemetry", () => {
           changes: Stream.fromPubSub(desktopChanges),
         });
         const layerTelemetry = ResourceTelemetry.layer.pipe(
-          Layer.provide(Layer.mergeAll(layerNative, layerDesktop, layerAttribution)),
+          Layer.provide(
+            Layer.mergeAll(layerNative, layerDesktop, layerAttribution, layerHostPower),
+          ),
         );
 
         yield* Effect.gen(function* () {

@@ -427,6 +427,14 @@
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"
     },
+    "./hostBattery": {
+      "types": "./src/hostBattery.ts",
+      "import": "./src/hostBattery.ts"
+    },
+    "./readHostBatteryPercent": {
+      "types": "./src/readHostBatteryPercent.ts",
+      "import": "./src/readHostBatteryPercent.ts"
+    },
     "./hostClassification": {
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"

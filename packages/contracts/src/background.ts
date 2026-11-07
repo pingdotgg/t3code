@@ -38,6 +38,10 @@ export const HostPowerSnapshot = Schema.Struct({
   locked: BackgroundBooleanState,
   suspended: Schema.Boolean,
   onBattery: BackgroundBooleanState,
+  /** Charge remaining on the host battery, when the machine reports one. */
+  batteryPercent: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  ),
   lowPowerMode: BackgroundBooleanState,
   thermalState: HostPowerThermalState,
   stale: Schema.Boolean,

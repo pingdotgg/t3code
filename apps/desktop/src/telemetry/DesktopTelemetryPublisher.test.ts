@@ -72,6 +72,7 @@ describe("DesktopTelemetryPublisher", () => {
           ElectronPowerMonitor.ElectronPowerMonitor,
           ElectronPowerMonitor.ElectronPowerMonitor.of({
             isOnBatteryPower: Effect.succeed(false),
+            getBatteryPercent: Effect.succeed(null),
             getSystemIdleTime: Deferred.succeed(pollStarted, undefined).pipe(
               Effect.andThen(Deferred.await(blockPoll)),
               Effect.as(0),
