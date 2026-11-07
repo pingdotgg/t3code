@@ -1570,7 +1570,14 @@ export function moveLayoutTab(
   }
   if (destination.kind === "split") {
     return normalizeLayout(
-      splitPaneWithTab(detached, destination.paneId, destination.side, tab, true, destination.exact),
+      splitPaneWithTab(
+        detached,
+        destination.paneId,
+        destination.side,
+        tab,
+        true,
+        destination.exact,
+      ),
     );
   }
   // As in niri, a moved window keeps its column's width.
@@ -1686,7 +1693,14 @@ export function placeLayoutTabs(
     );
   } else if (destination.kind === "split") {
     if (!findPane(state, destination.paneId)) return state;
-    next = splitPaneWithTab(state, destination.paneId, destination.side, first, options.focus, destination.exact);
+    next = splitPaneWithTab(
+      state,
+      destination.paneId,
+      destination.side,
+      first,
+      options.focus,
+      destination.exact,
+    );
   } else {
     if (!state.workspaces.some((workspace) => workspace.id === destination.workspaceId)) {
       return state;
