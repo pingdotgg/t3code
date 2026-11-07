@@ -192,7 +192,7 @@ it.effect.each([
     open: true,
     rejected: true,
     message:
-      "Device screenshot failed: The device hub could not complete the request. Call device_list to check the device state, and device_open if it needs to be reopened.",
+      "Device screenshot failed: The device hub could not complete the request. Call device_list to check the device state, and device_open if it needs to be reopened. You can also take the screenshot with the agent-device command device_open returned (screenshot <path>, after open <app>) and read the file.",
   },
 ])(
   "preserves actionable screenshot failure text: $message",

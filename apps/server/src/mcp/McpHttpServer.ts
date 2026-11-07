@@ -787,7 +787,7 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
         return isOrchestratorMcpFailure(error) ? error.message : "Device screenshot failed.";
       }
       return error._tag === "DeviceOperationError" && error.reason === "hub_rejected"
-        ? `${error.message} Call device_list to check the device state, and device_open if it needs to be reopened.`
+        ? `${error.message} Call device_list to check the device state, and device_open if it needs to be reopened. You can also take the screenshot with the agent-device command device_open returned (screenshot <path>, after open <app>) and read the file.`
         : error.message;
     },
   );

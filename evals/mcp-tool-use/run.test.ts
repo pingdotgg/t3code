@@ -794,7 +794,7 @@ const deviceCases = () =>
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {
     const cases = deviceCases();
-    assert.equal(new Set(cases.map((c) => c.id)).size, 16);
+    assert.equal(new Set(cases.map((c) => c.id)).size, 18);
     const base = buildBase(
       {
         ...template,
