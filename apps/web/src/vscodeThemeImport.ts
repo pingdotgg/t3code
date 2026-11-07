@@ -1,3 +1,7 @@
+import {
+  themeRelativeLuminance as relativeLuminance,
+  themeContrastRatio as contrastRatio,
+} from "@t3tools/shared/themeResolution";
 import { parse, type ParseError } from "jsonc-parser";
 
 import {
@@ -107,20 +111,6 @@ function flattenOver(color: VsCodeRgba, base: VsCodeRgb): string {
     g: color.g * color.a + base.g * (1 - color.a),
     b: color.b * color.a + base.b * (1 - color.a),
   });
-}
-
-function relativeLuminance(color: VsCodeRgb): number {
-  const channel = (value: number) => {
-    const ratio = value / 255;
-    return ratio <= 0.03928 ? ratio / 12.92 : ((ratio + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
-}
-
-function contrastRatio(first: VsCodeRgb, second: VsCodeRgb): number {
-  const a = relativeLuminance(first);
-  const b = relativeLuminance(second);
-  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
 function hexToRgb(value: string): VsCodeRgb {
@@ -360,8 +350,6 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     terminalSelection:
       solidOver(terminal, "terminal.selectionBackground", "editor.selectionBackground") ??
       derived.terminalSelection,
-    terminalScrollbar:
-      solidOver(terminal, "scrollbarSlider.background") ?? derived.terminalScrollbar,
   };
   overrides.accent = accentHex;
   overrides.focus = accentHex;

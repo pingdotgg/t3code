@@ -1,4 +1,9 @@
 import {
+  parseThemeSource,
+  resolveThemeSource,
+  resolveThemeDefinition,
+} from "@t3tools/shared/themeResolution";
+import {
   getStandardPaintedThemeColors,
   ThemeRgbColor,
   THEME_WHITE_FOREGROUND,
@@ -156,6 +161,7 @@ function lenientThemeColorOverrides(
 ): Partial<Record<ThemeColorRole, string>> {
   const overrides: Partial<Record<ThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
+    if (role === "terminalScrollbar" || role === "terminalScrollbarHover") continue;
     const normalized = toCanonicalThemeColor(color);
     if (THEME_COLOR_ROLE_SET.has(role) && normalized) {
       overrides[role as ThemeColorRole] = normalized;
@@ -197,13 +203,39 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
   const variants = parseStoredThemeVariants(value.variants, value.appearance);
   if (value.variants !== undefined && variants === null) return null;
   const collection = parseThemeCollection(value.collection);
+  const sources: NonNullable<ThemeDefinition["sources"]> = {};
+  if (value.sources !== undefined) {
+    if (!isRecord(value.sources)) return null;
+    try {
+      Object.assign(
+        sources,
+        Object.fromEntries(
+          Object.entries(value.sources).map(([mode, source]) => {
+            if (!isThemeAppearance(mode)) throw new Error("Invalid appearance.");
+            return [mode, parseThemeSource(source)];
+          }),
+        ),
+      );
+    } catch {
+      return null;
+    }
+  }
 
+  const resolvedVariants = { ...variants };
+  for (const mode of ["light", "dark"] as const) {
+    const source = sources[mode];
+    if (source && mode !== value.appearance)
+      resolvedVariants[mode] = resolveThemeSource(source, mode);
+  }
   return {
     id: value.id,
     label: value.label.trim(),
     appearance: value.appearance,
-    colors,
-    ...(variants ? { variants } : {}),
+    colors: sources[value.appearance]
+      ? resolveThemeSource(sources[value.appearance]!, value.appearance)
+      : colors,
+    ...(value.sources === undefined ? {} : { sources }),
+    ...(Object.keys(resolvedVariants).length ? { variants: resolvedVariants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
   };
@@ -419,13 +451,15 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 function canonicalizeThemeDefinition(theme: ThemeDefinition): ThemeDefinition {
   return {
     ...theme,
-    colors: decodeThemeColors(theme.colors),
+    colors: decodeThemeColors(getThemeColorsForMode(theme, theme.appearance) ?? theme.colors),
     ...(theme.variants
       ? {
           variants: Object.fromEntries(
             Object.entries(theme.variants).map(([appearance, colors]) => [
               appearance,
-              decodeThemeColors(colors),
+              decodeThemeColors(
+                getThemeColorsForMode(theme, appearance as ThemeAppearance) ?? colors,
+              ),
             ]),
           ) as ThemeVariants,
         }
@@ -514,8 +548,7 @@ export function getThemeColorsForMode(
   theme: ThemeDefinition,
   mode: ThemeAppearance,
 ): ThemeColors | null {
-  if (mode === theme.appearance) return theme.colors;
-  return theme.variants?.[mode] ?? null;
+  return resolveThemeDefinition(theme, mode);
 }
 
 export function getThemeModes(theme: ThemeDefinition): ReadonlyArray<ThemeAppearance> {
@@ -568,6 +601,14 @@ function saveCustomThemes(
 ): void {
   if (typeof window === "undefined") return;
   try {
+    if (
+      themes.some((theme) => theme.sources) &&
+      window.localStorage.getItem(`${CUSTOM_THEMES_STORAGE_KEY}:original`) === null
+    ) {
+      const original = window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);
+      if (original !== null)
+        window.localStorage.setItem(`${CUSTOM_THEMES_STORAGE_KEY}:original`, original);
+    }
     window.localStorage.setItem(CUSTOM_THEMES_STORAGE_KEY, JSON.stringify(storedThemes));
     customThemeLibrarySnapshot = { status: "ready", storedThemes, themes };
   } catch (cause) {
@@ -748,6 +789,7 @@ function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
 
   const overrides: Partial<Record<ThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
+    if (role === "terminalScrollbar" || role === "terminalScrollbarHover") continue;
     if (!THEME_COLOR_ROLE_SET.has(role)) {
       throw new Error(`"${role}" is not a supported theme color role.`);
     }
@@ -769,7 +811,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
   if (!isRecord(value)) {
     throw new Error("Theme files must contain a JSON object.");
   }
-  if (value.version !== THEME_FILE_VERSION) {
+  if (value.version !== THEME_FILE_VERSION && value.version !== 2) {
     throw new Error(`This theme file uses an unsupported version. Expected ${THEME_FILE_VERSION}.`);
   }
 
@@ -788,6 +830,12 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
   }
   if (RESERVED_THEME_IDS.has(id)) {
     throw new Error(`The theme id "${id}" is reserved.`);
+  }
+
+  if (value.version === 2 || value.sources !== undefined) {
+    const stored = parseStoredTheme({ ...value, id, label: name });
+    if (!stored || !stored.sources) throw new Error("Theme files need valid authored sources.");
+    return stored;
   }
 
   const overrides = parseThemeColorOverrides(rawColors);
@@ -826,7 +874,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
   };
 }
 
-export function serializeThemeFile(theme: ThemeDefinition): string {
+export function serializeThemeFile(theme: ThemeDefinition, options?: { legacy?: boolean }): string {
   const canonicalTheme = canonicalizeThemeDefinition(theme);
   const file: ThemeFile = {
     version: THEME_FILE_VERSION,
@@ -838,7 +886,11 @@ export function serializeThemeFile(theme: ThemeDefinition): string {
     ...(canonicalTheme.collection ? { collection: canonicalTheme.collection } : {}),
     ...(canonicalTheme.managed ? { managed: true } : {}),
   };
-  return `${JSON.stringify(file, null, 2)}\n`;
+  const output =
+    canonicalTheme.sources && !options?.legacy
+      ? { ...file, sources: canonicalTheme.sources }
+      : file;
+  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 const APP_THEME_VARIABLES: Readonly<Record<ThemeColorRole, string>> = {
@@ -901,8 +953,6 @@ const APP_THEME_VARIABLES: Readonly<Record<ThemeColorRole, string>> = {
   terminalForeground: "--app-theme-terminal-foreground",
   terminalCursor: "--app-theme-terminal-cursor",
   terminalSelection: "--app-theme-terminal-selection-background",
-  terminalScrollbar: "--app-theme-terminal-scrollbar",
-  terminalScrollbarHover: "--app-theme-terminal-scrollbar-hover",
 };
 
 export function getThemeColorVariable(role: ThemeColorRole): string {
@@ -935,22 +985,15 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   setThemePreviewAppearance(null);
   const palette = getThemeDefinition(theme);
 
-  if (palette) {
-    root.dataset.themeId = palette.id;
-    const mode = appearance ?? legacyThemeMode(theme) ?? palette.appearance;
-    const colors = getThemeColorsForMode(palette, mode) ?? palette.colors;
-    for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
-      root.style.setProperty(APP_THEME_VARIABLES[role], value);
-    }
-    applyContextChipVariables(root, colors);
-    return;
+  const mode = appearance ?? (palette ? (legacyThemeMode(theme) ?? palette.appearance) : "light");
+  const colors = palette
+    ? (getThemeColorsForMode(palette, mode) ?? palette.colors)
+    : getStandardPaintedThemeColors(mode);
+  root.dataset.themeId = palette?.id ?? "t3-code";
+  for (const role of THEME_COLOR_ROLES) {
+    root.style.setProperty(APP_THEME_VARIABLES[role], colors[role]);
   }
-
-  delete root.dataset.themeId;
-  for (const variable of Object.values(APP_THEME_VARIABLES)) {
-    root.style.removeProperty(variable);
-  }
-  applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light"));
+  applyContextChipVariables(root, colors);
 }
 
 export function resolveThemeAppearance(
@@ -1023,8 +1066,8 @@ export function parseThemeHalves(raw: string | null): ThemeHalves | null {
       const themeId = value[appearance];
       if (typeof themeId !== "string") continue;
       const definition = getThemeDefinition(themeId);
-      if (definition && getThemeColorsForMode(definition, appearance) !== null) {
-        halves[appearance] = definition.id;
+      if (!definition || getThemeColorsForMode(definition, appearance) !== null) {
+        halves[appearance] = definition?.id ?? themeId;
       }
     }
     return halves.light !== undefined || halves.dark !== undefined ? halves : null;

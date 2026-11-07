@@ -24,6 +24,7 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import {
   MAX_THEME_FILE_BYTES,
+  expandAuthoredThemeFile,
   readPublishedThemes,
   readThemeFileGuarded,
 } from "../environmentTheme.ts";
@@ -272,7 +273,7 @@ const publishThemeFile = Effect.fn(function* (input: {
     return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
   }
 
-  const decoded = decodeThemeFileJsonExit(raw);
+  const decoded = decodeThemeFileJsonExit(expandAuthoredThemeFile(raw));
   if (decoded._tag === "Failure") {
     return yield* new ThemeFileInvalidError({ filePath: input.filePath, cause: decoded.cause });
   }

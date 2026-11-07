@@ -87,18 +87,25 @@ export const THEME_COLOR_ROLES = [
   "terminalForeground",
   "terminalCursor",
   "terminalSelection",
-  "terminalScrollbar",
-  "terminalScrollbarHover",
 ] as const;
 
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
+export type ThemeColorInputs = Readonly<Partial<Record<ThemeColorRole, string>>>;
+export type ThemeSource = Readonly<{
+  version: 2;
+  seed?: Readonly<{ canvas: string; accent: string }>;
+  palette?: ThemeColorInputs;
+  overrides?: ThemeColorInputs;
+}>;
+
 export type ThemeDefinition = Readonly<{
   id: string;
   label: string;
   appearance: ThemeAppearance;
   colors: ThemeColors;
+  sources?: Readonly<Partial<Record<ThemeAppearance, ThemeSource>>>;
   variants?: ThemeVariants;
   collection?: Readonly<{ id: string; label: string }>;
   sidebarArtwork?: boolean;
@@ -165,8 +172,6 @@ export const T3_CODE_LIGHT_THEME_COLORS: ThemeColors = {
   terminalForeground: "#27272a",
   terminalCursor: "#26384e",
   terminalSelection: "#d0d6dd",
-  terminalScrollbar: "#d6d6d6",
-  terminalScrollbarHover: "#bdbdbd",
 };
 
 export const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
@@ -229,8 +234,6 @@ export const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
   terminalForeground: "#f5f5f5",
   terminalCursor: "#b4cbff",
   terminalSelection: "#343a47",
-  terminalScrollbar: "#222222",
-  terminalScrollbarHover: "#363636",
 };
 
 export const T3_CHAT_THEME: ThemeDefinition = {
@@ -297,8 +300,6 @@ export const T3_CHAT_THEME: ThemeDefinition = {
     terminalForeground: "oklch(0.325698 0.116116 325.037)",
     terminalCursor: "oklch(0.591646 0.217985 0.584)",
     terminalSelection: "oklch(0.869588 0.06751 334.899)",
-    terminalScrollbar: "oklch(0.851713 0.055822 336.6)",
-    terminalScrollbarHover: "oklch(0.802407 0.090963 345.892)",
   },
   variants: {
     dark: {
@@ -361,8 +362,6 @@ export const T3_CHAT_THEME: ThemeDefinition = {
       terminalForeground: "oklch(0.980735 0.004092 301.426)",
       terminalCursor: "oklch(0.591646 0.217985 0.584)",
       terminalSelection: "oklch(0.313674 0.030572 310.061)",
-      terminalScrollbar: "oklch(0.266817 0.02897 344.461)",
-      terminalScrollbarHover: "oklch(0.360924 0.021469 316.83)",
     },
   },
   sidebarArtwork: true,
@@ -432,8 +431,6 @@ export const GROVE_THEME: ThemeDefinition = {
     terminalForeground: "oklch(0.222003 0.03479 328.979)",
     terminalCursor: "oklch(0.523295 0.112292 158.089)",
     terminalSelection: "oklch(0.891377 0.026164 164.929)",
-    terminalScrollbar: "oklch(0.824752 0.001392 294.641)",
-    terminalScrollbarHover: "oklch(0.755495 0.004415 318.776)",
   },
   variants: {
     dark: {
@@ -496,8 +493,6 @@ export const GROVE_THEME: ThemeDefinition = {
       terminalForeground: "oklch(0.990339 0.008411 325.64)",
       terminalCursor: "oklch(0.796228 0.133058 157.319)",
       terminalSelection: "oklch(0.464636 0.066083 158.72)",
-      terminalScrollbar: "oklch(0.594692 0.006862 176.022)",
-      terminalScrollbarHover: "oklch(0.687968 0.00354 193.55)",
     },
   },
   sidebarArtwork: true,
@@ -567,8 +562,6 @@ export const OCEAN_THEME: ThemeDefinition = {
     terminalForeground: "oklch(0.222003 0.03479 328.979)",
     terminalCursor: "oklch(0.536684 0.120219 247.01)",
     terminalSelection: "oklch(0.895373 0.023469 241.913)",
-    terminalScrollbar: "oklch(0.826271 0.006191 305.456)",
-    terminalScrollbarHover: "oklch(0.756866 0.008685 313.721)",
   },
   variants: {
     dark: {
@@ -631,8 +624,6 @@ export const OCEAN_THEME: ThemeDefinition = {
       terminalForeground: "oklch(0.990339 0.008411 325.64)",
       terminalCursor: "oklch(0.758933 0.105833 241.548)",
       terminalSelection: "oklch(0.439946 0.0561 243.479)",
-      terminalScrollbar: "oklch(0.58613 0.012959 267.22)",
-      terminalScrollbarHover: "oklch(0.681569 0.010909 276.465)",
     },
   },
   sidebarArtwork: true,
@@ -702,8 +693,6 @@ export const EMBER_THEME: ThemeDefinition = {
     terminalForeground: "oklch(0.222003 0.03479 328.979)",
     terminalCursor: "oklch(0.552831 0.129438 44.656)",
     terminalSelection: "oklch(0.899296 0.022939 49.163)",
-    terminalScrollbar: "oklch(0.828185 0.005884 349.533)",
-    terminalScrollbarHover: "oklch(0.758584 0.008423 341.16)",
   },
   variants: {
     dark: {
@@ -766,8 +755,6 @@ export const EMBER_THEME: ThemeDefinition = {
       terminalForeground: "oklch(0.990339 0.008411 325.64)",
       terminalCursor: "oklch(0.762174 0.124117 52.082)",
       terminalSelection: "oklch(0.442681 0.0608 50.795)",
-      terminalScrollbar: "oklch(0.587861 0.010463 20.444)",
-      terminalScrollbarHover: "oklch(0.682876 0.009156 9.796)",
     },
   },
   sidebarArtwork: true,
@@ -837,8 +824,6 @@ export const IRIS_THEME: ThemeDefinition = {
     terminalForeground: "oklch(0.222003 0.03479 328.979)",
     terminalCursor: "oklch(0.525348 0.15373 294.176)",
     terminalSelection: "oklch(0.897143 0.028558 299.758)",
-    terminalScrollbar: "oklch(0.828195 0.008526 318.858)",
-    terminalScrollbarHover: "oklch(0.758596 0.010892 321.538)",
   },
   variants: {
     dark: {
@@ -901,8 +886,6 @@ export const IRIS_THEME: ThemeDefinition = {
       terminalForeground: "oklch(0.990339 0.008411 325.64)",
       terminalCursor: "oklch(0.671712 0.169136 293.929)",
       terminalSelection: "oklch(0.395417 0.085554 294.182)",
-      terminalScrollbar: "oklch(0.578663 0.017888 302.229)",
-      terminalScrollbarHover: "oklch(0.676012 0.015271 305.433)",
     },
   },
   sidebarArtwork: true,

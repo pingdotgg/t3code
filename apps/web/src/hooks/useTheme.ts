@@ -1,5 +1,4 @@
 import { themeSelectionStorage, THEME_SELECTION_STORAGE_KEY } from "@t3tools/shared/themeSelection";
-import { pipe } from "effect/Function";
 import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
@@ -207,21 +206,6 @@ export function readThemePreference(): Theme {
     return canonicalThemePreference(raw);
   }
   return DEFAULT_THEME_SNAPSHOT.theme;
-}
-
-function writeThemePreference(theme: Theme): void {
-  if (typeof window === "undefined") return;
-  try {
-    themeSelectionStorage(window.localStorage).setItem(STORAGE_KEY, theme);
-    themeStorageReadFailure = null;
-  } catch (cause) {
-    throw new ThemeStorageError({
-      operation: "write",
-      storageKey: STORAGE_KEY,
-      theme,
-      cause,
-    });
-  }
 }
 
 function getStored(): Theme {
@@ -525,26 +509,12 @@ export function useRenderedAppearance() {
 export function setTheme(next: Theme): boolean {
   if (typeof window === "undefined") return false;
   try {
-    // Save the current mode first; inferring it from the new theme can switch dark to light.
-    pipe(getStored(), readAppearanceModePreference, writeAppearanceModePreference);
-    // A whole theme replaces the mix; retain it to restore on a failed preference write.
-    const previousHalvesRaw = themeSelectionStorage(window.localStorage).getItem(
-      THEME_HALVES_STORAGE_KEY,
-    );
-    themeSelectionStorage(window.localStorage).removeItem(THEME_HALVES_STORAGE_KEY);
-    try {
-      writeThemePreference(next);
-    } catch (cause) {
-      if (previousHalvesRaw !== null) {
-        try {
-          themeSelectionStorage(window.localStorage).setItem(
-            THEME_HALVES_STORAGE_KEY,
-            previousHalvesRaw,
-          );
-        } catch {}
-      }
-      throw cause;
-    }
+    themeSelectionStorage(window.localStorage).patch({
+      [STORAGE_KEY]: next,
+      [THEME_APPEARANCE_MODE_STORAGE_KEY]: readAppearanceModePreference(getStored()),
+      [THEME_HALVES_STORAGE_KEY]: null,
+    });
+    themeStorageReadFailure = null;
   } catch (cause) {
     const error = isThemeStorageError(cause)
       ? cause

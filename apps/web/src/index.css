@@ -1113,46 +1113,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 :root {
   color-scheme: light;
   --radius: 0.5rem;
-  --background: var(--color-zinc-25);
-  --app-chrome-background: var(--background);
-  --toolbar-background: var(--app-chrome-background);
-  --toolbar-foreground: var(--foreground);
-  --toolbar-border: var(--border);
-  --toolbar-control: var(--popover);
-  --toolbar-control-foreground: var(--foreground);
-  --toolbar-control-hover: var(--accent);
-  --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
-  --foreground: var(--color-zinc-900);
-  --card: var(--color-white);
-  --card-foreground: var(--color-zinc-900);
-  --popover: var(--color-white);
-  --popover-foreground: var(--color-zinc-900);
-  --primary: oklch(0.488 0.217 264);
-  --primary-foreground: var(--color-white);
-  --secondary: var(--color-zinc-50);
-  --secondary-foreground: var(--color-zinc-800);
-  --muted: var(--color-zinc-50);
-  --muted-foreground: var(--color-zinc-500);
-  --placeholder: var(--muted-foreground);
-  --secondary-label: var(--muted-foreground);
-  --icon-muted: var(--muted-foreground);
-  /* One step past the accent, so a user turn stands off the near-white canvas. */
-  --message-surface: color-mix(in srgb, var(--color-zinc-200) 55%, var(--color-zinc-100));
-  --message-foreground: var(--foreground);
-  --message-action: var(--primary);
-  --message-action-foreground: var(--primary-foreground);
-  --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
-  --accent: var(--color-zinc-100);
-  --accent-foreground: var(--color-zinc-900);
-  --error: var(--color-red-500);
-  --error-foreground: var(--color-red-700);
-  --tool-error-icon: var(--error);
-  --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
-  --destructive: var(--error);
-  --border: var(--color-zinc-200);
-  --input: var(--color-zinc-300);
-  --ring: var(--primary);
-  --destructive-foreground: var(--error-foreground);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
   /* Messages from a guest link, and the sidebar Request status. */
@@ -1161,119 +1121,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
   --success: var(--color-emerald-500);
   --success-foreground: var(--color-emerald-700);
-  --warning: var(--color-amber-500);
-  --warning-foreground: var(--color-amber-700);
-  --warning-surface: color-mix(in srgb, var(--warning) 8%, transparent);
-  --update: var(--primary);
-  --update-foreground: var(--primary);
-  /* Keep every sidebar primitive on the same light surface hierarchy, including
-     portaled mobile sheets and settings navigation outside the app sidebar. */
-  --sidebar: var(--color-zinc-50);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-muted-foreground: var(--muted-foreground);
-  --sidebar-control-surface: var(--color-zinc-100);
-  --sidebar-row-hover: var(--color-zinc-25);
-  --sidebar-row-active: var(--color-white);
-  --sidebar-row-selected: var(--color-white);
-  --sidebar-border: var(--border);
-  --sidebar-stage-fade: var(--sidebar);
-  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
-  --code-foreground: var(--foreground);
-  --terminal-background: var(--background);
-  --terminal-foreground: var(--foreground);
-  --terminal-cursor: rgb(38 56 78);
-  --terminal-selection-background: rgb(37 63 99 / 20%);
 
   @variant dark {
     color-scheme: dark;
-    /* The canvas is true black, matching the sidebar. Raised surfaces keep the tone they had
-       over neutral-950, so cards, popovers, and the composer still lift. Borders and hover
-       states provide separation without milky gray fills. */
-    --background: #000;
-    --surface-raised: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.571 0.21 264);
-    --secondary: --alpha(var(--color-white) / 3%);
-    --secondary-foreground: var(--color-neutral-100);
-    --muted: --alpha(var(--color-white) / 3%);
-    --muted-foreground: var(--color-neutral-400);
-    --accent: --alpha(var(--color-white) / 4%);
-    --accent-foreground: var(--color-neutral-100);
-    /* A user turn sits above the composer tone, level with the selected sidebar row. */
-    --message-surface: color-mix(in srgb, var(--color-neutral-950) 92%, var(--color-white));
-    --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
-    --error-foreground: var(--color-red-400);
-    --tool-error-icon: #fca5a5;
-    --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
-    --border: --alpha(var(--color-white) / 8%);
-    --input: --alpha(var(--color-white) / 11%);
     --info-foreground: var(--color-blue-400);
     --guest-foreground: var(--color-fuchsia-300);
     --success-foreground: var(--color-emerald-400);
-    --warning-foreground: var(--color-amber-400);
-    --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
-    --update-foreground: var(--color-blue-400);
-    --sidebar: var(--card);
-    --sidebar-control-surface: var(--muted);
-    --sidebar-row-hover: var(--accent);
-    --sidebar-row-active: var(--accent);
-    --sidebar-row-selected: var(--muted);
-    --sidebar-stage-fade: var(--card);
-    --terminal-cursor: rgb(180 203 255);
-    --terminal-selection-background: rgb(180 203 255 / 25%);
-  }
-}
-
-/* Keep both sidebar implementations (default and legacy) on the same quiet
-   zinc hierarchy: zinc-50 navigation, zinc-25 hover, and white selected/raised
-   surfaces. */
-[data-app-sidebar] {
-  --background: var(--color-zinc-25);
-  --foreground: var(--color-zinc-900);
-  --card: var(--color-white);
-  --card-foreground: var(--color-zinc-900);
-  --accent: var(--color-zinc-100);
-  --accent-foreground: var(--color-zinc-900);
-  --muted: var(--color-zinc-50);
-  --muted-foreground: var(--color-zinc-500);
-  --border: var(--color-zinc-200);
-  --input: var(--color-zinc-300);
-  --sidebar: var(--color-zinc-50);
-  --sidebar-foreground: var(--color-zinc-900);
-  --sidebar-muted-foreground: var(--color-zinc-500);
-  --sidebar-control-surface: var(--color-zinc-100);
-  --sidebar-row-hover: var(--color-zinc-25);
-  --sidebar-row-active: var(--color-white);
-  --sidebar-row-selected: var(--color-white);
-  --sidebar-border: var(--color-zinc-200);
-  --sidebar-stage-fade: var(--sidebar);
-
-  @variant dark {
-    --background: #000;
-    --foreground: #f1f3f7;
-    --card: #000;
-    --card-foreground: var(--foreground);
-    --accent: #191a1d;
-    --accent-foreground: #f7f9ff;
-    --muted: #0a0a0a;
-    --muted-foreground: #a3a3a3;
-    --border: rgb(255 255 255 / 8%);
-    --input: rgb(255 255 255 / 18%);
-    --sidebar: var(--card);
-    --sidebar-foreground: var(--foreground);
-    --sidebar-muted-foreground: var(--muted-foreground);
-    --sidebar-control-surface: var(--muted);
-    --sidebar-row-hover: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
-    --sidebar-row-active: color-mix(in srgb, var(--contrast-foreground) 11%, transparent);
-    --sidebar-row-selected: color-mix(in srgb, var(--contrast-foreground) 7%, transparent);
-    --sidebar-border: var(--border);
-    --sidebar-stage-fade: var(--card);
-    /* Row metadata sits a step below read titles (75% white). */
-    --secondary-label: #8f8f8f;
   }
 }
 
@@ -1315,11 +1168,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-/* Theme files are expressed in app color roles and mapped to the existing
-   semantic surface tokens here. Keep this block after the sidebar-version
-   compatibility overrides so both navigation implementations receive the
-   same palette. Success, info, provider, and channel identity colors remain
-   independent; error, warning, and update roles are themeable below. */
+/* Every resolved palette, including stock, maps to the same semantic variables. */
 /* The non-empty marker adds enough specificity to outrank the generated root
    dark variant without reintroducing raw `.dark` selectors. */
 html[data-theme-id]:not([data-theme-id=""]) {

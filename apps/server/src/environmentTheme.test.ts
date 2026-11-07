@@ -1,3 +1,4 @@
+import { THEME_COLOR_ROLES } from "@t3tools/shared/themePalettes";
 import { EnvironmentThemeFile } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -67,6 +68,32 @@ const currentThemes = Effect.gen(function* () {
 });
 
 it.layer(NodeServices.layer)("environment theme", (it) => {
+  it.effect("expands authored sources into the version one wire contract", () =>
+    withEnvironmentThemes(
+      {
+        "authored.json": JSON.stringify({
+          version: 2,
+          name: "Authored",
+          appearance: "dark",
+          sources: {
+            dark: {
+              version: 2,
+              seed: { canvas: "#101010", accent: "#123456" },
+              overrides: { focus: "#ff0000", terminalBackground: "#002200" },
+            },
+          },
+        }),
+      },
+      Effect.gen(function* () {
+        const themes = yield* currentThemes;
+        assert.equal(themes.length, 1);
+        assert.equal(themes[0]!.version, 1);
+        assert.equal(Object.keys(themes[0]!.colors!).length, THEME_COLOR_ROLES.length);
+        assert.equal("sources" in themes[0]!, false);
+      }),
+    ),
+  );
+
   it.effect("follows the directory rather than the set read at start", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },

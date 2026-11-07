@@ -35,7 +35,7 @@ export function themeSelectionStorage(storage: {
       throw new Error("Invalid theme selection.");
     return selection as Record<string, string | null>;
   };
-  const write = (legacyKey: string, value: string | null) => {
+  const patch = (updates: Readonly<Record<string, string | null>>) => {
     const selection =
       read() ??
       Object.fromEntries(
@@ -43,17 +43,27 @@ export function themeSelectionStorage(storage: {
       );
     storage.setItem(
       key,
-      JSON.stringify({ version: 1, selection: { ...selection, [fields[legacyKey]!]: value } }),
+      JSON.stringify({
+        version: 1,
+        selection: {
+          ...selection,
+          ...Object.fromEntries(
+            Object.entries(updates).map(([legacyKey, value]) => [fields[legacyKey]!, value]),
+          ),
+        },
+      }),
     );
   };
   return {
-    getItem: (legacyKey: string) =>
-      fields[legacyKey]
-        ? (read()?.[fields[legacyKey]!] ?? (read() ? null : storage.getItem(legacyKey)))
-        : storage.getItem(legacyKey),
+    patch,
+    getItem: (legacyKey: string) => {
+      if (!fields[legacyKey]) return storage.getItem(legacyKey);
+      const selection = read();
+      return selection ? (selection[fields[legacyKey]!] ?? null) : storage.getItem(legacyKey);
+    },
     setItem: (legacyKey: string, value: string) =>
-      fields[legacyKey] ? write(legacyKey, value) : storage.setItem(legacyKey, value),
+      fields[legacyKey] ? patch({ [legacyKey]: value }) : storage.setItem(legacyKey, value),
     removeItem: (legacyKey: string) =>
-      fields[legacyKey] ? write(legacyKey, null) : storage.removeItem(legacyKey),
+      fields[legacyKey] ? patch({ [legacyKey]: null }) : storage.removeItem(legacyKey),
   };
 }

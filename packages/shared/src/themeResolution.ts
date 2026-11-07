@@ -9,7 +9,11 @@ import {
   type ThemeAppearance,
   type ThemeColorRole,
   type ThemeColors,
-} from "./themePalettes";
+  type ThemeSource,
+  type ThemeDefinition,
+  getThemeColorsForAppearance,
+  type ThemeColorInputs,
+} from "./themePalettes.ts";
 
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
@@ -21,15 +25,70 @@ export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
 }
 
-// index.css paints the light bubble a step darker than the shared palette mobile uses.
-const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
-  light: { messageSurface: "#ebebed" },
-  dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
+// Web retains translucent surfaces and true black; native uses opaque stock colors.
+const STANDARD_WEB_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
+  light: {
+    canvas: "oklch(0.992 0 0)",
+    chrome: "oklch(0.992 0 0)",
+    toolbar: "oklch(0.992 0 0)",
+    text: "oklch(0.21 0.006 285.885)",
+    toolbarForeground: "oklch(0.21 0.006 285.885)",
+    toolbarControlForeground: "oklch(0.21 0.006 285.885)",
+    secondaryForeground: "oklch(0.274 0.006 286.033)",
+    sidebarForeground: "oklch(0.21 0.006 285.885)",
+    messageForeground: "oklch(0.21 0.006 285.885)",
+    codeForeground: "oklch(0.21 0.006 285.885)",
+    terminalForeground: "oklch(0.21 0.006 285.885)",
+    surfaceRaised: "rgb(255 255 255 / 20%)",
+    messageSurface: "#ebebed",
+    accent: "oklch(0.488 0.217 264)",
+    focus: "oklch(0.488 0.217 264)",
+    messageAction: "oklch(0.488 0.217 264)",
+    update: "oklch(0.488 0.217 264)",
+    updateForeground: "oklch(0.488 0.217 264)",
+    errorSurface: "rgb(251 44 54 / 8%)",
+    warningSurface: "rgb(254 154 0 / 8%)",
+    terminalBackground: "oklch(0.992 0 0)",
+    terminalSelection: "rgb(37 63 99 / 20%)",
+  },
+  dark: {
+    canvas: "#000000",
+    chrome: "#000000",
+    toolbar: "#000000",
+    surface: "#111111",
+    surfaceRaised: "#111111",
+    surfaceOverlay: "#111111",
+    secondary: "rgb(255 255 255 / 3%)",
+    muted: "rgb(255 255 255 / 3%)",
+    accentSurface: "rgb(255 255 255 / 4%)",
+    toolbarControl: "#111111",
+    toolbarControlHover: "rgb(255 255 255 / 4%)",
+    textMuted: "#a3a3a3",
+    mutedForeground: "#a3a3a3",
+    placeholder: "#a3a3a3",
+    secondaryLabel: "#a3a3a3",
+    iconMuted: "#a3a3a3",
+    messageSurface: "#1e1e1e",
+    border: "rgb(255 255 255 / 8%)",
+    toolbarBorder: "rgb(255 255 255 / 8%)",
+    input: "rgb(255 255 255 / 11%)",
+    accent: "oklch(0.571 0.21 264)",
+    focus: "oklch(0.571 0.21 264)",
+    messageAction: "oklch(0.571 0.21 264)",
+    update: "oklch(0.571 0.21 264)",
+    errorSurface: "rgb(251 65 74 / 16%)",
+    warningSurface: "rgb(254 154 0 / 16%)",
+    sidebarRowHover: "rgb(255 255 255 / 8%)",
+    sidebarRowActive: "rgb(255 255 255 / 11%)",
+    sidebarRowSelected: "rgb(255 255 255 / 7%)",
+    sidebarBorder: "rgb(255 255 255 / 8%)",
+    terminalBackground: "#000000",
+    terminalSelection: "rgb(180 203 255 / 25%)",
+  },
 };
 
-/** The standard theme as index.css paints it, for solves that measure the page. */
 export function getStandardPaintedThemeColors(appearance: ThemeAppearance): ThemeColors {
-  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
+  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_COLORS[appearance] };
 }
 
 export type ThemeRgbColor = {
@@ -161,13 +220,13 @@ function srgbChannelToLinear(channel: number): number {
   return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 }
 
-function linearChannelToSrgb(channel: number, round = true): number {
+export function linearChannelToSrgb(channel: number, round = true): number {
   const c = channel <= 0.0031308 ? channel * 12.92 : 1.055 * channel ** (1 / 2.4) - 0.055;
   const srgb = Math.min(1, Math.max(0, c)) * 255;
   return round ? Math.round(srgb) : srgb;
 }
 
-function themeRgbToOklch(color: ThemeRgbColor): ThemeOklch {
+export function themeRgbToOklch(color: ThemeRgbColor): ThemeOklch {
   const r = srgbChannelToLinear(color.r);
   const g = srgbChannelToLinear(color.g);
   const b = srgbChannelToLinear(color.b);
@@ -180,7 +239,7 @@ function themeRgbToOklch(color: ThemeRgbColor): ThemeOklch {
   return { L, C: Math.hypot(a, bb), h: (Math.atan2(bb, a) * 180) / Math.PI };
 }
 
-function oklchToRgbUnclamped({ L, C, h }: ThemeOklch): { r: number; g: number; b: number } {
+export function oklchToRgbUnclamped({ L, C, h }: ThemeOklch): { r: number; g: number; b: number } {
   const hr = (h * Math.PI) / 180;
   const a = C * Math.cos(hr);
   const bb = C * Math.sin(hr);
@@ -455,8 +514,6 @@ export function createVividThemeColors(
     terminalForeground: themeRgbToThemeColor(textRgb),
     terminalCursor: themeRgbToThemeColor(accentRgb),
     terminalSelection: themeColor(surfaceAt(dark ? 0.18 : 0.12, Math.min(0.12, accent.C * 0.55))),
-    terminalScrollbar: themeColor(surfaceAt(dark ? 0.22 : 0.16, tintC)),
-    terminalScrollbarHover: themeColor(surfaceAt(dark ? 0.3 : 0.22, tintC)),
   };
 }
 
@@ -566,7 +623,13 @@ export function updateThemeColorFamily(
 
   switch (role) {
     case "canvas":
-      return { ...colors, canvas: normalized, chrome: normalized, toolbar: normalized };
+      return {
+        ...colors,
+        canvas: normalized,
+        chrome: normalized,
+        toolbar: normalized,
+        terminalBackground: normalized,
+      };
     case "surface":
     case "surfaceRaised":
     case "surfaceOverlay":
@@ -691,12 +754,6 @@ export function updateThemeColorFamily(
         terminalSelection: colorOf(
           mixThemeRgbColors(selectedOnCanvas, accent, terminalIsDark ? 0.35 : 0.18),
         ),
-        terminalScrollbar: colorOf(
-          mixThemeRgbColors(selectedOnCanvas, terminalForeground, terminalIsDark ? 0.42 : 0.22),
-        ),
-        terminalScrollbarHover: colorOf(
-          mixThemeRgbColors(selectedOnCanvas, terminalForeground, terminalIsDark ? 0.55 : 0.32),
-        ),
       };
     }
     case "error": {
@@ -720,4 +777,262 @@ export function updateThemeColorFamily(
     default:
       return { ...colors, [role]: normalized };
   }
+}
+
+// Families are applied in dependency order; explicit overrides are always applied last.
+export type ThemeEditorColorFamily = Readonly<{
+  id: string;
+  label: string;
+  role: ThemeColorRole;
+  roles: ReadonlyArray<ThemeColorRole>;
+}>;
+
+export const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
+  id: string;
+  title: string;
+  families: ReadonlyArray<ThemeEditorColorFamily>;
+}> = [
+  {
+    id: "foundation",
+    title: "Foundation",
+    families: [
+      {
+        id: "background",
+        label: "Background",
+        role: "canvas",
+        roles: ["canvas", "chrome", "toolbar"],
+      },
+      { id: "surface", label: "Surface", role: "surface", roles: ["surface"] },
+      {
+        id: "raised-surface",
+        label: "Raised surface",
+        role: "surfaceRaised",
+        roles: ["surfaceRaised"],
+      },
+      {
+        id: "overlay",
+        label: "Overlay",
+        role: "surfaceOverlay",
+        roles: ["surfaceOverlay"],
+      },
+      {
+        id: "text",
+        label: "Text",
+        role: "text",
+        roles: ["text", "toolbarForeground", "toolbarControlForeground"],
+      },
+      {
+        id: "muted-text",
+        label: "Muted text",
+        role: "mutedForeground",
+        roles: [
+          "textMuted",
+          "mutedForeground",
+          "placeholder",
+          "secondaryLabel",
+          "iconMuted",
+          "sidebarMutedForeground",
+        ],
+      },
+      {
+        id: "border",
+        label: "Border",
+        role: "border",
+        roles: ["border", "toolbarBorder", "sidebarBorder"],
+      },
+      { id: "input", label: "Input", role: "input", roles: ["input"] },
+    ],
+  },
+  {
+    id: "brand-content",
+    title: "Brand & content",
+    families: [
+      {
+        id: "subtle-surface",
+        label: "Subtle surface",
+        role: "secondary",
+        roles: ["secondary", "secondaryForeground", "muted", "toolbarControl"],
+      },
+      {
+        id: "highlight-surface",
+        label: "Highlight surface",
+        role: "accentSurface",
+        roles: ["accentSurface", "accentSurfaceForeground", "toolbarControlHover"],
+      },
+      {
+        id: "accent",
+        label: "Accent",
+        role: "accent",
+        roles: [
+          "accent",
+          "accentForeground",
+          "focus",
+          "update",
+          "updateForeground",
+          "updateSurface",
+          "terminalCursor",
+        ],
+      },
+      {
+        id: "action",
+        label: "Action",
+        role: "messageAction",
+        roles: ["messageAction", "messageActionForeground", "messageActionHover"],
+      },
+      {
+        id: "message-surface",
+        label: "Message surface",
+        role: "messageSurface",
+        roles: ["messageSurface", "messageForeground"],
+      },
+      {
+        id: "code-surface",
+        label: "Code surface",
+        role: "codeBackground",
+        roles: ["codeBackground", "codeForeground"],
+      },
+    ],
+  },
+  {
+    id: "search",
+    title: "Search",
+    families: [
+      {
+        id: "search-matches",
+        label: "Search matches",
+        role: "searchMatchBackground",
+        roles: ["searchMatchBackground", "searchMatchForeground"],
+      },
+      {
+        id: "current-match",
+        label: "Current match",
+        role: "searchMatchActiveBackground",
+        roles: ["searchMatchActiveBackground", "searchMatchActiveForeground"],
+      },
+    ],
+  },
+  {
+    id: "context",
+    title: "Context",
+    families: [
+      {
+        id: "sidebar-background",
+        label: "Sidebar background",
+        role: "sidebar",
+        roles: ["sidebar", "sidebarForeground"],
+      },
+      {
+        id: "sidebar-controls",
+        label: "Sidebar controls",
+        role: "sidebarControlSurface",
+        roles: ["sidebarControlSurface"],
+      },
+      {
+        id: "sidebar-selection",
+        label: "Sidebar selection",
+        role: "sidebarRowSelected",
+        roles: ["sidebarRowHover", "sidebarRowActive", "sidebarRowSelected"],
+      },
+      {
+        id: "terminal-background",
+        label: "Terminal background",
+        role: "terminalBackground",
+        roles: ["terminalBackground", "terminalForeground", "terminalSelection"],
+      },
+    ],
+  },
+  {
+    id: "status",
+    title: "Status",
+    families: [
+      {
+        id: "error",
+        label: "Error",
+        role: "error",
+        roles: ["error", "errorForeground", "errorSurface"],
+      },
+      {
+        id: "warning",
+        label: "Warning",
+        role: "warning",
+        roles: ["warning", "warningForeground", "warningSurface"],
+      },
+    ],
+  },
+];
+
+const THEME_PALETTE_ROLES = THEME_EDITOR_ROLE_GROUPS.flatMap((group) =>
+  group.families.map((family) => family.role),
+);
+
+export function resolveThemeSource(source: ThemeSource, appearance: ThemeAppearance): ThemeColors {
+  let colors = source.seed
+    ? createVividThemeColors(appearance, source.seed.canvas, source.seed.accent)
+    : decodeThemeColors(getDefaultThemeColors(appearance));
+  for (const role of THEME_PALETTE_ROLES) {
+    const value = source.overrides?.[role] ?? source.palette?.[role];
+    if (value !== undefined) colors = updateThemeColorFamily(appearance, colors, role, value);
+  }
+  // Non-family inputs remain independently addressable, including imported foregrounds.
+  return decodeThemeColors({ ...colors, ...source.palette, ...source.overrides });
+}
+
+export function themeSourceFromColors(colors: ThemeColors): ThemeSource {
+  return { version: 2, overrides: { ...colors } };
+}
+
+export function editThemeSource(
+  source: ThemeSource,
+  kind: "palette" | "overrides",
+  role: ThemeColorRole,
+  value: string | null,
+): ThemeSource {
+  const inputs: Partial<Record<ThemeColorRole, string>> = { ...source[kind] };
+  if (value === null) delete inputs[role];
+  else {
+    const color = toCanonicalThemeColor(value);
+    if (!color) throw new Error(`Invalid theme color for "${role}".`);
+    inputs[role] = color;
+  }
+  return { ...source, [kind]: inputs };
+}
+
+export function parseThemeSource(value: unknown): ThemeSource {
+  if (typeof value !== "object" || value === null || !("version" in value) || value.version !== 2) {
+    throw new Error("Unsupported authored theme version.");
+  }
+  const record = value as Record<string, unknown>;
+  const parseInputs = (input: unknown): ThemeColorInputs => {
+    if (typeof input !== "object" || input === null || Array.isArray(input))
+      throw new Error("Invalid theme inputs.");
+    const result: Partial<Record<ThemeColorRole, string>> = {};
+    for (const [role, value] of Object.entries(input)) {
+      if (role === "terminalScrollbar" || role === "terminalScrollbarHover") continue;
+      if (!(THEME_COLOR_ROLES as readonly string[]).includes(role))
+        throw new Error(`Unsupported theme role "${role}".`);
+      const color = toCanonicalThemeColor(value);
+      if (!color) throw new Error(`Invalid theme color for "${role}".`);
+      result[role as ThemeColorRole] = color;
+    }
+    return result;
+  };
+  const seed = record.seed === undefined ? undefined : parseInputs(record.seed);
+  if (seed && (!seed.canvas || !seed.accent))
+    throw new Error("Theme seeds need canvas and accent colors.");
+  return {
+    version: 2,
+    ...(seed ? { seed: { canvas: seed.canvas!, accent: seed.accent! } } : {}),
+    ...(record.palette === undefined ? {} : { palette: parseInputs(record.palette) }),
+    ...(record.overrides === undefined ? {} : { overrides: parseInputs(record.overrides) }),
+  };
+}
+
+export function resolveThemeDefinition(
+  theme: ThemeDefinition,
+  appearance: ThemeAppearance,
+): ThemeColors | null {
+  const source = theme.sources?.[appearance];
+  return source
+    ? resolveThemeSource(source, appearance)
+    : getThemeColorsForAppearance(theme, appearance);
 }

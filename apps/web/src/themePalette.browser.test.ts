@@ -2,7 +2,7 @@ import { converter } from "culori/fn";
 import { describe, expect, it } from "vite-plus/test";
 
 import "~/index.css";
-import { getStandardPaintedThemeColors } from "./themePalette";
+import { applyThemePalette, getStandardPaintedThemeColors } from "./themePalette";
 
 const toRgb = converter("rgb");
 
@@ -27,6 +27,7 @@ describe("standard painted theme colors", () => {
     try {
       for (const appearance of ["light", "dark"] as const) {
         root.classList.toggle("dark", appearance === "dark");
+        applyThemePalette(appearance, appearance);
         const colors = getStandardPaintedThemeColors(appearance);
         const canvas = paintedChannels("--background");
         for (const [variable, role] of [
@@ -38,9 +39,15 @@ describe("standard painted theme colors", () => {
           const expected = toRgb(colors[role])!;
           const painted = paintedChannels(variable, canvas);
           [expected.r, expected.g, expected.b].forEach((channel, index) => {
-            expect(Math.abs(channel * 255 - painted[index]!), `${appearance} ${role}`).toBeLessThan(
-              1.5,
-            );
+            expect(
+              Math.abs(
+                (channel * (expected.alpha ?? 1) +
+                  (canvas[index]! / 255) * (1 - (expected.alpha ?? 1))) *
+                  255 -
+                  painted[index]!,
+              ),
+              `${appearance} ${role}`,
+            ).toBeLessThan(1.5);
           });
         }
       }

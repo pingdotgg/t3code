@@ -95,6 +95,18 @@ describe("t3 theme", () => {
         (entry) => !entry.endsWith(".json"),
       );
       assert.deepEqual(residue, []);
+      const authoredFile = NodePath.join(baseDir, "authored.json");
+      NodeFS.writeFileSync(
+        authoredFile,
+        JSON.stringify({
+          version: 2,
+          name: "Authored",
+          appearance: "dark",
+          sources: { dark: { version: 2, seed: { canvas: "#101010", accent: "#123456" } } },
+        }),
+      );
+      yield* runCli(["theme", "set", authoredFile, "--base-dir", baseDir]);
+      assert.equal(readSettings(baseDir).defaultTheme, "authored");
     }),
   );
 

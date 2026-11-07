@@ -101,6 +101,47 @@ describe("theme files", () => {
     }
   });
 
+  it("retains authored overrides through storage and legacy export", () => {
+    const data = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => data.get(key) ?? null,
+        setItem: (key: string, value: string) => data.set(key, value),
+      },
+    });
+    invalidateCustomThemes();
+    const theme = parseThemeFile({
+      version: 2,
+      name: "Authored",
+      appearance: "dark",
+      colors: {},
+      sources: {
+        dark: {
+          version: 2,
+          seed: { canvas: "#101010", accent: "#123456" },
+          overrides: {
+            focus: "#ff0000",
+            sidebarForeground: "#abcdef",
+            messageAction: "#ff8800",
+            terminalBackground: "#002200",
+          },
+        },
+      },
+    });
+    installCustomTheme(theme);
+    invalidateCustomThemes();
+    const restored = getCustomThemes()[0]!;
+    expect(restored.sources).toEqual(theme.sources);
+    expect(restored.colors).toEqual(theme.colors);
+    expect(parseThemeFile(JSON.parse(serializeThemeFile(restored))).sources).toEqual(theme.sources);
+    const legacy = JSON.parse(serializeThemeFile(restored, { legacy: true }));
+    expect(legacy.version).toBe(1);
+    expect(legacy).not.toHaveProperty("sources");
+    expect(parseThemeFile(legacy).colors).toEqual(restored.colors);
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
+  });
+
   it("round-trips custom search colours and fills them in for older theme files", () => {
     const legacy = parseThemeFile({
       version: THEME_FILE_VERSION,
@@ -225,8 +266,8 @@ describe("theme files", () => {
         sidebar: "oklab(0.6 0.1 -0.1)",
         terminalCursor: "color(display-p3 0.8 0.2 0.3)",
         terminalSelection: "rebeccapurple",
-        terminalScrollbar: "transparent",
-        terminalScrollbarHover: "rgb(10 20 30 / none)",
+        toolbarControl: "transparent",
+        toolbarControlHover: "rgb(10 20 30 / none)",
       },
     });
 
@@ -235,8 +276,8 @@ describe("theme files", () => {
     expect(themeColorToHex(theme.colors.accent)).toBe("#aabbccdd");
     expect(themeColorToHex(theme.colors.focus)).toBe("#0a141e80");
     expect(themeColorToHex(theme.colors.terminalSelection)).toBe("#663399");
-    expect(theme.colors.terminalScrollbar).toBe("oklch(0 0 0 / 0)");
-    expect(themeColorToHex(theme.colors.terminalScrollbarHover)).toBe("#0a141e00");
+    expect(theme.colors.toolbarControl).toBe("oklch(0 0 0 / 0)");
+    expect(themeColorToHex(theme.colors.toolbarControlHover)).toBe("#0a141e00");
     for (const role of [
       "error",
       "warning",
