@@ -323,9 +323,13 @@ const make = Effect.gen(function* () {
     const date = DateTime.formatIso(yield* DateTime.now).slice(0, 10);
     const words = folderWords(input.text);
     const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
-    const folderFor = (idPart: string) =>
-      path.join(root.value, [date, words, idPart].filter(Boolean).join("-"));
     yield* makeScratchFolder(root.value);
+    // Provider sandboxes reject writable roots with a symlink component; the project keeps the configured path.
+    const realRoot = yield* fileSystem
+      .realPath(root.value)
+      .pipe(Effect.mapError((cause) => new ScratchFolderError({ folder: root.value, cause })));
+    const folderFor = (idPart: string) =>
+      path.join(realRoot, [date, words, idPart].filter(Boolean).join("-"));
     const fullFolder = folderFor(id);
     return yield* claimFreeFolder(
       (attempt) =>
