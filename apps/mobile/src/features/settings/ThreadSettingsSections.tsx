@@ -91,6 +91,7 @@ export function AutoSettleSettingsRows(props: {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      compactBeforeUsageLimit?: boolean;
     },
   ) => props.write(patch);
 
@@ -132,6 +133,13 @@ export function AutoSettleSettingsRows(props: {
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
             disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
+          />
+          <SettingsSwitchRow
+            icon="arrow.down.right.and.arrow.up.left"
+            label="Compact before usage limits"
+            value={uniformMobileSetting(displayTargets, "compactBeforeUsageLimit")}
+            disabled={disabledFor("compactBeforeUsageLimit")}
+            onValueChange={(value) => writeToAll({ compactBeforeUsageLimit: value })}
           />
         </SettingsSection>
       ) : null}

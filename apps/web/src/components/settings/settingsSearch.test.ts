@@ -229,6 +229,10 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "project")).toBe(false);
+    const compaction = getSettingsSearchTargetScope("compact-before-usage-limit")!;
+    expect(isSettingsSearchScopeAvailable(compaction.scope, "environment")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(compaction.scope, "all")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(compaction.scope, "project")).toBe(false);
     for (const id of ["response-streaming", "speech-project-dictionary"]) {
       expect(getSettingsSearchTargetScope(id)?.scope).toBe("project-defaults");
     }

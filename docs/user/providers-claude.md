@@ -86,6 +86,13 @@ Claude Code holds the turn until that window reopens, so it can keep showing as
 working. Wait for the reset, or stop the turn and continue later. The warning's
 timestamp shows when the displayed wait started.
 
+A reset more than an hour away outlasts the prompt cache, so the continuation
+reprocesses the whole conversation. Enable **Compact before usage limits** in
+**Settings → Threads** to compact a thread over 200,000 tokens as soon as a turn
+ends with the session usage window at 95% or more and resetting after the cache
+expires. Weekly limits do not trigger it.
+Providers whose **Compact idle threads** is **Never** are left alone.
+
 ## Skills
 
 Claude skills come from the config directory's `skills` folder and the project's
