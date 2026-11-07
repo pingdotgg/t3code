@@ -197,13 +197,18 @@ describe("makeManagedServerProvider", () => {
     "usage-credentials",
     "unused-credentials",
     "unverified-credentials",
+    "unused-credentials-health",
+    "unverified-credentials-health",
+    "changed-credentials-health",
   ] as const)(
     "keeps quota ownership across authentication changes and local credential changes: %s",
     (transition) =>
       Effect.scoped(
         Effect.gen(function* () {
           const usageOnly =
-            transition === "unused-credentials" || transition === "unverified-credentials";
+            transition === "unused-credentials" ||
+            transition === "unverified-credentials" ||
+            transition.endsWith("-health");
           const signedIn = {
             status: "authenticated",
             type: "chatgpt",
@@ -219,8 +224,9 @@ describe("makeManagedServerProvider", () => {
           const reads = yield* Ref.make(0);
           const limits = {
             checkedAt: refreshedSnapshot.checkedAt,
-            credentialFingerprint:
-              transition === "unverified-credentials" ? undefined : "quota-owner",
+            credentialFingerprint: transition.startsWith("unverified-credentials")
+              ? undefined
+              : "quota-owner",
             windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 20 }],
           } as const;
           const provider = yield* makeManagedServerProvider({
@@ -244,7 +250,10 @@ describe("makeManagedServerProvider", () => {
                           ? usageOnly && currentAuth.usageRefreshKey === "local-b"
                             ? {
                                 checkedAt: limits.checkedAt,
-                                credentialFingerprint: limits.credentialFingerprint,
+                                credentialFingerprint:
+                                  transition === "changed-credentials-health"
+                                    ? "other-owner"
+                                    : limits.credentialFingerprint,
                                 windows: [],
                                 unavailable: { reason: "probeFailed" as const },
                               }
@@ -277,9 +286,15 @@ describe("makeManagedServerProvider", () => {
                 : signedIn,
           );
           if (usageOnly) {
+            if (transition.endsWith("-health")) {
+              const health = yield* provider.refresh;
+              assert.deepStrictEqual(health.usageLimits?.windows ?? [], []);
+              yield* provider.refresh;
+              assert.strictEqual(yield* Ref.get(reads), 1);
+            }
             yield* provider.refreshUsage!;
             const retained = yield* provider.getSnapshot;
-            if (transition === "unused-credentials") {
+            if (transition.startsWith("unused-credentials")) {
               assert.deepStrictEqual(retained.usageLimits, {
                 ...limits,
                 stale: true,

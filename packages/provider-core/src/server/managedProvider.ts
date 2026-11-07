@@ -31,6 +31,7 @@ import type { ManagedServerProvider } from "./snapshot.ts";
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+  readonly retainedUsageLimits?: ServerProvider["usageLimits"];
 }
 
 function withUsageLimits(
@@ -205,24 +206,39 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const previous = state.snapshot.auth;
         const differs = (a: string | undefined, b: string | undefined) =>
           a !== undefined && b !== undefined && a !== b;
+        const previousLimits = state.retainedUsageLimits ?? state.snapshot.usageLimits;
         const sameQuotaOwner =
-          state.snapshot.usageLimits?.credentialFingerprint !== undefined &&
-          state.snapshot.usageLimits.credentialFingerprint ===
+          previousLimits?.credentialFingerprint !== undefined &&
+          previousLimits.credentialFingerprint ===
             probedSnapshot.usageLimits?.credentialFingerprint;
-        const switchedAccount =
+        const changedUsageKey = differs(
+          probedSnapshot.auth.usageRefreshKey,
+          previous.usageRefreshKey,
+        );
+        const changedAccount =
           accountReset ||
           (probedSnapshot.auth.status === "authenticated" && previous.status !== "authenticated") ||
           differs(probedSnapshot.auth.type, previous.type) ||
-          (differs(probedSnapshot.auth.usageRefreshKey, previous.usageRefreshKey) &&
-            (!pollingUsage || !sameQuotaOwner)) ||
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
+        const switchedAccount =
+          changedAccount || (changedUsageKey && (!pollingUsage || !sameQuotaOwner));
+        // A health-only marker change cannot establish ownership of the selected quota credential.
+        const retainedUsageLimits =
+          !pollingUsage &&
+          !changedAccount &&
+          probedSnapshot.auth.status === "authenticated" &&
+          (changedUsageKey || state.retainedUsageLimits !== undefined) &&
+          previousLimits?.credentialFingerprint !== undefined
+            ? previousLimits
+            : undefined;
         if (switchedAccount && !pollingUsage) usageRefreshAfter = 0;
         const usageLimits = switchedAccount
           ? probedSnapshot.usageLimits
           : resolveUsageLimitsAfterProbe({
-              published: state.snapshot.usageLimits,
+              published:
+                pollingUsage && sameQuotaOwner ? previousLimits : state.snapshot.usageLimits,
               probed:
                 !pollingUsage &&
                 probedSnapshot.auth.status === "authenticated" &&
@@ -244,7 +260,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation },
+          { snapshot, enrichmentGeneration: generation, retainedUsageLimits },
         ] as const;
       },
     );
