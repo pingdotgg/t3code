@@ -9,6 +9,7 @@ import { PlusIcon, ScaleIcon } from "lucide-react";
 import { memo } from "react";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
+import { EnvironmentHostSummary } from "./EnvironmentHostSummary";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
@@ -152,9 +153,15 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               value={environmentValue(env.environmentId)}
               disabled={onEnvironmentChange === undefined && env.environmentId !== environmentId}
             >
-              <span className="inline-flex items-center gap-1.5">
-                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
-                {env.label}
+              <span className="flex min-w-0 flex-col">
+                <span className="inline-flex items-center gap-1.5">
+                  <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                  {env.label}
+                </span>
+                <EnvironmentHostSummary
+                  environmentId={env.environmentId}
+                  className="ps-4.5 text-muted-foreground text-xs"
+                />
               </span>
             </SelectItem>
           ))}
