@@ -31,6 +31,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as EnvironmentKeys from "../cloud/environmentKeys.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -119,7 +120,10 @@ function waitingChild(
   });
 }
 
-const PublishPayload = Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) });
+const PublishPayload = Schema.Struct({
+  state: Schema.NullOr(RelayAgentActivityState),
+  suppressAlerts: Schema.optionalKey(Schema.Boolean),
+});
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
 const unused = () => Effect.die("Unexpected test dependency call");
 
@@ -170,6 +174,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
+    readonly readFamily?: (
+      threadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
   } = {},
@@ -217,10 +224,15 @@ const makeTestRelay = Effect.fnUntraced(function* (
             return { snapshotSequence: 1, threads: options.catchUpThreads ?? [] };
           })
         : Effect.sync(() => shellReads.push(threadId)).pipe(
-            Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
-            Effect.map((thread) => ({
+            Effect.andThen(
+              options.readFamily?.(threadId) ??
+                (options.readShell?.(threadId) ?? Ref.get(currentShell)).pipe(
+                  Effect.map((thread) => (thread === null ? [] : [thread])),
+                ),
+            ),
+            Effect.map((threads) => ({
               snapshotSequence: 1,
-              threads: thread === null ? [] : [thread],
+              threads,
             })),
           ),
     listActiveSubagentThreadIds: unused,
@@ -230,7 +242,6 @@ const makeTestRelay = Effect.fnUntraced(function* (
     listOlderSettledThreads: unused,
     readShellSnapshot: unused,
     getThreadTitles: unused,
-    getThreadLinkMetadata: unused,
     ensureLegacyTranscript: unused,
     dispatch: unused,
     searchThread: () => Effect.die("unused"),
@@ -270,7 +281,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly url: string;
     readonly authorization: string | null;
     readonly state: RelayAgentActivityState | null;
+    readonly suppressAlerts: boolean;
   }> = [];
+  const shouldSuppressMobileNotificationAlerts = yield* Ref.make(false);
   const fetch: typeof globalThis.fetch = Object.assign(
     (
       input: Parameters<typeof globalThis.fetch>[0],
@@ -287,6 +300,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
         url: String(input),
         authorization: new Headers(init?.headers).get("authorization"),
         state: payload.state,
+        suppressAlerts: payload.suppressAlerts === true,
       });
       return Promise.resolve(
         options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
@@ -324,10 +338,30 @@ const makeTestRelay = Effect.fnUntraced(function* (
       listShells: unused,
       getById: () => Effect.succeedSome(project),
     }),
+    Effect.provideService(
+      BackgroundPolicy.BackgroundPolicy,
+      BackgroundPolicy.BackgroundPolicy.of({
+        reportClientActivity: () => Effect.void,
+        removeRpcClient: () => Effect.void,
+        snapshot: Effect.die("unused background snapshot"),
+        shouldSuppressMobileNotificationAlerts: Ref.get(shouldSuppressMobileNotificationAlerts),
+        shouldRunScopeWork: () => Effect.succeed(false),
+        shouldRunOpportunisticWork: Effect.succeed(false),
+      }),
+    ),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
-  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
+  return {
+    relay,
+    secrets,
+    secretReads,
+    currentShell,
+    shellReads,
+    publications,
+    catchUp,
+    shouldSuppressMobileNotificationAlerts,
+  };
 });
 
 describe("AgentAwarenessRelay", () => {
@@ -368,7 +402,6 @@ describe("AgentAwarenessRelay", () => {
 
       yield* setShell(waitingChild({ pendingRuntimeRequest: null }));
       yield* relay.publishThread(CHILD_THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.equal(publications.length, 4);
       assert.equal(publications[3]?.state?.phase, "completed");
@@ -501,6 +534,77 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("asks relay to suppress banners while someone is actively present on web/desktop", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications, shouldSuppressMobileNotificationAlerts } =
+        yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications[0]?.suppressAlerts, false);
+      yield* Ref.set(shouldSuppressMobileNotificationAlerts, true);
+      yield* Ref.set(currentShell, shell({ title: "Still working" }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.at(-1)?.suppressAlerts, true);
+      assert.equal(publications.at(-1)?.state?.threadTitle, "Still working");
+    }),
+  );
+
+  it.effect("publishes parent approval when a nested subagent waits", () =>
+    Effect.gen(function* () {
+      const childId = ThreadId.make("relay-subagent");
+      const grandchildId = ThreadId.make("relay-nested-subagent");
+      const parent = {
+        ...shell({
+          status: "completed",
+          pendingBackgroundTasks: [{ taskId: "review", kind: "subagent", childThreadId: childId }],
+        }),
+        descendantPendingRequest: "approval" as const,
+      };
+      const child = shell({
+        id: childId,
+        status: "running",
+        activityRunStatus: "running",
+        creationSource: "mcp",
+        lineage: {
+          rootThreadId: THREAD_ID,
+          parentThreadId: THREAD_ID,
+          relationshipToParent: "subagent",
+        },
+      });
+      const grandchild = shell({
+        id: grandchildId,
+        status: "waiting",
+        activityRunStatus: "waiting",
+        creationSource: "mcp",
+        lineage: {
+          rootThreadId: THREAD_ID,
+          parentThreadId: childId,
+          relationshipToParent: "subagent",
+        },
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request:approve"),
+          kind: "command",
+          createdAt: DateTime.makeUnsafe(NOW),
+        },
+      });
+      const byId = new Map([
+        [THREAD_ID, parent],
+        [childId, child],
+        [grandchildId, grandchild],
+      ]);
+      const { relay, publications, shellReads } = yield* makeTestRelay({
+        readShell: (threadId) => Effect.succeed(byId.get(threadId) ?? null),
+      });
+      yield* relay.publishThread(grandchildId);
+      assert.deepEqual(shellReads, [grandchildId, childId, THREAD_ID]);
+      assert.equal(publications.length, 1);
+      assert.include(publications[0]?.state, {
+        threadId: THREAD_ID,
+        phase: "waiting_for_approval",
+        headline: "Needs your reply",
+      });
+    }),
+  );
+
   it.effect("republishes unchanged state with fresh credentials after relinking", () =>
     Effect.gen(function* () {
       const { relay, secrets, publications } = yield* makeTestRelay();
@@ -540,8 +644,6 @@ describe("AgentAwarenessRelay", () => {
         const terminal = shell({ status });
         yield* Ref.set(currentShell, terminal);
         yield* relay.publishThread(THREAD_ID);
-        yield* TestClock.adjust("5 seconds");
-        yield* relay.drain;
         assert.equal(publications[1]?.state?.phase, status);
 
         const now = yield* DateTime.now;
@@ -562,14 +664,14 @@ describe("AgentAwarenessRelay", () => {
         yield* Queue.take(pulls);
         yield* relay.drain;
         assert.equal(publications.length, 2);
-        yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("1500 millis");
         yield* relay.drain;
         assert.equal(publications.length, 3);
         assert.equal(publications[2]?.state, null);
       }).pipe(Effect.scoped),
   );
 
-  it.effect("holds a completion through a continuation gap, then publishes it once", () =>
+  it.effect("publishes a brief completion before a continuation resumes", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
       yield* relay.publishThread(THREAD_ID);
@@ -577,26 +679,14 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(THREAD_ID);
       yield* Ref.set(currentShell, shell());
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase),
-        ["running"],
-      );
-
-      yield* Ref.set(currentShell, shell({ status: "completed" }));
-      yield* relay.publishThread(THREAD_ID);
-      assert.equal(publications.length, 1);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      assert.deepEqual(
-        publications.map((publication) => publication.state?.phase),
-        ["running", "completed"],
+        ["running", "completed", "running"],
       );
     }),
   );
 
-  it.effect("still publishes a completion when the thread settles during the hold", () =>
+  it.effect("still publishes a completion when the thread settles right after", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
       yield* relay.publishThread(THREAD_ID);
@@ -610,14 +700,12 @@ describe("AgentAwarenessRelay", () => {
         lastVisitedAt: null,
       });
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase ?? null),
         ["running", "completed"],
       );
 
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase ?? null),
@@ -633,8 +721,6 @@ describe("AgentAwarenessRelay", () => {
       const completed = shell({ status: "completed" });
       yield* Ref.set(currentShell, completed);
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
       yield* Ref.set(currentShell, {
         ...completed,
         settledOverride: "settled",
@@ -642,7 +728,7 @@ describe("AgentAwarenessRelay", () => {
         lastVisitedAt: null,
       });
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase ?? null),
@@ -651,7 +737,7 @@ describe("AgentAwarenessRelay", () => {
 
       for (let i = 0; i < 3; i++) {
         yield* relay.publishThread(THREAD_ID);
-        yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("1500 millis");
         yield* relay.drain;
       }
       assert.deepEqual(
@@ -676,7 +762,7 @@ describe("AgentAwarenessRelay", () => {
         lastVisitedAt: null,
       });
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state),
@@ -685,7 +771,7 @@ describe("AgentAwarenessRelay", () => {
 
       yield* Ref.set(currentShell, oldCompleted);
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state),
@@ -694,7 +780,7 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("alerts a completion settled during its hold after an earlier tombstone", () =>
+  it.effect("alerts a completion that settles after an earlier tombstone", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)));
       const { relay, currentShell, publications } = yield* makeTestRelay();
@@ -706,7 +792,7 @@ describe("AgentAwarenessRelay", () => {
         lastVisitedAt: null,
       });
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
 
       const completed = shell({
@@ -722,9 +808,11 @@ describe("AgentAwarenessRelay", () => {
         lastVisitedAt: null,
       });
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      yield* TestClock.adjust("5 seconds");
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        [null, "completed"],
+      );
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase ?? null),
@@ -733,7 +821,7 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("drops a held completion when a queued continuation hides the thread", () =>
+  it.effect("still publishes a completion when a queued continuation follows", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
       yield* relay.publishThread(THREAD_ID);
@@ -741,11 +829,15 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(THREAD_ID);
       yield* Ref.set(currentShell, shell({ status: "queued" }));
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      assert.notInclude(
+      assert.include(
         publications.map((publication) => publication.state?.phase ?? null),
         "completed",
+      );
+      yield* TestClock.adjust("1500 millis");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", "completed", null],
       );
     }),
   );
@@ -762,24 +854,26 @@ describe("AgentAwarenessRelay", () => {
       const completed = shell({ status: "completed" });
       yield* Ref.set(currentShell, completed);
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", "completed"],
+      );
       yield* Ref.set(currentShell, {
         ...completed,
         settledOverride: "settled",
         settledAt: yield* DateTime.now,
         lastVisitedAt: null,
       });
+      // Failed completion retries, then the settled tombstone confirms after its hold.
       yield* TestClock.adjust("1 second");
       yield* relay.drain;
-      assert.deepEqual(
-        publications.map((publication) => publication.state?.phase ?? null),
-        ["running", "completed", "completed"],
-      );
-
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
       assert.equal(publications.at(-1)?.state ?? null, null);
+      assert.include(
+        publications.map((publication) => publication.state?.phase ?? null),
+        "completed",
+      );
     }),
   );
 
@@ -794,14 +888,14 @@ describe("AgentAwarenessRelay", () => {
       });
       yield* Ref.set(currentShell, held);
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
       assert.equal(publications.length, 1);
       assert.equal(publications[0]?.state?.phase, "running");
 
       yield* Ref.set(currentShell, { ...held, pendingBackgroundTasks: [] });
       yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state, null);
@@ -959,7 +1053,7 @@ describe("AgentAwarenessRelay", () => {
       yield* deliver(
         itemEvent("event:held-item:end", item("item:tool", { ...background, status: "completed" })),
       );
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("1500 millis");
       yield* relay.drain;
       assert.deepEqual(
         publications.map((publication) => publication.state?.phase),

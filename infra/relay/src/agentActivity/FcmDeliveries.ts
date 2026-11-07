@@ -29,6 +29,7 @@ import {
   alertForActivityRows,
   attentionTransitionRows,
   terminalTransitionRows,
+  repairAwarenessPreferences,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
 
@@ -39,12 +40,15 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
+  suppressAlerts: Schema.optional(Schema.Boolean),
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
-const decodePreferences = Schema.decodeUnknownOption(
+const decodePreferencesJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentAwarenessPreferences),
 );
+const decodePreferences = (value: string) =>
+  Option.map(decodePreferencesJson(value), repairAwarenessPreferences);
 const decodePreviousActivity = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentActivityAggregateState),
 );
@@ -120,6 +124,7 @@ export class FcmDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
       readonly replay?: boolean;
+      readonly suppressAlerts?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
     readonly process: (
       body: unknown,
@@ -169,6 +174,7 @@ const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
+          ...(input.suppressAlerts ? { suppressAlerts: true } : {}),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -239,46 +245,50 @@ const make = Effect.gen(function* () {
         // Notification-only jobs must not acknowledge another environment's pending card transitions.
         acknowledgeAggregate =
           deliveryUser?.liveActivitiesEnabled === true || !preferences.value.liveActivitiesEnabled;
-        if (
-          deliveryUser?.liveActivitiesEnabled &&
-          preferences.value.liveActivitiesEnabled &&
-          previousAggregate &&
-          aggregate
-        ) {
-          const environmentIds = [...new Set(aggregate.activities.map((row) => row.environmentId))];
-          const allowedEnvironments = new Set<string>();
-          for (const environmentId of environmentIds) {
-            const environmentLink = yield* links.getForUser({
-              userId: job.userId,
-              environmentId,
-            });
-            if (!environmentLink) continue;
-            const users = yield* links.listDeliveryUsersForEnvironment({
-              environmentId,
-              environmentPublicKey: environmentLink.environmentPublicKey,
-            });
-            if (users.some((user) => user.userId === job.userId && user.notificationsEnabled)) {
-              allowedEnvironments.add(environmentId);
+        if (job.suppressAlerts !== true) {
+          if (
+            deliveryUser?.liveActivitiesEnabled &&
+            preferences.value.liveActivitiesEnabled &&
+            previousAggregate &&
+            aggregate
+          ) {
+            const environmentIds = [
+              ...new Set(aggregate.activities.map((row) => row.environmentId)),
+            ];
+            const allowedEnvironments = new Set<string>();
+            for (const environmentId of environmentIds) {
+              const environmentLink = yield* links.getForUser({
+                userId: job.userId,
+                environmentId,
+              });
+              if (!environmentLink) continue;
+              const users = yield* links.listDeliveryUsersForEnvironment({
+                environmentId,
+                environmentPublicKey: environmentLink.environmentPublicKey,
+              });
+              if (users.some((user) => user.userId === job.userId && user.notificationsEnabled)) {
+                allowedEnvironments.add(environmentId);
+              }
             }
+            alert = androidAlertForAggregate({
+              previousAggregate,
+              nextAggregate: {
+                ...aggregate,
+                activities: aggregate.activities.filter((row) =>
+                  allowedEnvironments.has(row.environmentId),
+                ),
+              },
+              preferences: preferences.value,
+              nowMs: now.epochMilliseconds,
+            });
+          } else if (
+            deliveryUser?.notificationsEnabled &&
+            state?.phase === job.state.phase &&
+            state.updatedAt === job.state.updatedAt &&
+            !isExpiredAgentActivityState(state, now.epochMilliseconds)
+          ) {
+            alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
           }
-          alert = androidAlertForAggregate({
-            previousAggregate,
-            nextAggregate: {
-              ...aggregate,
-              activities: aggregate.activities.filter((row) =>
-                allowedEnvironments.has(row.environmentId),
-              ),
-            },
-            preferences: preferences.value,
-            nowMs: now.epochMilliseconds,
-          });
-        } else if (
-          deliveryUser?.notificationsEnabled &&
-          state?.phase === job.state.phase &&
-          state.updatedAt === job.state.updatedAt &&
-          !isExpiredAgentActivityState(state, now.epochMilliseconds)
-        ) {
-          alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
         }
       }
       const displayedAggregate = preferences.value.liveActivitiesEnabled ? aggregate : null;

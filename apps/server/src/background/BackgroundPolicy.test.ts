@@ -142,6 +142,92 @@ describe("BackgroundPolicy", () => {
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
   );
 
+  it.effect(
+    "suppresses mobile banners only while web/desktop is actively present and the host is awake",
+    () =>
+      Effect.gen(function* () {
+        const policy = yield* BackgroundPolicy.BackgroundPolicy;
+        assert.equal(yield* policy.shouldSuppressMobileNotificationAlerts, false);
+        yield* policy.reportClientActivity(
+          AuthSessionId.make("session-mobile"),
+          RpcClientId.make(1),
+          makeReport({ clientId: "phone", clientKind: "mobile" }),
+        );
+        assert.equal(yield* policy.shouldSuppressMobileNotificationAlerts, false);
+        yield* policy.reportClientActivity(
+          AuthSessionId.make("session-web"),
+          RpcClientId.make(2),
+          makeReport({ clientId: "browser", clientKind: "web" }),
+        );
+        assert.equal(yield* policy.shouldSuppressMobileNotificationAlerts, true);
+        yield* policy.reportClientActivity(
+          AuthSessionId.make("session-web"),
+          RpcClientId.make(2),
+          makeReport({
+            clientId: "browser",
+            clientKind: "web",
+            focused: true,
+            recentlyInteracted: false,
+          }),
+        );
+        assert.equal(yield* policy.shouldSuppressMobileNotificationAlerts, false);
+      }).pipe(
+        Effect.provide(
+          layerFor({
+            ...nominalHostPower,
+            idle: "false",
+            locked: "false",
+            suspended: false,
+            stale: false,
+          }),
+        ),
+      ),
+  );
+
+  it.effect("does not suppress mobile banners when the host is idle", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      yield* policy.reportClientActivity(
+        AuthSessionId.make("session-web"),
+        RpcClientId.make(1),
+        makeReport({ clientId: "browser", clientKind: "web" }),
+      );
+      assert.equal(yield* policy.shouldSuppressMobileNotificationAlerts, false);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          ...nominalHostPower,
+          idle: "true",
+          locked: "false",
+          suspended: false,
+          stale: false,
+        }),
+      ),
+    ),
+  );
+
+  it.effect("does not suppress mobile banners when the host is locked", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      yield* policy.reportClientActivity(
+        AuthSessionId.make("session-web"),
+        RpcClientId.make(1),
+        makeReport({ clientId: "browser", clientKind: "web" }),
+      );
+      assert.equal(yield* policy.shouldSuppressMobileNotificationAlerts, false);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          ...nominalHostPower,
+          idle: "false",
+          locked: "true",
+          suspended: false,
+          stale: false,
+        }),
+      ),
+    ),
+  );
+
   it.effect("host suspension disables scoped and opportunistic work", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;

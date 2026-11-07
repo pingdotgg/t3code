@@ -1,5 +1,8 @@
-import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { pendingGuestMessageCount } from "@t3tools/contracts";
+import {
+  rollupListedThreadAwarenessPending,
+  type ProjectThreadAwarenessV2Input,
+} from "@t3tools/shared/agentAwareness";
+import { isListedThreadLineage, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -1018,7 +1021,9 @@ export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
     | "activeRunId"
     | "latestRunId"
     | "hasActionableProposedPlan"
-  >;
+  > & {
+    readonly descendantPendingRequest?: ProjectThreadAwarenessV2Input["descendantPendingRequest"];
+  };
 
 type ShellThreadRow = {
   readonly thread_id: string;
@@ -7131,14 +7136,36 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const getAgentAwarenessSnapshot = Effect.fn("ProjectionStore.getAgentAwarenessSnapshot")(
       function* (threadId?: ThreadId) {
-        const { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows } =
+        const { returnedRows, rollupRows, providerThreadRows, pendingTurnItemRows, sequenceRows } =
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              const threadRows = yield* selectShellThreadRows(
-                threadId,
-                threadId === undefined ? { location: "active", listedOnly: true } : {},
-              );
-              const ids = threadRows.map((row) => ThreadId.make(row.thread_id));
+              // Rollup reads include unlisted children; returned rows stay listed (or the
+              // exact requested thread) so callers keep their existing snapshot shape.
+              const returnedRows =
+                threadId === undefined
+                  ? yield* selectShellThreadRows(undefined, {
+                      location: "active",
+                      listedOnly: true,
+                    })
+                  : yield* selectShellThreadRows(threadId);
+              const familyRows =
+                threadId === undefined
+                  ? null
+                  : yield* selectShellThreadRows(undefined, {
+                      familyOf: threadId,
+                      location: "active",
+                    });
+              const rollupRows =
+                threadId === undefined
+                  ? yield* selectShellThreadRows(undefined, { location: "active" })
+                  : familyRows !== null && familyRows.length > 0
+                    ? familyRows
+                    : returnedRows;
+              const ids = [
+                ...new Set(
+                  [...returnedRows, ...rollupRows].map((row) => ThreadId.make(row.thread_id)),
+                ),
+              ];
               const providerThreadRows =
                 ids.length === 0 ? [] : yield* selectShellProviderThreadRows(ids);
               const pendingTurnItemRows =
@@ -7146,7 +7173,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ? []
                   : yield* selectShellPendingTurnItemRows(
                       ids,
-                      threadRows.flatMap((row) =>
+                      [...returnedRows, ...rollupRows].flatMap((row) =>
                         row.active_run_id !== null && row.active_run_status === "running"
                           ? [row.active_run_id]
                           : [],
@@ -7156,12 +7183,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT MAX(sequence) AS snapshot_sequence FROM orchestration_events
               WHERE application_event_version = 2 AND aggregate_kind = 'thread'
             `;
-              return { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows };
+              return {
+                returnedRows,
+                rollupRows,
+                providerThreadRows,
+                pendingTurnItemRows,
+                sequenceRows,
+              };
             }),
           );
         const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
           yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
-        const threads = yield* Effect.forEach(threadRows, (row) =>
+        const toAwarenessThread = (row: (typeof returnedRows)[number]) =>
           shellThreadStateFromRow({
             row,
             // Awareness never consumes timeline counts or inherited fork history.
@@ -7191,6 +7224,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               pendingRuntimeRequest: state.pendingRuntimeRequest,
               pendingBackgroundTasks: state.pendingBackgroundTasks,
             })),
+          );
+        const rollupThreads = yield* Effect.forEach(rollupRows, toAwarenessThread);
+        const descendantPendingByThread = rollupListedThreadAwarenessPending(rollupThreads);
+        const threads = yield* Effect.forEach(returnedRows, (row) =>
+          toAwarenessThread(row).pipe(
+            Effect.map((thread) =>
+              isListedThreadLineage(thread.lineage)
+                ? {
+                    ...thread,
+                    descendantPendingRequest: descendantPendingByThread.get(thread.id) ?? null,
+                  }
+                : thread,
+            ),
           ),
         );
         return { snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0, threads };

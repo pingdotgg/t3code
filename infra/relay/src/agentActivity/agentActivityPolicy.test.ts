@@ -5,6 +5,7 @@ import { makeAggregateState } from "./agentActivityAggregate.ts";
 import {
   attentionTransitionRows,
   terminalTransitionRows,
+  repairAwarenessPreferences,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
 
@@ -101,5 +102,22 @@ describe("shared agent activity policy", () => {
       }),
     ).toBe(false);
     expect(shouldAlertForActivity({ ...input, nowMs: 180_000 })).toBe(false);
+  });
+
+  it("repairs prefs that can alert on approval but silence completion", () => {
+    expect(
+      repairAwarenessPreferences({
+        ...preferences,
+        notifyOnCompletion: false,
+        notifyOnFailure: false,
+      }),
+    ).toMatchObject({ notifyOnCompletion: true, notifyOnFailure: true });
+    expect(
+      repairAwarenessPreferences({
+        ...preferences,
+        notifyOnApproval: false,
+        notifyOnCompletion: false,
+      }),
+    ).toMatchObject({ notifyOnApproval: false, notifyOnCompletion: false });
   });
 });

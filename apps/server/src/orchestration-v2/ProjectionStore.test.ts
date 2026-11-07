@@ -103,11 +103,18 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
   const { tracer, statements, queryTransactions } = traceSqlStatements();
   const activity = yield* store.getAgentAwarenessSnapshot().pipe(Effect.withTracer(tracer));
   assert.equal(activity.snapshotSequence, snapshot.snapshotSequence);
-  const awareness = (thread: Parameters<typeof projectThreadAwarenessV2>[0]["thread"]) =>
+  const awareness = (
+    thread: Parameters<typeof projectThreadAwarenessV2>[0]["thread"] & {
+      readonly descendantPendingRequest?: Parameters<
+        typeof projectThreadAwarenessV2
+      >[0]["descendantPendingRequest"];
+    },
+  ) =>
     projectThreadAwarenessV2({
       environmentId: EnvironmentId.make("test"),
       project: { title: "Test" },
       thread,
+      descendantPendingRequest: thread.descendantPendingRequest ?? null,
     });
   assert.deepEqual(
     activity.threads.map(awareness),

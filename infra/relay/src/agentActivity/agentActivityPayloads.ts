@@ -100,13 +100,34 @@ export function sanitizeApnsNotificationPayload(
   };
 }
 
+export function agentActivityNotificationCopy(
+  row: Pick<RelayAgentActivityAggregateRow, "phase" | "threadTitle" | "projectTitle" | "status">,
+): { readonly title: string; readonly body: string } {
+  const thread = row.threadTitle.trim().length > 0 ? row.threadTitle.trim() : "Thread";
+  const project = row.projectTitle.trim().length > 0 ? row.projectTitle.trim() : "T3 Code";
+  const where = `${thread} · ${project}`;
+  switch (row.phase) {
+    case "waiting_for_approval":
+      return { title: "Needs your reply", body: where };
+    case "waiting_for_input":
+      return { title: "Needs your reply", body: where };
+    case "completed":
+      return { title: "Ready to review", body: where };
+    case "failed":
+      return { title: "Agent failed", body: where };
+    default:
+      return { title: thread, body: `${row.status}: ${project}` };
+  }
+}
+
 export function notificationForActivity(
   row: RelayAgentActivityAggregateRow,
 ): ApnsNotificationPayload {
   const activity = sanitizeAgentActivityAggregateRow(row);
+  const copy = agentActivityNotificationCopy(activity);
   return sanitizeApnsNotificationPayload({
-    title: activity.threadTitle,
-    body: `${activity.status}: ${activity.projectTitle}`,
+    title: copy.title,
+    body: copy.body,
     environmentId: activity.environmentId,
     threadId: activity.threadId,
     deepLink: activity.deepLink,

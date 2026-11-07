@@ -274,6 +274,10 @@ export const RelayAgentActivityPublishRequest = Schema.Struct({
   proof: TrimmedNonEmptyString.annotate({
     description: "Environment-signed JWT covering this published activity state.",
   }),
+  suppressAlerts: Schema.optionalKey(Schema.Boolean).annotate({
+    description:
+      "When true, deliver Live Activity / ongoing card updates without audible banners. Used when a web or desktop client is actively using this environment.",
+  }),
 }).annotate({ description: "Publishes a signed agent-awareness update from an environment." });
 export type RelayAgentActivityPublishRequest = typeof RelayAgentActivityPublishRequest.Type;
 

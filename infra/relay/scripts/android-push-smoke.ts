@@ -71,14 +71,12 @@ const main = Effect.gen(function* () {
   }).pipe(Effect.flatMap(decodeDevice));
   const title =
     phase === "completed"
-      ? "Agent finished"
+      ? "Ready to review"
       : phase === "failed"
         ? "Agent failed"
-        : phase === "approval"
-          ? "Approval needed"
-          : phase === "input"
-            ? "Input needed"
-            : null;
+        : phase === "approval" || phase === "input"
+          ? "Needs your reply"
+          : null;
   const active = phase === "running" || phase === "approval" || phase === "input";
   const now = yield* Clock.currentTimeMillis;
   const config: RelayConfiguration.RelayConfiguration["Service"] = {
@@ -107,10 +105,12 @@ const main = Effect.gen(function* () {
           updated_at: String(now),
           active: String(active),
           activity_title: active
-            ? "1 active agent"
+            ? phase === "approval" || phase === "input"
+              ? "1 needs your reply"
+              : "1 working"
             : phase === "failed"
-              ? "Agent work failed"
-              : "Agent work completed",
+              ? "Failed"
+              : "All caught up",
           activity_expires_at: String(
             phase === "end" ? 0 : now + (active ? 2 * 60 * 60 * 1000 : 15 * 60 * 1000),
           ),

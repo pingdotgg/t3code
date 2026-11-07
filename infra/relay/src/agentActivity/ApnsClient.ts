@@ -111,6 +111,8 @@ function liveActivityAlertPayload(alert: ApnsLiveActivityAlert) {
       body: alert.body,
       sound: "default",
     },
+    // Respect Focus / notification summary; not time-sensitive.
+    "interruption-level": "active",
   };
 }
 
@@ -191,7 +193,8 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
   return {
     token: input.token,
     event: input.event,
-    priority: input.event === "update" && !input.alert ? "5" : "10",
+    // Immediate delivery for content-state changes; we already throttle/coalesce upstream.
+    priority: "10",
     payload: {
       aps: {
         timestamp,
@@ -225,6 +228,8 @@ function makePushNotificationRequest(input: {
         },
         sound: "default",
         "thread-id": notificationThreadId(input.notification),
+        // Respect Focus / notification summary; not time-sensitive.
+        "interruption-level": "active",
       },
       // Expo iOS exposes userInfo.body as notification.content.data for remote pushes.
       body: {

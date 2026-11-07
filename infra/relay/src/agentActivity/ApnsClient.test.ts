@@ -33,7 +33,7 @@ describe("ApnsClient", () => {
   const now = DateTime.makeUnsafe(0);
   const state: RelayAgentActivityAggregateState = {
     title: "T3 Code",
-    subtitle: "Agent work in progress",
+    subtitle: "1 working",
     activeCount: 1,
     updatedAt: DateTime.formatIso(now),
     activities: [
@@ -58,7 +58,7 @@ describe("ApnsClient", () => {
         event: "update",
         token: "token",
         state,
-        alert: { title: "Thread", body: "Approval: Project" },
+        alert: { title: "Needs your reply", body: "Thread · Project" },
         nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
         nowIso: DateTime.formatIso(now),
       });
@@ -68,10 +68,11 @@ describe("ApnsClient", () => {
         aps: {
           event: "update",
           alert: {
-            title: "Thread",
-            body: "Approval: Project",
+            title: "Needs your reply",
+            body: "Thread · Project",
             sound: "default",
           },
+          "interruption-level": "active",
         },
       });
     }).pipe(Effect.provide(layerTest)),
@@ -119,7 +120,7 @@ describe("ApnsClient", () => {
         token: "push-token",
         notification: {
           title: "Thread",
-          body: "Input: Project",
+          body: "Thread · Project",
           environmentId: "env",
           threadId: "thread",
           deepLink: "/threads/env/thread",
@@ -131,10 +132,11 @@ describe("ApnsClient", () => {
         aps: {
           alert: {
             title: "Thread",
-            body: "Input: Project",
+            body: "Thread · Project",
           },
           sound: "default",
           "thread-id": "env/thread",
+          "interruption-level": "active",
         },
         body: {
           environmentId: "env",
@@ -282,7 +284,7 @@ describe("ApnsClient", () => {
         token: "push-token",
         notification: {
           title: "Thread",
-          body: "Input: Project",
+          body: "Thread · Project",
           environmentId: "env",
           threadId: "thread",
           deepLink: "/threads/env/thread",

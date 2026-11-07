@@ -128,25 +128,36 @@ function AgentActivity(
 
   const allDone = props.activeCount === 0;
   const doneLabel = failedRow ? "Failed" : "Done";
-  const outcomeLabel = failedRow ? "Agent work failed" : "Agent work completed";
-
-  const agentWord = props.activeCount === 1 ? "agent" : "agents";
-  const agentsLabel = allDone
-    ? outcomeLabel
-    : environment.isStale
-      ? "Agent status out of date"
-      : `${props.activeCount} active ${agentWord}`;
-  const attentionSuffix =
-    attentionRows.length > 0
-      ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
-      : "";
+  // Inbox header: working / needs reply / caught up — not a live tool transcript.
+  const inboxHeader =
+    props.subtitle.trim().length > 0
+      ? props.subtitle
+      : allDone
+        ? failedRow
+          ? "Failed"
+          : "All caught up"
+        : attentionRows.length > 0
+          ? attentionRows.length === 1
+            ? "1 needs your reply"
+            : `${attentionRows.length} need your reply`
+          : props.activeCount === 1
+            ? "1 working"
+            : `${props.activeCount} working`;
+  const agentsLabel = environment.isStale ? "Status out of date" : inboxHeader;
   const activeLabel = allDone
     ? doneLabel
     : environment.isStale
       ? "Out of date"
-      : `${props.activeCount} active`;
+      : props.activeCount === 1
+        ? "1 working"
+        : `${props.activeCount} working`;
   const showCompactGlyph = !attentionRow && !failedRow && !allDone && !environment.isStale;
-  const summary = attentionSuffix || activeLabel;
+  const summary =
+    attentionRows.length > 0
+      ? attentionRows.length === 1
+        ? "Needs reply"
+        : `${attentionRows.length} need reply`
+      : activeLabel;
 
   // Widget taps target the containing app, so its production scheme is safe in every build.
   const deepLinkRow = attentionRow ?? row0;
@@ -255,26 +266,14 @@ function AgentActivity(
             <Text
               modifiers={[
                 font({ weight: "semibold", size: 13 }),
-                foregroundStyle(allDone ? headerTint : primaryForeground),
+                foregroundStyle(
+                  allDone || attentionRows.length > 0 ? headerTint : primaryForeground,
+                ),
                 lineLimit(1),
               ]}
             >
               {agentsLabel}
             </Text>
-            {attentionSuffix ? (
-              <Text modifiers={[font({ size: 13 }), foregroundStyle(secondaryForeground)]}>·</Text>
-            ) : null}
-            {attentionSuffix ? (
-              <Text
-                modifiers={[
-                  font({ weight: "semibold", size: 13 }),
-                  foregroundStyle(headerTint),
-                  lineLimit(1),
-                ]}
-              >
-                {attentionSuffix}
-              </Text>
-            ) : null}
             <Spacer minLength={0} />
           </HStack>
         </ZStack>

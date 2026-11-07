@@ -220,10 +220,10 @@ describe("Android delivery routing", () => {
     {
       firstPhase: "waiting_for_approval",
       secondPhase: "waiting_for_input",
-      title: "2 agents need attention",
+      title: "2 need your reply",
       active: "true",
     },
-    { firstPhase: "completed", secondPhase: "failed", title: "2 agents finished", active: "false" },
+    { firstPhase: "completed", secondPhase: "failed", title: "2 ready to review", active: "false" },
   ] as const)(
     "routes grouped $firstPhase and $secondPhase to the overview once across their queued jobs",
     ({ firstPhase, secondPhase, title, active }) => {
@@ -260,8 +260,8 @@ describe("Android delivery routing", () => {
       const delivery = yield* FcmDeliveries.FcmDeliveries;
       yield* delivery.process({ ...h.job, state: h.current.state });
       expect(h.sent[0]?.data).toMatchObject({
-        alert_title: "Second thread",
-        alert_body: "Input: Project",
+        alert_title: "Needs your reply",
+        alert_body: "Second thread · Project",
         alert_path: "/threads/env/second-thread",
       });
     }).pipe(Effect.provide(h.layer));
@@ -290,8 +290,8 @@ describe("Android delivery routing", () => {
       const delivery = yield* FcmDeliveries.FcmDeliveries;
       yield* delivery.process({ ...h.job, state: h.current.state });
       expect(h.sent[0]?.data).toMatchObject({
-        alert_title: "Second thread",
-        alert_body: "Input: Project",
+        alert_title: "Needs your reply",
+        alert_body: "Second thread · Project",
       });
       yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
       expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
@@ -346,8 +346,8 @@ describe("Android delivery routing", () => {
         const delivery = yield* FcmDeliveries.FcmDeliveries;
         yield* delivery.process({ ...h.job, state: h.current.state });
         expect(h.sent[0]?.data).toMatchObject({
-          alert_title: "Fix notifications",
-          alert_body: "Approval: Project",
+          alert_title: "Needs your reply",
+          alert_body: "Fix notifications · Project",
         });
       }).pipe(Effect.provide(h.layer));
     },
@@ -369,7 +369,7 @@ describe("Android delivery routing", () => {
       nowMs: 0,
     };
     const alert = FcmDeliveries.androidAlertForAggregate(input);
-    expect(alert?.alert_title).toBe("2 agents finished");
+    expect(alert?.alert_title).toBe("2 ready to review");
     expect(
       FcmDeliveries.androidAlertForAggregate({
         ...input,
@@ -407,7 +407,10 @@ describe("Android delivery routing", () => {
         preferences,
         nowMs: 0,
       }),
-    ).toMatchObject({ alert_title: "Second thread", alert_body: "Input: Project" });
+    ).toMatchObject({
+      alert_title: "Needs your reply",
+      alert_body: "Second thread · Project",
+    });
   });
 
   it("keeps notification groups distinct when identifiers contain slashes", () => {
@@ -447,8 +450,8 @@ describe("Android delivery routing", () => {
         yield* delivery.process({ ...h.job, state: h.current.state });
         expect(h.sent[0]?.data).toMatchObject({
           active: "false",
-          alert_title: "Fix notifications",
-          alert_body: "Done: Project",
+          alert_title: "Ready to review",
+          alert_body: "Fix notifications · Project",
           alert_path: "/threads/env/thread",
         });
       }).pipe(Effect.provide(h.layer));
@@ -467,8 +470,8 @@ describe("Android delivery routing", () => {
       yield* delivery.process({ ...h.job, state: h.current.state });
       expect(h.sent[0]?.data).toMatchObject({
         active: "false",
-        alert_title: "Fix notifications",
-        alert_body: "Done: Project",
+        alert_title: "Ready to review",
+        alert_body: "Fix notifications · Project",
       });
       expect(h.sent[0]?.data.user_id).toBe("user");
     }).pipe(Effect.provide(h.layer));
@@ -562,7 +565,7 @@ describe("Android delivery routing", () => {
       user_id: "u".repeat(128),
       updated_at: "1788780000000",
       alert_id: "a".repeat(64),
-      alert_title: "5 agents finished",
+      alert_title: "5 ready to review",
       alert_body: Array(5).fill(longTitle).join(", "),
       alert_path: "/threads/env/thread",
     });

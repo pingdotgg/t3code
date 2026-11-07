@@ -34,6 +34,11 @@ export class BackgroundPolicy extends Context.Service<
       rpcClientId: RpcClientId,
     ) => Effect.Effect<void>;
     readonly snapshot: Effect.Effect<BackgroundPolicySnapshot>;
+    /**
+     * Someone is actively using web/desktop on this machine — suppress mobile banners.
+     * Live Activities may still update. Idle, lock, suspend, or stale interaction clears this.
+     */
+    readonly shouldSuppressMobileNotificationAlerts: Effect.Effect<boolean>;
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
   }
@@ -111,6 +116,25 @@ function upsertClientActivityLease(
 
 function isForegroundLease(lease: ClientActivityLease, now: DateTime.Utc): boolean {
   return isLeaseActive(lease, now) && lease.visible && (lease.focused || lease.recentlyInteracted);
+}
+
+function hostLooksAway(hostPower: HostPowerSnapshot): boolean {
+  return hostPower.suspended || hostPower.locked === "true" || hostPower.idle === "true";
+}
+
+/** Present enough to quiet the phone: visible, focused, recent input, and the machine is awake. */
+function isActivelyPresentWebOrDesktopLease(
+  lease: ClientActivityLease,
+  hostPower: HostPowerSnapshot,
+  now: DateTime.Utc,
+): boolean {
+  if (lease.clientKind !== "web" && lease.clientKind !== "desktop-renderer") {
+    return false;
+  }
+  if (!isLeaseActive(lease, now) || !lease.visible || !lease.focused || !lease.recentlyInteracted) {
+    return false;
+  }
+  return !hostLooksAway(hostPower);
 }
 
 function leaseHasScope(lease: ClientActivityLease, scope: BackgroundScope): boolean {
@@ -266,6 +290,20 @@ export const make = Effect.fn("background.policy.make")(function* () {
     (current) => current.shouldRunOpportunisticWork,
   );
 
+  const shouldSuppressMobileNotificationAlerts = Effect.gen(function* () {
+    const [leases, hostPower, now] = yield* Effect.all([
+      Ref.get(leasesRef),
+      hostPowerMonitor.snapshot,
+      DateTime.now,
+    ]);
+    for (const lease of leases.values()) {
+      if (isActivelyPresentWebOrDesktopLease(lease, hostPower, now)) {
+        return true;
+      }
+    }
+    return false;
+  });
+
   yield* Effect.forever(
     Effect.sleep("15 seconds").pipe(
       Effect.andThen(
@@ -288,6 +326,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
   return BackgroundPolicy.of({
     reportClientActivity,
     removeRpcClient,
+    shouldSuppressMobileNotificationAlerts,
     snapshot,
     shouldRunScopeWork,
     shouldRunOpportunisticWork,

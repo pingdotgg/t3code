@@ -39,6 +39,7 @@ export class AgentActivityPublisher extends Context.Service<
       readonly environmentPublicKey: string;
       readonly threadId: string;
       readonly state: RelayAgentActivityState | null;
+      readonly suppressAlerts?: boolean;
     }) => Effect.Effect<RelayPublishResponse, AgentActivityPublishError>;
     readonly replayForLiveActivityRegistration: (input: {
       readonly userId: string;
@@ -62,6 +63,7 @@ const make = Effect.gen(function* () {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
+    readonly suppressAlerts: boolean;
   }) {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
       ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
@@ -88,7 +90,13 @@ const make = Effect.gen(function* () {
       targets,
       Effect.fnUntraced(function* (target) {
         if (target.platform === "android") {
-          return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
+          return [
+            yield* fcmDeliveries.enqueue({
+              target,
+              state: input.state,
+              ...(input.suppressAlerts ? { suppressAlerts: true } : {}),
+            }),
+          ];
         }
         return yield* Effect.all(
           [
@@ -96,8 +104,9 @@ const make = Effect.gen(function* () {
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
+              ...(input.suppressAlerts ? { suppressAlerts: true } : {}),
             }),
-            notificationOnlyAggregate === null
+            notificationOnlyAggregate === null || input.suppressAlerts
               ? Effect.succeed(null)
               : apnsDeliveries.sendPushNotificationForTarget({
                   target,
@@ -225,6 +234,10 @@ const make = Effect.gen(function* () {
         environmentPublicKey: input.environmentPublicKey,
       });
       const now = yield* DateTime.now;
+      const suppressAlerts = input.suppressAlerts === true;
+      yield* Effect.annotateCurrentSpan({
+        "relay.agent_activity.suppress_alerts": suppressAlerts,
+      });
       const deliveriesByUser = yield* Effect.forEach(
         deliveryUsers,
         (deliveryUser) =>
@@ -232,6 +245,7 @@ const make = Effect.gen(function* () {
             deliveryUser,
             state: input.state,
             nowMs: now.epochMilliseconds,
+            suppressAlerts,
           }),
         { concurrency: 4 },
       );

@@ -9,7 +9,7 @@ import type {
 import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
+import { projectThreadAwarenessV2, rollupListedThreadAwarenessPending } from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
 
@@ -23,6 +23,7 @@ describe("projectThreadAwarenessV2", () => {
     overrides: Partial<
       Pick<
         OrchestrationV2ThreadShell,
+        | "id"
         | "activityRunStatus"
         | "latestRunStopRequested"
         | "status"
@@ -94,7 +95,7 @@ describe("projectThreadAwarenessV2", () => {
         project,
         thread: v2Thread({ status: "cancelled", activityRunStatus: "running" }),
       }),
-    ).toMatchObject({ phase: "running", headline: "Agent is working" });
+    ).toMatchObject({ phase: "running", headline: "Working" });
   });
 
   it.each(["completed", "failed"] as const)("removes settled %s work", (status) => {
@@ -198,7 +199,7 @@ describe("projectThreadAwarenessV2", () => {
     };
     expect(projectThreadAwarenessV2(input)).toMatchObject({
       phase: "waiting_for_input",
-      headline: "Waiting for input",
+      headline: "Needs your reply",
     });
   });
 
@@ -215,6 +216,56 @@ describe("projectThreadAwarenessV2", () => {
           },
         }),
       }),
-    ).toMatchObject({ phase: "running", headline: "Agent is working" });
+    ).toMatchObject({ phase: "running", headline: "Working" });
+  });
+
+  it("surfaces a descendant subagent approval on the listed parent", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          pendingBackgroundTasks: [{ taskId: "review", kind: "subagent" }],
+        }),
+        descendantPendingRequest: "approval",
+      }),
+    ).toMatchObject({ phase: "waiting_for_approval", headline: "Needs your reply" });
+  });
+
+  it("rolls nested subagent approvals up to the listed parent", () => {
+    const root = v2Thread({
+      id: "root" as ThreadId,
+      status: "completed",
+      pendingBackgroundTasks: [{ taskId: "review", kind: "subagent" }],
+    });
+    const child = v2Thread({
+      id: "child" as ThreadId,
+      status: "running",
+      activityRunStatus: "running",
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent",
+      },
+    });
+    const grandchild = v2Thread({
+      id: "grandchild" as ThreadId,
+      status: "waiting",
+      activityRunStatus: "waiting",
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: child.id,
+        relationshipToParent: "subagent",
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("approve-rm"),
+        kind: "command",
+        createdAt: updatedAt,
+      },
+    });
+    expect(rollupListedThreadAwarenessPending([root, child, grandchild]).get(root.id)).toBe(
+      "approval",
+    );
   });
 });

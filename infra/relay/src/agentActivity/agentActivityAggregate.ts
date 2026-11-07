@@ -45,13 +45,40 @@ function aggregateRowForState(state: RelayAgentActivityState) {
   };
 }
 
+function inboxSubtitle(input: {
+  readonly activeCount: number;
+  readonly activities: ReadonlyArray<{ readonly phase: RelayAgentActivityState["phase"] }>;
+  readonly terminalOnly: boolean;
+  readonly failed: boolean;
+}): string {
+  const needsAttention = input.activities.filter(
+    (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
+  ).length;
+  if (needsAttention > 0) {
+    return needsAttention === 1 ? "1 needs your reply" : `${needsAttention} need your reply`;
+  }
+  if (input.activeCount > 0) {
+    return input.activeCount === 1 ? "1 working" : `${input.activeCount} working`;
+  }
+  if (input.terminalOnly) {
+    return input.failed ? "Failed" : "All caught up";
+  }
+  return "All caught up";
+}
+
 function terminalAggregateState(state: RelayAgentActivityState): RelayAgentActivityAggregateState {
+  const activities = [aggregateRowForState(state)];
   return sanitizeAgentActivityAggregateState({
     title: "T3 Code",
-    subtitle: state.phase === "failed" ? "Agent work failed" : "Agent work completed",
+    subtitle: inboxSubtitle({
+      activeCount: 0,
+      activities,
+      terminalOnly: true,
+      failed: state.phase === "failed",
+    }),
     activeCount: 0,
     updatedAt: state.updatedAt,
-    activities: [aggregateRowForState(state)],
+    activities,
   });
 }
 
@@ -91,12 +118,18 @@ export function makeAggregateState(input: {
     if (!newest) {
       return null;
     }
+    const activities = recentTerminal.slice(0, MAX_ACTIVITY_ROWS).map(aggregateRowForState);
     return sanitizeAgentActivityAggregateState({
       title: "T3 Code",
-      subtitle: newest.phase === "failed" ? "Agent work failed" : "Agent work completed",
+      subtitle: inboxSubtitle({
+        activeCount: 0,
+        activities,
+        terminalOnly: true,
+        failed: recentTerminal.some((state) => state.phase === "failed"),
+      }),
       activeCount: 0,
       updatedAt: newest.updatedAt,
-      activities: recentTerminal.slice(0, MAX_ACTIVITY_ROWS).map(aggregateRowForState),
+      activities,
     });
   }
   const recentTerminalStates = input.activeStates
@@ -111,12 +144,18 @@ export function makeAggregateState(input: {
   const updatedAt = [...activeStates, ...recentTerminalStates].reduce((latest, state) =>
     state.updatedAt.localeCompare(latest.updatedAt) > 0 ? state : latest,
   ).updatedAt;
+  const activities = displayedStates.map(aggregateRowForState);
   return sanitizeAgentActivityAggregateState({
     title: "T3 Code",
-    subtitle: "Agent work in progress",
+    subtitle: inboxSubtitle({
+      activeCount: activeStates.length,
+      activities,
+      terminalOnly: false,
+      failed: false,
+    }),
     activeCount: activeStates.length,
     updatedAt,
-    activities: displayedStates.map(aggregateRowForState),
+    activities,
   });
 }
 

@@ -53,7 +53,7 @@ describe("ApnsDeliveryQueue", () => {
         token: "push-token",
         notification: {
           title: "Thread",
-          body: "Input: Project",
+          body: "Thread · Project",
           environmentId: "env-1",
           threadId: "thread-1",
           deepLink: "/threads/env-1/thread-1",

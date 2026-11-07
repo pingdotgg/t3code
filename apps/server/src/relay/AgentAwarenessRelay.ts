@@ -40,6 +40,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -52,6 +53,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
+
+const TOMBSTONE_CONFIRM_MS = 1_500;
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -344,6 +347,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     environmentId: input.environmentId,
     project: input.project.value,
     thread: input.thread.value,
+    descendantPendingRequest: input.thread.value.descendantPendingRequest ?? null,
   };
   const state = projectThreadAwarenessV2({
     ...awarenessInput,
@@ -386,6 +390,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
         environmentId: input.environmentId,
         project,
         thread,
+        descendantPendingRequest: thread.descendantPendingRequest ?? null,
       });
       return (
         state !== null &&
@@ -403,12 +408,16 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const random = yield* SecureRandom.SecureRandom;
   const signingKey = yield* EnvironmentSigningKey;
   const scope = yield* Effect.scope;
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  // Unlisted children disappear from awareness snapshots on delete; remember
+  // the listed parent so side-chat/user_input rollups clear with them.
+  const childParentByThreadRef = yield* Ref.make(new Map<ThreadId, ThreadId>());
   // Android keys alerts by phase and time, so a child's unchanged request keeps
   // its first alert time through parent renames, relinks and the parent's own requests.
   const childAlertByThread = new Map<ThreadId, SubagentAlert>();
@@ -452,8 +461,6 @@ export const make = Effect.gen(function* () {
 
   // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
-  // Threads whose confirmation holds a completion, so a thread that settles during the hold still alerts.
-  const heldCompletions = new Set<ThreadId>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const publishRetries = new Map<
     ThreadId,
@@ -473,8 +480,8 @@ export const make = Effect.gen(function* () {
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
-    heldCompletions.clear();
     yield* Ref.set(publishedStateByThreadRef, new Map());
+    yield* Ref.set(childParentByThreadRef, new Map());
   });
 
   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
@@ -532,6 +539,7 @@ export const make = Effect.gen(function* () {
         reason: input.reason,
       });
 
+      const suppressAlerts = yield* backgroundPolicy.shouldSuppressMobileNotificationAlerts;
       const response = yield* relayClient.server
         .publishAgentActivity({
           params: {
@@ -541,6 +549,7 @@ export const make = Effect.gen(function* () {
           payload: {
             state: input.state,
             proof,
+            ...(suppressAlerts ? { suppressAlerts: true } : {}),
           },
         })
         .pipe(Effect.timeout("10 seconds"));
@@ -561,8 +570,27 @@ export const make = Effect.gen(function* () {
       !isListedThreadLineage(threadShell.lineage) &&
       !hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
-      // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
+      // Subagents and side chats have no relay rows; publish toward the listed parent instead.
+      const parentId = threadShell.lineage.parentThreadId;
+      if (parentId !== null && parentId !== threadId) {
+        yield* Ref.update(childParentByThreadRef, (parents) =>
+          new Map(parents).set(threadId, parentId),
+        );
+        yield* enqueueTopLevelPublish(parentId);
+      }
       return;
+    }
+    if (threadShell === null) {
+      const parentId = (yield* Ref.get(childParentByThreadRef)).get(threadId);
+      if (parentId !== undefined && parentId !== threadId) {
+        yield* Ref.update(childParentByThreadRef, (parents) => {
+          const next = new Map(parents);
+          next.delete(threadId);
+          return next;
+        });
+        yield* enqueueTopLevelPublish(parentId);
+        return;
+      }
     }
     const thread =
       threadShell === null || threadShell.archivedAt !== null
@@ -585,14 +613,9 @@ export const make = Effect.gen(function* () {
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
-    if (
-      publishedStateByThread.get(threadId) === publishIdentity &&
-      // A held completion settled after an earlier clear still has to alert.
-      !(snapshot.state === null && heldCompletions.has(threadId))
-    ) {
+    if (publishedStateByThread.get(threadId) === publishIdentity) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
-      heldCompletions.delete(threadId);
       yield* Effect.logDebug("agent activity publish skipped; projected state unchanged", {
         environmentId,
         threadId,
@@ -601,21 +624,18 @@ export const make = Effect.gen(function* () {
       return;
     }
 
-    // Confirm tombstones over live state to avoid removing active cards.
-    // Confirm completion: a run can end moments before its continuation starts, and the relay
-    // alerts on every move into completed.
-    const requiresConfirmation = snapshot.state === null || snapshot.state?.phase === "completed";
-    if (requiresConfirmation) {
-      if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
+    // Confirm tombstones over live state to avoid removing active cards. Completions and
+    // failures publish immediately so mobile banners are not lost to follow-up work.
+    if (snapshot.state === null) {
       const nowMs = (yield* DateTime.now).epochMilliseconds;
       const deadline = publishConfirmDeadlines.get(threadId);
       if (deadline === undefined) {
-        publishConfirmDeadlines.set(threadId, nowMs + 5_000);
+        publishConfirmDeadlines.set(threadId, nowMs + TOMBSTONE_CONFIRM_MS);
         yield* Effect.logInfo("agent activity publish deferred pending confirmation", {
           environmentId,
           threadId,
           reason: snapshot.reason,
-          statePhase: snapshot.state?.phase ?? null,
+          statePhase: null,
           shell: describeThreadShellForAwareness(thread),
         });
         yield* schedulePublishConfirm(threadId);
@@ -628,41 +648,11 @@ export const make = Effect.gen(function* () {
         environmentId,
         threadId,
         reason: snapshot.reason,
-        statePhase: snapshot.state?.phase ?? null,
+        statePhase: null,
         shell: describeThreadShellForAwareness(thread),
       });
-      // Settled during the hold, not resumed: alert the current completion, then clear the card
-      // on a new window. Only settlement may hide it; queued or silent runs also project to null.
-      const unsettled =
-        snapshot.state === null &&
-        heldCompletions.has(threadId) &&
-        Option.isSome(thread) &&
-        thread.value.settledOverride === "settled"
-          ? resolveAgentAwarenessRelayPublishSnapshot({
-              environmentId,
-              thread: Option.some({ ...thread.value, settledOverride: null }),
-              project,
-              pendingSubagentRequest: null,
-            })
-          : null;
-      if (unsettled?.state?.phase === "completed") {
-        const completion = unsettled.state;
-        yield* publishState({
-          projectId: unsettled.projectId,
-          state: completion,
-          reason: unsettled.reason,
-        }).pipe(withRelayClientTracing);
-        heldCompletions.delete(threadId);
-        publishConfirmDeadlines.set(threadId, nowMs + 5_000);
-        yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
-        );
-        yield* schedulePublishConfirm(threadId);
-        return;
-      }
     } else {
       publishConfirmDeadlines.delete(threadId);
-      heldCompletions.delete(threadId);
     }
 
     if (snapshot.reason === "thread-not-found") {
@@ -695,7 +685,6 @@ export const make = Effect.gen(function* () {
       childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });
     }
     publishConfirmDeadlines.delete(threadId);
-    heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
       new Map(publishedStates).set(threadId, publishIdentity),
     );
@@ -903,7 +892,7 @@ export const make = Effect.gen(function* () {
 
   schedulePublishConfirm = (threadId) =>
     Effect.forkIn(
-      Effect.sleep("5 seconds").pipe(
+      Effect.sleep(`${TOMBSTONE_CONFIRM_MS} millis`).pipe(
         Effect.andThen(worker.enqueue(threadId)),
         Effect.catchCause((cause) =>
           Effect.logWarning("deferred agent activity confirmation failed", {

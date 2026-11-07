@@ -46,10 +46,13 @@ import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
+  repairAwarenessPreferences,
   rowPhasesChanged,
+  rowStatusesChanged,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
-const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
+// Mid-run status labels coalesce on the host (~3s); keep the relay floor aligned.
+const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 3_000;
 const FRESHLY_ARMED_GRACE_MS = 2 * 60 * 1_000;
 const PERMANENT_APNS_TOKEN_REASONS = new Set([
   "BadDeviceToken",
@@ -139,7 +142,8 @@ function parseAggregate(value: string | null): RelayAgentActivityAggregateState 
 }
 
 function parsePreferences(value: string): RelayAgentAwarenessPreferences | null {
-  return Option.getOrNull(decodeRelayAgentAwarenessPreferencesJson(value));
+  const preferences = Option.getOrNull(decodeRelayAgentAwarenessPreferencesJson(value));
+  return preferences === null ? null : repairAwarenessPreferences(preferences);
 }
 
 function aggregateNeedsAttention(aggregate: RelayAgentActivityAggregateState): boolean {
@@ -166,9 +170,12 @@ function shouldUpdateLiveActivity(input: {
   if (aggregateNeedsAttention(input.nextAggregate)) {
     return true;
   }
-  // Phase and row changes may be the last update until the next transition.
+  // Phase and status changes may be the last update until the next transition.
   // Throttling them would leave the card showing a stale state indefinitely.
-  if (rowPhasesChanged(input.previousAggregate, input.nextAggregate)) {
+  if (
+    rowPhasesChanged(input.previousAggregate, input.nextAggregate) ||
+    rowStatusesChanged(input.previousAggregate, input.nextAggregate)
+  ) {
     return true;
   }
   const lastDeliveryAtMs =
@@ -205,6 +212,32 @@ function notificationForAggregate(input: {
   }
   if (!shouldAlertForActivity({ ...activity, preferences, nowMs: input.nowMs })) return null;
   return notificationForActivity(activity);
+}
+
+function companionNotificationForAlert(input: {
+  readonly alert: ApnsLiveActivityAlert;
+  readonly aggregate: RelayAgentActivityAggregateState;
+}): ApnsNotificationPayload | null {
+  const alertRow =
+    input.aggregate.activities.find(
+      (row) =>
+        row.phase === "completed" ||
+        row.phase === "failed" ||
+        row.phase === "waiting_for_approval" ||
+        row.phase === "waiting_for_input",
+    ) ?? input.aggregate.activities[0];
+  if (!alertRow) {
+    return null;
+  }
+  return sanitizeApnsNotificationPayload({
+    title: input.alert.title,
+    body: input.alert.body,
+    environmentId: alertRow.environmentId,
+    threadId: alertRow.threadId,
+    deepLink: alertRow.deepLink,
+    phase: alertRow.phase,
+    updatedAt: alertRow.updatedAt,
+  });
 }
 
 // Suppressed Live Activity updates must not fall back to alert pushes or unchanged replays would ring.
@@ -486,6 +519,8 @@ export class ApnsDeliveries extends Context.Service<
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly nowMs: number;
       readonly replay?: boolean;
+      /** Keep Live Activity content updates; skip audible banners / companion pushes. */
+      readonly suppressAlerts?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendPushNotificationForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
@@ -690,21 +725,23 @@ const make = Effect.gen(function* () {
     if (alert) {
       const preferences = parsePreferences(currentTarget.preferences_json);
       const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
-      alert =
-        !preferences?.notificationsEnabled || !aggregate
-          ? null
-          : (alertForAttentionTransition({
-              previousAggregate,
-              nextAggregate: aggregate,
-              preferences,
-            }) ??
-            alertForNewlyTerminal({
-              previousAggregate,
-              nextAggregate: aggregate,
-              preferences,
-              nowMs: now.epochMilliseconds,
-              includeUnobserved: true,
-            }));
+      // Gate on notifyOn* flags only. notificationsEnabled was historically set from
+      // push-token presence, so a granted OS permission with a late token left it
+      // false and silently stripped every Live Activity banner.
+      alert = !aggregate
+        ? null
+        : (alertForAttentionTransition({
+            previousAggregate,
+            nextAggregate: aggregate,
+            preferences,
+          }) ??
+          alertForNewlyTerminal({
+            previousAggregate,
+            nextAggregate: aggregate,
+            preferences,
+            nowMs: now.epochMilliseconds,
+            includeUnobserved: true,
+          }));
     }
     if (
       aggregate !== null &&
@@ -713,6 +750,35 @@ const make = Effect.gen(function* () {
         aggregate,
       }))
     ) {
+      // A completion/attention alert on a superseded Live Activity update still needs to ring.
+      if (alert && currentTarget.push_token) {
+        const alertRow =
+          aggregate.activities.find(
+            (row) =>
+              row.phase === "completed" ||
+              row.phase === "failed" ||
+              row.phase === "waiting_for_approval" ||
+              row.phase === "waiting_for_input",
+          ) ?? aggregate.activities[0];
+        if (alertRow) {
+          yield* deliveryQueue.enqueuePushNotification({
+            userId: currentTarget.user_id,
+            deviceId: currentTarget.device_id,
+            token: currentTarget.push_token,
+            bundleId: currentTarget.bundle_id,
+            apsEnvironment: currentTarget.aps_environment,
+            notification: sanitizeApnsNotificationPayload({
+              title: alert.title,
+              body: alert.body,
+              environmentId: alertRow.environmentId,
+              threadId: alertRow.threadId,
+              deepLink: alertRow.deepLink,
+              phase: alertRow.phase,
+              updatedAt: alertRow.updatedAt,
+            }),
+          });
+        }
+      }
       yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,
         apnsReason: "Stale agent activity state skipped.",
@@ -1036,6 +1102,7 @@ const make = Effect.gen(function* () {
     }),
     sendForTarget: Effect.fnUntraced(function* (input) {
       if (!config.apns) return null;
+      const suppressAlerts = input.suppressAlerts === true;
       const delivery = chooseDelivery({
         target: input.target,
         aggregate: input.aggregate,
@@ -1046,6 +1113,9 @@ const make = Effect.gen(function* () {
         return null;
       }
       if (delivery.kind === "push_notification") {
+        if (suppressAlerts) {
+          return null;
+        }
         const result = yield* deliveryQueue.enqueuePushNotification({
           userId: input.target.user_id,
           deviceId: input.target.device_id,
@@ -1056,24 +1126,38 @@ const make = Effect.gen(function* () {
         });
         return result;
       }
-      const notification = input.replay
-        ? null
-        : notificationForAggregate({
-            target: input.target,
-            aggregate: input.aggregate,
-            nowMs: input.nowMs,
-          });
-      // Use the end alert only when no companion notification will ring, preserving feedback for Live-Activity-only users.
-      const alert = input.replay
-        ? null
-        : delivery.kind === "live_activity_end"
-          ? notification && input.target.push_token
-            ? null
-            : alertForTerminalAggregate({
+      const preferences = parsePreferences(input.target.preferences_json);
+      const notification =
+        input.replay || suppressAlerts
+          ? null
+          : notificationForAggregate({
+              target: input.target,
+              aggregate: input.aggregate,
+              nowMs: input.nowMs,
+            });
+      const liveActivityAlert =
+        input.replay || suppressAlerts
+          ? null
+          : delivery.kind === "live_activity_end"
+            ? alertForTerminalAggregate({
                 aggregate: delivery.aggregate,
-                preferences: parsePreferences(input.target.preferences_json),
+                preferences,
               })
-          : delivery.alert;
+            : delivery.alert;
+      // Prefer a regular push whenever we have a device token. Live Activity alert
+      // payloads alone stay silent if the activity token is stale or the card was
+      // dismissed — the failure mode behind "notifications on, still nothing".
+      const companionNotification =
+        input.target.push_token === null || input.replay || suppressAlerts
+          ? null
+          : (notification ??
+            (liveActivityAlert && input.aggregate
+              ? companionNotificationForAlert({
+                  alert: liveActivityAlert,
+                  aggregate: input.aggregate,
+                })
+              : null));
+      const alert = companionNotification ? null : liveActivityAlert;
       const result = yield* deliveryQueue.enqueueLiveActivity({
         userId: input.target.user_id,
         deviceId: input.target.device_id,
@@ -1084,14 +1168,14 @@ const make = Effect.gen(function* () {
         aggregate: delivery.aggregate,
         alert,
       });
-      if (delivery.kind === "live_activity_end" && notification && input.target.push_token) {
+      if (companionNotification && input.target.push_token) {
         yield* deliveryQueue.enqueuePushNotification({
           userId: input.target.user_id,
           deviceId: input.target.device_id,
           token: input.target.push_token,
           bundleId: input.target.bundle_id,
           apsEnvironment: input.target.aps_environment,
-          notification,
+          notification: companionNotification,
         });
       }
       return result;

@@ -6,6 +6,8 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
+import { agentActivityNotificationCopy } from "./agentActivityPayloads.ts";
+
 export interface AgentActivityAlert {
   readonly title: string;
   readonly body: string;
@@ -15,9 +17,27 @@ const TERMINAL_NOTIFICATION_FRESHNESS_MS = 2 * 60 * 1_000;
 
 function isFreshTerminalNotification(updatedAt: string, nowMs: number): boolean {
   const timestamp = Option.getOrNull(DateTime.make(updatedAt));
-  return (
-    timestamp !== null && nowMs - timestamp.epochMilliseconds <= TERMINAL_NOTIFICATION_FRESHNESS_MS
-  );
+  const epochMs = timestamp?.epochMilliseconds ?? Date.parse(updatedAt);
+  return Number.isFinite(epochMs) && nowMs - epochMs <= TERMINAL_NOTIFICATION_FRESHNESS_MS;
+}
+
+/** Registration always enables every notifyOn* flag; repair rows that only ring for attention. */
+export function repairAwarenessPreferences(
+  preferences: RelayAgentAwarenessPreferences,
+): RelayAgentAwarenessPreferences {
+  if (
+    !preferences.notificationsEnabled ||
+    !preferences.notifyOnApproval ||
+    !preferences.notifyOnInput ||
+    (preferences.notifyOnCompletion && preferences.notifyOnFailure)
+  ) {
+    return preferences;
+  }
+  return {
+    ...preferences,
+    notifyOnCompletion: true,
+    notifyOnFailure: true,
+  };
 }
 
 type TransitionInput = {
@@ -39,6 +59,17 @@ export function rowPhasesChanged(
     previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
   );
   return nextAggregate.activities.some((row) => previousPhases.get(rowKey(row)) !== row.phase);
+}
+
+export function rowStatusesChanged(
+  previousAggregate: RelayAgentActivityAggregateState,
+  nextAggregate: RelayAgentActivityAggregateState,
+): boolean {
+  if (previousAggregate.activities.length !== nextAggregate.activities.length) return true;
+  const previousStatuses = new Map(
+    previousAggregate.activities.map((row) => [rowKey(row), row.status]),
+  );
+  return nextAggregate.activities.some((row) => previousStatuses.get(rowKey(row)) !== row.status);
 }
 
 function isAttentionPhase(phase: string): boolean {
@@ -119,10 +150,12 @@ export function alertForActivityRows(
   const first = rows[0];
   if (!first) return null;
   if (rows.length === 1) {
-    return { title: first.threadTitle, body: `${first.status}: ${first.projectTitle}` };
+    return agentActivityNotificationCopy(first);
   }
   return {
-    title: `${rows.length} agents ${isAttentionPhase(first.phase) ? "need attention" : "finished"}`,
+    title: isAttentionPhase(first.phase)
+      ? `${rows.length} need your reply`
+      : `${rows.length} ready to review`,
     body: rows.map((row) => row.threadTitle).join(", "),
   };
 }

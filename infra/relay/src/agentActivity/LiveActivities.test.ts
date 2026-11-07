@@ -12,7 +12,7 @@ import * as LiveActivities from "./LiveActivities.ts";
 
 const aggregate: RelayAgentActivityAggregateState = {
   title: "T3 Code",
-  subtitle: "Agent work in progress",
+  subtitle: "1 working",
   activeCount: 1,
   updatedAt: "2026-05-25T00:00:00.000Z",
   activities: [

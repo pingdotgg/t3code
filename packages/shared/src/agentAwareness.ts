@@ -20,6 +20,8 @@ export type AgentAwarenessPhase =
   | "failed"
   | "stale";
 
+export type AgentAwarenessDescendantPendingRequest = "approval" | "user_input";
+
 export interface SubagentRequestAwareness {
   readonly requestId: RuntimeRequestId;
   /** The child's own update time, which moves whenever its request changes. */
@@ -84,6 +86,8 @@ export interface ProjectThreadAwarenessV2Input {
   >;
   /** The approval a live subagent below this thread is waiting on. */
   readonly pendingSubagentRequest?: SubagentRequestAwareness | null;
+  /** Approvals/input rolled up from unlisted subagents or side chats under this listed thread. */
+  readonly descendantPendingRequest?: AgentAwarenessDescendantPendingRequest | null;
 }
 
 export function projectThreadAwarenessV2(
@@ -92,7 +96,11 @@ export function projectThreadAwarenessV2(
   const { environmentId, project, thread } = input;
   if (!isListedThreadLineage(thread.lineage)) return null;
   const subagentRequest = input.pendingSubagentRequest ?? null;
-  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest !== null);
+  const phase = resolveThreadAwarenessPhaseV2(
+    thread,
+    input.descendantPendingRequest ?? null,
+    subagentRequest !== null,
+  );
   if (phase === null) {
     return null;
   }
@@ -131,8 +139,84 @@ export function projectThreadAwarenessV2(
   };
 }
 
+const isChildRunLive = (
+  thread: Pick<ProjectThreadAwarenessV2Input["thread"], "activityRunStatus" | "status">,
+) =>
+  thread.activityRunStatus !== undefined
+    ? thread.activityRunStatus !== null
+    : thread.status === "preparing" ||
+      thread.status === "starting" ||
+      thread.status === "running" ||
+      thread.status === "waiting";
+
+function descendantRequestKind(
+  thread: Pick<
+    ProjectThreadAwarenessV2Input["thread"],
+    "pendingRuntimeRequest" | "lineage" | "activityRunStatus" | "status"
+  >,
+): AgentAwarenessDescendantPendingRequest | null {
+  const kind = thread.pendingRuntimeRequest?.kind;
+  if (kind === undefined || kind === "auth_refresh") return null;
+  if (thread.lineage.sideChat === true) {
+    return kind === "user_input" ? "user_input" : "approval";
+  }
+  if (thread.lineage.relationshipToParent !== "subagent" || !isChildRunLive(thread)) {
+    return null;
+  }
+  // The parent agent answers subagent questions; only approvals need a phone alert.
+  return kind === "user_input" ? null : "approval";
+}
+
+/**
+ * Maps listed parents to the strongest pending request among their unlisted
+ * subagent/side-chat descendants. Mirrors client-runtime rollup for mobile push.
+ */
+export function rollupListedThreadAwarenessPending(
+  threads: ReadonlyArray<
+    Pick<
+      ProjectThreadAwarenessV2Input["thread"],
+      "id" | "lineage" | "pendingRuntimeRequest" | "activityRunStatus" | "status"
+    >
+  >,
+): ReadonlyMap<ThreadId, AgentAwarenessDescendantPendingRequest> {
+  const requests = new Map<ThreadId, AgentAwarenessDescendantPendingRequest>();
+  let byId: ReadonlyMap<ThreadId, (typeof threads)[number]> | undefined;
+  const flag = (
+    firstParentId: ThreadId | null,
+    request: AgentAwarenessDescendantPendingRequest,
+    seen: Set<ThreadId>,
+  ) => {
+    byId ??= new Map(threads.map((thread) => [thread.id, thread] as const));
+    let parentId = firstParentId;
+    while (parentId !== null && !seen.has(parentId)) {
+      seen.add(parentId);
+      if (requests.get(parentId) !== "approval") requests.set(parentId, request);
+      const parent = byId.get(parentId);
+      parentId =
+        parent?.lineage.relationshipToParent === "subagent" || parent?.lineage.sideChat === true
+          ? parent.lineage.parentThreadId
+          : null;
+    }
+  };
+  for (const child of threads) {
+    const request = descendantRequestKind(child);
+    if (request === null) continue;
+    if (child.lineage.sideChat === true) {
+      const parentId = child.lineage.parentThreadId;
+      if (parentId !== null && requests.get(parentId) !== "approval") {
+        requests.set(parentId, request);
+      }
+      continue;
+    }
+    if (child.lineage.relationshipToParent !== "subagent") continue;
+    flag(child.lineage.parentThreadId, request, new Set([child.id]));
+  }
+  return requests;
+}
+
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
+  descendantPendingRequest: AgentAwarenessDescendantPendingRequest | null,
   childAwaitsApproval: boolean,
 ): AgentAwarenessPhase | null {
   if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
@@ -142,9 +226,10 @@ function resolveThreadAwarenessPhaseV2(
   ) {
     return "waiting_for_approval";
   }
-  // The parent can finish its own turn while a delegated child keeps working,
-  // so a child's request outranks the parent's run status.
-  if (childAwaitsApproval) return "waiting_for_approval";
+  if (descendantPendingRequest === "user_input") return "waiting_for_input";
+  if (descendantPendingRequest === "approval" || childAwaitsApproval) {
+    return "waiting_for_approval";
+  }
   switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":
     case "starting":
@@ -170,18 +255,17 @@ function resolveThreadAwarenessPhaseV2(
 function headlineForPhase(phase: AgentAwarenessPhase): string {
   switch (phase) {
     case "starting":
-      return "Starting agent";
+      return "Starting";
     case "running":
-      return "Agent is working";
+      return "Working";
     case "waiting_for_approval":
-      return "Approval needed";
     case "waiting_for_input":
-      return "Waiting for input";
+      return "Needs your reply";
     case "completed":
-      return "Agent finished";
+      return "Ready to review";
     case "failed":
-      return "Agent failed";
+      return "Failed";
     case "stale":
-      return "Update delayed";
+      return "Out of date";
   }
 }

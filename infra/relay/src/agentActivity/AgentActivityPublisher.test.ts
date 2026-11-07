@@ -453,7 +453,7 @@ describe("makeAggregateState", () => {
     });
 
     expect(aggregate?.activeCount).toBe(1);
-    expect(aggregate?.subtitle).toBe("Agent work in progress");
+    expect(aggregate?.subtitle).toBe("1 working");
     expect(aggregate?.activities).toMatchObject([
       { threadId: "thread-active", phase: "running" },
       { threadId: "thread-done", phase: "completed", status: "Done" },
@@ -475,7 +475,7 @@ describe("makeAggregateState", () => {
 
     expect(aggregate).toMatchObject({
       activeCount: 0,
-      subtitle: "Agent work completed",
+      subtitle: "All caught up",
       activities: [{ phase: "completed", status: "Done" }],
     });
     expect(

@@ -19,10 +19,16 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
   const hero = rows[0];
   const title =
     activeCount > 0
-      ? `${activeCount} active agent${activeCount === 1 ? "" : "s"}${attentionCount ? ` · ${attentionCount} need${attentionCount === 1 ? "s" : ""} attention` : ""}`
+      ? attentionCount > 0
+        ? attentionCount === 1
+          ? "1 needs your reply"
+          : `${attentionCount} need your reply`
+        : activeCount === 1
+          ? "1 working"
+          : `${activeCount} working`
       : failed
-        ? "Agent work failed"
-        : "Agent work completed";
+        ? "Failed"
+        : "All caught up";
   const expiresAt = Math.max(
     0,
     ...rows.map((row) =>
