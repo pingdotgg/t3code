@@ -135,12 +135,22 @@ function FlameChartPanel({
     startMs: 0,
     durationMs: Math.max(MIN_VIEW_MS, axis.displayTotalMs),
   };
-  const traceKey = `${trace.originMs}:${trace.totalMs}:${trace.turns.length}:${axis.displayTotalMs}`;
+  // Keep zoom/pan across live totalMs updates; only reset when the turn set changes.
+  const traceKey = `${trace.originMs}:${trace.turns.map((turn) => turn.runId).join("\0")}`;
   const [viewByKey, setViewByKey] = useState<{ key: string; view: ViewWindow }>(() => ({
     key: traceKey,
     view: fitView,
   }));
-  const view = viewByKey.key === traceKey ? viewByKey.view : fitView;
+  const view =
+    viewByKey.key === traceKey
+      ? clampTimingViewWindow(
+          viewByKey.view.startMs,
+          viewByKey.view.durationMs,
+          0,
+          Math.max(1, axis.displayTotalMs),
+          MIN_VIEW_MS,
+        )
+      : fitView;
 
   const [selection, setSelection] = useState<Selection | null>(null);
   const selectedTurn =
@@ -538,6 +548,7 @@ function FlameViewport({
                 zIndex: selected ? 30 : 10 + node.depth,
               }}
               onPointerDown={(event) => {
+                suppressClickRef.current = false;
                 event.stopPropagation();
               }}
               onClick={(event) => {

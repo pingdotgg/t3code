@@ -43,7 +43,10 @@ export type ThreadTimingTurn = {
 export type ThreadTimingTrace = {
   readonly originMs: number;
   readonly endMs: number;
+  /** Wall-clock span from first request to last turn end (includes idle between turns). */
   readonly totalMs: number;
+  /** Union of turn intervals; excludes idle gaps and counts overlaps once. */
+  readonly activeMs: number;
   readonly queueWaitMs: number;
   readonly waitMs: number;
   readonly workMs: number;
@@ -293,11 +296,10 @@ export function layoutThreadFlameChart(trace: ThreadTimingTrace): FlameChartLayo
         if (candidate.id === span.id) continue;
         const candidateDepth = depthById.get(candidate.id);
         if (candidateDepth === undefined) continue;
-        const contains =
-          candidate.startMs <= span.startMs &&
-          candidate.endMs >= span.endMs &&
-          candidate.durationMs > span.durationMs;
-        if (contains) parentDepth = Math.max(parentDepth, candidateDepth);
+        // Any overlap (not only full containment) needs a deeper row so bars
+        // and click targets do not stack on the same depth.
+        const overlaps = candidate.startMs < span.endMs && span.startMs < candidate.endMs;
+        if (overlaps) parentDepth = Math.max(parentDepth, candidateDepth);
       }
       const depth = parentDepth + 1;
       depthById.set(span.id, depth);
@@ -415,14 +417,17 @@ export function buildCompressedTimingAxis(
     .sort(
       (left, right) => left.requestedAtMs - right.requestedAtMs || left.ordinal - right.ordinal,
     );
-  const activeMs = ordered.reduce(
-    (sum, turn) => sum + Math.max(0, turn.endMs - turn.requestedAtMs),
-    0,
+  // Covered wall time only — overlapping turns must not inflate the axis.
+  const coverageActiveMs = unionIntervalMs(
+    ordered.map((turn) => ({
+      startMs: turn.requestedAtMs,
+      endMs: Math.max(turn.endMs, turn.requestedAtMs),
+    })),
   );
-  const collapseAboveMs = options?.collapseAboveMs ?? Math.max(3_000, activeMs * 0.15);
+  const collapseAboveMs = options?.collapseAboveMs ?? Math.max(3_000, coverageActiveMs * 0.15);
   // Wide enough at fit-zoom for a readable torn-paper void between turns.
   const breakDisplayMs =
-    options?.breakDisplayMs ?? Math.min(10_000, Math.max(3_500, activeMs * 0.1));
+    options?.breakDisplayMs ?? Math.min(10_000, Math.max(3_500, coverageActiveMs * 0.1));
 
   const segments: TimingAxisSegment[] = [];
   const breaks: TimingIdleBreak[] = [];
@@ -469,18 +474,21 @@ export function buildCompressedTimingAxis(
       displayCursor += gapMs;
     }
 
-    const turnStart = turn.requestedAtMs;
+    // Clip to uncovered real time so overlaps are not mapped twice.
+    const turnStart = Math.max(turn.requestedAtMs, prevEndMs);
     const turnEnd = Math.max(turn.endMs, turnStart);
     const turnDuration = turnEnd - turnStart;
-    segments.push({
-      kind: "active",
-      realStartMs: turnStart,
-      realEndMs: turnEnd,
-      displayStartMs: displayCursor,
-      displayEndMs: displayCursor + turnDuration,
-    });
-    displayCursor += turnDuration;
-    prevEndMs = turnEnd;
+    if (turnDuration > 0) {
+      segments.push({
+        kind: "active",
+        realStartMs: turnStart,
+        realEndMs: turnEnd,
+        displayStartMs: displayCursor,
+        displayEndMs: displayCursor + turnDuration,
+      });
+      displayCursor += turnDuration;
+    }
+    prevEndMs = Math.max(prevEndMs, turnEnd);
   }
 
   const displayTotalMs = Math.max(1, displayCursor);
@@ -573,8 +581,9 @@ export function deriveThreadTimingTrace(input: {
       toEpochMs(run.workStartedAt) ?? toEpochMs(run.startedAt) ?? requestedAtMs;
     const startedAtMs = toEpochMs(run.startedAt);
     const endMs = runEndMs(run, runItems, input.nowMs);
-    const queueWaitMs =
-      startedAtMs !== null && startedAtMs > requestedAtMs ? startedAtMs - requestedAtMs : 0;
+    // No startedAt (still queued / canceled before start): queue through endMs.
+    const queueEndMs = startedAtMs ?? endMs;
+    const queueWaitMs = queueEndMs > requestedAtMs ? queueEndMs - requestedAtMs : 0;
 
     const spans: ThreadTimingSpan[] = [];
     if (queueWaitMs > 0) {
@@ -583,7 +592,7 @@ export function deriveThreadTimingTrace(input: {
         kind: "queue",
         label: "Queued",
         startMs: requestedAtMs,
-        endMs: startedAtMs ?? requestedAtMs,
+        endMs: queueEndMs,
         durationMs: queueWaitMs,
         status: "queued",
       });
@@ -640,14 +649,46 @@ export function deriveThreadTimingTrace(input: {
   const queueWaitMs = turns.reduce((sum, turn) => sum + turn.queueWaitMs, 0);
   const waitMs = turns.reduce((sum, turn) => sum + turn.waitMs, 0);
   const workMs = turns.reduce((sum, turn) => sum + turn.workMs, 0);
+  // Wall-clock busy time: overlapping parallel turns count once.
+  const activeMs = unionIntervalMs(
+    turns.map((turn) => ({ startMs: turn.requestedAtMs, endMs: turn.endMs })),
+  );
 
   return {
     originMs,
     endMs,
     totalMs,
+    activeMs,
     queueWaitMs,
     waitMs,
     workMs,
     turns,
   };
+}
+
+function unionIntervalMs(
+  intervals: ReadonlyArray<{ readonly startMs: number; readonly endMs: number }>,
+): number {
+  const ordered = intervals
+    .map((interval) => ({
+      startMs: interval.startMs,
+      endMs: Math.max(interval.endMs, interval.startMs),
+    }))
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  if (ordered.length === 0) return 0;
+
+  let total = 0;
+  let coverStart = ordered[0]!.startMs;
+  let coverEnd = ordered[0]!.endMs;
+  for (let index = 1; index < ordered.length; index++) {
+    const next = ordered[index]!;
+    if (next.startMs > coverEnd) {
+      total += coverEnd - coverStart;
+      coverStart = next.startMs;
+      coverEnd = next.endMs;
+    } else {
+      coverEnd = Math.max(coverEnd, next.endMs);
+    }
+  }
+  return total + (coverEnd - coverStart);
 }
