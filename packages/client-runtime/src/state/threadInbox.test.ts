@@ -293,14 +293,14 @@ describe("sortWorkingThreadsByEnter", () => {
     tracker.observe([woken, enteredLast]);
     expect(
       sortWorkingThreadsByEnter([woken, enteredLast], tracker.enteredAt).map((entry) => entry.id),
-    ).toEqual(["entered-last", "entered-first"]);
+    ).toEqual(["entered-first", "entered-last"]);
     expect(sortWorkingThreadsByEnter([woken, enteredLast]).map((entry) => entry.id)).toEqual([
-      "entered-first",
       "entered-last",
+      "entered-first",
     ]);
   });
 
-  it("puts a live re-enter above an older working thread", () => {
+  it("appends a live re-enter after older working threads", () => {
     vi.setSystemTime(Date.parse("2026-06-01T01:00:00.000Z"));
     const tracker = createInboxReturnTracker();
     const older = {
@@ -319,7 +319,7 @@ describe("sortWorkingThreadsByEnter", () => {
     tracker.observe([older, workingNewer]);
     expect(
       sortWorkingThreadsByEnter([older, workingNewer], tracker.enteredAt).map((entry) => entry.id),
-    ).toEqual(["newer", "older"]);
+    ).toEqual(["older", "newer"]);
   });
 });
 

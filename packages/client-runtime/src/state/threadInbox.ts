@@ -88,7 +88,7 @@ export function sortWorkingThreadsBySend<T extends WorkingSortInput>(threads: re
   return sortNewestFirst(threads, timestamps);
 }
 
-/** Newest entry into Working first. Prefer a live enter stamp so wakes do not reshuffle. */
+/** Oldest entry into Working first, so the shelf is a backlog. Prefer a live enter stamp so wakes do not reshuffle. */
 export function sortWorkingThreadsByEnter<T extends WorkingSortInput>(
   threads: readonly T[],
   observedEnterAt?: (thread: T) => number | undefined,
@@ -99,7 +99,7 @@ export function sortWorkingThreadsByEnter<T extends WorkingSortInput>(
       observedEnterAt?.(thread) ?? deriveWorkingEnterTimestamp(thread),
     ]),
   );
-  return sortNewestFirst(threads, timestamps);
+  return sortOldestFirst(threads, timestamps);
 }
 
 /** Soonest unsnooze first. */
