@@ -1,4 +1,4 @@
-import { ComposerSelectControl } from "./chat/ComposerControl";
+import { composerContextPillClassName, ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
@@ -7,6 +7,8 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { PlusIcon, ScaleIcon } from "lucide-react";
 import { memo } from "react";
+
+import { cn } from "~/lib/utils";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -68,7 +70,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
     const lockedRow = (
       <span
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
+        className={cn(
+          "inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-(--control-radius) border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs",
+          composerContextPillClassName,
+        )}
         data-composer-context-control
       >
         <EnvironmentMachineIcon

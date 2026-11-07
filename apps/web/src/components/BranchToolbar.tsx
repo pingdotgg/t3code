@@ -46,7 +46,7 @@ import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
 } from "./chat/threadDetailsPanelStyles";
-import { ComposerControl } from "./chat/ComposerControl";
+import { ComposerControl, composerContextPillClassName } from "./chat/ComposerControl";
 import {
   Menu,
   MenuGroup,
@@ -263,7 +263,8 @@ const RunContextSelector = memo(function RunContextSelector({
     return (
       <span
         className={cn(
-          "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-foreground/70 text-sm sm:h-6 sm:text-xs dark:text-muted-foreground",
+          "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-(--control-radius) border border-transparent px-1.75 font-normal text-foreground/70 text-sm sm:h-6 sm:text-xs dark:text-muted-foreground",
+          composerContextPillClassName,
           isPanel && "max-w-full",
           isPanel && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
         )}
