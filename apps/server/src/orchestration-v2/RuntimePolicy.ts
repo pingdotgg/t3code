@@ -92,11 +92,21 @@ function providerRuntimeMode(
   runtimeMode: RuntimeMode,
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
 ): RuntimeMode {
-  return supportedRuntimeModes === undefined ||
+  if (
+    supportedRuntimeModes === undefined ||
     supportedRuntimeModes.length === 0 ||
     supportedRuntimeModes.includes(runtimeMode)
-    ? runtimeMode
-    : "approval-required";
+  ) {
+    return runtimeMode;
+  }
+  if (supportedRuntimeModes.includes("approval-required")) return "approval-required";
+  // Codex's managed requirements can forbid the read-only sandbox Supervised needs, so step down
+  // to the broadest mode it still allows rather than one it will refuse to start.
+  return (
+    RuntimeMode.literals.findLast(
+      (mode) => supportedRuntimeModes.includes(mode) && !isRuntimeModeAbove(mode, runtimeMode),
+    ) ?? runtimeMode
+  );
 }
 
 const refuseAboveCeiling = (

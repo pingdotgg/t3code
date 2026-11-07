@@ -65,9 +65,11 @@ function makeThread(input: {
 
 const grokInstanceId = ProviderInstanceId.make("grok");
 const antigravityInstanceId = ProviderInstanceId.make("antigravity");
+const managedCodexInstanceId = ProviderInstanceId.make("codex-managed");
 const supportedRuntimeModesByInstance = new Map<ProviderInstanceId, ReadonlyArray<RuntimeMode>>([
   [grokInstanceId, ["approval-required", "auto", "full-access"]],
   [antigravityInstanceId, ["approval-required", "auto-accept-edits", "full-access"]],
+  [managedCodexInstanceId, ["auto-accept-edits", "auto"]],
 ]);
 const providerInstanceFor = (instanceId: ProviderInstanceId) =>
   ({
@@ -154,6 +156,24 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
       assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
+    }),
+  );
+
+  it.effect("steps down to the broadest mode Codex allows when it forbids Supervised", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const modeFor = (runtimeMode: RuntimeMode) =>
+        policy
+          .resolve({
+            thread: makeThread({ now, worktreePath: null, runtimeMode }),
+            modelSelection: { instanceId: managedCodexInstanceId, model: "gpt-5.5" },
+          })
+          .pipe(Effect.map((resolved) => resolved.runtimeMode));
+
+      assert.equal(yield* modeFor("full-access"), "auto");
+      assert.equal(yield* modeFor("auto-accept-edits"), "auto-accept-edits");
+      assert.equal(yield* modeFor("approval-required"), "approval-required");
     }),
   );
 });
