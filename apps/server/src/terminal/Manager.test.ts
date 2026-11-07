@@ -1576,6 +1576,32 @@ it.layer(
     }),
   );
 
+  it.effect("starts a $SHELL whose path contains a space", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { SHELL: "/Users/Jane Doe/.local/bin/fish" },
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "/Users/Jane Doe/.local/bin/fish",
+      ]);
+    }),
+  );
+
+  it.effect("starts a quoted $SHELL whose path contains a space and a dash", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { SHELL: '"/opt/my -shell/fish" -l' },
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["/opt/my -shell/fish"]);
+    }),
+  );
+
   it.effect(
     "writes completion syntax for the fallback shell instead of the configured fish shell",
     () =>
