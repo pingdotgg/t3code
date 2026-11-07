@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
@@ -89,8 +90,9 @@ const readChildren = (olderRun: string) =>
 it.layer(
   Layer.mergeAll(
     NodeServices.layer,
+    NodeCrypto.layer,
     ServerConfig.layerTest(process.cwd(), { prefix: "native-child-work-" }).pipe(
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   ),
 )("NativeChildWorkQuery", (it) => {
