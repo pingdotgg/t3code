@@ -2,7 +2,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { ThreadRouteView } from "../components/ThreadRouteView";
+import { ChatPanes } from "../components/ChatPanes";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
 import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../threadRoutes";
@@ -34,7 +34,7 @@ function ChatRouteLayout() {
         <ThreadLinkPrompt threadRef={shownTarget.threadRef} />
       ) : null}
       {shownTarget ? (
-        <ThreadRouteView target={shownTarget} background={modalOpen} />
+        <ChatPanes routeTarget={shownTarget} background={modalOpen} />
       ) : modalOpen ? (
         <SidebarInset className="h-dvh" />
       ) : (
@@ -45,15 +45,20 @@ function ChatRouteLayout() {
   );
 }
 
+// Startup opens the app on "/", which only then resumes a split's focused thread.
+let chatRouteLoaded = false;
+
 export const Route = createFileRoute("/_chat")({
-  beforeLoad: async ({ context, location }) => {
+  beforeLoad: async ({ context, location, preload }) => {
     if (
       context.authGateState.status !== "authenticated" &&
       context.authGateState.status !== "hosted-static"
     ) {
       throw redirect({ to: "/pair", replace: true });
     }
-    return { appModalPage: isAppModalPage(location.pathname) };
+    const firstChatLoad = !preload && !chatRouteLoaded;
+    if (!preload) chatRouteLoaded = true;
+    return { appModalPage: isAppModalPage(location.pathname), firstChatLoad };
   },
   component: ChatRouteLayout,
   // Every match carries the whole location's params, so this layout sees the thread route's too.

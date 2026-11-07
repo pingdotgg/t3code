@@ -127,6 +127,23 @@ describe("applyDeviceSnapshot", () => {
     expect(miniPlayerSource()).toBeUndefined();
   });
 
+  it("leaves only the sessions of threads in a narrow split pane to the sheet", () => {
+    setup();
+    const otherRef = scopeThreadRef(ref.environmentId, ThreadId.make("thread-2"));
+    const otherSession = { ...session, threadId: otherRef.threadId };
+    const narrowPane = { ...floating, sheetLayoutThreadKeys: new Set([threadKey]) };
+    applyDeviceSnapshot(ref.environmentId, deviceState({}), narrowPane);
+    applyDeviceSnapshot(
+      ref.environmentId,
+      deviceState({ sessions: [session, otherSession] }),
+      narrowPane,
+    );
+    expect(miniPlayerSource()).toBeUndefined();
+    expect(
+      usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(otherRef)]?.source,
+    ).toMatchObject({ kind: "device", deviceId: "pixel" });
+  });
+
   it("closes a floating device when its session ends, even before a baseline", () => {
     setup();
     usePreviewMiniPlayerStore.getState().open(ref, {

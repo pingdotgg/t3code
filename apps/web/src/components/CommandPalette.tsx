@@ -77,6 +77,9 @@ import {
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
+import { ArrowLeftRightIcon, Columns2Icon, Rows2Icon, XIcon } from "lucide-react";
+import { isChatSplitOpen, useChatPanesStore } from "../chatPanesStore";
+import { useChatPaneCommands } from "../hooks/useChatPaneCommands";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
   useDeferredValue,
@@ -268,6 +271,7 @@ import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
+const OPEN_IN_SPLIT_GROUP = "open-in-split";
 
 /** The submenu an open intent starts in; its groups resolve while rendering. */
 function openIntentView(intent: CommandPaletteOpenIntent | null): CommandPaletteView | null {
@@ -281,6 +285,11 @@ function openIntentView(intent: CommandPaletteOpenIntent | null): CommandPalette
       return {
         addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
         groups: [{ value: NEW_THREAD_IN_GROUP, label: "Projects", items: [] }],
+      };
+    case "open-in-split":
+      return {
+        addonIcon: <Columns2Icon className={ADDON_ICON_CLASS} />,
+        groups: [{ value: OPEN_IN_SPLIT_GROUP, label: "Threads", items: [] }],
       };
     case "change-theme":
       return {
@@ -888,6 +897,7 @@ function OpenCommandPaletteDialog(props: {
 
   const {
     threadItems: allThreadItems,
+    openInSplitItems,
     threadMessageItems,
     now: searchNow,
     isSearchPending: isThreadSearchPending,
@@ -1250,6 +1260,8 @@ function OpenCommandPaletteDialog(props: {
     if (firstOption) startNewProject(firstOption.environmentId, null);
   };
 
+  const chatPanesLayout = useChatPanesStore((state) => state.layout);
+  const { focusOtherPane, closeFocusedPane } = useChatPaneCommands();
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -1329,6 +1341,73 @@ function OpenCommandPaletteDialog(props: {
         openThreadFind(activeThreadKey);
       },
     });
+  }
+
+  const openInSplitGroup = {
+    value: OPEN_IN_SPLIT_GROUP,
+    label: "Threads",
+    items: openInSplitItems.toSorted(
+      (left, right) =>
+        (right.threadSearch ? threadRecentUse(right.threadSearch) : 0) -
+        (left.threadSearch ? threadRecentUse(left.threadSearch) : 0),
+    ),
+  };
+  if (paletteRouteTarget !== null && openInSplitItems.length > 0) {
+    actionItems.push({
+      kind: "submenu",
+      value: "action:open-in-split",
+      searchTerms: ["split", "side by side", "pane", "beside", "open thread"],
+      title: "Open thread in split...",
+      icon: <Columns2Icon className={ITEM_ICON_CLASS} />,
+      addonIcon: <Columns2Icon className={ADDON_ICON_CLASS} />,
+      groups: [openInSplitGroup],
+    });
+  }
+
+  if (isChatSplitOpen(chatPanesLayout)) {
+    const sideBySide = chatPanesLayout.direction === "row";
+    actionItems.push(
+      {
+        kind: "action",
+        value: "action:split-focus-other",
+        searchTerms: ["split", "pane", "focus", "other", "switch"],
+        title: "Focus other split pane",
+        icon: <Columns2Icon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "splitPanes.focusNext",
+        run: async () => focusOtherPane(),
+      },
+      {
+        kind: "action",
+        value: "action:split-swap",
+        searchTerms: ["split", "pane", "swap", "flip"],
+        title: "Swap split panes",
+        icon: <ArrowLeftRightIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "splitPanes.swap",
+        run: async () => useChatPanesStore.getState().swap(),
+      },
+      {
+        kind: "action",
+        value: "action:split-direction",
+        searchTerms: ["split", "pane", "stack", "vertical", "horizontal", "side by side"],
+        title: sideBySide ? "Stack split panes top and bottom" : "Place split panes side by side",
+        shortcutCommand: "splitPanes.toggleDirection",
+        icon: sideBySide ? (
+          <Rows2Icon className={ITEM_ICON_CLASS} />
+        ) : (
+          <Columns2Icon className={ITEM_ICON_CLASS} />
+        ),
+        run: async () => useChatPanesStore.getState().setDirection(sideBySide ? "column" : "row"),
+      },
+      {
+        kind: "action",
+        value: "action:split-close",
+        searchTerms: ["split", "pane", "close", "single"],
+        title: "Close split pane",
+        icon: <XIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "splitPanes.close",
+        run: async () => closeFocusedPane(),
+      },
+    );
   }
 
   const promptLinkTarget = paletteRouteTarget
@@ -1723,20 +1802,22 @@ function OpenCommandPaletteDialog(props: {
         )
       : currentView?.groups[0]?.value === ADD_PROJECT_ENTRY_GROUP
         ? addProjectEntryGroups()
-        : currentView?.groups[0]?.value === NEW_THREAD_IN_GROUP
-          ? [
-              {
-                value: NEW_THREAD_IN_GROUP,
-                label: "Projects",
-                // Every project archived and no "No project" home leaves only adding one.
-                items: projectThreadItems.length > 0 ? projectThreadItems : [addProjectAction],
-              },
-            ]
-          : currentView?.groups[0]?.value === "themes"
-            ? changeThemeItem.groups
-            : currentView?.groups[0]?.value === "appearance"
-              ? changeAppearanceItem.groups
-              : (currentView?.groups ?? rootGroups);
+        : currentView?.groups[0]?.value === OPEN_IN_SPLIT_GROUP
+          ? [openInSplitGroup]
+          : currentView?.groups[0]?.value === NEW_THREAD_IN_GROUP
+            ? [
+                {
+                  value: NEW_THREAD_IN_GROUP,
+                  label: "Projects",
+                  // Every project archived and no "No project" home leaves only adding one.
+                  items: projectThreadItems.length > 0 ? projectThreadItems : [addProjectAction],
+                },
+              ]
+            : currentView?.groups[0]?.value === "themes"
+              ? changeThemeItem.groups
+              : currentView?.groups[0]?.value === "appearance"
+                ? changeAppearanceItem.groups
+                : (currentView?.groups ?? rootGroups);
 
   const isLinkedThreadSearch =
     linkedThreadSearch?.linkedThreads !== undefined && deferredQuery === linkedThreadSearch.query;

@@ -8,7 +8,7 @@ export interface CommandPaletteLinkedThreads {
 }
 
 export interface CommandPaletteOpenDetail {
-  readonly open?: "add-project" | "new-thread-in";
+  readonly open?: "add-project" | "new-thread-in" | "open-in-split";
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
 }
@@ -19,6 +19,8 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
   if (!isCommandPaletteMounted()) return;
   if (detail.open === "new-thread-in") {
     dispatchCommandPalette({ _tag: "OpenNewThreadIn" });
+  } else if (detail.open === "open-in-split") {
+    dispatchCommandPalette({ _tag: "OpenInSplit" });
   } else if (detail.open === "add-project") {
     dispatchCommandPalette({ _tag: "OpenAddProject" });
   } else if (detail.query !== undefined) {
