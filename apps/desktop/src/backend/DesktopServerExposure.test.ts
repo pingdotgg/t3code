@@ -343,6 +343,45 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect("refuses a Tailscale Serve port that already serves another service", () => {
+    const serveStatus = JSON.stringify({
+      TCP: { "443": { HTTPS: true } },
+      Web: {
+        "box.tailnet.ts.net:443": {
+          Handlers: {
+            "/": { Proxy: "http://127.0.0.1:9000" },
+            "/mcp": { Proxy: "http://127.0.0.1:8080" },
+          },
+        },
+      },
+    });
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const error = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: true, port: 443 })
+          .pipe(Effect.flip);
+        assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServePortInUseError);
+        assert.include(error.message, "port 443");
+        assert.isFalse((yield* settings.get).tailscaleServeEnabled);
+
+        const moved = yield* serverExposure.setTailscaleServeEnabled({
+          enabled: true,
+          port: 8443,
+        });
+        assert.equal(moved.state.tailscaleServePort, 8443);
+      }),
+      {},
+      layerMockSpawner(serveStatus),
+    );
+  });
+
   it.effect("keeps a Tailscale Serve change made while a mode change is saving", () =>
     Effect.gen(function* () {
       const modeWriteStarted = yield* Deferred.make<void>();
