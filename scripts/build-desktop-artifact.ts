@@ -2868,7 +2868,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           role: "Viewer",
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // The custom signer receives the resolved certificate hash; the default one only its name.
+      ...(signed || localSigningIdentity
+        ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+        : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
