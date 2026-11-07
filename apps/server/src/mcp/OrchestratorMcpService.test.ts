@@ -146,7 +146,6 @@ describe("OrchestratorMcpService", () => {
         subagents: [],
         providerThreads: [],
         runtimeRequests: [],
-        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
       let settleAfterTaskRead = false;
@@ -3677,6 +3676,8 @@ describe("OrchestratorMcpService thread lookup", () => {
           runId: null,
           status: "idle",
           timedOut: false,
+          hasPendingQuestion: false,
+          pendingApproval: null,
         });
       }).pipe(
         Effect.provide(
@@ -3684,7 +3685,13 @@ describe("OrchestratorMcpService thread lookup", () => {
             getThreadShell: () => Effect.die("Unexpected shell lookup for the caller"),
             getThreadRecords: () => Effect.succeed(idleThreadProjection(launched)),
             waitForThread: () =>
-              Effect.succeed({ threadId: launched.id, run: null, timedOut: false }),
+              Effect.succeed({
+                threadId: launched.id,
+                run: null,
+                timedOut: false,
+                hasPendingQuestion: false,
+                pendingApproval: null,
+              }),
           }),
         ),
       );

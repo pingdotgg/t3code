@@ -1318,7 +1318,11 @@ it.effect.each([null, "question", "approval"] as const)(
         const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
         const clock = yield* Clock.Clock;
         const sleeps: Array<number> = [];
-        const a = yield* makeLaptop(database, offers).pipe(
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+        // The follower is forked by delegation, so it inherits this call's clock.
+        const delegated = yield* delegateToBox(a).pipe(
           Effect.provideService(Clock.Clock, {
             ...clock,
             sleep: (duration) =>
@@ -1329,9 +1333,6 @@ it.effect.each([null, "question", "approval"] as const)(
                 : clock.sleep(duration),
           }),
         );
-        yield* linkTo(a.links, b, "full-access");
-        yield* seedParent(a);
-        const delegated = yield* delegateToBox(a);
 
         // The task's run there ends after delegating a review of its own.
         yield* Ref.set(thread.nested, true);
