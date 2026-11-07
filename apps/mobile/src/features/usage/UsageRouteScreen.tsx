@@ -558,7 +558,7 @@ function ProviderSection(props: {
                     : formatUsd(provider.costUsd)}
               </Text>
             </View>
-            {props.compact ? null : (
+            {props.compact || (metric === "cost" && costUnknown) ? null : (
               <View className="h-1 flex-row overflow-hidden rounded-full bg-subtle">
                 <View
                   className="h-full rounded-full"
