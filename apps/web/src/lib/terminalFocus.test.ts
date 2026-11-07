@@ -167,6 +167,18 @@ describe("focusTerminal", () => {
     unregister();
   });
 
+  it("does not leave a pending terminal request behind when its thread is left", () => {
+    const ref = threadRef("left-before-mount");
+    useTerminalUiStateStore.getState().ensureTerminal(ref, "a", { open: true, active: true });
+    const leave = focusTerminalOnThreadEnter(ref);
+    leave();
+    const focus = vi.fn(() => true);
+    const unregister = registerTerminalFocusTarget({ threadRef: ref, terminalId: "a", focus });
+
+    expect(focus).not.toHaveBeenCalled();
+    unregister();
+  });
+
   it("entering a thread with its drawer open focuses the active drawer terminal", () => {
     const ref = threadRef("entered");
     useTerminalUiStateStore.getState().ensureTerminal(ref, "a", { open: true, active: true });

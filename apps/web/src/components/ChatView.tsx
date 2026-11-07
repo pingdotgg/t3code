@@ -2129,16 +2129,58 @@ export default function ChatView(props: ChatViewProps) {
     setTimelineAnchor,
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
+  const canRestoreThreadFocus = useStableCallback(
+    () =>
+      document.querySelector("[data-mcp-app-fullscreen]") === null &&
+      !isInSideChatPane(document.activeElement) &&
+      ((!terminalUiState.terminalOpen && getTerminalFocusOwner() === "drawer") ||
+        shouldRefocusComposerOnWindowFocus(document.activeElement)),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores this thread's input focus and observes subsequent DOM focus choices
   useEffect(() => {
-    if (embedded || !activeThread?.id || terminalUiState.terminalOpen) return;
-    const frame = window.requestAnimationFrame(() => {
-      focusComposerStable();
-    });
+    if (embedded || backgroundThread || !activeThreadRef) return;
+    let frame: number | null = null;
+    const leave = focusTerminalOnThreadEnter(
+      activeThreadRef,
+      () => {
+        frame = window.requestAnimationFrame(() => {
+          if (canRestoreThreadFocus()) focusComposerStable();
+        });
+      },
+      canRestoreThreadFocus,
+    );
     return () => {
-      window.cancelAnimationFrame(frame);
+      leave();
+      if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, embedded, focusComposerStable, terminalUiState.terminalOpen]);
+  }, [activeThreadRef, backgroundThread, embedded, focusComposerStable, canRestoreThreadFocus]);
+
+  const previousDrawer = useRef({ threadKey: activeThreadKey, open: terminalUiState.terminalOpen });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- returns focus from a drawer closed in this thread, independently of thread-entry restoration
+  useEffect(() => {
+    const previous = previousDrawer.current;
+    previousDrawer.current = { threadKey: activeThreadKey, open: terminalUiState.terminalOpen };
+    if (
+      embedded ||
+      backgroundThread ||
+      activeThreadKey === null ||
+      previous.threadKey !== activeThreadKey ||
+      !previous.open ||
+      terminalUiState.terminalOpen
+    )
+      return;
+    const frame = window.requestAnimationFrame(() => {
+      if (canRestoreThreadFocus()) focusComposerStable();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeThreadKey,
+    backgroundThread,
+    embedded,
+    terminalUiState.terminalOpen,
+    canRestoreThreadFocus,
+    focusComposerStable,
+  ]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
   useEffect(() => {
@@ -2679,14 +2721,6 @@ export default function ChatView(props: ChatViewProps) {
   ) {
     setTerminalUiLaunchContext(null);
   }
-
-  // Entering a thread with its drawer open focuses the drawer terminal; opening
-  // it from a handler requests focus there. A closed drawer leaves focus to the
-  // composer effect above.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the open drawer terminal when entering a thread
-  useEffect(() => {
-    if (activeThreadRef && !embedded) return focusTerminalOnThreadEnter(activeThreadRef);
-  }, [activeThreadRef, embedded]);
 
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
     terminalFocus: getTerminalFocusOwner() !== null,
@@ -3314,6 +3348,7 @@ export default function ChatView(props: ChatViewProps) {
   const content = (
     <div
       ref={setWorkspaceLayoutElement}
+      data-thread-focus-key={routeThreadKey}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
       {embedded ? null : (
