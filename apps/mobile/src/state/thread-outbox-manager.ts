@@ -2,6 +2,7 @@ import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
+import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import {
   flattenQueuedThreadMessages,
   groupQueuedThreadMessages,
@@ -47,20 +48,13 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       console.warn(message, error);
     });
   let loadPromise: Promise<boolean> | null = null;
-  let mutationQueue: Promise<void> = Promise.resolve();
+  const mutationQueue = new SerializedAsyncQueue();
   const revisions = new Map<MessageId, number>();
   const bumpRevision = (messageId: MessageId): void => {
     revisions.set(messageId, (revisions.get(messageId) ?? 0) + 1);
   };
 
-  const serialize = <A>(mutation: () => Promise<A>): Promise<A> => {
-    const result = mutationQueue.then(mutation, mutation);
-    mutationQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
+  const serialize = <A>(mutation: () => Promise<A>): Promise<A> => mutationQueue.run(mutation);
 
   const currentMessages = (): ReadonlyArray<QueuedThreadMessage> =>
     flattenQueuedThreadMessages(options.registry.get(queuedMessagesByThreadKeyAtom));
