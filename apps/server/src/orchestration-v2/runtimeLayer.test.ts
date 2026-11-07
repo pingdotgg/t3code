@@ -3728,17 +3728,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       const ended = yield* watchOf;
       assert.isUndefined(ended?.watch);
-      assert.isFalse(ended?.endedWatch?.passed);
+      assert.isTrue(ended?.endedWatch?.passed);
+      assert.deepEqual(ended?.endedWatch?.passedChecks, ["lint"]);
       assert.deepEqual(yield* summaries, ["#13: new comments, stopped watching"]);
 
       status = "success";
       yield* TestClock.adjust("10 minutes");
       yield* watch("again");
       yield* reactor.sweep;
-      assert.deepEqual(yield* summaries, [
-        "#13: new comments, stopped watching",
-        "#13: checks passed",
-      ]);
+      assert.deepEqual(yield* summaries, ["#13: new comments, stopped watching"]);
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("pr-watch-limit-end"),
