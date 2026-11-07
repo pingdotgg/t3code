@@ -615,7 +615,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
   if (npmPrefix) {
     // npm 12 requires script approval to install native binaries; older npm only warns about the flag.
-    return makeProviderMaintenanceCapabilities({
+    const npm = makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "npm",
@@ -630,6 +630,23 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateLockKey: `npm-global:${normalizeCommandPath(npmPrefix)}`,
       env: context.env,
     });
+    // Windows access() ignores directory ACLs, so only POSIX modes can predict npm's EACCES.
+    if (
+      npm.update &&
+      context.platform !== "win32" &&
+      (yield* npmPrefixDeniesWrite(npmPrefix, packageName))
+    ) {
+      // The version lookup still needs the provider's npm and prefix.
+      const { lookupLatestVersion } = yield* withConfiguredNpmVersionLookup(npm);
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        provider: definition.provider,
+        packageName,
+        installPath: context.realCommandPath,
+        manualCommand: `sudo ${npm.update.command}`,
+        ...(lookupLatestVersion ? { lookupLatestVersion } : {}),
+      });
+    }
+    return npm;
   }
 
   const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
@@ -769,6 +786,28 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
     .exists(manifestPath)
     .pipe(Effect.orElseSucceed(() => false));
   return hasManifest ? shimDir : null;
+});
+
+// npm's reify renames the package within its parent and the bin links within `<prefix>/bin`.
+// A missing directory is one npm creates, so only a definite denial counts.
+const npmPrefixDeniesWrite = Effect.fn("npmPrefixDeniesWrite")(function* (
+  prefix: string,
+  packageName: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packageDir = path.join(prefix, "lib", "node_modules", ...packageName.split("/"));
+  const denials = yield* Effect.forEach(
+    [path.dirname(packageDir), path.join(prefix, "bin")],
+    (dir) =>
+      fileSystem.access(dir, { writable: true }).pipe(
+        Effect.as(false),
+        Effect.catchTags({
+          PlatformError: (error) => Effect.succeed(error.reason._tag === "PermissionDenied"),
+        }),
+      ),
+  );
+  return denials.some(Boolean);
 });
 
 export function makePackageManagedProviderMaintenanceResolver(

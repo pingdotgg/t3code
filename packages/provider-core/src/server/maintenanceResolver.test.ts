@@ -463,6 +463,104 @@ it.layer(
       }),
   );
 
+  // Root ignores directory modes, and chmod does not stop writes on Windows.
+  const readOnlyDirsUnenforced = windowsHost || process.getuid?.() === 0;
+  const resolveNpmInstallWithReadOnlyDir = (
+    readOnlySegments: ReadonlyArray<string>,
+    options?: { readonly launchPackageExecutable?: boolean },
+  ) =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-npm-read-only");
+      const link = linkIntoPackage(tempDir, "package-tool", [
+        "lib",
+        "node_modules",
+        "@example",
+        "package-tool",
+      ]);
+      // An npm only the provider's PATH reaches, like a version manager's.
+      const providerNpm = NodePath.join(tempDir, "provider-bin", "npm");
+      writeExecutable(providerNpm);
+      const readOnlyDir = NodePath.join(tempDir, ...readOnlySegments);
+      NodeFS.chmodSync(readOnlyDir, 0o555);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.chmodSync(readOnlyDir, 0o755);
+          NodeFS.rmSync(tempDir, { recursive: true, force: true });
+        }),
+      );
+      const views: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: options?.launchPackageExecutable ? NodeFS.realpathSync(link) : link,
+        env: { PATH: [NodePath.dirname(providerNpm), NodePath.join(tempDir, "bin")].join(":") },
+      }).pipe(
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner((command, args) => {
+            views.push({ command, args });
+            return '"1.2.0"';
+          }),
+        ),
+      );
+      const latestVersion = yield* capabilities.lookupLatestVersion ?? Effect.succeed(null);
+      return { tempDir, providerNpm, capabilities, latestVersion, views };
+    });
+
+  it.effect.skipIf(!symlinksSupported || readOnlyDirsUnenforced)(
+    "shows the npm command without offering to run it when the package scope is read-only",
+    () =>
+      Effect.gen(function* () {
+        const { tempDir, providerNpm, capabilities, latestVersion, views } =
+          yield* resolveNpmInstallWithReadOnlyDir(["lib", "node_modules", "@example"]);
+
+        expect(capabilities.update).toBeNull();
+        expect(capabilities.manualCommand).toBe(
+          `sudo npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
+        );
+        expect(latestVersion).toBe("1.2.0");
+        expect(views).toEqual([
+          {
+            command: providerNpm,
+            args: [
+              "view",
+              "--global",
+              "--prefix",
+              tempDir,
+              "--json",
+              "@example/package-tool@latest",
+              "version",
+            ],
+          },
+        ]);
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported || readOnlyDirsUnenforced)(
+    "shows the npm command without offering to run it when the prefix bin is read-only",
+    () =>
+      Effect.gen(function* () {
+        const { tempDir, capabilities } = yield* resolveNpmInstallWithReadOnlyDir(["bin"]);
+
+        expect(capabilities.update).toBeNull();
+        expect(capabilities.manualCommand).toBe(
+          `sudo npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
+        );
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported || readOnlyDirsUnenforced)(
+    "stays manual-only when the package executable is launched directly and the prefix bin is read-only",
+    () =>
+      Effect.gen(function* () {
+        // npm still renames the package's existing bin link, however the CLI is launched.
+        const { capabilities } = yield* resolveNpmInstallWithReadOnlyDir(["bin"], {
+          launchPackageExecutable: true,
+        });
+
+        expect(capabilities.update).toBeNull();
+      }),
+  );
+
   it("derives the npm prefix only from the global lib/node_modules layout", () => {
     expect(
       npmGlobalPrefixFromCommandPath(
