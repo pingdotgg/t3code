@@ -42,6 +42,7 @@ export interface ProviderSettingsFieldModel {
   /** Typed `SettingsSecretValue`: may name a secret provider reference instead of a value. */
   readonly acceptsSecretReference?: boolean | undefined;
   readonly defaultBooleanValue?: boolean | undefined;
+  readonly isValid: (value: string) => boolean;
 
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
 }
@@ -89,6 +90,15 @@ function readFieldBooleanDefault(
   return Option.isSome(decoded) && typeof decoded.value === "boolean" ? decoded.value : undefined;
 }
 
+function makeFieldTextValidator(
+  fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
+  clearWhenEmpty: ProviderSettingsFieldModel["clearWhenEmpty"],
+) {
+  const decode = Schema.decodeUnknownOption(fieldSchema as Schema.Decoder<unknown>);
+  return (value: string) =>
+    (clearWhenEmpty === "omit" && value.trim().length === 0) || Option.isSome(decode(value));
+}
+
 export function deriveProviderSettingsFields(
   definition: SettingsFormDefinition,
   value?: unknown,
@@ -118,6 +128,7 @@ export function deriveProviderSettingsFields(
 
       const annotatedTitle = readFieldAnnotationString(fieldSchema, "title");
       const annotatedDescription = readFieldAnnotationString(fieldSchema, "description");
+      const clearWhenEmpty = formAnnotation.clearWhenEmpty ?? "omit";
       return [
         {
           key,
@@ -136,7 +147,8 @@ export function deriveProviderSettingsFields(
             : formAnnotation.placeholder !== undefined
               ? { placeholder: formAnnotation.placeholder }
               : {}),
-          clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
+          clearWhenEmpty,
+          isValid: makeFieldTextValidator(fieldSchema, clearWhenEmpty),
           ...(isSecretSetting(fieldSchema) ? { secret: true } : {}),
           ...(acceptsSecretReference(fieldSchema) ? { acceptsSecretReference: true } : {}),
           ...(formAnnotation.control === "switch"
@@ -393,6 +405,56 @@ function SecretSettingsControl({
   );
 }
 
+function ProviderSettingsTextInput({
+  field,
+  value,
+  inputId,
+  descriptionId,
+  onChange,
+}: {
+  readonly field: ProviderSettingsFieldModel;
+  readonly value: unknown;
+  readonly inputId: string;
+  readonly descriptionId: string | undefined;
+  readonly onChange: ProviderSettingsFormProps["onChange"];
+}) {
+  const saved = readProviderConfigString(value, field.key);
+  const [rejection, setRejection] = useState<{ draft: string; saved: string } | null>(null);
+  // A rejected draft stays only until the saved value changes underneath it.
+  const rejected = rejection?.saved === saved ? rejection.draft : null;
+  const errorId = `${inputId}-error`;
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-1 @min-[32rem]/settings-row:w-56">
+      <DraftInput
+        id={inputId}
+        aria-describedby={
+          rejected === null ? descriptionId : [descriptionId, errorId].filter(Boolean).join(" ")
+        }
+        aria-invalid={rejected !== null}
+        size="sm"
+        type={field.control === "password" ? "password" : undefined}
+        autoComplete={field.control === "password" ? "off" : undefined}
+        value={rejected ?? saved}
+        placeholder={field.placeholder}
+        onCommit={(next) => {
+          if (!field.isValid(next)) {
+            setRejection({ draft: next, saved });
+            return;
+          }
+          setRejection(null);
+          onChange(nextProviderConfigWithFieldValue(value, field, next));
+        }}
+        spellCheck={false}
+      />
+      {rejected !== null ? (
+        <p id={errorId} className="text-2xs text-destructive">
+          Enter a valid value.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function ProviderSettingsSelect({
   field,
   value,
@@ -541,19 +603,12 @@ function ProviderSettingsFieldRow({
           ) : null}
         </div>
       ) : (
-        <DraftInput
-          id={inputId}
-          aria-describedby={descriptionId}
-          size="sm"
-          className="w-full max-w-full @min-[32rem]/settings-row:w-56"
-          type={field.control === "password" ? "password" : undefined}
-          autoComplete={field.control === "password" ? "off" : undefined}
-          value={readProviderConfigString(value, field.key)}
-          placeholder={field.placeholder}
-          onCommit={(next) => {
-            onChange(nextProviderConfigWithFieldValue(value, field, next));
-          }}
-          spellCheck={false}
+        <ProviderSettingsTextInput
+          field={field}
+          value={value}
+          inputId={inputId}
+          descriptionId={descriptionId}
+          onChange={onChange}
         />
       );
 

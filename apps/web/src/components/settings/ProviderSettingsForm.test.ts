@@ -52,6 +52,20 @@ describe("ProviderSettingsForm helpers", () => {
     expect(next).toEqual({ forkOwned: 1 });
   });
 
+  it("accepts only text values the field schema decodes", () => {
+    const claude = providerClients.get(ProviderDriverKind.make("claudeAgent"));
+    expect(claude).toBeDefined();
+
+    const autoCompactWindow = deriveProviderSettingsFields(claude!).find(
+      (field) => field.key === "autoCompactWindow",
+    );
+    expect(autoCompactWindow?.isValid).toBeDefined();
+
+    const isValid = autoCompactWindow!.isValid;
+    expect(["50000", "300,000", "300k"].map(isValid)).toEqual([false, false, false]);
+    expect(["300000", " 300000 ", "1000000", ""].map(isValid)).toEqual([true, true, true, true]);
+  });
+
   it("stores false boolean fields when true is the default", () => {
     const next = nextProviderConfigWithFieldValue(
       undefined,
@@ -60,6 +74,7 @@ describe("ProviderSettingsForm helpers", () => {
         control: "switch",
         label: "Experimental",
         clearWhenEmpty: "omit",
+        isValid: () => true,
         defaultBooleanValue: true,
       },
       false,
