@@ -327,6 +327,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
   canRetry: Schema.Boolean,
   notAppliedVersion: Schema.optionalKey(Schema.String),
+  channelBlockedByPolicy: Schema.optionalKey(Schema.Literal(true)),
 });
 
 export const DesktopCliCommandStateSchema = Schema.Struct({
