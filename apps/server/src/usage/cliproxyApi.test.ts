@@ -235,14 +235,17 @@ describe("CLIProxyAPI built-in management API", () => {
   it.effect("names the models the hub routes to each account, when the hub lists them", () =>
     Effect.gen(function* () {
       const test = fixture({
+        accounts: [...accounts, { ...accounts[1]!, id: "third.json", auth_index: "c" }],
         models: (name) =>
           name === "first.json"
             ? Response.json({ models: [{ id: "gpt-5.6-sol" }, { id: " " }] })
-            : Response.json({}, { status: 404 }),
+            : name === "third.json"
+              ? Response.json({ models: [] })
+              : Response.json({}, { status: 404 }),
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
-      expect(result.map((account) => account.models)).toEqual([["gpt-5.6-sol"], undefined]);
+      expect(result.map((account) => account.models)).toEqual([["gpt-5.6-sol"], undefined, []]);
       expect(result[1]?.usageLimits.windows).toHaveLength(1);
     }),
   );

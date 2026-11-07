@@ -316,7 +316,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ...(account.id_token?.chatgpt_account_id?.trim()
         ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
         : {}),
-      ...(Option.isSome(models) && models.value.length > 0 ? { models: models.value } : {}),
+      ...(Option.isSome(models) ? { models: models.value } : {}),
       ...(served ? { lastServedAt: served } : {}),
     };
     const read = Effect.gen(function* () {
