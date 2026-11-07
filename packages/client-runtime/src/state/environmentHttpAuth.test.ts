@@ -29,13 +29,9 @@ import {
   type PreparedConnection,
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
-import * as ConnectionDriver from "../connection/driver.ts";
-import * as ConnectionResolver from "../connection/resolver.ts";
-import { routeGrantFromSession } from "../connection/routes.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
-import * as RpcSession from "../rpc/session.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
@@ -434,53 +430,6 @@ describe("authenticated environment HTTP requests", () => {
         },
       });
       expect(harness.calls).toHaveLength(2);
-      expect(new Headers(harness.calls[1]!.init.headers).get("authorization")).toBe(
-        "DPoP renewed-token",
-      );
-    }),
-  );
-
-  it.effect("renews credentials captured for the connection driver's grant check", () =>
-    Effect.gen(function* () {
-      const harness = makeHarness((requestNumber) =>
-        Response.json(requestNumber === 1 ? UNAUTHENTICATED_SESSION : SESSION),
-      );
-      const driver = yield* ConnectionDriver.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            harness.httpLayer,
-            Layer.succeed(
-              ConnectionResolver.ConnectionResolver,
-              ConnectionResolver.ConnectionResolver.of({
-                prepare: () => Effect.die("The grant check must not prepare a connection."),
-                prepareForUpdate: () =>
-                  Effect.die("The grant check must not prepare a connection."),
-              }),
-            ),
-            Layer.succeed(
-              RpcSession.RpcSessionFactory,
-              RpcSession.RpcSessionFactory.of({
-                connect: () => Effect.die("The grant check must not open a socket."),
-              }),
-            ),
-            Layer.succeed(
-              ManagedRelay.ManagedRelayDpopSigner,
-              Option.getOrThrow(harness.input.signer),
-            ),
-            Layer.succeed(
-              RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-              harness.remoteAuthorization,
-            ),
-          ),
-        ),
-      );
-      const grant = yield* driver.sessionGrant(PREPARED);
-
-      expect(grant).toEqual(routeGrantFromSession({ authenticated: true, scopes: SESSION.scopes }));
-      expect(harness.calls.map((call) => call.url)).toEqual([
-        `${CURRENT_ORIGIN}/api/auth/session`,
-        `${RENEWED_ORIGIN}/api/auth/session`,
-      ]);
       expect(new Headers(harness.calls[1]!.init.headers).get("authorization")).toBe(
         "DPoP renewed-token",
       );

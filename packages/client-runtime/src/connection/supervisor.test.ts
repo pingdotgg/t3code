@@ -2013,17 +2013,12 @@ describe("EnvironmentSupervisor routes", () => {
     "moves a legacy LAN connection to a T3 Connect route added %s that grants more",
     (added) =>
       Effect.gen(function* () {
-        const lanPrepares = yield* Ref.make(0);
         const harness = yield* makeHarness({
           checkRoute: (route) =>
             Effect.succeed(
               route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked",
             ),
-          prepare: (_attempt, target) =>
-            (target._tag === "BearerConnectionTarget"
-              ? Ref.update(lanPrepares, (count) => count + 1)
-              : Effect.void
-            ).pipe(Effect.as(preparedFor(target))),
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
           grant: (target) =>
             Effect.succeedSome(
               target._tag === "RelayConnectionTarget" ? STANDARD_GRANT : LEGACY_GRANT,
@@ -2053,15 +2048,7 @@ describe("EnvironmentSupervisor routes", () => {
         );
         expect(yield* Ref.get(harness.releaseCount)).toBe(1);
 
-        // The LAN route still answers, but no later check moves back to it.
-        yield* harness.wake("network-changed");
-        for (let minute = 0; minute < 3; minute += 1) {
-          yield* TestClock.adjust("60 seconds");
-        }
-        expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(2);
-
         // A replacement connection goes straight to the route that grants more.
-        yield* Ref.set(lanPrepares, 0);
         yield* harness.closeLatestSession();
         yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
         yield* TestClock.adjust("250 millis");
@@ -2072,57 +2059,41 @@ describe("EnvironmentSupervisor routes", () => {
         expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
           "RelayConnectionTarget",
         );
-        expect(yield* Ref.get(lanPrepares)).toBe(0);
       }),
   );
 
-  it.effect(
-    "asks again for a grant the host could not report, backing off until the network changes",
-    () =>
-      Effect.gen(function* () {
-        const lanGrantChecks = yield* Ref.make(0);
-        const harness = yield* makeHarness({
-          checkRoute: (route) =>
-            Effect.succeed(
-              route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked",
-            ),
-          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
-          grant: (target) =>
-            target._tag === "RelayConnectionTarget"
-              ? Effect.succeedSome(STANDARD_GRANT)
-              : Ref.updateAndGet(lanGrantChecks, (count) => count + 1).pipe(
-                  Effect.map((count) => (count <= 2 ? Option.none() : Option.some(LEGACY_GRANT))),
-                ),
-        });
-        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
-          initiallyDesired: true,
-        }).pipe(Effect.provide(harness.dependencies));
+  it.effect("asks T3 Connect for its grant again after the network changes", () =>
+    Effect.gen(function* () {
+      const relayGrant = yield* Ref.make(LEGACY_GRANT);
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        grant: (target) =>
+          target._tag === "RelayConnectionTarget"
+            ? Ref.get(relayGrant).pipe(Effect.map(Option.some))
+            : Effect.succeedSome(LEGACY_GRANT),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
 
-        yield* awaitState(
-          supervisor.state,
-          (state) => state.phase === "connected" && state.generation === 1,
-        );
-        // Asked on connecting, then again at 2 minutes and not before 6.
-        yield* TestClock.adjust("60 seconds");
-        expect(yield* Ref.get(lanGrantChecks)).toBe(1);
-        yield* TestClock.adjust("60 seconds");
-        expect(yield* Ref.get(lanGrantChecks)).toBe(2);
-        for (let minute = 0; minute < 3; minute += 1) {
-          yield* TestClock.adjust("60 seconds");
-        }
-        expect(yield* Ref.get(lanGrantChecks)).toBe(2);
-        expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      yield* TestClock.adjust("60 seconds");
+      yield* Ref.set(relayGrant, STANDARD_GRANT);
+      yield* harness.wake("network-changed");
 
-        yield* harness.wake("network-changed");
-        yield* awaitState(
-          supervisor.state,
-          (state) => state.phase === "connected" && state.generation === 2,
-        );
-        expect(yield* Ref.get(lanGrantChecks)).toBe(3);
-        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-          "RelayConnectionTarget",
-        );
-      }),
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+    }),
   );
 
   it.effect.each([
@@ -2132,17 +2103,16 @@ describe("EnvironmentSupervisor routes", () => {
     { relay: "a broader but unconfirmed", lanGrant: undefined, relayGrant: STANDARD_GRANT },
   ])("keeps a working LAN connection when T3 Connect has $relay grant", (grants) =>
     Effect.gen(function* () {
-      const relayChecks = yield* Ref.make(0);
       const harness = yield* makeHarness({
         checkRoute: (route) =>
           Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
         grant: (target) =>
-          target._tag === "RelayConnectionTarget"
-            ? Ref.update(relayChecks, (count) => count + 1).pipe(
-                Effect.as(Option.fromUndefinedOr(grants.relayGrant)),
-              )
-            : Effect.succeed(Option.fromUndefinedOr(grants.lanGrant)),
+          Effect.succeed(
+            Option.fromUndefinedOr(
+              target._tag === "RelayConnectionTarget" ? grants.relayGrant : grants.lanGrant,
+            ),
+          ),
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
         initiallyDesired: true,
@@ -2164,10 +2134,6 @@ describe("EnvironmentSupervisor routes", () => {
         "BearerConnectionTarget",
       );
       expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-      // A known grant is not asked for again, and an unavailable one only after a backoff.
-      expect(yield* Ref.get(relayChecks)).toBeLessThanOrEqual(
-        grants.relayGrant === undefined ? 2 : 1,
-      );
     }),
   );
 

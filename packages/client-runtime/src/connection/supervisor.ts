@@ -346,23 +346,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // is strictly broader goes ahead of the saved network order, so an old
   // narrow pairing on the LAN cannot hide a T3 Connect route that grants more.
   const routeGrants = yield* Ref.make<ReadonlyMap<string, RouteGrant>>(new Map());
-  // The live session's grant is asked for until the host reports it, backing
-  // off like a silent route.
-  const activeGrantCheck = yield* Ref.make<{
-    readonly session: RpcSession.RpcSession | undefined;
-    readonly answered: boolean;
-    readonly retry: SilentRoute | undefined;
-  }>({ session: undefined, answered: false, retry: undefined });
-  const forgetSilentRoutes = Effect.all(
-    [
-      Ref.update(silentRoutes, ({ generation }) => ({
-        generation: generation + 1,
-        routes: new Map(),
-      })),
-      Ref.update(activeGrantCheck, (check) => ({ ...check, retry: undefined })),
-    ],
-    { discard: true },
-  );
+  // The live session whose grant was last asked for, so it is asked once.
+  const grantAskedFor = yield* Ref.make<RpcSession.RpcSession | undefined>(undefined);
+  // A network change asks other routes again, since their grants may have
+  // changed, but keeps the active one's so a failed ask cannot downgrade it.
+  const forgetSilentRoutes = Effect.gen(function* () {
+    yield* Ref.update(silentRoutes, ({ generation }) => ({
+      generation: generation + 1,
+      routes: new Map(),
+    }));
+    yield* Ref.set(grantAskedFor, undefined);
+    const active = yield* SubscriptionRef.get(prepared);
+    const activeId = Option.isSome(active) ? connectionRouteId(active.value.target) : undefined;
+    yield* Ref.update(routeGrants, (grants) => {
+      const kept = activeId === undefined ? undefined : grants.get(activeId);
+      return kept === undefined ? new Map() : new Map([[activeId!, kept]]);
+    });
+  });
   const recordGrant = (routeId: string, grant: RouteGrant) =>
     Ref.update(routeGrants, (grants) => new Map(grants).set(routeId, grant));
 
@@ -511,27 +511,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // Only while another route could beat the session.
   const activeGrantDue = Effect.fnUntraced(function* (lease: ConnectedLease) {
     if (!hasGrant(lease.prepared.target) || (yield* currentRoutes).length < 2) return false;
-    const check = yield* Ref.get(activeGrantCheck);
-    if (check.session !== lease.session) return true;
-    return !check.answered && (check.retry?.until ?? 0n) <= (yield* Clock.monotonicTimeNanos);
+    if ((yield* Ref.get(grantAskedFor)) === lease.session) return false;
+    return !(yield* Ref.get(routeGrants)).has(connectionRouteId(lease.prepared.target));
   });
 
   const checkActiveGrant = Effect.fnUntraced(function* (lease: ConnectedLease) {
     const live = yield* SubscriptionRef.get(session);
     if (Option.isNone(live) || live.value !== lease.session) return;
     if (!(yield* activeGrantDue(lease))) return;
+    yield* Ref.set(grantAskedFor, lease.session);
     const grant = yield* driver.sessionGrant(lease.prepared);
     if (Option.isSome(grant)) {
       yield* recordGrant(connectionRouteId(lease.prepared.target), grant.value);
     }
-    const now = yield* Clock.monotonicTimeNanos;
-    yield* Ref.update(activeGrantCheck, (check) => ({
-      session: lease.session,
-      answered: Option.isSome(grant),
-      retry: Option.isSome(grant)
-        ? undefined
-        : backOffSilentRoute(check.session === lease.session ? check.retry : undefined, now),
-    }));
   });
 
   const clearLease = Effect.all(
