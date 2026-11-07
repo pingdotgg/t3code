@@ -91,7 +91,7 @@ type ViewWindow = {
 type TurnCostEstimate = {
   readonly costUsd: number;
   readonly costSource: UsageCostSource;
-  /** True when some measurable turns are missing from this sum (unpriced or mixed model). */
+  /** True when the priced sum omits turns (partial counts, unpriced, or mixed model). */
   readonly incomplete: boolean;
 };
 
@@ -116,13 +116,15 @@ function measurableTurnCount(rows: readonly ThreadTurnTokenUsageRow[]): number {
 
 function costByRunId(
   items: readonly UsagePriceItemResult[] | null,
+  rows: readonly ThreadTurnTokenUsageRow[],
 ): ReadonlyMap<string, TurnCostEstimate> {
+  const usageByRun = new Map(rows.map((row) => [row.runId, row.usage] as const));
   const map = new Map<string, TurnCostEstimate>();
   for (const item of items ?? []) {
     map.set(item.id, {
       costUsd: item.costUsd,
       costSource: item.costSource,
-      incomplete: false,
+      incomplete: usageByRun.get(item.id)?.usageStatus === "partial",
     });
   }
   return map;
@@ -135,16 +137,18 @@ function threadCostEstimate(
 ): TurnCostEstimate | null {
   let costUsd = 0;
   let priced = 0;
+  let incomplete = false;
   for (const cost of costs.values()) {
     if (cost.costSource === "unpriced") continue;
     costUsd += cost.costUsd;
     priced += 1;
+    if (cost.incomplete) incomplete = true;
   }
   if (priced === 0) return null;
   return {
     costUsd,
     costSource: "modelPriced",
-    incomplete: priced < measurableTurns,
+    incomplete: incomplete || priced < measurableTurns,
   };
 }
 
@@ -191,7 +195,7 @@ export function InsightsPanel({
           input: { items: [...priceItems] },
         }),
   );
-  const costs = costByRunId(priced.data?.items ?? null);
+  const costs = costByRunId(priced.data?.items ?? null, turnRows);
   const threadCost = threadCostEstimate(costs, measurableTurnCount(turnRows));
   const pricingPending = priceItems.length > 0 && priced.isPending && priced.data === null;
   const pricingError =
@@ -631,7 +635,7 @@ function TokenUsageSummary({
       ) : null}
       {cost?.incomplete === true ? (
         <p className="text-2xs text-muted-foreground">
-          Cost covers priced turns only; mixed or unpriced models are left out.
+          Cost can be partial when turns are still reporting, mixed, or unpriced.
         </p>
       ) : null}
       {cost === null &&
