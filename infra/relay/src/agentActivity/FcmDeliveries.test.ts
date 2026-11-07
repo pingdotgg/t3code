@@ -385,6 +385,16 @@ describe("Android delivery routing", () => {
       yield* delivery.process(otherJob);
       expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
       expect(h.marked.at(-1)?.aggregate?.activities).toHaveLength(2);
+
+      h.current.target.preferences_json = encodeJson({
+        ...preferences,
+        disabledEnvironmentIds: [state.environmentId, other.environmentId],
+      });
+      yield* delivery.process({ ...h.job, state: null, replay: true });
+      expect(h.marked.at(-1)?.aggregate).toBeNull();
+      h.current.target.preferences_json = encodeJson(preferences);
+      yield* delivery.process(otherJob);
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
     }).pipe(Effect.provide(h.layer));
   });
 
