@@ -1,3 +1,5 @@
+import * as Schema from "effect/Schema";
+import type { AcpAdapterV2ExtensionContext } from "@t3tools/provider-acp/server/adapter";
 import type * as AcpSchema from "effect-acp/compat";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import type { AcpAdapterV2SubagentUpdate } from "@t3tools/provider-acp/server/adapter";
@@ -53,4 +55,16 @@ export function extractDevinSubagentUpdate(
     status: completed ? (completed.success === false ? "failed" : "completed") : "running",
     result: typeof completed?.summary === "string" ? completed.summary : null,
   };
+}
+
+export function registerDevinCompaction(context: AcpAdapterV2ExtensionContext) {
+  return context.runtime.handleExtNotification(
+    "_cognition.ai/compaction",
+    Schema.Struct({
+      sessionId: Schema.String,
+      status: Schema.Literals(["started", "completed", "failed", "cancelled"]),
+      summary: Schema.optionalKey(Schema.String),
+    }),
+    context.reportCompaction,
+  );
 }
