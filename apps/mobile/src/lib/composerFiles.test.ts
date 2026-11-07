@@ -248,11 +248,15 @@ describe("composer file attachments", () => {
           name: "IMG_9280.png",
           mimeType: "image/png",
           sizeBytes: last.width * last.height * 4,
-          previewUri: `file:///cache/fitted-${last.width}x${last.height}.png`,
+          previewUri: image!.dataUrl,
         }),
       );
       expect(image!.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
       expect(mocks.delete).toHaveBeenCalledWith("file:///cache/fitted-1397x2000.png");
+      expect(mocks.delete).toHaveBeenCalledWith(
+        `file:///cache/fitted-${last.width}x${last.height}.png`,
+      );
+      expect(mocks.delete).not.toHaveBeenCalledWith(photo.uri);
       expect(mocks.delete).not.toHaveBeenCalledWith(image!.previewUri);
     });
 
@@ -627,13 +631,12 @@ describe("composer file attachments", () => {
             mimeType: "image/png",
             sizeBytes: oversized ? header.length : 3,
             dataUrl: `data:image/png;base64,${oversized ? original : "YWJj"}`,
-            previewUri: oversized
-              ? `data:image/png;base64,${original}`
-              : "file:///cache/fitted.png",
+            previewUri: `data:image/png;base64,${oversized ? original : "YWJj"}`,
           }),
         ],
         error: null,
       });
+      expect(mocks.delete).toHaveBeenCalledWith("file:///cache/fitted.png");
     });
 
     it("releases the owned copy when reading an image fails", async () => {
