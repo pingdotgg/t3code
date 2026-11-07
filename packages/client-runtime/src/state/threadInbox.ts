@@ -1,4 +1,6 @@
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
+import type { ScheduledTask, ThreadId } from "@t3tools/contracts";
+
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 import { effectiveSnoozed } from "./threadSettled.ts";
@@ -28,6 +30,57 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
     run.status !== "waiting" &&
     thread.runtime?.activeRunId !== run.runId;
   return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
+}
+
+type PendingWakeThreadInput = Pick<
+  EnvironmentThreadShell,
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "pendingSubagentRequest"
+  | "pendingGuestMessageCount"
+  | "pendingBackgroundTasks"
+  | "runtime"
+  | "hasHeldQueue"
+>;
+
+const ENDED_RUNTIME_STATUSES = new Set<NonNullable<EnvironmentThreadShell["runtime"]>["status"]>([
+  "completed",
+  "interrupted",
+  "cancelled",
+]);
+
+/**
+ * The latest turn ended and nothing T3 knows of can start another. Any running background task
+ * counts, since some providers wake on unawaited ones. Failed and rolled-back turns keep their
+ * own state. `hasScheduledWake` is null while the scheduled task list is unknown.
+ */
+export function threadHasNoPendingWake(
+  thread: PendingWakeThreadInput,
+  hasScheduledWake: boolean | null,
+): boolean {
+  if (thread.runtime === null || !ENDED_RUNTIME_STATUSES.has(thread.runtime.status)) return false;
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  if (thread.pendingSubagentRequest != null || (thread.pendingGuestMessageCount ?? 0) > 0) {
+    return false;
+  }
+  // A held queue keeps its messages out of the latest run, so the earlier turn still reads ended.
+  // Older servers omit it, and an unknown queue never reads as idle.
+  if (thread.hasHeldQueue !== false) return false;
+  return thread.pendingBackgroundTasks.length === 0 && hasScheduledWake === false;
+}
+
+export function scheduledTasksWakeThread(
+  tasks: ReadonlyArray<
+    Pick<ScheduledTask, "threadId" | "enabled" | "nextRunAt" | "schedule" | "blockedByPolicy">
+  >,
+  threadId: ThreadId,
+): boolean {
+  return tasks.some(
+    (task) =>
+      task.threadId === threadId &&
+      task.blockedByPolicy === undefined &&
+      (task.nextRunAt !== null || (task.enabled && task.schedule.type === "webhook")),
+  );
 }
 
 type InboxThreadInput = Pick<

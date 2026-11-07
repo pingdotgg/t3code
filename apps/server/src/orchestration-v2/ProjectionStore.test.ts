@@ -778,6 +778,17 @@ it.effect("SQL queue readiness skips held runs without bypassing active work", (
     const { runs } = yield* store.getThreadProjection(threadId);
     const run = runs[0]!;
     const now = yield* DateTime.now;
+    const assertShellsHoldQueue = Effect.fnUntraced(function* (held: boolean) {
+      const memoryShell = ProjectionStore.threadShellFromProjection(
+        yield* store.getThreadProjection(threadId),
+      );
+      const sqlShell = (yield* store.getShellSnapshot()).threads.find(
+        (row) => row.id === threadId,
+      )!;
+      assert.equal(memoryShell.hasHeldQueue, held);
+      assert.equal(sqlShell.hasHeldQueue, held);
+    });
+    yield* assertShellsHoldQueue(false);
     const held = { ...run, status: "queued" as const, queueHeld: true };
     yield* store.apply({
       id: EventId.make("held-queue:held"),
@@ -787,6 +798,7 @@ it.effect("SQL queue readiness skips held runs without bypassing active work", (
       payload: held,
     });
     assert.isFalse(yield* store.canStartQueuedRun(threadId));
+    yield* assertShellsHoldQueue(true);
 
     const wake = { ...run, id: RunId.make("held-queue:wake"), ordinal: 2 };
     for (const status of ["running", "queued", "completed"] as const) {

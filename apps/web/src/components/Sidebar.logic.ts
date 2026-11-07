@@ -26,6 +26,8 @@ import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/c
 import type { AsyncResult } from "effect/reactivity";
 import {
   effectiveSnoozed,
+  isThreadListedActive,
+  threadWokeAt,
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -37,6 +39,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
+import { parseTimestampDate } from "../timestampFormat";
 import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
@@ -704,6 +707,36 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
+}
+
+/** A thread woke from its snooze after the user last opened it. */
+export function isSidebarThreadWoke(input: {
+  readonly wokeAt: string | null;
+  readonly lastVisitedAt: string | undefined;
+  readonly settled: boolean;
+}): boolean {
+  const wokeAtDate = input.wokeAt === null ? null : parseTimestampDate(input.wokeAt);
+  const lastVisitedDate =
+    input.lastVisitedAt === undefined ? null : parseTimestampDate(input.lastVisitedAt);
+  return (
+    wokeAtDate !== null &&
+    (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
+    !input.settled
+  );
+}
+
+/** The header may show Idle only where the thread's sidebar row would: active, read, not woke. */
+export function threadHeaderMayShowIdle(
+  thread: ThreadStatusInput & ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride">,
+  options: { readonly lastVisitedAt: string | undefined; readonly now: string },
+): boolean {
+  if (!isThreadListedActive(thread, { now: options.now })) return false;
+  if (hasUnseenCompletion({ ...thread, lastVisitedAt: options.lastVisitedAt })) return false;
+  return !isSidebarThreadWoke({
+    wokeAt: threadWokeAt(thread, { now: options.now }),
+    lastVisitedAt: options.lastVisitedAt,
+    settled: false,
+  });
 }
 
 /** Unopened threads' failures still count as unseen, unlike completions. */

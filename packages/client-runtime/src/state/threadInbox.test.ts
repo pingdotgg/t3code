@@ -1,11 +1,23 @@
-import { EnvironmentId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+  type OrchestrationV2ThreadShell,
+  type ScheduledTask,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { presentThreadShell } from "./models.ts";
+import { v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import {
   createInboxReturnTracker,
   isThreadWorking,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
+  scheduledTasksWakeThread,
+  threadHasNoPendingWake,
 } from "./threadInbox.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -239,5 +251,121 @@ describe("sortWorkingThreadsBySend", () => {
     expect(
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
+  });
+});
+
+describe("threadHasNoPendingWake", () => {
+  const runId = RunId.make("run-ended");
+  const ended = { ...v2ThreadShell, latestRunId: runId, status: "completed" as const };
+  const present = (shell: Partial<OrchestrationV2ThreadShell>) =>
+    presentThreadShell(environmentId, { ...ended, hasHeldQueue: false, ...shell });
+  const request = (kind: "user_input" | "dynamic_tool_call") => ({
+    id: RuntimeRequestId.make("request-open"),
+    kind,
+    createdAt: v2ThreadShell.updatedAt,
+  });
+  const watch = {
+    taskId: "pull-request-watch:github.com/acme/app#1",
+    kind: "monitor" as const,
+    awaited: true as const,
+  };
+
+  it("is idle once the turn ended with nothing that could resume it", () => {
+    for (const status of ["completed", "interrupted", "cancelled"] as const) {
+      expect(threadHasNoPendingWake(present({ status }), false)).toBe(true);
+    }
+  });
+
+  it.each([
+    { name: "no turn ran yet", shell: { latestRunId: null, status: "idle" as const } },
+    { name: "a turn is running", shell: { activeRunId: runId, status: "running" as const } },
+    { name: "the turn awaits its checkpoint", shell: { status: "waiting" as const } },
+    { name: "the turn failed", shell: { status: "failed" as const } },
+    // A rolled-back latest run hides the pending work list, watches included.
+    { name: "the turn was rolled back", shell: { status: "rolled_back" as const } },
+    {
+      name: "an awaited background command runs",
+      shell: {
+        pendingBackgroundTasks: [
+          { taskId: "tests", kind: "command" as const, awaited: true as const },
+        ],
+      },
+    },
+    {
+      // Claude wakes the agent when any background command it started exits.
+      name: "an unawaited background command runs",
+      shell: { pendingBackgroundTasks: [{ taskId: "build", kind: "command" as const }] },
+    },
+    {
+      name: "a delegated thread is open",
+      shell: {
+        pendingBackgroundTasks: [
+          { taskId: "delegate", kind: "subagent" as const, childThreadId: ThreadId.make("child") },
+        ],
+      },
+    },
+    { name: "a pull request is watched", shell: { pendingBackgroundTasks: [watch] } },
+    {
+      name: "an approval is pending",
+      shell: { pendingRuntimeRequest: request("dynamic_tool_call") },
+    },
+    { name: "a question is pending", shell: { pendingRuntimeRequest: request("user_input") } },
+    { name: "a guest message waits", shell: { pendingGuestMessageCount: 1 } },
+    // Includes a message queued during the turn and held by a stop, which predates the turn's end.
+    { name: "a message waits in a held queue", shell: { hasHeldQueue: true } },
+  ])("is not idle when $name", ({ shell }) => {
+    expect(threadHasNoPendingWake(present(shell), false)).toBe(false);
+  });
+
+  it("is not idle while a child thread asks for approval or input", () => {
+    for (const childRequest of ["approval", "user_input"] as const) {
+      const shell = presentThreadShell(
+        environmentId,
+        { ...ended, hasHeldQueue: false },
+        childRequest,
+      );
+      expect(threadHasNoPendingWake(shell, false)).toBe(false);
+    }
+  });
+
+  it("is not idle when an older server does not report its held queue", () => {
+    expect(threadHasNoPendingWake(presentThreadShell(environmentId, ended), false)).toBe(false);
+  });
+
+  it("is not idle while a scheduled task can run into it, or before the task list loads", () => {
+    expect(threadHasNoPendingWake(present({}), true)).toBe(false);
+    expect(threadHasNoPendingWake(present({}), null)).toBe(false);
+  });
+});
+
+describe("scheduledTasksWakeThread", () => {
+  const threadId = v2ThreadShell.id;
+  const task = (
+    overrides: Partial<
+      Pick<ScheduledTask, "threadId" | "enabled" | "nextRunAt" | "schedule" | "blockedByPolicy">
+    > = {},
+  ) => ({
+    threadId,
+    enabled: true,
+    nextRunAt: "2026-06-21T00:00:00.000Z",
+    schedule: { type: "interval" as const, everyMs: 3_600_000 },
+    ...overrides,
+  });
+
+  it("counts a bound task with a next run or an enabled webhook", () => {
+    expect(scheduledTasksWakeThread([task()], threadId)).toBe(true);
+    const webhook = task({ nextRunAt: null, schedule: { type: "webhook", signature: null } });
+    expect(scheduledTasksWakeThread([webhook], threadId)).toBe(true);
+  });
+
+  it("ignores tasks that cannot run into this thread again", () => {
+    const tasks = [
+      task({ threadId: ThreadId.make("other-thread") }),
+      task({ threadId: null }),
+      task({ enabled: false, nextRunAt: null }),
+      task({ nextRunAt: null, schedule: { type: "once", runAt: "2026-06-19T00:00:00.000Z" } }),
+      task({ blockedByPolicy: "Webhooks are disabled by policy." }),
+    ];
+    expect(scheduledTasksWakeThread(tasks, threadId)).toBe(false);
   });
 });
