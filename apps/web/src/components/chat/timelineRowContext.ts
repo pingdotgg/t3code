@@ -95,7 +95,8 @@ export interface TimelineRowSharedState {
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   onToggleWorkingHistory: (key: string) => void;
-  onWorkingHistoryCollapsing: (collapsing: boolean) => void;
+  onWorkingHistoryMoving: (moving: boolean) => void;
+  onWorkingHistorySettled: () => void;
   onFocusComposer: (() => void) | null;
   workGroupViewState: WorkGroupViewState;
 }

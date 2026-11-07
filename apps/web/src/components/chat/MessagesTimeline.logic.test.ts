@@ -971,7 +971,7 @@ describe("deriveMessagesTimelineRows", () => {
       const rows = applyWorkingWindow(deriveMessagesTimelineRows(running), running);
       expect(rows.map((row) => row.id)).toEqual(["prompt", "working-indicator-row", "reply"]);
       expect(rows.filter((row) => row.kind === "working")).toMatchObject([
-        { createdAt: prompt.createdAt, window: { items: [], answering: streaming } },
+        { createdAt: prompt.createdAt, window: { items: [], answering: true } },
       ]);
       expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
     }
