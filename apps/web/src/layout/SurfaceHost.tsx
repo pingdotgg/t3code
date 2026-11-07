@@ -898,7 +898,7 @@ export function LayoutSurfaceHost({
     if (column) lastFocusedPaneByColumn.current.set(column.id, focusedPaneId);
   }, [focusedPaneId, workspace]);
 
-  // The sidebar highlights every thread on screen (pen r45lm). Derived from
+  // The sidebar keeps every thread on screen from receding. Derived from
   // the slots and the strip's settled scroll position, never per frame.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to settled strip scrolling and publishes the DOM-visible panes to the shared layout registry
   useEffect(() => {

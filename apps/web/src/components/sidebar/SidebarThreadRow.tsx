@@ -638,10 +638,6 @@ type SidebarThreadRowProps = {
   // Unlike isActive, never true for the ancestor standing in for an open
   // subagent: drafts and PR clicks care about which composer is on screen.
   isRouteThread: boolean;
-  /**
-   * The thread shows in a pane on screen (pen r45lm): it takes the selected
-   * fill like the focused one, which alone keeps the strong title.
-   */
   isOnScreen: boolean;
   openPullRequestsInRightPanel: boolean;
   jumpLabel: string | null;
@@ -1012,7 +1008,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       "[&:not(:hover):not(:focus-within)_*]:text-secondary-label",
     isRenaming
       ? "bg-transparent sidebar-rename-ring ring-inset ring-ring"
-      : props.isActive || props.isOnScreen
+      : props.isActive
         ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
         : isSelected || props.sweepAction !== null
           ? "surface-sidebar-row-selected text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
