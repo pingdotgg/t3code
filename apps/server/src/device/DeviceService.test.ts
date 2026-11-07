@@ -47,47 +47,21 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
-// `simctl help io` excerpts. Xcode 27 accepts the numeric screen IDs expo-device-hub passes.
-const XCODE_27_SIMCTL_IO_HELP = `--display    Specifies which display to record. Accepts:
-                 - Screen ID (eg: "1")
-                 - Alias (for compatibility): "internal" or "external"`;
-const XCODE_26_SIMCTL_IO_HELP = `--display    iOS: supports "internal" or "external". Default is "internal".
-                 tvOS: supports only "external"
-                 watchOS: supports only "internal"
-
-                 You may also specify a port by UUID`;
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
 it.effect.each([
   {
-    name: "keeps the hub's 400 when simctl takes screen IDs",
-    status: 400,
-    help: XCODE_27_SIMCTL_IO_HELP,
-    expected: { failure: { _tag: "DeviceOperationError", reason: "hub_rejected" } },
-  },
-  {
-    name: "keeps the hub's 500 when simctl takes screen IDs",
-    status: 500,
-    help: XCODE_27_SIMCTL_IO_HELP,
-    expected: { failure: { _tag: "DeviceOperationError", reason: "hub_rejected" } },
-  },
-  {
-    name: "keeps the hub's 500 for Android",
-    status: 500,
+    name: "keeps the hub's rejection for Android",
     platform: "android" as const,
     expected: { failure: { _tag: "DeviceOperationError", reason: "hub_rejected" } },
   },
   {
-    name: "captures with simctl when it rejects screen IDs",
-    status: 500,
-    help: XCODE_26_SIMCTL_IO_HELP,
+    name: "captures the default display with simctl when the hub rejects an iOS screenshot",
     capture: { code: 0, stdout: `${Buffer.from(PNG).toString("base64")}\n`, stderr: "" },
     expected: { success: PNG },
   },
   {
-    name: "reports simctl's own failure when it rejects screen IDs",
-    status: 500,
-    help: XCODE_26_SIMCTL_IO_HELP.replaceAll('"', "'"),
+    name: "reports simctl's own failure when the iOS fallback fails",
     capture: { code: 1, stdout: "", stderr: "Error: Device is not booted" },
     expected: {
       failure: {
@@ -98,26 +72,24 @@ it.effect.each([
       },
     },
   },
-])("screenshot $name", ({ status, platform = "ios" as const, help, capture, expected }) =>
+])("screenshot $name", ({ platform = "ios" as const, capture, expected }) =>
   Effect.gen(function* () {
     const operations = makeDeviceHubOperations({
       hostId: LOCAL_DEVICE_HOST_ID,
       origin: "http://device.test",
       http: HttpClient.make((request) =>
         Effect.succeed(
-          HttpClientResponse.fromWeb(request, new Response("private hub output", { status })),
+          HttpClientResponse.fromWeb(request, new Response("private hub output", { status: 500 })),
         ),
       ),
       run: (command, args) =>
-        command === "xcrun" && args.join(" ") === "simctl help io" && help
-          ? Effect.succeed({ code: 0, stdout: "", stderr: help })
-          : command === "sh" && args.at(-1) === "phone" && capture
-            ? Effect.sync(() => {
-                expect(args[1]).toContain('simctl io "$1" screenshot ');
-                expect(args[1]).not.toContain("--display");
-                return capture;
-              })
-            : Effect.die(`Unexpected command: ${command} ${args.join(" ")}`),
+        command === "sh" && args.at(-1) === "phone" && capture
+          ? Effect.sync(() => {
+              expect(args[1]).toContain('simctl io "$1" screenshot ');
+              expect(args[1]).not.toContain("--display");
+              return capture;
+            })
+          : Effect.die(`Unexpected command: ${command} ${args.join(" ")}`),
       platformAvailable: () => Effect.succeed(false),
     });
     const result = yield* operations
