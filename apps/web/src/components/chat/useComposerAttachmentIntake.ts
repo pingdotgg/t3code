@@ -8,7 +8,6 @@ import {
 import {
   type ComposerContextReference,
   collectInlineContextIds,
-  stripInlineContextReferences,
 } from "~/lib/composerContextReferences";
 import {
   type ComposerFileAttachment,
@@ -137,12 +136,12 @@ export function useComposerAttachmentIntake(input: {
     // large image is being compressed, and the attachments and errors belong
     // to the thread the paste happened in.
     const threadId = activeThreadId;
+    // Images show as tiles above the prompt; a chip only replaces a selection or answers a question.
     const imageAttachmentsGetChips =
       !options?.skipImageInlineChip &&
       (options?.selection !== undefined ||
         pendingUserInputs.length > 0 ||
-        projectSelectionRequired ||
-        stripInlineContextReferences(promptRef.current).trim().length > 0);
+        projectSelectionRequired);
 
     // Validation happens synchronously so concurrent pastes see each other:
     // accepted files reserve their attachment slots (as preparing images)
@@ -221,7 +220,8 @@ export function useComposerAttachmentIntake(input: {
     if (acceptedFiles.length > 0) {
       const storedIds = new Set(addComposerFilesToDraft(acceptedFiles));
       const storedFiles = acceptedFiles.filter((file) => storedIds.has(file.id));
-      if (storedFiles.length > 0) {
+      // Picked files show as cards above the prompt; folded pasted text keeps its place in the text.
+      if (storedFiles.length > 0 && options?.source?._tag === "pasted-text") {
         insertedAny = insertAttachmentReferences(
           storedFiles.map(fileContextReference),
           options?.selection,

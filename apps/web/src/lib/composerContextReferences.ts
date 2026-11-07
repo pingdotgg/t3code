@@ -70,10 +70,7 @@ export function insertInlineContextReference(
   };
 }
 
-export function appendInlineContextReference(
-  prompt: string,
-  reference: ComposerContextReference,
-): string {
+function appendInlineContextReference(prompt: string, reference: ComposerContextReference): string {
   return insertInlineContextReference(prompt, prompt.length, reference).prompt;
 }
 

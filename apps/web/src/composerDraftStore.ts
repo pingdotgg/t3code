@@ -72,7 +72,6 @@ import {
   normalizeTerminalContextText,
 } from "./lib/terminalContext";
 import {
-  appendInlineContextReference,
   type ComposerContextReference,
   ensureInlineContextReferences,
   formatInlineContextReference,
@@ -81,9 +80,7 @@ import {
 import {
   fileContextReference,
   previewAnnotationContextId,
-  previewAnnotationContextReference,
   reviewCommentContextId,
-  reviewCommentContextReference,
   terminalContextReference,
   threadContextReference,
   environmentContextReference,
@@ -549,7 +546,7 @@ interface ComposerDraftStoreState {
   addFiles: (
     threadRef: ComposerThreadTarget,
     files: ComposerFileAttachment[],
-    options?: { allowDuplicates?: boolean; appendReference?: boolean },
+    options?: { allowDuplicates?: boolean },
   ) => string[];
   removeFile: (threadRef: ComposerThreadTarget, fileId: string) => void;
   setFileUpload: (
@@ -570,28 +567,19 @@ interface ComposerDraftStoreState {
     context: TerminalContextDraft,
     index: number,
   ) => boolean;
-  addTerminalContexts: (
-    threadRef: ComposerThreadTarget,
-    contexts: TerminalContextDraft[],
-    options?: ComposerContextAddOptions,
-  ) => void;
+  addTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   removeTerminalContext: (threadRef: ComposerThreadTarget, contextId: string) => void;
   clearTerminalContexts: (threadRef: ComposerThreadTarget) => void;
   addPreviewAnnotation: (
     threadRef: ComposerThreadTarget,
     annotation: PreviewAnnotationPayload,
-    options?: ComposerContextAddOptions,
   ) => void;
   setPreviewAnnotations: (
     threadRef: ComposerThreadTarget,
     annotations: ReadonlyArray<PreviewAnnotationPayload>,
   ) => void;
   removePreviewAnnotation: (threadRef: ComposerThreadTarget, annotationId: string) => void;
-  addReviewComment: (
-    threadRef: ComposerThreadTarget,
-    comment: ReviewCommentContext,
-    options?: ComposerContextAddOptions,
-  ) => void;
+  addReviewComment: (threadRef: ComposerThreadTarget, comment: ReviewCommentContext) => void;
   setContextInsertionHandler: (
     threadRef: ComposerThreadTarget,
     handler: ComposerContextInsertionHandler | null,
@@ -1921,10 +1909,7 @@ function normalizePersistedDraftsByThreadId(
         return contextId ? formatInlineContextReference({ kind, contextId, label }) : source;
       },
     );
-    const prompt = ensureInlineContextReferences(
-      migrateLegacyTerminalContextPlaceholders(migratedPrompt, terminalContexts),
-      terminalContexts.map((context) => terminalContextReference({ ...context, text: "" })),
-    );
+    const prompt = migrateLegacyTerminalContextPlaceholders(migratedPrompt, terminalContexts);
     const legacyDraftCandidate = draftValue as LegacyPersistedComposerThreadDraftState;
     let modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
     let activeProvider: ProviderInstanceId | null = null;
@@ -2424,12 +2409,10 @@ function toHydratedThreadDraft(
     })) ?? [];
 
   return {
+    // Files, review comments and preview picks without a chip show above the prompt.
     prompt: ensureInlineContextReferences(persistedDraft.prompt, [
-      ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
-      ...(persistedDraft.previewAnnotations ?? []).map(previewAnnotationContextReference),
       ...(persistedDraft.threadContexts ?? []).map(threadContextReference),
       ...(persistedDraft.environmentContexts ?? []).map(environmentContextReference),
-      ...files.map(fileContextReference),
     ]),
     images: hydrateImagesFromPersisted(persistedDraft.attachments),
     files,
@@ -2987,19 +2970,17 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
             const nextDraft: ComposerThreadDraftState = {
               ...existing,
-              prompt: ensureInlineContextReferences(
-                existing.terminalContexts
-                  .filter((context) => !normalizedContexts.some((next) => next.id === context.id))
-                  .reduce(
-                    (prompt, context) =>
-                      removeInlineContextReference(
-                        prompt,
-                        terminalContextReference(context).contextId,
-                      ).prompt,
-                    existing.prompt,
-                  ),
-                normalizedContexts.map(terminalContextReference),
-              ),
+              // Terminals without a chip show as cards; send adds their references.
+              prompt: existing.terminalContexts
+                .filter((context) => !normalizedContexts.some((next) => next.id === context.id))
+                .reduce(
+                  (prompt, context) =>
+                    removeInlineContextReference(
+                      prompt,
+                      terminalContextReference(context).contextId,
+                    ).prompt,
+                  existing.prompt,
+                ),
               terminalContexts: normalizedContexts,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
@@ -3401,12 +3382,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...state.draftsByThreadKey,
                 [threadKey]: {
                   ...existing,
-                  prompt: options?.appendReference
-                    ? ensureInlineContextReferences(
-                        prompt,
-                        [...accepted, ...replacements.values()].map(fileContextReference),
-                      )
-                    : prompt,
+                  prompt,
                   files: [...retained, ...accepted],
                 },
               },
@@ -3555,7 +3531,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           });
           return inserted;
         },
-        addTerminalContexts: (threadRef, contexts, options) => {
+        addTerminalContexts: (threadRef, contexts) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           const threadId = resolveComposerThreadId(get(), threadRef);
           if (!threadKey || !threadId || contexts.length === 0) {
@@ -3567,11 +3543,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             ...contexts,
           ]).slice(currentContexts.length);
           if (incoming.length === 0) return;
-          const placedAtCaret =
-            options?.appendReference !== false &&
-            options?.insertAtCaret !== false &&
-            (contextInsertionHandlers.get(threadKey)?.(incoming.map(terminalContextReference)) ??
-              false);
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
             const acceptedContexts = normalizeTerminalContextsForThread(threadId, [
@@ -3586,15 +3557,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...state.draftsByThreadKey,
                 [threadKey]: {
                   ...existing,
-                  prompt:
-                    placedAtCaret || options?.appendReference === false
-                      ? existing.prompt
-                      : ensureInlineContextReferences(
-                          existing.prompt,
-                          [...existing.terminalContexts, ...acceptedContexts].map(
-                            terminalContextReference,
-                          ),
-                        ),
                   terminalContexts: [...existing.terminalContexts, ...acceptedContexts],
                 },
               },
@@ -3659,23 +3621,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        addPreviewAnnotation: (threadRef, annotation, options) => {
+        addPreviewAnnotation: (threadRef, annotation) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) return;
           const compactAnnotation: PreviewAnnotationPayload = {
             ...annotation,
             screenshot: annotation.screenshot ? { ...annotation.screenshot, dataUrl: "" } : null,
           };
-          const reference = previewAnnotationContextReference(compactAnnotation);
-          const current = get().draftsByThreadKey[threadKey];
-          const alreadyPresent =
-            current?.previewAnnotations.some((entry) => entry.id === annotation.id) ?? false;
-          // The handler calls setPrompt; running it inside the updater would overwrite the inserted reference.
-          const placedAtCaret =
-            !alreadyPresent &&
-            options?.appendReference !== false &&
-            options?.insertAtCaret !== false &&
-            (contextInsertionHandlers.get(threadKey)?.([reference]) ?? false);
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
             const nextAnnotations = existing.previewAnnotations.filter(
@@ -3686,10 +3638,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...state.draftsByThreadKey,
                 [threadKey]: {
                   ...existing,
-                  prompt:
-                    alreadyPresent || placedAtCaret || options?.appendReference === false
-                      ? existing.prompt
-                      : appendInlineContextReference(existing.prompt, reference),
                   previewAnnotations: [...nextAnnotations, compactAnnotation],
                 },
               },
@@ -3710,10 +3658,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 previewAnnotationContextId(previous.id),
               ).prompt;
             }
-            prompt = ensureInlineContextReferences(
-              prompt,
-              annotations.map(previewAnnotationContextReference),
-            );
             const nextDraft = { ...existing, prompt, previewAnnotations: [...annotations] };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
@@ -3752,21 +3696,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        addReviewComment: (threadRef, comment, options) => {
+        addReviewComment: (threadRef, comment) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey || !isReviewCommentContext(comment)) return;
-          const reference = reviewCommentContextReference(comment);
-          const current = get().draftsByThreadKey[threadKey];
-          const alreadyPresent =
-            current?.reviewComments.some((entry) => entry.id === comment.id) ?? false;
-          const shouldPlaceReference =
-            options?.appendReference !== false &&
-            (!alreadyPresent || options?.allowDuplicateReference === true);
-          // Editor insertion must finish before this update reads the draft it extends.
-          const placedAtCaret =
-            shouldPlaceReference &&
-            options?.insertAtCaret !== false &&
-            (contextInsertionHandlers.get(threadKey)?.([reference]) ?? false);
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
             const reviewComments = existing.reviewComments.filter(
@@ -3777,10 +3709,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...state.draftsByThreadKey,
                 [threadKey]: {
                   ...existing,
-                  prompt:
-                    !shouldPlaceReference || placedAtCaret
-                      ? existing.prompt
-                      : appendInlineContextReference(existing.prompt, reference),
                   reviewComments: [...reviewComments, { ...comment }],
                 },
               },
@@ -3815,10 +3743,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 reviewCommentContextId(previous.id),
               ).prompt;
             }
-            prompt = ensureInlineContextReferences(
-              prompt,
-              reviewComments.map(reviewCommentContextReference),
-            );
             const nextDraft = { ...existing, prompt, reviewComments };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
@@ -4083,11 +4007,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextDraft: ComposerThreadDraftState = {
               ...current,
               prompt: ensureInlineContextReferences("", [
-                ...current.terminalContexts.map(terminalContextReference),
-                ...current.reviewComments.map(reviewCommentContextReference),
                 ...current.threadContexts.map(threadContextReference),
                 ...current.environmentContexts.map(environmentContextReference),
-                ...current.previewAnnotations.map(previewAnnotationContextReference),
               ]),
               images: [],
               files: [],
@@ -4154,10 +4075,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               });
             const movedFileIds = new Set(movedFiles.map((file) => file.id));
             const retainedFiles = source.files.filter((file) => !movedFileIds.has(file.id));
-            const movedPrompt = ensureInlineContextReferences(
-              stripInlineContextReferences(source.prompt),
-              destination.terminalContexts.map(terminalContextReference),
-            );
+            const movedPrompt = stripInlineContextReferences(source.prompt);
             const nextDestination: ComposerThreadDraftState = {
               ...destination,
               prompt: movedPrompt,
@@ -4177,10 +4095,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // Moved images still use these blob URLs at the destination; do not revoke them.
             const nextSource: ComposerThreadDraftState = {
               ...source,
-              prompt: ensureInlineContextReferences(
-                "",
-                source.terminalContexts.map(terminalContextReference),
-              ),
+              prompt: "",
               images: retainedImages,
               files: retainedFiles,
               nonPersistedImageIds: source.nonPersistedImageIds.filter(

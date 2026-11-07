@@ -1,5 +1,8 @@
 import type { ComposerFileAttachment } from "../composerDraftStore";
-import { formatInlineContextReference } from "../lib/composerContextReferences";
+import {
+  collectInlineContextIds,
+  formatInlineContextReference,
+} from "../lib/composerContextReferences";
 import { fileContextReference } from "../lib/composerContextRecords";
 import {
   reconcileAttachmentContextReferences,
@@ -635,6 +638,7 @@ describe("composer context undo lifetime", () => {
         placeholder: "",
         onChange: (value, _cursor, _expandedCursor, _adjacent, contextIds) => {
           const changes = reconcileAttachmentContextReferences({
+            previouslyReferencedContextIds: new Set(collectInlineContextIds(draft.value)),
             referencedContextIds: new Set(contextIds),
             files: draft.files,
             images: [],

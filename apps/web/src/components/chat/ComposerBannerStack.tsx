@@ -25,40 +25,6 @@ export interface ComposerBannerStackItem {
   readonly onDismiss?: () => void;
 }
 
-const GROUPS = ["environment", "attention"] as const;
-
-const FADE_IN =
-  "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none";
-
-/**
- * Notices about sending from this composer, each its own attached card. Consecutive cards join
- * edge to edge, and the last joins the composer or the drawer below it. Detached cards stand
- * apart instead, for layouts where the composer must not move when a notice appears.
- */
-export function ComposerBannerStack({
-  items,
-  detached = false,
-}: {
-  readonly items: ReadonlyArray<ComposerBannerStackItem>;
-  readonly detached?: boolean;
-}) {
-  const ordered = GROUPS.flatMap((group) =>
-    items.filter((item) => (item.group ?? "attention") === group),
-  );
-  if (detached) {
-    return ordered.map((item) => (
-      <div key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
-        <NoticeCard item={item} detached />
-      </div>
-    ));
-  }
-  return ordered.map((item) => (
-    <ComposerBanner.Attachment key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
-      <NoticeCard item={item} />
-    </ComposerBanner.Attachment>
-  ));
-}
-
 const SUBPIXEL_ROUNDING = 0.001;
 
 export function NoticeText({
@@ -160,65 +126,5 @@ export function NoticeText({
         </Popover>
       ) : null}
     </span>
-  );
-}
-
-function NoticeCard({
-  item,
-  detached = false,
-}: {
-  readonly item: ComposerBannerStackItem;
-  readonly detached?: boolean;
-}) {
-  return (
-    <ComposerBanner.Root
-      role={item.variant === "error" || item.variant === "warning" ? "alert" : undefined}
-      variant={item.variant}
-      detached={detached}
-      density="comfortable"
-      data-chat-composer-collapsed-controls="true"
-    >
-      <ComposerBanner.Row layout="wrap-actions">
-        <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
-          {item.icon}
-        </ComposerBanner.Icon>
-        <ComposerBanner.Content className="whitespace-nowrap">
-          <NoticeText
-            detailsLabel={
-              typeof item.title === "string"
-                ? `Show full title: ${item.title}`
-                : "Show title details"
-            }
-            className="min-w-0 truncate font-medium leading-7 sm:leading-6"
-          >
-            {item.title}
-          </NoticeText>
-          {item.description ? (
-            <NoticeText
-              detailsLabel={
-                typeof item.title === "string"
-                  ? `Show details: ${item.title}`
-                  : "Show notice details"
-              }
-              className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
-            >
-              {item.description}
-            </NoticeText>
-          ) : null}
-        </ComposerBanner.Content>
-        {item.actions || item.onDismiss ? (
-          <ComposerBanner.Actions className="min-w-14 sm:min-w-12">
-            {item.actions}
-            {item.onDismiss ? (
-              <ComposerBanner.Dismiss
-                aria-label={item.dismissLabel ?? "Dismiss warning"}
-                onClick={item.onDismiss}
-              />
-            ) : null}
-          </ComposerBanner.Actions>
-        ) : null}
-      </ComposerBanner.Row>
-      {item.children ? <ComposerBanner.Children>{item.children}</ComposerBanner.Children> : null}
-    </ComposerBanner.Root>
   );
 }

@@ -1357,6 +1357,8 @@ export function makeModelDisabledReason(
 /** What the composer held when the user pressed send, after a direct annotation merged in. */
 export interface ComposerSendContents {
   readonly prompt: string;
+  /** What the user typed; a failed send restores it so cards stay above the prompt. */
+  readonly draftPrompt: string;
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly files: ReadonlyArray<ComposerFileAttachment>;
   readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
@@ -1376,6 +1378,15 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
   const images = [...contents.images];
   const files = [...contents.files];
   const terminalContexts = [...contents.sendableTerminalContexts];
+  const withoutExpiredTerminals = (text: string) =>
+    contents.terminalContexts
+      .filter((context) => !terminalContexts.includes(context))
+      .reduce(
+        (next, context) =>
+          removeInlineContextReference(next, terminalContextReference(context).contextId).prompt,
+        text,
+      )
+      .trim();
   return {
     images,
     files,
@@ -1385,14 +1396,8 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     reviewComments: [...contents.reviewComments],
     threadContexts: [...contents.threadContexts],
     environmentContexts: [...contents.environmentContexts],
-    messageText: contents.terminalContexts
-      .filter((context) => !terminalContexts.includes(context))
-      .reduce(
-        (text, context) =>
-          removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
-        contents.prompt,
-      )
-      .trim(),
+    messageText: withoutExpiredTerminals(contents.prompt),
+    draftText: withoutExpiredTerminals(contents.draftPrompt),
   };
 }
 

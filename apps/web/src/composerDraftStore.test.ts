@@ -2309,80 +2309,55 @@ describe("composerDraftStore inline context references", () => {
     resetComposerDraftStore();
   });
 
-  it("appends a link when a review comment is added and strips it on removal", () => {
+  it("keeps review comments and preview picks out of the prompt and strips old chips on removal", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(threadRef, "look");
     store.addReviewComment(threadRef, reviewComment);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`look ${reviewLink} `);
-    store.addReviewComment(threadRef, { ...reviewComment, text: "edited" });
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`look ${reviewLink} `);
+    store.addPreviewAnnotation(threadRef, annotation);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("look");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([reviewComment]);
+
+    store.setPrompt(threadRef, `look ${reviewLink} ${annotationLink}`);
     store.removeReviewComment(threadRef, "rc-1");
+    store.removePreviewAnnotation(threadRef, "ann-1");
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("look");
   });
 
-  it("keeps bulk-set review records and their inline references in sync", () => {
+  it("bulk-sets review comments without adding chips and strips chips of dropped ones", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(threadRef, "Explain this pull request.");
     store.setReviewComments(threadRef, [reviewComment]);
-
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
-      `Explain this pull request. ${reviewLink} `,
-    );
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("Explain this pull request.");
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([reviewComment]);
 
+    store.setPrompt(threadRef, `Explain this pull request. ${reviewLink}`);
     store.setReviewComments(threadRef, []);
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("Explain this pull request.");
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([]);
   });
 
-  it("hands new review comments to a registered caret handler instead of appending", () => {
+  it("sets terminal contexts without turning cards into chips", () => {
     const store = useComposerDraftStore.getState();
-    store.setPrompt(threadRef, "look");
-    const seen: string[] = [];
-    store.setContextInsertionHandler(threadRef, (references) => {
-      seen.push(...references.map((reference) => reference.contextId));
-      return true;
-    });
-    store.addReviewComment(threadRef, reviewComment);
-    expect(seen).toEqual(["review-comment_rc-1"]);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("look");
-    store.setContextInsertionHandler(threadRef, null);
-    store.addReviewComment(threadRef, { ...reviewComment, id: "rc-2" });
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
-      "look [b.ts L4](t3-context://v1/review-comment/review-comment_rc-2) ",
-    );
+    const first = makeTerminalContext({ id: "ctx-1" });
+    const second = makeTerminalContext({ id: "ctx-2", lineStart: 9, lineEnd: 9 });
+    const firstLink = formatTerminalContextReference(first);
+    store.setPrompt(threadRef, `run ${firstLink}`);
+    store.setTerminalContexts(threadRef, [first, second]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`run ${firstLink}`);
+    store.setTerminalContexts(threadRef, [second]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("run");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.terminalContexts.map((c) => c.id)).toEqual([
+      "ctx-2",
+    ]);
   });
 
-  it("does not overwrite a prompt update made by the caret handler", () => {
-    const store = useComposerDraftStore.getState();
-    store.setPrompt(threadRef, "before after");
-    store.setContextInsertionHandler(threadRef, (references) => {
-      const reference = references[0];
-      if (!reference) return false;
-      useComposerDraftStore
-        .getState()
-        .setPrompt(
-          threadRef,
-          `before [${reference.label}](t3-context://v1/${reference.kind}/${reference.contextId}) after`,
-        );
-      return true;
-    });
-
-    store.addReviewComment(threadRef, reviewComment);
-
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`before ${reviewLink} after`);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([reviewComment]);
-    store.setContextInsertionHandler(threadRef, null);
-  });
-
-  it("keeps links for retained context when clearing text and attachments", () => {
+  it("keeps cards when clearing text and attachments", () => {
     const store = useComposerDraftStore.getState();
     store.addReviewComment(threadRef, reviewComment);
     store.addPreviewAnnotation(threadRef, annotation);
     store.clearComposerPromptAndImages(threadRef);
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.prompt).toContain(reviewLink);
-    expect(draft?.prompt).toContain(annotationLink);
+    expect(draft?.prompt).toBe("");
     expect(draft?.reviewComments).toEqual([reviewComment]);
     expect(draft?.previewAnnotations).toEqual([annotation]);
   });
@@ -2498,7 +2473,7 @@ describe("composerDraftStore attachment references", () => {
     },
   );
 
-  it("appends chips for persisted files that predate references", () => {
+  it("keeps persisted files without a chip as cards above the prompt", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {
         merge: (
@@ -2521,7 +2496,9 @@ describe("composerDraftStore attachment references", () => {
       },
       useComposerDraftStore.getInitialState(),
     );
-    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.prompt).toBe(`old ${fileLink} `);
+    const draft = mergedState.draftsByThreadKey[threadKeyFor(threadId)];
+    expect(draft?.prompt).toBe("old");
+    expect(draft?.files.map((file) => file.id)).toEqual(["file-1"]);
   });
 
   it("migrates legacy image references without doubling their image marker", () => {

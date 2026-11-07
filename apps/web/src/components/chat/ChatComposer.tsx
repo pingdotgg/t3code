@@ -115,13 +115,15 @@ import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
+  lostContextReference,
   reconcileAttachmentContextReferences,
   useRetainedContextPayloads,
 } from "./composerContextUndo";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
-import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
+import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import { ComposerStatusDot } from "./ComposerStatusDot";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
   composerOtherFilesForPresentation,
@@ -170,7 +172,6 @@ import {
   type ComposerContextReference,
   ensureInlineContextReferences,
   formatInlineContextReference,
-  insertInlineContextReference,
   inlineContextReferenceReplacement,
 } from "~/lib/composerContextReferences";
 import {
@@ -203,6 +204,8 @@ import {
   ComposerAttachButton,
   ComposerAttachmentFileList,
   ComposerAttachmentMediaRow,
+  ComposerContextChipRow,
+  ComposerTerminalContextCards,
   ComposerFilePreviewDialog,
   ComposerQueuedAttachmentRow,
   ComposerRestingImagePreviews,
@@ -290,6 +293,13 @@ function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   deadline.current = 0;
   return armed;
 }
+
+// Context kinds that show above the prompt instead of as a chip in the text.
+const SHELF_CONTEXT_KINDS: ReadonlySet<string> = new Set([
+  "terminal",
+  "review-comment",
+  "preview-annotation",
+]);
 
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
@@ -699,9 +709,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const prompt = composerDraft.prompt;
   const composerImages = attachmentDraft.images;
   const composerFiles = attachmentDraft.files;
+  const inlineContextIdSet = new Set(collectInlineContextIds(prompt));
   const inlineFileIdSet = (() => {
     if (questionAttachmentTarget) return new Set<string>();
-    const contextIds = new Set(collectInlineContextIds(prompt));
+    const contextIds = inlineContextIdSet;
     return new Set(
       composerFiles
         .filter((file) => contextIds.has(toKindScopedComposerContextId("file", file.id)))
@@ -719,6 +730,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerTerminalContexts = composerDraft.terminalContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
+  const shelfTerminalContexts = composerTerminalContexts.filter(
+    (context) => !inlineContextIdSet.has(terminalContextReference(context).contextId),
+  );
+  const shelfReviewComments = composerReviewComments.filter(
+    (comment) => !inlineContextIdSet.has(reviewCommentContextId(comment.id)),
+  );
+  const shelfPreviewAnnotations = composerPreviewAnnotations.filter(
+    (annotation) => !inlineContextIdSet.has(previewAnnotationContextId(annotation.id)),
+  );
   const composerThreadContexts = attachmentDraft.threadContexts;
   const composerEnvironmentContexts = composerDraft.environmentContexts;
   const {
@@ -823,6 +843,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const removeComposerDraftReviewComment = useComposerDraftStore(
     (store) => store.removeReviewComment,
+  );
+  const removeComposerDraftTerminalContext = useComposerDraftStore(
+    (store) => store.removeTerminalContext,
   );
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
@@ -1290,9 +1313,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     addComposerDraftImages(attachmentDraftTarget, images);
 
   const addComposerFilesToDraft = (files: ComposerFileAttachment[]) =>
-    addComposerDraftFiles(attachmentDraftTarget, files, {
-      appendReference: questionAttachmentTarget === null,
-    });
+    addComposerDraftFiles(attachmentDraftTarget, files);
 
   const removeComposerImageFromDraft = (imageId: string) => {
     if (questionAttachmentTarget && activePendingIsResponding) return;
@@ -1625,12 +1646,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     onTypingGuardDraftChange();
+    const previouslyReferenced = new Set(collectInlineContextIds(promptRef.current));
     promptRef.current = nextPrompt;
     setPrompt(nextPrompt);
     if (promptHistoryPositionRef.current?.position.recalled !== nextPrompt) {
       promptHistoryPositionRef.current = null;
     }
     const referenced = new Set(contextIds);
+    const lost = (contextId: string) =>
+      lostContextReference(contextId, previouslyReferenced, referenced);
     const retained = retainedContextPayloads;
 
     const liveTerminalIds = new Set<string>(
@@ -1642,14 +1666,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return context ? [context] : [];
     });
     const nextTerminals = [
-      ...composerTerminalContexts.filter((context) =>
-        referenced.has(terminalContextReference(context).contextId),
+      ...composerTerminalContexts.filter(
+        (context) => !lost(terminalContextReference(context).contextId),
       ),
       ...restoredTerminals,
     ];
     for (const context of composerTerminalContexts) {
       const contextId = terminalContextReference(context).contextId;
-      if (!referenced.has(contextId)) retained.terminals.set(contextId, context);
+      if (lost(contextId)) retained.terminals.set(contextId, context);
     }
     if (nextTerminals.length !== composerTerminalContexts.length || restoredTerminals.length > 0) {
       setComposerDraftTerminalContexts(composerDraftTarget, nextTerminals);
@@ -1696,7 +1720,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
     for (const comment of composerReviewComments) {
       const contextId = reviewCommentContextId(comment.id);
-      if (!referenced.has(contextId)) {
+      if (lost(contextId)) {
         retained.reviewComments.set(contextId, comment);
         removeComposerDraftReviewComment(composerDraftTarget, comment.id);
       }
@@ -1708,11 +1732,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (liveReviewIds.has(contextId)) continue;
       const comment = retained.reviewComments.get(contextId);
       if (comment) {
-        addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
+        addComposerDraftReviewComment(composerDraftTarget, comment);
       }
     }
 
     const attachmentChanges = reconcileAttachmentContextReferences({
+      previouslyReferencedContextIds: previouslyReferenced,
       referencedContextIds: referenced,
       files: composerFiles,
       images: composerImages,
@@ -1724,9 +1749,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     for (const restored of attachmentChanges.annotationsToRestore) {
       if (restored.image) addComposerDraftImages(attachmentDraftTarget, [restored.image]);
-      addComposerDraftPreviewAnnotation(composerDraftTarget, restored.annotation, {
-        appendReference: false,
-      });
+      addComposerDraftPreviewAnnotation(composerDraftTarget, restored.annotation);
     }
     for (const fileId of attachmentChanges.filesToRemove) {
       removeComposerDraftFile(attachmentDraftTarget, fileId);
@@ -2032,9 +2055,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
       });
       if (applied) {
-        addComposerDraftReviewComment(composerDraftTarget, comment, {
-          appendReference: false,
-        });
+        addComposerDraftReviewComment(composerDraftTarget, comment);
         setComposerHighlightedItemId(null);
       }
       return;
@@ -2384,7 +2405,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     importContextRecords,
     expandMobileComposer: expandMobileComposerStable,
   });
-  const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
   const composerControlsCollapsed = isComposerCollapsedMobile;
   // The collapsed mobile web composer keeps a second controls row inside the card.
   const showInlineRestingControls = isComposerCollapsedMobile;
@@ -2500,12 +2520,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }),
           },
         ];
-  const shelfItems = hasBlockingComposerTopDrawer
-    ? bannerItems.filter(
-        (item) =>
-          item.group === "environment" && (item.variant === "error" || item.variant === "warning"),
-      )
-    : bannerItems;
 
   const insertComposerText = (
     text: string,
@@ -2696,10 +2710,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerPasteStable = useStableCallback(onComposerPaste);
   const insertContextReferencesAtCaret = (
     references: ReadonlyArray<ComposerContextReference>,
-  ): boolean =>
-    insertComposerText(`${references.map(formatInlineContextReference).join(" ")} `, "cursor", {
-      ensureLeadingBoundary: true,
-    });
+  ): boolean => {
+    if (references.some((reference) => SHELF_CONTEXT_KINDS.has(reference.kind))) return true;
+    return insertComposerText(
+      `${references.map(formatInlineContextReference).join(" ")} `,
+      "cursor",
+      { ensureLeadingBoundary: true },
+    );
+  };
   const insertContextReferencesAtCaretStable = useStableCallback(insertContextReferencesAtCaret);
   const setContextInsertionHandler = useComposerDraftStore(
     (store) => store.setContextInsertionHandler,
@@ -2720,7 +2738,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         { ensureLeadingBoundary: true },
       );
       if (inserted) {
-        addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
+        addComposerDraftReviewComment(composerDraftTarget, comment);
       }
       return inserted;
     },
@@ -3064,35 +3082,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       addTerminalContext: (selection: TerminalContextSelection) => {
         if (!activeThread || isChoiceOnlyPendingQuestion || isLiteralPendingAnswer) return;
-        const snapshot = readComposerSnapshotStable();
         const context = {
           id: randomUUID(),
           threadId: activeThread.id,
           createdAt: new Date().toISOString(),
           ...selection,
         };
-        const insertion = insertInlineContextReference(
-          snapshot.value,
-          snapshot.expandedCursor,
-          terminalContextReference(context),
-        );
-        const nextCollapsedCursor = collapseExpandedComposerCursor(
-          insertion.prompt,
-          insertion.cursor,
-        );
+        // The excerpt shows as a card above the prompt; send adds its reference.
         const inserted = insertComposerDraftTerminalContext(
           composerDraftTarget,
-          insertion.prompt,
+          getComposerDraft(composerDraftTarget)?.prompt ?? promptRef.current,
           context,
           composerTerminalContexts.length,
         );
-        if (!inserted) return;
-        promptRef.current = insertion.prompt;
-        setComposerCursor(nextCollapsedCursor);
-        setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
-        window.requestAnimationFrame(() => {
-          composerEditorRef.current?.focusAt(nextCollapsedCursor);
-        });
+        if (inserted) scheduleComposerFocus();
       },
       getSendContext: () => ({
         answeringPendingUserInput: activePendingProgress !== null,
@@ -3238,6 +3241,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onRemoveFile={removeComposerFileFromDraft}
       />
     ) : null;
+  // A question answer sends only its own text and files, so the thread's context waits.
+  const showThreadContextShelf = !isComposerCollapsedMobile && pendingUserInputs.length === 0;
+  const composerTerminalCards =
+    showThreadContextShelf && shelfTerminalContexts.length > 0 ? (
+      <ComposerTerminalContextCards
+        contexts={shelfTerminalContexts}
+        onRemove={(contextId) => removeComposerDraftTerminalContext(composerDraftTarget, contextId)}
+      />
+    ) : null;
+  const composerContextChipRow =
+    showThreadContextShelf &&
+    (shelfReviewComments.length > 0 || shelfPreviewAnnotations.length > 0) ? (
+      <ComposerContextChipRow
+        reviewComments={shelfReviewComments}
+        previewAnnotations={shelfPreviewAnnotations}
+        onRemoveReviewComment={(commentId) =>
+          removeComposerDraftReviewComment(composerDraftTarget, commentId)
+        }
+        onRemovePreviewAnnotation={(annotationId) =>
+          removeComposerDraftPreviewAnnotation(composerDraftTarget, annotationId)
+        }
+      />
+    ) : null;
   const composerAttachButton = showComposerAttachAction ? (
     <ComposerAttachButton
       addComposerAttachments={addComposerAttachments}
@@ -3299,7 +3325,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     >
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
-          <ComposerBannerStack items={shelfItems} />
           {showComposerTopDrawer ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">
@@ -3372,6 +3397,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     (showProviderUnavailable ? "Enable a provider in Settings" : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}
+                <ComposerStatusDot items={bannerItems} />
                 <button
                   type="button"
                   data-chat-composer-transition-actions="true"
@@ -3476,9 +3502,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   />
                 )}
 
-              {composerAttachmentMediaRow}
-
-              {composerAttachmentFileList}
+              {composerAttachmentMediaRow ||
+              composerAttachmentFileList ||
+              composerTerminalCards ||
+              composerContextChipRow ? (
+                <div
+                  data-composer-attachment-shelf="true"
+                  className="mb-2.5 flex min-w-0 flex-wrap items-center gap-1.5 *:mb-0"
+                >
+                  {composerAttachmentMediaRow}
+                  {composerAttachmentFileList}
+                  {composerTerminalCards}
+                  {composerContextChipRow}
+                </div>
+              ) : null}
 
               <div className="relative">
                 {previewFile ? (
@@ -3603,23 +3640,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     "hidden sm:flex",
                 )}
               >
-                {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+                {composerAttachButton ? <div className="me-0.5">{composerAttachButton}</div> : null}
                 <div
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"
                   data-chat-composer-primary-actions-compact={
                     isComposerPrimaryActionsCompact ? "true" : "false"
                   }
-                  className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
+                  className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-1.5"
                 >
                   <div
                     ref={attachExpandedComposerControls}
                     data-chat-composer-controls="footer"
                     data-chat-composer-footer-controls="true"
-                    className="relative flex min-w-0 flex-1 items-center justify-end gap-0.5"
+                    className="relative flex min-w-0 flex-1 items-center justify-start gap-0.5"
                   >
                     {composerControls}
                   </div>
+                  <ComposerStatusDot items={bannerItems} />
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

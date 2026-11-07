@@ -1047,9 +1047,8 @@ export function PullRequestDetailPanel({
     const hasReference = (store.getComposerDraft(attachTarget)?.reviewComments ?? []).some(
       (existing) => existing.pullRequest?.url === detail.url,
     );
-    // The active editor may be answering a provider question rather than editing this draft.
-    if (!hasReference) store.addReviewComment(attachTarget, reference, { insertAtCaret: false });
-    store.addReviewComment(attachTarget, comment, { insertAtCaret: false });
+    if (!hasReference) store.addReviewComment(attachTarget, reference);
+    store.addReviewComment(attachTarget, comment);
     toastManager.add({ type: "success", title: "Added to the composer" });
   };
 

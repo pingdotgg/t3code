@@ -47,6 +47,10 @@ apply, including images already in the conversation. A video attachment gives
 the agent a file path; only [Antigravity](./providers-antigravity.md#skills-and-attachments)
 sends supported videos to Gemini models as video.
 
+Attached files, terminal output, review comments and picked preview elements
+show above the message, not in its text. The agent receives each one with the
+message. Remove one with its **×**.
+
 Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On web and desktop, reloading
 before an upload finishes requires you to attach that file again.

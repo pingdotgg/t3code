@@ -58,7 +58,17 @@ export function useRetainedContextPayloads(draftTargetKey: string): RetainedCont
   return retained;
 }
 
+/** Only a chip the edit deleted takes its payload with it; cards above the prompt never had one. */
+export function lostContextReference(
+  contextId: string,
+  previouslyReferencedContextIds: ReadonlySet<string>,
+  referencedContextIds: ReadonlySet<string>,
+): boolean {
+  return previouslyReferencedContextIds.has(contextId) && !referencedContextIds.has(contextId);
+}
+
 export function reconcileAttachmentContextReferences(input: {
+  previouslyReferencedContextIds: ReadonlySet<string>;
   referencedContextIds: ReadonlySet<string>;
   files: ReadonlyArray<ComposerFileAttachment>;
   images: ReadonlyArray<ComposerImageAttachment>;
@@ -76,7 +86,15 @@ export function reconcileAttachmentContextReferences(input: {
   const filesToRemove: string[] = [];
   for (const file of input.files) {
     const contextId = fileContextReference(file).contextId;
-    if (input.referencedContextIds.has(contextId)) continue;
+    if (
+      !lostContextReference(
+        contextId,
+        input.previouslyReferencedContextIds,
+        input.referencedContextIds,
+      )
+    ) {
+      continue;
+    }
     input.retained.files.set(contextId, file);
     filesToRemove.push(file.id);
   }
@@ -93,7 +111,15 @@ export function reconcileAttachmentContextReferences(input: {
   const annotationIdsToRemove: string[] = [];
   for (const annotation of input.previewAnnotations) {
     const contextId = previewAnnotationContextId(annotation.id);
-    if (input.referencedContextIds.has(contextId)) continue;
+    if (
+      !lostContextReference(
+        contextId,
+        input.previouslyReferencedContextIds,
+        input.referencedContextIds,
+      )
+    ) {
+      continue;
+    }
     input.retained.previewAnnotations.set(contextId, {
       annotation,
       image: imagesById.get(annotation.id),

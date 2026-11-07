@@ -3,14 +3,17 @@ import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { PlusIcon, ScaleIcon } from "lucide-react";
 import { memo } from "react";
 
+import { cn } from "~/lib/utils";
+
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
+import { serverUpdateStageLabel } from "./ServerUpdateAction";
 import {
   Select,
   SelectGroup,
@@ -51,6 +54,14 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   );
   const activeEnvironment =
     availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
+  const updateState = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
+  const updateLabel =
+    updateState.status === "running" ? (
+      <span className="text-info">
+        {" "}
+        · {serverUpdateStageLabel(updateState.stage).toLowerCase()}
+      </span>
+    ) : null;
 
   const environmentItems = [
     ...(onAutoEnvironment
@@ -73,9 +84,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       >
         <EnvironmentMachineIcon
           kind={activeEnvironment?.machine ?? "server"}
-          className="size-3 shrink-0"
+          className={cn("size-3 shrink-0", updateLabel && "text-info")}
         />
-        <ComposerContextLabel>{activeEnvironment?.label ?? "Run on"}</ComposerContextLabel>
+        <ComposerContextLabel>
+          {activeEnvironment?.label ?? "Run on"}
+          {updateLabel}
+        </ComposerContextLabel>
       </span>
     );
     return (
@@ -118,11 +132,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           ) : (
             <EnvironmentMachineIcon
               kind={activeEnvironment?.machine ?? "server"}
-              className="size-3 shrink-0"
+              className={cn("size-3 shrink-0", updateLabel && "text-info")}
             />
           )}
           <ComposerContextLabel>
             <SelectValue />
+            {updateLabel}
           </ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>

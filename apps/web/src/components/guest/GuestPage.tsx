@@ -24,7 +24,7 @@ import {
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { createQuestionHistoryProjector } from "@t3tools/client-runtime/state/thread-requests";
-import { ArrowUpIcon, PaperclipIcon, XIcon } from "lucide-react";
+import { ArrowUpIcon, PlusIcon, XIcon } from "lucide-react";
 import {
   useEffect,
   useReducer,
@@ -803,7 +803,7 @@ function GuestComposer({
           }}
         />
         <ComposerControl aria-label="Attach files" onClick={() => fileInputRef.current?.click()}>
-          <ComposerControlIcon icon={PaperclipIcon} />
+          <ComposerControlIcon icon={PlusIcon} />
         </ComposerControl>
         <GuestModelLabel model={model} />
         {error !== null ? (
