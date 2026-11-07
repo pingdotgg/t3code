@@ -1318,24 +1318,11 @@ const unregisterXAiPromptCompletionFallback = (
 
 const abortPendingPromptCompletions = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
-  sessionId?: string,
 ) =>
-  Ref.modify(pendingRef, (pending) => {
-    const [toAbort, remaining] = pending.reduce<
-      [ReadonlyArray<PendingXAiPromptCompletion>, ReadonlyArray<PendingXAiPromptCompletion>]
-    >(
-      ([aborting, kept], entry) =>
-        sessionId === undefined || entry.sessionId === sessionId
-          ? [[...aborting, entry], kept]
-          : [aborting, [...kept, entry]],
-      [[], []],
-    );
-    if (toAbort.length === 0) {
-      return [Effect.void, pending] as const;
-    }
-    return [
+  Ref.getAndSet(pendingRef, []).pipe(
+    Effect.flatMap((pending) =>
       Effect.forEach(
-        toAbort,
+        pending,
         (entry) =>
           Deferred.succeed(
             entry.deferred,
@@ -1346,11 +1333,10 @@ const abortPendingPromptCompletions = (
               agentResult: null,
             }),
           ),
-        { concurrency: "unbounded" },
-      ).pipe(Effect.asVoid),
-      remaining,
-    ] as const;
-  }).pipe(Effect.flatten);
+        { concurrency: "unbounded", discard: true },
+      ),
+    ),
+  );
 
 const resolveXAiPromptCompletionFallback = ({
   pendingRef,
