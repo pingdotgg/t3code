@@ -3032,6 +3032,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         ...key,
         watching: true,
+        includeOwnRemarks: true,
         link: { url, source: "agent" },
       });
       assert.equal(
@@ -3041,6 +3042,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const started = yield* watchOf;
       assert.isDefined(started);
       if (started === undefined) return;
+      assert.isTrue(started.includeOwnRemarks);
 
       yield* orchestrator.dispatch({
         type: "thread.metadata.update",
@@ -3062,6 +3064,42 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(yield* watchOf, recorded);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* watchOf, recorded);
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-exclude-own"),
+        threadId,
+        ...key,
+        watching: true,
+        includeOwnRemarks: false,
+      });
+      const changed = yield* watchOf;
+      assert.isFalse(changed?.includeOwnRemarks);
+      assert.notEqual(changed?.startedAt, started.startedAt);
+      assert.equal(changed?.remarksThrough, DateTime.formatIso(yield* DateTime.now));
+      assert.deepEqual(changed?.failedChecks, recorded.failedChecks);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-preserve-option"),
+        threadId,
+        ...key,
+        watching: true,
+      });
+      assert.deepEqual(yield* watchOf, changed);
+      const staleOption = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("pr-watch-old-option-sync"),
+          threadId,
+          ...key,
+          startedAt: recorded.startedAt,
+          watch: recorded,
+        })
+        .pipe(Effect.flip);
+      assert.equal(staleOption._tag, "OrchestratorDispatchError");
+      assert.deepEqual(yield* watchOf, changed);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* watchOf, changed);
 
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
