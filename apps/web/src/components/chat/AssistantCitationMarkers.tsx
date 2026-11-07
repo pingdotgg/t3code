@@ -198,7 +198,7 @@ function CitationMarkers({
           onBlur={updateCitationHighlight}
           render={<button type="button" />}
           hidden={!viewport}
-          className="pointer-events-auto absolute data-[citation-highlight]:ring-2 data-[citation-highlight]:ring-ring"
+          className="pointer-events-auto absolute data-[citation-highlight]:ring-2 data-[citation-highlight]:ring-ring data-[citation-highlight]:ring-offset-2 data-[citation-highlight]:ring-offset-background"
           aria-label={`Edit citation ${number} comment`}
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {
