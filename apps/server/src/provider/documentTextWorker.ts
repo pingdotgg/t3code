@@ -14,9 +14,10 @@ const CELL_END = Symbol("cell-end");
 type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
-// Parts the document never displays: tracked deletions and moves, field codes, phonetic guides,
-// paragraph properties such as tab-stop definitions.
+// Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
+// phonetic guides, paragraph properties such as tab-stop definitions.
 const HIDDEN = new Set([
+  "head",
   "script",
   "style",
   "binary-data",
