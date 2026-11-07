@@ -901,12 +901,22 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
           thread(id("elsewhere"), other, { title: "Kestrel nest", settledAt: old }),
           thread(id("note"), project, { title: "Unrelated", settledAt: old }),
           thread(id("new-note"), project, { title: "Unrelated", settledAt: at(50) }),
+          thread(id("archived"), project, {
+            title: "Kestrel nest",
+            settledAt: old,
+            archivedAt: old,
+          }),
+          thread(id("archived-note"), project, {
+            title: "Unrelated",
+            settledAt: old,
+            archivedAt: old,
+          }),
         ],
         projections.apply,
         { discard: true },
       );
       const before = DateTime.formatIso(at(30));
-      const messageThreadIds = [id("new-note"), id("note"), id("old")];
+      const messageThreadIds = [id("new-note"), id("note"), id("archived-note"), id("old")];
       assert.sameMembers(
         [...(yield* search.searchOlderSettled({ query: "kestrel", before, messageThreadIds }))],
         [id("old"), id("elsewhere"), id("note")],

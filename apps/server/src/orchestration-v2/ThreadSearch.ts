@@ -385,7 +385,7 @@ export const make = Effect.gen(function* () {
       INNER JOIN projection_projects AS projects
         ON projects.project_id = threads.project_id
       WHERE threads.deleted_at IS NULL
-        AND json_extract(threads.payload_json, '$.archivedAt') IS NULL
+        AND threads.archived_at IS NULL
         AND projects.deleted_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
@@ -409,7 +409,7 @@ export const make = Effect.gen(function* () {
       FROM orchestration_v2_projection_threads AS threads
       WHERE threads.thread_id IN (SELECT value FROM json_each(${threadIds}))
         AND threads.deleted_at IS NULL
-        AND json_extract(threads.payload_json, '$.archivedAt') IS NULL
+        AND threads.archived_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1

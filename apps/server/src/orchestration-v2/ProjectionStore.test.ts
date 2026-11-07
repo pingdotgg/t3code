@@ -5935,21 +5935,32 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const [originalRow] = yield* sql<{
         payload_json: string;
       }>`SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
-      for (const [field, value] of [
-        ["archivedAt", DateTime.formatIso(now)],
-        ["settledOverride", "settled"],
-      ]) {
-        yield* sql`UPDATE orchestration_v2_projection_threads
-          SET payload_json = json_set(payload_json, ${`$.${field}`}, ${value})
-          WHERE thread_id = ${threadId}`;
-        assert.isUndefined(
-          (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
+      const limitThread = (yield* store.getThreadProjection(threadId)).thread;
+      for (const archivedAt of [now, null]) {
+        yield* store.apply({
+          id: EventId.make(`event:limit-shell:archived:${archivedAt !== null}`),
+          type: archivedAt === null ? "thread.unarchived" : "thread.archived",
+          threadId,
+          occurredAt: now,
+          payload: { ...limitThread, archivedAt },
+        });
+        assert.strictEqual(
+          (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).some(
             (row) => row.id === threadId,
           ),
+          archivedAt === null,
         );
-        yield* sql`UPDATE orchestration_v2_projection_threads
-          SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
       }
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.settledOverride', 'settled')
+        WHERE thread_id = ${threadId}`;
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
       yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${DateTime.formatIso(now)} WHERE thread_id = ${threadId}`;
       assert.isUndefined(
         (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
