@@ -32,6 +32,7 @@ import {
   readLayoutOpenBesideKinds,
   toggleFocusedLayoutFill,
 } from "./layoutActions";
+import { isScrollingWorkspaceCommand } from "./layoutBehavior";
 import { runLayoutCommand } from "./layoutCommands";
 import { toggleLayoutShortcutSheet } from "./layoutOverlayStore";
 
@@ -196,10 +197,12 @@ function runLayoutPaletteCommand(command: LayoutKeybindingCommand): void {
  * Every layout key as a palette command, under "Layout…", so each action
  * has a path that needs no key (the web keeps some keys for the browser).
  */
-export function buildLayoutPaletteItems(): Array<
-  CommandPaletteSubmenuItem | CommandPaletteActionItem
-> {
-  const items = LAYOUT_ENTRIES.map((entry): CommandPaletteActionItem => ({
+export function buildLayoutPaletteItems(
+  scrollingWorkspaces: boolean,
+): Array<CommandPaletteSubmenuItem | CommandPaletteActionItem> {
+  const items = LAYOUT_ENTRIES.filter(
+    (entry) => scrollingWorkspaces || !isScrollingWorkspaceCommand(entry.command),
+  ).map((entry): CommandPaletteActionItem => ({
     kind: "action",
     value: `action:${entry.command}`,
     searchTerms: [entry.title.toLowerCase(), "layout", "pane", ...(entry.searchTerms ?? [])],
