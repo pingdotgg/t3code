@@ -2424,6 +2424,7 @@ export function buildThreadFeed(
       foldedAnswerRunIdByMessageId.get(item.messageId) === item.runId
     )
       continue;
+    if (item.type === "user_message" && item.retryOfRunId !== undefined) continue;
     if (
       item.type === "run_interrupt_request" ||
       (item.type === "run_interrupt_result" &&

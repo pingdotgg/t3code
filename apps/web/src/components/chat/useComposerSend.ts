@@ -1611,10 +1611,6 @@ export function useComposerSend(input: ComposerSendInput) {
     beginLocalDispatch({ preparingWorktree: false });
     setThreadError(threadIdForSend, null);
 
-    anchorNewTurn(
-      scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-      messageIdForSend,
-    );
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -1623,6 +1619,7 @@ export function useComposerSend(input: ComposerSendInput) {
         text: failedRunMessage.text,
         ...(failedRunMessage.context ? { context: failedRunMessage.context } : {}),
         ...(failedRunMessage.attachments ? { attachments: failedRunMessage.attachments } : {}),
+        retryOfRunId: failedRunId,
         runId: null,
         createdAt: messageCreatedAt,
         updatedAt: messageCreatedAt,
@@ -1634,6 +1631,7 @@ export function useComposerSend(input: ComposerSendInput) {
       environmentId,
       input: {
         threadId: threadIdForSend,
+        retryOfRunId: failedRunId,
         message: {
           messageId: messageIdForSend,
           role: "user",
