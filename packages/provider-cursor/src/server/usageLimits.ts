@@ -131,7 +131,13 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
       );
       token = credentials.accessToken?.trim();
     }
-    if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+    if (!token) {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: "Cursor usage requires a CLI login or CURSOR_AUTH_TOKEN.",
+      });
+    }
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(

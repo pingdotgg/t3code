@@ -1500,6 +1500,32 @@ describe("external usage settings", () => {
     expect(collectLimitAccounts(presentations)).toEqual([]);
     expect(collectLimitNotices(presentations)).toEqual([]);
   });
+
+  it("surfaces unsupported accounts that only have an actionable message", () => {
+    const cursor = provider({
+      instanceId: ProviderInstanceId.make("cursor"),
+      driver: ProviderDriverKind.make("cursor"),
+      displayName: "Cursor",
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        unavailable: {
+          reason: "unsupported",
+          message: "Enable Cursor account usage in T3 Code to read its Keychain login.",
+        },
+      },
+    });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("a"),
+        { entry: { target: { label: "A" } }, serverConfig: { providers: [cursor] } },
+      ],
+    ]);
+    expect(collectLimitNotices(presentations)).toEqual([
+      "Cursor: Enable Cursor account usage in T3 Code to read its Keychain login.",
+    ]);
+    expect(collectExternalUsageLinks(presentations)).toEqual([]);
+  });
 });
 
 describe("ChatGPT sharing presentation", () => {
