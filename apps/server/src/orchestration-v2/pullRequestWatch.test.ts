@@ -97,6 +97,22 @@ describe("evaluatePullRequestWatch", () => {
     assert.equal(evaluatePullRequestWatch(test.next, pushed, noRemarks).changes.length, 1);
   });
 
+  it("reports a rerun that fails again between two reads", () => {
+    const run = (job: number): PullRequestCheck => ({
+      ...check("lint", "failure"),
+      url: `https://ci.example/lint/job/${job}`,
+      required: true,
+    });
+    const first = evaluatePullRequestWatch(watch(), detail({ checks: [run(1)] }), noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-failed", failed: [run(1)] }]);
+    const again = evaluatePullRequestWatch(first.next, detail({ checks: [run(2)] }), noRemarks);
+    assert.deepEqual(again.changes, [{ kind: "checks-failed", failed: [run(2)] }]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(again.next, detail({ checks: [run(2)] }), noRemarks).changes,
+      [],
+    );
+  });
+
   it("reports passed once the required checks pass, whatever the others do", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
       ...check(name, status),

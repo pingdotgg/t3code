@@ -581,6 +581,45 @@ describe("pull request detail decoding", () => {
     }
   });
 
+  it("keeps a failed push run failing while the pull_request run of it runs or passes", () => {
+    const run = (event: string, fields: Record<string, unknown>) =>
+      check({
+        name: "lint",
+        checkSuite: { workflowRun: { event, workflow: { name: "CI" } } },
+        ...fields,
+      });
+    const pushFailed = run("push", {
+      status: "COMPLETED",
+      conclusion: "FAILURE",
+      startedAt: "2026-10-08T04:06:10Z",
+      completedAt: "2026-10-08T04:08:00Z",
+    });
+    const pullRequestRunning = run("pull_request", {
+      status: "IN_PROGRESS",
+      conclusion: null,
+      startedAt: "2026-10-08T04:06:13Z",
+      completedAt: "0001-01-01T00:00:00Z",
+    });
+    const pullRequestPassed = run("pull_request", {
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      startedAt: "2026-10-08T04:06:13Z",
+      completedAt: "2026-10-08T04:12:00Z",
+    });
+    const checksOf = (rollup: ReadonlyArray<Record<string, unknown>>) => {
+      const detail = detailOf(rollup);
+      return [detail.checks.map((check) => [check.name, check.status]), detail.checksState];
+    };
+
+    const rollups = [
+      [pushFailed, pullRequestRunning],
+      [pullRequestRunning, pushFailed],
+      [pushFailed, pullRequestPassed],
+      [pullRequestPassed, pushFailed],
+    ];
+    expect(rollups.map(checksOf)).toEqual(rollups.map(() => [[["lint", "failure"]], "failing"]));
+  });
+
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
     const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
     expect(detail.comments.map((comment) => comment.id)).toEqual(["r1", "c1", "r2"]);
