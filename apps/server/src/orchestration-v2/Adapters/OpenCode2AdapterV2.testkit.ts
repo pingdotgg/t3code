@@ -7,6 +7,7 @@ import {
   ThreadId,
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -128,12 +129,19 @@ const operationOf = (
   return { type: `${method} ${path}`, input: { ...query, body } };
 };
 
+/** A starved server accepts the event subscription but never sends its response headers. */
+interface UnansweredEvents {
+  readonly subscribed: Deferred.Deferred<void>;
+  readonly abandoned: Deferred.Deferred<void>;
+}
+
 const replayHttpClient = (
   controller: OpenCodeReplayController,
   replayGate: ProviderReplayGate | undefined,
   onPrompt: ((input: unknown) => void) | undefined,
+  unansweredEvents: UnansweredEvents | undefined,
 ) =>
-  HttpClient.make((request, url) =>
+  HttpClient.make((request, url, signal) =>
     Effect.tryPromise({
       try: async () => {
         if (controller.exited && controller.finished) {
@@ -155,6 +163,15 @@ const replayHttpClient = (
         if (operation.type === "session.prompt") onPrompt?.(operation.input);
         await controller.expectOutbound(operation);
         if (operation.type === "event.subscribe") {
+          if (unansweredEvents !== undefined) {
+            Deferred.doneUnsafe(unansweredEvents.subscribed, Effect.void);
+            return new Promise<Response>((_, reject) =>
+              signal.addEventListener("abort", () => {
+                Deferred.doneUnsafe(unansweredEvents.abandoned, Effect.void);
+                reject(signal.reason);
+              }),
+            );
+          }
           controller.exited = false;
           const encoder = new TextEncoder();
           const events = controller.events(undefined, replayGate?.beforeEmit);
@@ -195,6 +212,7 @@ export const replayServer = (
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
+    readonly unansweredEvents?: UnansweredEvents;
   },
 ) =>
   Effect.gen(function* () {
@@ -208,7 +226,12 @@ export const replayServer = (
     const opencode = yield* OpenCode2Client.make.pipe(
       Effect.provideService(
         HttpClient.HttpClient,
-        replayHttpClient(controller, options?.replayGate, options?.onPrompt),
+        replayHttpClient(
+          controller,
+          options?.replayGate,
+          options?.onPrompt,
+          options?.unansweredEvents,
+        ),
       ),
     );
     const connection = {
@@ -242,6 +265,7 @@ const makeReplayAdapter = (
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
+    readonly unansweredEvents?: UnansweredEvents;
   },
 ) =>
   Effect.gen(function* () {
@@ -298,6 +322,7 @@ export const openCode2ReplayRuntime = (
     readonly attachmentsDir?: string;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
+    readonly unansweredEvents?: UnansweredEvents;
   },
 ) =>
   Effect.gen(function* () {

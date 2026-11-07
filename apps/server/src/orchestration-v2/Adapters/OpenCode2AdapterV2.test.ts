@@ -2293,6 +2293,24 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal((yield* Fiber.join(created)).nativeThreadRef?.nativeId, SESSION);
     }).pipe(Effect.scoped),
   );
+
+  // regression: #30193 a starved server held the open, and every run queued behind it, for 300 s
+  it.effect("fails the open when the server never answers the event subscription", () =>
+    Effect.gen(function* () {
+      const subscribed = yield* Deferred.make<void>();
+      const abandoned = yield* Deferred.make<void>();
+      const opened = yield* openCode2ReplayRuntime([out("event.subscribe")], {
+        unansweredEvents: { subscribed, abandoned },
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(subscribed);
+      yield* TestClock.adjust("2 minutes");
+      assert.isTrue(
+        yield* Deferred.isDone(abandoned),
+        "the open still waits on the event subscription after 2 minutes",
+      );
+      assert.isTrue(Exit.isFailure(yield* Fiber.await(opened)));
+    }).pipe(Effect.scoped),
+  );
   const reconnected = (
     active: Record<string, unknown>,
     ended?: "succeeded",

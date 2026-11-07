@@ -58,7 +58,7 @@ export interface OpenCode2Api {
       OpenCode2StreamEvent,
       HttpClientError.HttpClientError | Sse.Retry | Sse.SseError | OpenCode2SilentStreamError
     >,
-    HttpClientError.HttpClientError
+    HttpClientError.HttpClientError | OpenCode2SilentStreamError
   >;
 }
 
@@ -118,6 +118,11 @@ const undecodable = Effect.fnUntraced(function* (data: string) {
 const readEvents = HttpClient.get("/api/event", {
   headers: { accept: "text/event-stream" },
 }).pipe(
+  // A starved server accepts the connection but never sends headers; undici waits 300 s.
+  Effect.timeoutOrElse({
+    duration: SILENT_STREAM_TIMEOUT,
+    orElse: () => Effect.fail(new OpenCode2SilentStreamError()),
+  }),
   Effect.flatMap(HttpClientResponse.filterStatusOk),
   Effect.map((response) =>
     response.stream.pipe(
