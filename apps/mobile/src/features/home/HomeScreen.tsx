@@ -62,6 +62,7 @@ import { threadListEnvironmentsAtom } from "../../state/presentation";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
+  ThreadListV2CaughtUpPlaceholder,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -542,6 +543,9 @@ export function HomeScreen(props: HomeScreenProps) {
           activationKey={item.key}
         />
       );
+    }
+    if (item.type === "v2-caught-up") {
+      return <ThreadListV2CaughtUpPlaceholder pane={sidebarSurface ? "sidebar" : "screen"} />;
     }
     if (item.type === "v2-working-shelf") {
       return (

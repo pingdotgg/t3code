@@ -946,6 +946,46 @@ describe("buildThreadListV2ListItems", () => {
     ).toEqual([true, true, true, false, null, false]);
   });
 
+  it("shows an all-caught-up placeholder when only shelves remain", () => {
+    const shelvesOnly = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("snoozed"),
+          title: "snoozed",
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("settled"),
+          title: "settled",
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    expect(shelvesOnly.activeCount).toBe(0);
+    const items = buildThreadListV2ListItems({
+      items: shelvesOnly.items,
+      pendingTasks: [],
+      activeCount: shelvesOnly.activeCount,
+      snoozedCount: shelvesOnly.snoozedCount,
+      snoozedShelfExpanded: false,
+      snoozedShelfHeaderIndex: shelvesOnly.snoozedShelfHeaderIndex,
+      settledCount: shelvesOnly.settledCount,
+      settledShelfExpanded: true,
+      settledShelfHeaderIndex: shelvesOnly.settledShelfHeaderIndex,
+    });
+    expect(items.map((item) => item.type)).toEqual([
+      "v2-caught-up",
+      "v2-snoozed-shelf",
+      "v2-settled-shelf",
+      "v2-thread",
+    ]);
+  });
+
   it("places queued tasks above active rows and a collapsed snoozed shelf", () => {
     const snoozedLayout = buildThreadListV2Items({
       threads: [

@@ -306,6 +306,41 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
   return <ThreadListV2ShelfHeader {...props} kind="settled" />;
 });
 
+export const ThreadListV2CaughtUpPlaceholder = memo(
+  function ThreadListV2CaughtUpPlaceholder(props: { readonly pane?: "screen" | "sidebar" }) {
+    const sidebarPane = props.pane === "sidebar";
+    return (
+      <View
+        accessibilityLabel="All caught up. Nothing needs a response right now."
+        className={cn("items-center justify-center gap-2 py-10", sidebarPane ? "px-3" : "px-5")}
+      >
+        <SymbolView
+          name="checkmark.circle.fill"
+          size={sidebarPane ? 28 : 36}
+          tintColorClassName={sidebarPane ? "accent-drawer-foreground-muted" : "accent-primary"}
+          type="hierarchical"
+        />
+        <Text
+          className={cn(
+            "text-center font-t3-semibold",
+            sidebarPane ? "text-[15px] text-drawer-foreground" : "text-[17px] text-foreground",
+          )}
+        >
+          All Caught Up
+        </Text>
+        <Text
+          className={cn(
+            "text-center text-[13px]",
+            sidebarPane ? "text-drawer-foreground-muted" : "text-foreground-tertiary",
+          )}
+        >
+          Nothing needs a response right now.
+        </Text>
+      </View>
+    );
+  },
+);
+
 export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
   readonly pane?: "screen" | "sidebar";
   readonly hiddenCount: number;

@@ -52,6 +52,7 @@ import { WORKSPACE_LIST_SCROLL_INSETS } from "../layout/workspace/workspace-list
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2CaughtUpPlaceholder,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
@@ -479,6 +480,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           />
         );
       }
+      case "v2-caught-up":
+        return <ThreadListV2CaughtUpPlaceholder pane="sidebar" />;
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader
