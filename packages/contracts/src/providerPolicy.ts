@@ -42,6 +42,20 @@ const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
 export const isRuntimeModeAbove = (mode: RuntimeMode, ceiling: RuntimeMode | undefined): boolean =>
   ceiling !== undefined && RUNTIME_MODE_RANK[mode] > RUNTIME_MODE_RANK[ceiling];
 
+/** The broadest of `supported` that grants no more than `mode`; none when every one grants more. */
+export const broadestRuntimeModeWithin = (
+  mode: RuntimeMode,
+  supported: ReadonlyArray<RuntimeMode>,
+): RuntimeMode | undefined =>
+  supported.reduce<RuntimeMode | undefined>(
+    (best, candidate) =>
+      !isRuntimeModeAbove(candidate, mode) &&
+      (best === undefined || isRuntimeModeAbove(candidate, best))
+        ? candidate
+        : best,
+    undefined,
+  );
+
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";

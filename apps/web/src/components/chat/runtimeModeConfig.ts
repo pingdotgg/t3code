@@ -1,4 +1,5 @@
 import {
+  broadestRuntimeModeWithin,
   managedRuntimeModeDenial,
   type ManagedPolicySummary,
   type RuntimeMode,
@@ -43,7 +44,7 @@ export function resolveCompatibleRuntimeMode(
     supportedRuntimeModes && supportedRuntimeModes.length > 0
       ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
       : runtimeModeOptions;
-  return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
+  return { modes, mode: broadestRuntimeModeWithin(runtimeMode, modes) ?? modes[0] ?? runtimeMode };
 }
 
 export function resolveRuntimeModeOptions(

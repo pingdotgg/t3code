@@ -28,18 +28,20 @@ the parent conversation with the subagent's name, so you can respond without swi
 
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.
 **Auto** uses automatic review on Codex, Claude, Cursor, Grok, and fx; providers without an equivalent,
-including OpenCode and Antigravity, fall back to asking. On Grok, commands its review blocks come
-to you for approval. On fx, prompts it still sends also come to you.
+including OpenCode, fall back to asking. On Grok, commands its review blocks come to you for
+approval. On fx, prompts it still sends also come to you.
 
-Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
-runs in **Supervised**.
+A thread set to a mode its provider does not offer runs in the broadest mode the provider offers
+below it. For example, **Auto** runs as **Auto-accept edits** on Pi and Antigravity, and
+**Full access** runs as **Auto** on fx.
 
-T3 Code offers no **Auto-accept edits** or **Full access** for fx. An fx thread already set to either runs in
-**Supervised**.
+Muse Code offers only **Supervised** and **Full access**.
 
-Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. Grok
-file-change approvals offer **Allow all edits this session**. Its command approvals have no
-session-wide choice, because Grok would remember that command for the whole project.
+T3 Code offers no **Auto-accept edits** or **Full access** for fx.
+
+Grok offers no **Auto-accept edits**. Grok file-change approvals offer **Allow all edits this
+session**. Its command approvals have no session-wide choice, because Grok would remember that
+command for the whole project.
 
 ACP Registry agents run their own tools in their own mode; T3 Code answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).

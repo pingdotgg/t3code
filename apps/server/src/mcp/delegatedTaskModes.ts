@@ -1,4 +1,6 @@
 import {
+  broadestRuntimeModeWithin,
+  isRuntimeModeAbove,
   type ModelSelection,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
@@ -8,20 +10,6 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-
-/** How much a runtime mode allows, narrowest first. */
-export function runtimeModeRank(mode: RuntimeMode): number {
-  switch (mode) {
-    case "approval-required":
-      return 0;
-    case "auto-accept-edits":
-      return 1;
-    case "auto":
-      return 2;
-    case "full-access":
-      return 3;
-  }
-}
 
 /** How much an interaction mode allows: plan, then default. */
 export function interactionModeRank(mode: ProviderInteractionMode): number {
@@ -43,7 +31,7 @@ export function resolveRuntimeMode(
 ): Effect.Effect<RuntimeMode, OrchestratorMcpFailure> {
   const inherited = requested === undefined || requested === "inherit";
   const resolved = inherited ? parentMode : requested;
-  if (runtimeModeRank(resolved) > runtimeModeRank(parentMode)) {
+  if (isRuntimeModeAbove(resolved, parentMode)) {
     return Effect.fail(
       new OrchestratorMcpFailure({
         code: "runtime_mode_escalation_denied",
@@ -55,20 +43,15 @@ export function resolveRuntimeMode(
   if (supported === undefined || supported.length === 0 || supported.includes(resolved)) {
     return Effect.succeed(resolved);
   }
-  if (!inherited) {
-    return Effect.fail(
-      new OrchestratorMcpFailure({
-        code: "invalid_request",
-        message: `Provider ${target?.modelSelection.instanceId} does not offer runtime mode ${resolved}, so it would run as approval-required. Use one of: ${supported.join(", ")}.`,
-      }),
-    );
-  }
-  return Effect.succeed(
-    supported
-      .filter((mode) => runtimeModeRank(mode) <= runtimeModeRank(resolved))
-      .toSorted((left, right) => runtimeModeRank(right) - runtimeModeRank(left))[0] ??
-      "approval-required",
-  );
+  const steppedDown = broadestRuntimeModeWithin(resolved, supported) ?? "approval-required";
+  return inherited
+    ? Effect.succeed(steppedDown)
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `Provider ${target?.modelSelection.instanceId} does not offer runtime mode ${resolved}, so it would run as ${steppedDown}. Use one of: ${supported.join(", ")}.`,
+        }),
+      );
 }
 
 /** The same, for interaction modes. */

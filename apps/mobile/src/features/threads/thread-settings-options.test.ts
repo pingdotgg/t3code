@@ -10,8 +10,10 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  compatibleRuntimeModeForChoices,
   RUNTIME_MODE_CHOICES,
   resolveNewThreadRuntimeMode,
+  runtimeModeChoicesForSupportedModes,
   selectableChoices,
   withManagedRuntimeModeLimits,
 } from "./thread-settings-options";
@@ -46,6 +48,17 @@ describe("managed runtime mode limits", () => {
     );
     expect(resolveNewThreadRuntimeMode(undefined, "auto", capped)).toBe("auto");
     expect(resolveNewThreadRuntimeMode("full-access", "auto", undefined)).toBe("full-access");
+  });
+});
+
+describe("compatibleRuntimeModeForChoices", () => {
+  it("shows Auto on a provider without it as Auto-accept edits, not Supervised", () => {
+    const piChoices = runtimeModeChoicesForSupportedModes([
+      "approval-required",
+      "auto-accept-edits",
+      "full-access",
+    ]);
+    expect(compatibleRuntimeModeForChoices("auto", piChoices)).toBe("auto-accept-edits");
   });
 });
 
