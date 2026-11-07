@@ -10,6 +10,8 @@ import {
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetShownInputSchema,
+  DesktopPreviewOpenDevToolsInputSchema,
+  DesktopPreviewSetDevToolsBoundsInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
   DesktopPreviewSetZoomFactorInputSchema,
   BrowserImportResult,
@@ -203,10 +205,28 @@ const setShown = DesktopIpc.makeIpcMethod({
     yield* manager.setShown(tabId, shown);
   }),
 });
-const toggleDevTools = tabMethod(
-  IpcChannels.PREVIEW_TOGGLE_DEVTOOLS_CHANNEL,
-  "desktop.ipc.preview.toggleDevTools",
-  (manager, tabId) => manager.toggleDevTools(tabId),
+const openDevTools = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
+  payload: DesktopPreviewOpenDevToolsInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.openDevTools")(function* ({ tabId, docked }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.openDevTools(tabId, docked);
+  }),
+});
+const setDevToolsBounds = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_DEVTOOLS_BOUNDS_CHANNEL,
+  payload: DesktopPreviewSetDevToolsBoundsInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setDevToolsBounds")(function* ({ tabId, bounds }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setDevToolsBounds(tabId, bounds);
+  }),
+});
+const closeDevTools = tabMethod(
+  IpcChannels.PREVIEW_CLOSE_DEVTOOLS_CHANNEL,
+  "desktop.ipc.preview.closeDevTools",
+  (manager, tabId) => manager.closeDevTools(tabId),
 );
 const cancelPickElement = tabMethod(
   IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL,
@@ -443,7 +463,9 @@ export const methods = [
   setZoomFactor,
   setAudioMuted,
   setShown,
-  toggleDevTools,
+  openDevTools,
+  closeDevTools,
+  setDevToolsBounds,
   clearCookies,
   clearCache,
   getPreviewConfig,
