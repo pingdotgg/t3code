@@ -1783,7 +1783,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isLiteralPendingAnswer,
     );
     if (options?.citationComment) {
-      composerEditorRef.current?.requestCitationComment({
+      if (!composerEditorRef.current) return false;
+      composerEditorRef.current.requestCitationComment({
         previousValue: currentText,
         value: next.text,
         citationStart: options.citationComment.start,

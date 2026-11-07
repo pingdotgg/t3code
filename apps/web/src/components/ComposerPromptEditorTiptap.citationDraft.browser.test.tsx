@@ -8,7 +8,10 @@ import { expect, it } from "vite-plus/test";
 
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import {
+  createCitationCommentInput,
+  findAssistantCitationSourceAnchor,
+} from "~/lib/assistantTextSelection";
 import { act, render } from "../../test/render";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
@@ -27,6 +30,30 @@ const citation = {
   suffix: "",
 };
 const promptBefore = `See ${serializeAssistantCitation(citation)} `;
+
+it.each(["remove", "unmount"])(
+  "releases pending citation input before subscription on %s",
+  async (action) => {
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+    const sourceAnchor = findAssistantCitationSourceAnchor(document, citation)!;
+    sourceAnchor.commentInput = createCitationCommentInput("a");
+    await act(async () => {
+      editorRef.current?.requestCitationComment({
+        previousValue: promptBefore,
+        value: `${promptBefore}pending`,
+        citationStart: "See ".length,
+        sourceAnchor,
+        insertedSpaces: { before: false, after: true },
+      });
+    });
+    expect(sourceAnchor.commentInput.pending).toBe(true);
+    await screen.rerender(
+      action === "remove" ? <Composer question editorRef={editorRef} /> : <div />,
+    );
+    expect(sourceAnchor.commentInput.pending).toBe(false);
+  },
+);
 
 function Composer({
   question,

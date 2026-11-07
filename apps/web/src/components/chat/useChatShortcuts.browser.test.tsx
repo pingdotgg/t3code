@@ -1,12 +1,17 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { useChatShortcuts } from "./useChatShortcuts";
+
+vi.mock(import("~/hooks/useSettings"), () => ({
+  getClientSettings: () => ({ ...DEFAULT_CLIENT_SETTINGS, typingWithSelection: "cite" }),
+}));
 
 const shortcutContext = {
   terminalFocus: false,
@@ -47,10 +52,26 @@ function Launcher(props: { keys: string; received: string[] }) {
 
 // The chat's shortcut listener registers when the chat mounts, so a launcher that opens
 // later registers after it. Tests mount the chat first and add the launcher by rerendering.
-function Chat(props: { composerKeys: string[]; launcher?: { keys: string; received: string[] } }) {
+function Chat(props: {
+  composerKeys: string[];
+  launcher?: { keys: string; received: string[] };
+  stops?: string[];
+}) {
   useChatShortcuts({
     enabled: true,
-    keybindings: [],
+    keybindings: [
+      {
+        command: "thread.stop",
+        shortcut: {
+          key: "a",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: false,
+        },
+      },
+    ],
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
@@ -65,7 +86,7 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
     },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
-    commands: {},
+    commands: { "thread.stop": () => void props.stops?.push("stop") },
     fallback: () => undefined,
   });
   return props.launcher ? <Launcher {...props.launcher} /> : null;
@@ -186,4 +207,20 @@ it("runs a side chat's composer chords only from its composer, and never thread 
 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
+});
+
+it("does not resolve a shortcut after citation input consumes its key", async () => {
+  const composerKeys: string[] = [];
+  const stops: string[] = [];
+  await using _screen = await render(<Chat composerKeys={composerKeys} stops={stops} />, options);
+  const toolbar = document.createElement("button");
+  toolbar.dataset.typeToCite = "true";
+  toolbar.addEventListener("cite-selection-input", (event) => event.preventDefault());
+  document.body.append(toolbar);
+  using _toolbar = { [Symbol.dispose]: () => toolbar.remove() };
+  const event = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+  document.body.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  expect(stops).toEqual([]);
+  expect(composerKeys).toEqual([]);
 });
