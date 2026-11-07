@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
@@ -496,6 +497,23 @@ export const ResourceTelemetryHistoryInput = Schema.Struct({
   bucketMs: NonNegativeInt,
 });
 export type ResourceTelemetryHistoryInput = typeof ResourceTelemetryHistoryInput.Type;
+
+export class ResourceTelemetryHistoryError extends Schema.TaggedError<ResourceTelemetryHistoryError>()(
+  "ResourceTelemetryHistoryError",
+  {
+    // Keep the server cause without sending worker paths or output to clients.
+    cause: Schema.Unknown.pipe(
+      Schema.encodeTo(Schema.Literal("HistoryAggregationError"), {
+        decode: SchemaGetter.passthroughSubtype(),
+        encode: SchemaGetter.succeed("HistoryAggregationError"),
+      }),
+    ),
+  },
+) {
+  override get message(): string {
+    return "Resource telemetry history aggregation failed.";
+  }
+}
 
 export const ResourceTelemetryHistoryBucket = Schema.Struct({
   startedAt: Schema.DateTimeUtc,
