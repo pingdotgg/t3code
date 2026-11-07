@@ -28,6 +28,36 @@ export function resolveSelectionActionPosition(options: {
 
 type SelectionRect = { left: number; top: number; right: number; bottom: number };
 
+export function resolveChatSelectionActionPosition({
+  selectionRect,
+  bounds,
+  actionSize,
+  viewport,
+}: {
+  selectionRect: SelectionRect;
+  bounds: SelectionRect;
+  actionSize: { width: number; height: number };
+  viewport: { width: number; height: number };
+}): SelectionActionPoint {
+  const above = selectionRect.top - actionSize.height - 6;
+  return {
+    x: Math.max(
+      8,
+      Math.min(
+        (selectionRect.left + selectionRect.right - actionSize.width) / 2,
+        viewport.width - actionSize.width - 8,
+      ),
+    ),
+    y: Math.max(
+      8,
+      Math.min(
+        above >= Math.max(8, bounds.top) ? above : selectionRect.bottom + 6,
+        viewport.height - actionSize.height - 8,
+      ),
+    ),
+  };
+}
+
 export function isSelectionRectVisible(rect: SelectionRect, clips: readonly SelectionRect[]) {
   let { left, top, right, bottom } = rect;
   for (const clip of clips) {

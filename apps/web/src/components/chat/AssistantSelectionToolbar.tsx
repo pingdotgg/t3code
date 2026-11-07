@@ -14,8 +14,7 @@ import {
 import {
   isSelectionRectVisible,
   observeSelectionActions,
-  resolveSelectionActionPosition,
-  type SelectionActionPoint,
+  resolveChatSelectionActionPosition,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -31,7 +30,7 @@ export function AssistantSelectionToolbar({
 }) {
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
-    position: SelectionActionPoint;
+    rect: { left: number; top: number; right: number; bottom: number };
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
@@ -41,17 +40,23 @@ export function AssistantSelectionToolbar({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
-    if (!toolbar || !selection) return;
+    if (!toolbar || !selection || !viewport) return;
     const rect = toolbar.getBoundingClientRect();
-    toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
-    toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
-  }, [selection]);
+    const position = resolveChatSelectionActionPosition({
+      selectionRect: selection.rect,
+      bounds: viewport.getBoundingClientRect(),
+      actionSize: rect,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+    });
+    toolbar.style.left = `${position.x}px`;
+    toolbar.style.top = `${position.y}px`;
+  }, [selection, viewport]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to document selectionchange and keydown to track text selections in the viewport
   useEffect(() => {
     if (!viewport) return;
     const clear = () => setSelection(null);
-    const update = (pointer: SelectionActionPoint | null) => {
+    const update = () => {
       const nativeSelection = window.getSelection();
       const captured = captureAssistantTextSelection(viewport, nativeSelection);
       const messageId = captured?.source.dataset.assistantCitationSource;
@@ -69,8 +74,8 @@ export function AssistantSelectionToolbar({
       const common = captured.range.commonAncestorContainer;
       const walker = document.createTreeWalker(common, NodeFilter.SHOW_TEXT);
       let node = common.nodeType === Node.TEXT_NODE ? common : walker.nextNode();
-      let visible = false;
-      for (; node && !visible; node = walker.nextNode()) {
+      const visibleLines: { left: number; top: number; right: number; bottom: number }[] = [];
+      for (; node; node = walker.nextNode()) {
         if (!captured.range.intersectsNode(node)) continue;
         if (node.parentElement && getComputedStyle(node.parentElement).userSelect === "none")
           continue;
@@ -105,22 +110,22 @@ export function AssistantSelectionToolbar({
             bottom: clipY ? top + element.clientHeight : Infinity,
           });
         }
-        visible = lines.some((line) => isSelectionRectVisible(line, clips));
+        for (const line of lines) {
+          if (!isSelectionRectVisible(line, clips)) continue;
+          const visibleLine = {
+            left: Math.max(line.left, 0, ...clips.map((clip) => clip.left)),
+            right: Math.min(line.right, window.innerWidth, ...clips.map((clip) => clip.right)),
+            top: Math.max(line.top, 0, ...clips.map((clip) => clip.top)),
+            bottom: Math.min(line.bottom, window.innerHeight, ...clips.map((clip) => clip.bottom)),
+          };
+          if (visibleLine.right > visibleLine.left && visibleLine.bottom > visibleLine.top)
+            visibleLines.push(visibleLine);
+        }
       }
-      if (!visible) {
+      if (visibleLines.length === 0) {
         clear();
         return;
       }
-      const rects = captured.range.getClientRects();
-      const pointerOnText =
-        pointer !== null &&
-        Array.from(rects).some(
-          (line) =>
-            pointer.x >= line.left - 8 &&
-            pointer.x <= line.right + 8 &&
-            pointer.y >= line.top - 8 &&
-            pointer.y <= line.bottom + 8,
-        );
       setSelection({
         sourceAnchor: { source: captured.source, range: captured.range, viewport },
         citation: {
@@ -129,12 +134,12 @@ export function AssistantSelectionToolbar({
           messageId: MessageId.make(messageId),
           ...captured.selector,
         },
-        position: resolveSelectionActionPosition({
-          bounds: viewportRect,
-          selectionRect: rects.item(rects.length - 1) ?? rect,
-          pointer: pointerOnText ? pointer : null,
-          viewport: { width: window.innerWidth, height: window.innerHeight },
-        }),
+        rect: {
+          left: Math.min(...visibleLines.map((line) => line.left)),
+          right: Math.max(...visibleLines.map((line) => line.right)),
+          top: Math.min(...visibleLines.map((line) => line.top)),
+          bottom: Math.max(...visibleLines.map((line) => line.bottom)),
+        },
       });
     };
     const actions = observeSelectionActions({
@@ -192,12 +197,11 @@ export function AssistantSelectionToolbar({
     <Button
       ref={toolbarRef}
       type="button"
-      size="xs"
-      variant="glass"
+      size="sm"
+      variant="default"
       disabled={tooLong}
       aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
       className="fixed z-50 max-w-[calc(100vw-1rem)]"
-      style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
       onClick={cite}
       onKeyDown={(event) => {
