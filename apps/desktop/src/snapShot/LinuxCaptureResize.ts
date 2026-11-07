@@ -8,7 +8,7 @@ export async function resizeLinuxCaptureInRenderer(png: Buffer): Promise<Buffer>
   const view = new WebContentsView({
     webPreferences: {
       preload: NodePath.join(__dirname, "snapShot", "LinuxCaptureResizePreload.cjs"),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
     },
