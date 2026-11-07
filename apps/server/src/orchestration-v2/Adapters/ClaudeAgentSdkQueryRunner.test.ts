@@ -115,6 +115,69 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
     }).pipe(Effect.provide(forkRunnerLayer)),
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
+
+it.effect.each(["absolute", "relative"] as const)(
+  "reads a fork model from a %s custom Claude configuration directory",
+  (kind) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-model-config-",
+        });
+        const projectDir = yield* writeClaudeSession(configDir);
+        const agentId = "agent-test";
+        const subagentsDir = path.join(projectDir, FORK_SESSION_ID, "subagents");
+        yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(subagentsDir, `agent-${agentId}.jsonl`),
+          [
+            {
+              type: "user",
+              uuid: "aaaaaaaa-0000-4000-8000-000000000011",
+              parentUuid: null,
+              sessionId: FORK_SESSION_ID,
+              agentId,
+              isSidechain: true,
+              cwd: "/repo",
+              message: { role: "user", content: "hello" },
+            },
+            {
+              type: "assistant",
+              uuid: "aaaaaaaa-0000-4000-8000-000000000012",
+              parentUuid: "aaaaaaaa-0000-4000-8000-000000000011",
+              sessionId: FORK_SESSION_ID,
+              agentId,
+              isSidechain: true,
+              cwd: "/repo",
+              message: {
+                role: "assistant",
+                model: "claude-haiku-4-5",
+                content: [{ type: "text", text: "hi" }],
+              },
+            },
+          ]
+            .map((entry) => JSON.stringify(entry))
+            .join("\n") + "\n",
+        );
+        const runner = yield* ClaudeAgentSdkQueryRunner;
+        const model = yield* runner.subagentModel({
+          sessionId: FORK_SESSION_ID,
+          agentId,
+          dir: "/repo",
+          environment: {
+            ...process.env,
+            CLAUDE_CONFIG_DIR: kind === "relative" ? path.relative("/repo", configDir) : configDir,
+          },
+          threadId: ThreadId.make("thread-fork-model-config"),
+          providerSessionId: ProviderSessionId.make("session-fork-model-config"),
+        });
+        assert.equal(model, "claude-haiku-4-5");
+      }).pipe(Effect.provide(forkRunnerLayer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("forked Claude sessions keep their compaction chain", () =>
   Effect.scoped(
     Effect.gen(function* () {
