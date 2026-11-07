@@ -33,6 +33,7 @@ import {
   isProviderNativeSubagentThread,
   NodeId,
   type EnvironmentId,
+  canStopNativeSubagent,
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
@@ -717,11 +718,7 @@ export function ThreadRelationshipsPanel(props: {
     const canStop =
       agent &&
       (agent.origin === "app_owned" ||
-        (agent.origin === "provider_native" &&
-          agent.driver === "claudeAgent" &&
-          agent.runId != null &&
-          agent.nativeTaskRef?.strength === "strong" &&
-          agent.nativeTaskRef.nativeId !== null &&
+        (canStopNativeSubagent(agent) &&
           ["pending", "running", "waiting"].includes(agent.nativeStatus))) &&
       agent.startedAt &&
       ["pending", "running", "waiting"].includes(agent.status);

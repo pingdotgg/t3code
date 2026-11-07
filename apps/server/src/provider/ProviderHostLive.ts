@@ -9,6 +9,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import { snapshotMcpApp } from "../mcpApps/McpAppSnapshot.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DocumentText from "./DocumentText.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
@@ -46,6 +47,12 @@ export const layer = Layer.effect(
         },
         Effect.provideService(FileSystem.FileSystem, fileSystem),
       ),
+      snapshotMcpApp: Effect.fn("ProviderHost.snapshotMcpApp")(function (input) {
+        return snapshotMcpApp({ ...input, attachmentsDir: config.attachmentsDir }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.orElseSucceed(() => undefined),
+        );
+      }),
       credentials: Effect.fn("ProviderHost.credentials")(function (namespace, bindingId) {
         return ProviderCredentialStore.make(namespace, bindingId).pipe(
           Effect.map((store) => ({

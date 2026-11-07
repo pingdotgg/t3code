@@ -326,6 +326,12 @@ describe("resolveSubagentStopTarget", () => {
       }),
     ).toBeNull();
     expect(resolveSubagentStopTarget({ ...native, runId: null })).toBeNull();
+    expect(
+      resolveSubagentStopTarget({ ...native, driver: ProviderDriverKind.make("githubCopilot") }),
+    ).toEqual({ kind: "subagent", input: { threadId: native.threadId, subagentId: native.id } });
+    expect(
+      resolveSubagentStopTarget({ ...native, driver: ProviderDriverKind.make("acpRegistry") }),
+    ).toBeNull();
     expect(resolveSubagentStopTarget({ ...native, status: "completed" })).toBeNull();
     expect(
       resolveSubagentStopTarget({ ...native, driver: ProviderDriverKind.make("codex") }),

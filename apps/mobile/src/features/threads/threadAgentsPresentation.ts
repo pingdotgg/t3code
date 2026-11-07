@@ -9,11 +9,12 @@ import {
   type SubagentWorkflowGroup,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/client-runtime/state/thread-execution";
-import type {
-  EnvironmentId,
-  OrchestrationV2Subagent,
-  ServerProvider,
-  ThreadId,
+import {
+  canStopNativeSubagent,
+  type EnvironmentId,
+  type OrchestrationV2Subagent,
+  type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 
@@ -238,13 +239,7 @@ export function resolveSubagentStopTarget(
       input: { threadId: subagent.threadId, subagentId: subagent.id },
     };
   }
-  if (
-    subagent.origin === "provider_native" &&
-    subagent.driver === "claudeAgent" &&
-    subagent.runId !== null &&
-    subagent.nativeTaskRef?.strength === "strong" &&
-    subagent.nativeTaskRef.nativeId !== null
-  ) {
+  if (canStopNativeSubagent(subagent)) {
     return {
       kind: "subagent" as const,
       input: { threadId: subagent.threadId, subagentId: subagent.id },

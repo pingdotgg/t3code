@@ -15,6 +15,7 @@ import type {
   AnyProviderDriver,
   ProviderUsageReaderEnv,
 } from "@t3tools/provider-core/server/driver";
+import { GitHubCopilotDriver, type GitHubCopilotDriverEnv } from "@t3tools/provider-copilot/server";
 import { KiroDriver, type KiroDriverEnv } from "@t3tools/provider-kiro/server";
 
 export type BuiltInDriversEnv =
@@ -25,6 +26,7 @@ export type BuiltInDriversEnv =
   | CursorDriverEnv
   | FxDriverEnv
   | GrokDriverEnv
+  | GitHubCopilotDriverEnv
   | KiroDriverEnv
   | OpenCodeDriverEnv
   | PiDriverEnv
@@ -38,6 +40,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   FxDriver,
   OpenCodeDriver,
   AntigravityDriver,
+  GitHubCopilotDriver,
   KiroDriver,
   PiDriver,
   MuseDriver,
