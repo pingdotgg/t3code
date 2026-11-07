@@ -325,6 +325,7 @@ export function resolveMultipleModelTargets(input: {
         planModeEnabled,
         provider: provider.snapshot,
         interactionMode: input.interactionMode,
+        persistedInteractionMode: undefined,
       }).interactionMode,
     };
   });

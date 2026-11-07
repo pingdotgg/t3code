@@ -39,6 +39,7 @@ import type { Thread } from "../types";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
   getAntigravitySendBlockReason,
+  resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveWorktreeSetupProgress,
   peekRememberedThreadTimeline,
@@ -667,6 +668,58 @@ describe("resolveComposerProviderSelection", () => {
     });
 
     expect(selection.selectedProviderEntry).toBeUndefined();
+  });
+});
+
+describe("resolveComposerInteractionMode", () => {
+  const toggle = { showInteractionModeToggle: true };
+  const hidden = { showInteractionModeToggle: false };
+  it.each([
+    {
+      name: "setting off, stale plan draft on a new thread",
+      on: false,
+      provider: toggle,
+      draft: "plan",
+      persisted: undefined,
+      enabled: false,
+      mode: "default",
+    },
+    {
+      name: "setting off, persisted plan thread",
+      on: false,
+      provider: toggle,
+      draft: "plan",
+      persisted: "plan",
+      enabled: true,
+      mode: "plan",
+    },
+    {
+      name: "setting off, persisted plan thread switched to default",
+      on: false,
+      provider: toggle,
+      draft: "default",
+      persisted: "plan",
+      enabled: true,
+      mode: "default",
+    },
+    {
+      name: "setting off, persisted plan thread, provider hides the toggle",
+      on: false,
+      provider: hidden,
+      draft: "plan",
+      persisted: "plan",
+      enabled: false,
+      mode: "default",
+    },
+  ] as const)("$name", ({ on, provider, draft, persisted, enabled, mode }) => {
+    expect(
+      resolveComposerInteractionMode({
+        planModeEnabled: on,
+        provider,
+        interactionMode: draft,
+        persistedInteractionMode: persisted,
+      }),
+    ).toEqual({ enabled, interactionMode: mode });
   });
 });
 

@@ -1317,6 +1317,7 @@ export default function ChatView(props: ChatViewProps) {
     provider: activeProviderStatus,
     interactionMode:
       composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
+    persistedInteractionMode: serverThread?.interactionMode,
   });
   const conversationProviderStatus =
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??

@@ -302,6 +302,7 @@ export interface ThreadDetailScreenProps {
   readonly onReconnectEnvironment: () => void;
   readonly canSwitchThreadProvider: boolean;
   readonly onUpdateThreadInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
+  readonly persistedInteractionMode?: ProviderInteractionMode;
   readonly onRespondToApproval: ApprovalResponder;
   readonly onSelectUserInputOption: (
     requestId: RuntimeRequestId,
@@ -1934,6 +1935,7 @@ function ThreadDetailBody(
                         onShowUsageLimits={showUsageLimits}
                         canSwitchProvider={props.canSwitchThreadProvider}
                         onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+                        persistedInteractionMode={props.persistedInteractionMode}
                         onHeightChange={handleComposerHeightChange}
                         onEditorFocusChange={handleOwnedInputFocusChange}
                       />
