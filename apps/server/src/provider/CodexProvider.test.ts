@@ -1,6 +1,92 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  checkCodexProviderStatus,
+  mapCodexModelCapabilities,
+  probeCodexSkillsForCwd,
+} from "./CodexProvider.ts";
+
+// The mock app-server is a shell script Windows cannot execute.
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+
+const makeRemotePluginCodexFixture = Effect.fn("CodexProvider.test.makeRemotePluginCodexFixture")(
+  function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-codex-skills-" });
+    const sourceDir = path.join(import.meta.dirname, "testFixtures");
+    const binaryPath = path.join(fixtureDir, "codex");
+    const scriptPath = path.join(fixtureDir, "codex-script.json");
+    yield* fileSystem.copyFile(path.join(sourceDir, "codexCollabMockPeer.sh"), binaryPath);
+    yield* fileSystem.chmod(binaryPath, 0o755);
+    for (const file of ["codexCollabMockPeer.mjs", "codexMultiAgentWire.json"]) {
+      yield* fileSystem.copyFile(path.join(sourceDir, file), path.join(fixtureDir, file));
+    }
+    yield* fileSystem.writeFileString(
+      scriptPath,
+      JSON.stringify({
+        rootThreadId: "probe-thread",
+        notifications: [],
+        remoteInstalledPluginSkills: [
+          {
+            name: "impeccable:impeccable",
+            description: "Design review skill",
+            path: path.join(fixtureDir, "impeccable", "SKILL.md"),
+            enabled: true,
+            scope: "user",
+            pluginId: "impeccable@openai-curated-remote",
+          },
+        ],
+      }),
+    );
+    return {
+      binaryPath,
+      cwd: fixtureDir,
+      environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+    };
+  },
+);
+
+it.live.skipIf(windowsHost)("lists remote marketplace plugin skills for a workspace", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeRemotePluginCodexFixture();
+    const skills = yield* probeCodexSkillsForCwd(fixture);
+
+    assert.deepStrictEqual(
+      skills.map((skill) => skill.name),
+      ["impeccable:impeccable"],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live.skipIf(windowsHost)("reports remote marketplace plugin skills in the Codex snapshot", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeRemotePluginCodexFixture();
+    const provider = yield* checkCodexProviderStatus(
+      {
+        enabled: true,
+        binaryPath: fixture.binaryPath,
+        homePath: "",
+        shadowHomePath: "",
+        launchArgs: "",
+        customModels: [],
+      },
+      undefined,
+      fixture.environment,
+    );
+
+    assert.deepStrictEqual(
+      provider.skills.map((skill) => skill.name),
+      ["impeccable:impeccable"],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({

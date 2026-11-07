@@ -12,6 +12,7 @@ const script = JSON.parse(NodeFS.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 let turnStartCount = 0;
 let activeTurn;
+let remotePluginCacheLoaded = false;
 const openServerRequests = new Map();
 const rl = NodeReadline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
@@ -82,6 +83,25 @@ rl.on("line", (line) => {
   }
   if (method === "account/rateLimitResetCredit/consume" && script.resetCreditOutcome) {
     write({ id, result: { outcome: script.resetCreditOutcome } });
+    return;
+  }
+  if (method === "plugin/installed") {
+    remotePluginCacheLoaded = true;
+    write({ id, result: { marketplaces: [] } });
+    return;
+  }
+  if (method === "skills/list" && script.remoteInstalledPluginSkills) {
+    // Like real Codex, remote marketplace plugin skills appear only once plugin/installed has filled its cache.
+    write({
+      id,
+      result: {
+        data: message.params.cwds.map((cwd) => ({
+          cwd,
+          errors: [],
+          skills: remotePluginCacheLoaded ? script.remoteInstalledPluginSkills : [],
+        })),
+      },
+    });
     return;
   }
   if (method === "skills/list" || method === "model/list") {

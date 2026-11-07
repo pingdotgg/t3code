@@ -72,6 +72,7 @@ type CodexRateLimitsProbe =
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
+const CODEX_INSTALLED_PLUGINS_TIMEOUT_MS = 5_000;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
 // Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
@@ -448,6 +449,29 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
   );
 });
 
+/**
+ * A fresh app-server fills its remote plugin inventory in the background, and
+ * skills/list omits those plugins' skills until it lands. plugin/installed
+ * fetches and caches it when empty, so ask for it first, best-effort.
+ */
+const requestCodexSkills = Effect.fn("requestCodexSkills")(function* (input: {
+  readonly client: CodexClient.CodexAppServerClient["Service"];
+  readonly cwd: string;
+  readonly deadlineMs: number;
+}) {
+  yield* withCodexDiscoveryDeadline(
+    input.client.request("plugin/installed", { cwds: [input.cwd] }),
+    input.deadlineMs,
+    CODEX_INSTALLED_PLUGINS_TIMEOUT_MS,
+  ).pipe(
+    Effect.catch((cause) => Effect.logDebug("Codex installed plugin read failed.", { cause })),
+  );
+  return yield* withCodexDiscoveryDeadline(
+    input.client.request("skills/list", { cwds: [input.cwd] }),
+    input.deadlineMs,
+  );
+});
+
 /** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
 export const codexAppServerEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
@@ -553,7 +577,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
   const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
     [
-      withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
+      requestCodexSkills({ client, cwd: input.cwd, deadlineMs }),
       accountResponse.account?.type === "chatgpt"
         ? requestCodexChatGptModels({
             client,
@@ -651,8 +675,12 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   const { client } = yield* withCodexAppServerClient(input);
-  const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
-  return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+  const skillsResponse = yield* requestCodexSkills({
+    client,
+    cwd: input.cwd,
+    deadlineMs: Infinity,
+  });
+  return skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [];
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
