@@ -3,6 +3,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import {
   type AssetResource,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2Run,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -1119,6 +1120,51 @@ export function findRevertCheckpoint(
         ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
         : checkpoint.appRunOrdinal === turnCount),
   );
+}
+
+export type RevertFileCheck =
+  | { readonly kind: "changed" }
+  | { readonly kind: "diff"; readonly toTurnCount: number };
+
+/**
+ * Whether runs after `turnCount` changed files; later hand edits are unseen, so keep files on
+ * "unchanged". Empty summaries can hide changes (failed summary, git imports), hence the real
+ * diff. Checkpoints snapshot the worktree, so it also covers runs that never captured one.
+ */
+export function revertFileCheck(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>,
+  checkpoints: ReadonlyArray<
+    Pick<OrchestrationV2Checkpoint, "runId" | "status" | "files" | "filesTotal">
+  >,
+  turnCount: number,
+): RevertFileCheck {
+  const laterRuns = runs.filter(
+    (run) => run.ordinal > turnCount && run.status !== "rolled_back" && run.status !== "queued",
+  );
+  const latestRun = laterRuns.reduce<(typeof laterRuns)[number] | null>(
+    (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
+    null,
+  );
+  const readyCheckpoint = (runId: RunId) =>
+    checkpoints.findLast(
+      (checkpoint) => checkpoint.runId === runId && checkpoint.status === "ready",
+    );
+  // The turn diff query only resolves checkpoints of completed runs.
+  if (
+    latestRun === null ||
+    latestRun.status !== "completed" ||
+    readyCheckpoint(latestRun.id) === undefined
+  ) {
+    return { kind: "changed" };
+  }
+  const summarizedChanges = laterRuns.some((run) => {
+    const checkpoint = readyCheckpoint(run.id);
+    return (
+      checkpoint !== undefined &&
+      (checkpoint.files.length > 0 || (checkpoint.filesTotal?.count ?? 0) > 0)
+    );
+  });
+  return summarizedChanges ? { kind: "changed" } : { kind: "diff", toTurnCount: latestRun.ordinal };
 }
 
 export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {

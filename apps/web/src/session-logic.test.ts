@@ -33,6 +33,7 @@ import {
   selectMessageImageResources,
   createMessageAttachmentPreviewProjector,
   providerErrorPresentation,
+  revertFileCheck,
   type TimelineEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
@@ -1786,4 +1787,53 @@ it("renders automatic completion as a work entry instead of a user bubble", () =
       ],
     })[0]?.kind,
   ).toBe("message");
+});
+
+describe("revertFileCheck", () => {
+  type Run = Parameters<typeof revertFileCheck>[0][number];
+  type Checkpoint = Parameters<typeof revertFileCheck>[1][number];
+  const run = (ordinal: number, status: Run["status"] = "completed"): Run => ({
+    id: RunId.make(`run-${ordinal}`),
+    ordinal,
+    status,
+  });
+  const checkpoint = (ordinal: number, overrides: Partial<Checkpoint> = {}): Checkpoint => ({
+    runId: RunId.make(`run-${ordinal}`),
+    status: "ready",
+    files: [],
+    ...overrides,
+  });
+  const file = { path: "a.ts", kind: "modified", additions: 1, deletions: 0 };
+
+  it("asks for the diff to the latest run when summaries show no changes", () => {
+    // Run 3 has no chat message (a notification wake), so only the run list knows it.
+    expect(
+      revertFileCheck(
+        [run(1), run(2), run(3), run(4, "rolled_back"), run(5, "queued")],
+        [checkpoint(1), checkpoint(2), checkpoint(3)],
+        1,
+      ),
+    ).toEqual({ kind: "diff", toTurnCount: 3 });
+  });
+
+  it("reports changes without a diff when summaries or checkpoints say so", () => {
+    expect(revertFileCheck([run(1), run(2)], [checkpoint(2, { files: [file] })], 0)).toEqual({
+      kind: "changed",
+    });
+    expect(
+      revertFileCheck(
+        [run(1)],
+        [checkpoint(1, { filesTotal: { count: 3, additions: 1, deletions: 1 } })],
+        0,
+      ),
+    ).toEqual({ kind: "changed" });
+    // The latest run stopped or failed to capture, so its edits are in no checkpoint.
+    expect(revertFileCheck([run(1), run(2, "interrupted")], [checkpoint(1)], 0)).toEqual({
+      kind: "changed",
+    });
+    expect(revertFileCheck([run(1)], [checkpoint(1, { status: "error" })], 0)).toEqual({
+      kind: "changed",
+    });
+    expect(revertFileCheck([], [], 0)).toEqual({ kind: "changed" });
+  });
 });
