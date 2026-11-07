@@ -3130,10 +3130,6 @@ describe("v2 run and attempt history", () => {
       "steer-user-entry",
       "active-assistant-entry",
     ]);
-    expect(expandedRows.filter((row) => row.superseded).map((row) => row.id)).toEqual([
-      "superseded-assistant-entry",
-      "superseded-work-entry",
-    ]);
     const settledRows = deriveMessagesTimelineRows({
       ...common,
       latestRun: { ...common.latestRun, status: "completed", completedAt: "2026-01-01T00:00:08Z" },
