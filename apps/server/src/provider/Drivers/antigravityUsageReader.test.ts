@@ -134,6 +134,293 @@ describe("readAntigravityUsage", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  const attemptUsage = (scale: number, ids: number[] = []) => [
+    ...protoNumber(2, 100 * scale),
+    ...protoNumber(3, 40 * scale),
+    ...protoNumber(4, 5 * scale),
+    ...protoNumber(5, 20 * scale),
+    ...protoNumber(9, 10 * scale),
+    ...protoNumber(10, 30 * scale),
+    ...ids,
+  ];
+  const usageRow = (
+    source: "step" | "generation",
+    main: number[],
+    attempts: number[][] = [],
+    model = "gemini-3.1-pro",
+    seconds = 1780000000,
+  ) => {
+    const step = source === "step";
+    const data = [
+      ...protoBytes(step ? 9 : 4, main),
+      ...attempts.flatMap((usage) => protoBytes(step ? 28 : 17, protoBytes(2, usage))),
+      ...(step ? protoBytes(24, protoText(12, model)) : protoText(19, model)),
+      ...(step
+        ? protoBytes(8, protoNumber(1, seconds))
+        : protoBytes(9, protoBytes(4, protoNumber(1, seconds)))),
+    ];
+    return new Uint8Array(step ? data : protoBytes(1, data));
+  };
+  const readUsageRows = Effect.fnUntraced(function* (
+    steps: Uint8Array[],
+    generations: Uint8Array[],
+  ) {
+    const path = yield* Path.Path;
+    const dir = yield* tempDir;
+    yield* seedDatabase(path.join(dir, "attempts.db"), (db) =>
+      Effect.gen(function* () {
+        yield* createTables(db);
+        for (const [index, row] of steps.entries()) {
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [7 + index * 2, row]);
+        }
+        for (const [index, row] of generations.entries()) {
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [index, row]);
+        }
+      }),
+    );
+    const result = yield* readAntigravityUsage(dir, 0);
+    assert.deepStrictEqual(result.errors, []);
+    return records(result);
+  });
+  const attemptTotals = (scale: number) => ({
+    uncachedInputTokens: 100 * scale,
+    cachedInputTokens: 20 * scale,
+    cacheCreationTokens: 5 * scale,
+    outputTokens: 40 * scale,
+    reasoningTokens: 10 * scale,
+  });
+
+  it.effect.each([
+    { name: "retry attempts", attempts: [1, 2], step: "gemini-3.1-pro", gen: "gemini-3.1-pro" },
+    {
+      name: "single call with Gemini variant labels",
+      attempts: [1],
+      step: "gemini-3.8-flash-high",
+      gen: "gemini-3.8-flash-n",
+    },
+  ])(
+    "counts $name once across main, attempt, step and generation copies",
+    ({ attempts, step, gen }) =>
+      Effect.gen(function* () {
+        const usages = attempts.map((scale) => attemptUsage(scale));
+        const read = yield* readUsageRows(
+          usages.map((usage) => usageRow("step", usage, [usage], step)),
+          [
+            usageRow(
+              "generation",
+              attemptUsage(attempts.reduce((a, b) => a + b, 0)),
+              usages,
+              gen,
+              1780000010,
+            ),
+          ],
+        );
+        assert.deepStrictEqual(
+          read.map(({ totals, model, timestampMs }) => ({ totals, model, timestampMs })),
+          attempts.map((scale) => ({
+            totals: attemptTotals(scale),
+            model: step,
+            timestampMs: 1780000000000,
+          })),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  const response = protoText(11, "response");
+  const aliases = [response, protoText(12, "provider"), protoText(7, "message")];
+  it.effect.each([
+    {
+      name: "preserves main response aliases when the single attempt has none",
+      steps: [usageRow("step", attemptUsage(1, aliases.flat()), [attemptUsage(1)])],
+      generations: aliases.map((alias) => usageRow("generation", attemptUsage(1, alias))),
+      expected: [1],
+    },
+    {
+      name: "keeps the aggregate when retries share a response ID",
+      steps: [],
+      generations: [
+        usageRow("generation", attemptUsage(3, response), [
+          attemptUsage(1, response),
+          attemptUsage(2, response),
+        ]),
+      ],
+      expected: [3],
+    },
+    {
+      name: "keeps equal-counter attempts with different response IDs separate",
+      steps: [],
+      generations: [
+        usageRow("generation", attemptUsage(1, response), [
+          attemptUsage(1, protoText(11, "other")),
+        ]),
+      ],
+      expected: [1, 1],
+    },
+    {
+      name: "keeps retry IDs in their response and provider namespaces",
+      steps: [],
+      generations: [
+        usageRow("generation", attemptUsage(3, [...response, ...protoText(12, "response")]), [
+          attemptUsage(1, response),
+          attemptUsage(2, protoText(12, "response")),
+        ]),
+      ],
+      expected: [1, 2],
+    },
+  ])("$name", ({ steps, generations, expected }) =>
+    Effect.gen(function* () {
+      const read = yield* readUsageRows(steps, generations);
+      assert.deepStrictEqual(
+        read.map((record) => record.totals),
+        expected.map(attemptTotals),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    {
+      name: "different models with missing copies",
+      steps: [
+        ["claude-opus-4-6", 1780000000],
+        ["gemini-3.1-pro", 1780000000],
+      ],
+      generations: [
+        ["gemini-3.1-pro", 1780000010],
+        ["claude-sonnet-4-6", 1780000010],
+      ],
+      expected: [
+        ["claude-opus-4-6", 1780000000],
+        ["gemini-3.1-pro", 1780000000],
+        ["claude-sonnet-4-6", 1780000010],
+      ],
+    },
+    {
+      name: "distant timestamps with missing copies",
+      steps: [
+        ["gemini-3.1-pro", 1780000000],
+        ["gemini-3.1-pro", 1780086400],
+      ],
+      generations: [
+        ["gemini-3.1-pro", 1780086410],
+        ["gemini-3.1-pro", 1780172810],
+      ],
+      expected: [
+        ["gemini-3.1-pro", 1780000000],
+        ["gemini-3.1-pro", 1780086400],
+        ["gemini-3.1-pro", 1780172810],
+      ],
+    },
+    {
+      name: "ambiguous copies without model evidence",
+      steps: [
+        ["", 1780000000],
+        ["", 1780000000],
+      ],
+      generations: [
+        ["", 1780000010],
+        ["", 1780000010],
+      ],
+      expected: [
+        ["antigravity-unknown", 1780000000],
+        ["antigravity-unknown", 1780000000],
+        ["antigravity-unknown", 1780000010],
+        ["antigravity-unknown", 1780000010],
+      ],
+    },
+    {
+      name: "ambiguous copies without timestamp evidence",
+      steps: [
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+      ],
+      generations: [
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+      ],
+      expected: [
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+      ],
+    },
+    {
+      name: "multiple plausible partners with model and timestamp evidence",
+      steps: [
+        ["gemini-3.1-pro", 1780000000],
+        ["gemini-3.1-pro", 1780000020],
+      ],
+      generations: [["gemini-3.1-pro", 1780000010]],
+      expected: [
+        ["gemini-3.1-pro", 1780000000],
+        ["gemini-3.1-pro", 1780000020],
+        ["gemini-3.1-pro", 1780000010],
+      ],
+    },
+  ] as const)(
+    "does not infer identity from equal counters: $name",
+    ({ steps, generations, expected }) =>
+      Effect.gen(function* () {
+        const read = yield* readUsageRows(
+          steps.map(([model, seconds]) => usageRow("step", attemptUsage(1), [], model, seconds)),
+          generations.map(([model, seconds]) =>
+            usageRow("generation", attemptUsage(1), [], model, seconds),
+          ),
+        );
+        assert.deepStrictEqual(
+          read.map((record) => record.totals),
+          expected.map(() => attemptTotals(1)),
+        );
+        assert.deepStrictEqual(
+          read.map(({ model, timestampMs }) => [model, steps[0][1] === 0 ? 0 : timestampMs / 1000]),
+          expected.map((entry) => [...entry]),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    {
+      name: "retains differing source model labels despite a shared usage model enum",
+      stepModel: "claude-opus-4-6",
+      generationModel: "claude-sonnet-4-6",
+      stepEnum: 1016,
+      generationEnum: 1016,
+      expectedModels: ["gemini-3.1-pro", "gemini-3.1-pro"],
+    },
+    {
+      name: "retains differing usage model enums despite a shared source model label",
+      stepModel: "claude-opus-4-6",
+      generationModel: "claude-opus-4-6",
+      stepEnum: 1016,
+      generationEnum: 1026,
+      expectedModels: ["gemini-3.1-pro", "claude-opus-4-6"],
+    },
+  ])("$name", ({ stepModel, generationModel, stepEnum, generationEnum, expectedModels }) =>
+    Effect.gen(function* () {
+      const read = yield* readUsageRows(
+        [usageRow("step", attemptUsage(1, protoNumber(1, stepEnum)), [], stepModel)],
+        [
+          usageRow(
+            "generation",
+            attemptUsage(1, protoNumber(1, generationEnum)),
+            [],
+            generationModel,
+            1780000010,
+          ),
+        ],
+      );
+      assert.strictEqual(read.length, 2);
+      assert.deepStrictEqual(
+        read.map((record) => record.totals),
+        [attemptTotals(1), attemptTotals(1)],
+      );
+      assert.deepStrictEqual(
+        read.map((record) => record.model),
+        expectedModels,
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("uses the matching Antigravity generation model for each model-less step", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
