@@ -187,39 +187,41 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       pointerEvents={props.collapsed ? "none" : "auto"}
       accessibilityElementsHidden={props.collapsed}
       importantForAccessibility={props.collapsed ? "no-hide-descendants" : "auto"}
-      className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
+      className="overflow-hidden rounded-[20px] border border-border bg-card-alt"
       style={cardAnimatedStyle}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Collapse user input"
-        onPress={props.onToggleCollapsed}
-        className="flex-row items-start gap-2"
-      >
-        <View className="flex-1 gap-2.5">
-          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-            User input needed
-          </Text>
-          <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
-        </View>
-        <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
-          <SymbolView
-            name="chevron.down"
-            size={13}
-            tintColorClassName={"accent-icon-subtle"}
-            type="monochrome"
-          />
-        </View>
-      </Pressable>
       <ScrollView
         bounces={false}
         className="min-h-0"
-        contentContainerClassName="gap-2.5 pb-1"
+        contentContainerClassName="gap-2.5 p-4"
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
         showsVerticalScrollIndicator
         style={{ flexShrink: 1 }}
       >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Collapse user input"
+          onPress={props.onToggleCollapsed}
+          className="flex-row items-start gap-2"
+        >
+          <View className="flex-1 gap-2.5">
+            <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
+              User input needed
+            </Text>
+            <Text className="font-t3-bold text-lg text-foreground">
+              Fill in the pending answers
+            </Text>
+          </View>
+          <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
+            <SymbolView
+              name="chevron.down"
+              size={13}
+              tintColorClassName={"accent-icon-subtle"}
+              type="monochrome"
+            />
+          </View>
+        </Pressable>
         {!canRespond ? (
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
             The provider process for this request is no longer available. Interrupt or restart the
@@ -305,27 +307,27 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             </View>
           );
         })}
-      </ScrollView>
-      <Button
-        label="Submit answers"
-        fullWidth
-        tone={props.answers ? "primary" : "secondary"}
-        disabled={!props.canOperateThread || responseDisabled || props.answers === null}
-        onPress={() => void props.onSubmit()}
-      />
-      {props.pendingUserInput.dismissible ? (
         <Button
-          label="Dismiss without answering"
-          tone="text"
-          disabled={isResponding}
-          onPress={() => void props.onDismiss()}
+          label="Submit answers"
+          fullWidth
+          tone={props.answers ? "primary" : "secondary"}
+          disabled={!props.canOperateThread || responseDisabled || props.answers === null}
+          onPress={() => void props.onSubmit()}
         />
-      ) : null}
-      {!props.canOperateThread ? (
-        <Text className="font-sans text-xs text-foreground-tertiary">
-          This connection cannot submit answers.
-        </Text>
-      ) : null}
+        {props.pendingUserInput.dismissible ? (
+          <Button
+            label="Dismiss without answering"
+            tone="text"
+            disabled={isResponding}
+            onPress={() => void props.onDismiss()}
+          />
+        ) : null}
+        {!props.canOperateThread ? (
+          <Text className="font-sans text-xs text-foreground-tertiary">
+            This connection cannot submit answers.
+          </Text>
+        ) : null}
+      </ScrollView>
     </Animated.View>
   );
   return (
