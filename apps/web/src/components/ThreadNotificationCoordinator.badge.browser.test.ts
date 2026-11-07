@@ -5,7 +5,8 @@ import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { stubGlobal } from "../../test/render";
+import { fakeTimers, stubGlobal } from "../../test/render";
+import { RELEASED_COMPLETION_GRACE_MS } from "./ThreadNotificationCoordinator.logic";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
@@ -252,6 +253,53 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
+it("presents one completion when a monitor ends with a final wake", async () => {
+  await using app = setup();
+  using _timers = fakeTimers();
+  state.mode = "notifications-and-sound";
+  app.start();
+  const watching = (
+    turnId: string,
+    turnState: string,
+    completedAt: string | null,
+    latestRunBackgroundWake: boolean,
+    pendingBackgroundTasks: ReadonlyArray<{ taskId: string; kind: "monitor" }>,
+  ) => ({
+    status: "live",
+    snapshot: Option.some({
+      threads: [
+        {
+          ...toV2ThreadShell({ ...thread, latestTurn: { turnId, state: turnState, completedAt } }),
+          latestRunBackgroundWake,
+          pendingBackgroundTasks,
+        },
+      ],
+    }),
+  });
+  const monitor = [{ taskId: "watch", kind: "monitor" as const }];
+  const titles = () => TestNotification.sent.map(({ title }) => title);
+  state.shells.set(
+    "one",
+    watching("turn", "completed", "2026-09-13T07:00:01.000Z", false, monitor),
+  );
+  expect(titles()).toEqual(["Thread completed"]);
+
+  state.shells.set("one", watching("wake", "running", null, true, monitor));
+  state.shells.set("one", watching("wake", "completed", "2026-09-13T07:00:09.000Z", true, monitor));
+  expect(titles()).toEqual(["Thread completed"]);
+
+  // The adapter drains the roster before the final wake starts.
+  state.shells.set("one", watching("wake", "completed", "2026-09-13T07:00:09.000Z", true, []));
+  expect(titles()).toEqual(["Thread completed"]);
+
+  state.shells.set("one", watching("final", "running", null, true, []));
+  vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+  state.shells.set("one", watching("final", "completed", "2026-09-13T07:00:11.000Z", true, []));
+  vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+  expect(titles()).toEqual(["Thread completed", "Thread completed"]);
+  expect(state.sound).toHaveBeenCalledTimes(2);
 });
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
