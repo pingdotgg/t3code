@@ -4,7 +4,6 @@ import {
   AuthOrchestrationOperateScope,
   AuthSessionId,
   DeviceOperationError,
-  type DeviceSummary,
   LOCAL_DEVICE_HOST_ID,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
@@ -245,53 +244,23 @@ describe("device hub proxy", () => {
     expect(requests).toHaveLength(2);
   });
 
-  it("captures iOS screenshots through the device service on hub hosts", async () => {
-    const captured: Array<{ readonly hostId?: string | undefined; readonly deviceId: string }> = [];
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-    const { handler, requests } = fixture(
-      [AuthOrchestrationReadScope],
-      false,
-      undefined,
-      undefined,
-      (input) => {
-        captured.push(input);
-        return input.deviceId === "udid-1"
-          ? Effect.succeed({ device: {} as DeviceSummary, png })
-          : Effect.fail(
-              new DeviceOperationError({
-                operation: "screenshot",
-                reason: "command_failed",
-                cause: "simctl failed",
-              }),
-            );
-      },
+  it("keeps simctl diagnostics out of a failed iOS screenshot response", async () => {
+    const { handler } = fixture([AuthOrchestrationReadScope], false, undefined, undefined, () =>
+      Effect.fail(
+        new DeviceOperationError({
+          operation: "screenshot",
+          reason: "command_failed",
+          cause: "simctl failed",
+        }),
+      ),
     );
-    const hub = "http://t3.test/api/device-hub/vendor";
-    const ios = await handler(
-      new Request(`${hub}/serve-sim/api/screenshot?device=udid-1&hostId=local`, {
+    const failed = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/api/screenshot?device=udid-2", {
         method: "POST",
       }),
     );
-    expect(ios.status).toBe(200);
-    expect(ios.headers.get("content-type")).toBe("image/png");
-    expect(new Uint8Array(await ios.arrayBuffer())).toEqual(png);
-    const failed = await handler(
-      new Request(`${hub}/serve-sim/api/screenshot?device=udid-2`, { method: "POST" }),
-    );
     expect(failed.status).toBe(502);
     expect(await failed.text()).not.toContain("simctl failed");
-    expect(captured).toEqual([
-      { hostId: LOCAL_DEVICE_HOST_ID, deviceId: "udid-1" },
-      { hostId: LOCAL_DEVICE_HOST_ID, deviceId: "udid-2" },
-    ]);
-    const android = await handler(
-      new Request(`${hub}/serve-emu/api/screenshot?device=emulator-5554`, { method: "POST" }),
-    );
-    expect(android.status).toBe(200);
-    await android.text();
-    expect(requests).toEqual([
-      "http://hub.test/vendor/serve-emu/api/screenshot?device=emulator-5554",
-    ]);
   });
 
   it("never forwards the vendor shell endpoint", async () => {

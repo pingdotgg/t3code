@@ -56,6 +56,11 @@ it.effect.each([
     expected: { failure: { _tag: "DeviceOperationError", reason: "hub_rejected" } },
   },
   {
+    name: "keeps the hub's rejection on iOS 27 runtimes, which can have several displays",
+    version: "iOS 27.2.iPhone19.4",
+    expected: { failure: { _tag: "DeviceOperationError", reason: "hub_rejected" } },
+  },
+  {
     name: "captures the default display with simctl when the hub rejects an iOS screenshot",
     capture: { code: 0, stdout: `${Buffer.from(PNG).toString("base64")}\n`, stderr: "" },
     expected: { success: PNG },
@@ -72,7 +77,7 @@ it.effect.each([
       },
     },
   },
-])("screenshot $name", ({ platform = "ios" as const, capture, expected }) =>
+])("screenshot $name", ({ platform = "ios" as const, version, capture, expected }) =>
   Effect.gen(function* () {
     const operations = makeDeviceHubOperations({
       hostId: LOCAL_DEVICE_HOST_ID,
@@ -96,7 +101,7 @@ it.effect.each([
       .screenshot({
         id: "phone",
         name: "Phone",
-        version: platform === "ios" ? "iOS 26.2" : "Android 15",
+        version: version ?? (platform === "ios" ? "iOS 26.2" : "Android 15"),
         platform,
         booted: true,
         physical: false,

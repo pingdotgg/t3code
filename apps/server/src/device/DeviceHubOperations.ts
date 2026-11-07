@@ -21,6 +21,8 @@ const SIMULATOR_LIST_FAILED =
   /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
 // expo-device-hub 0.19.1 always passes a numeric `--display`, which Xcode 26's simctl rejects
 // (it takes only internal/external). Base64 keeps the PNG intact as text.
+// Multi-display simulators need an iOS 27 runtime, where simctl's default display can be the wrong panel.
+const runsOnXcode26Runtime = (version: string) => Number(/^iOS (\d+)/.exec(version)?.[1]) <= 26;
 const DEFAULT_DISPLAY_SCREENSHOT = `f=$(mktemp -t t3-screenshot) || exit 1
 trap 'rm -f "$f"' 0
 trap 'exit 1' HUP INT TERM
@@ -318,7 +320,10 @@ export const makeDeviceHubOperations = (options: {
   const screenshot: DeviceOperations["screenshot"] = (device) =>
     hubScreenshot(device).pipe(
       Effect.catchIf(
-        (error) => device.platform === "ios" && error.reason === "hub_rejected",
+        (error) =>
+          device.platform === "ios" &&
+          runsOnXcode26Runtime(device.version) &&
+          error.reason === "hub_rejected",
         () => defaultDisplayScreenshot(device.id),
       ),
       Effect.withSpan("DeviceHubOperations.screenshot"),
