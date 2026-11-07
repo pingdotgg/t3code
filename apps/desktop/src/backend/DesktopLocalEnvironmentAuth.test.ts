@@ -238,4 +238,30 @@ describe("DesktopLocalEnvironmentAuth", () => {
       assert.strictEqual(yield* Ref.get(requestCount), 1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
+  it.effect("waits out a backend that stays unresponsive for 30 seconds after launch", () =>
+    Effect.gen(function* () {
+      // A stopped backend accepts connections but answers nothing until resumed.
+      const resumed = yield* Deferred.make<void>();
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Deferred.await(resumed).pipe(Effect.as(tokenResponse(request))),
+        ),
+      );
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
+          ),
+        ),
+      );
+
+      const fiber = yield* auth.getBearerToken.pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(30));
+      yield* Deferred.succeed(resumed, undefined);
+      yield* TestClock.adjust(Duration.seconds(11));
+
+      assert.strictEqual(yield* Fiber.join(fiber), "desktop-bearer-token");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 });
