@@ -43,6 +43,7 @@ const UNREACHABLE_MESSAGE =
 const FORWARDING_FAILED_MESSAGE = "Could not deliver the sign-in response. Start sign-in again.";
 const isSetupError = Schema.is(ProviderSetupError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+const isAcpProcessExitedError = Schema.is(AcpErrors.AcpProcessExitedError);
 
 interface AuthSnapshot {
   readonly ownerSessionId: string | null;
@@ -114,6 +115,12 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
   if (Option.isSome(error)) {
     if (isSetupError(error.value)) {
       return error.value.detail;
+    }
+    if (isAcpProcessExitedError(error.value)) {
+      const { code, signal } = error.value;
+      const reason =
+        signal !== undefined ? ` (${signal})` : code !== undefined ? ` with code ${code}` : "";
+      return `Antigravity exited unexpectedly${reason}. Try again.`;
     }
     if (isAcpRequestError(error.value)) {
       if (error.value.errorMessage.includes("SUBSCRIPTION_REQUIRED")) {
