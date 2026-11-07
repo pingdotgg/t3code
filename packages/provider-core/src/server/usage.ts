@@ -103,8 +103,16 @@ export interface ProviderUsageScanInput<Config> {
   readonly awaitRefresh: boolean;
 }
 
+interface ProviderUsageRateModel {
+  /**
+   * The rate-table name for a model ID this provider records with a separate `rateModel`, so
+   * usage mapped onto that ID prices like the provider's own records of it.
+   */
+  readonly rateModel?: (model: string) => string;
+}
+
 export type ProviderUsageReader<Config, R> =
-  | {
+  | (ProviderUsageRateModel & {
       readonly kind: "transcripts";
       readonly provider: UsageProviderKind;
       readonly format: TranscriptUsageFormat<unknown>;
@@ -118,12 +126,12 @@ export type ProviderUsageReader<Config, R> =
         never,
         R
       >;
-    }
-  | {
+    })
+  | (ProviderUsageRateModel & {
       readonly kind: "scan";
       readonly provider: UsageProviderKind;
       /** Fails only when the whole usage read cannot go on; an unreadable source is a status. */
       readonly scan: (
         input: ProviderUsageScanInput<Config>,
       ) => Effect.Effect<ReadonlyArray<ProviderUsageScan>, UsageReadError, R>;
-    };
+    });

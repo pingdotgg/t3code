@@ -103,8 +103,10 @@ const MODEL_IDS: Record<number, string> = {
 };
 
 // ACP slugs append the thinking level, which shares the base model's price.
+export const antigravityRateModel = (model: string) => model.replace(/-(?:low|medium|high)$/, "");
+
 function withRateModel(record: UsageRecord): UsageRecord {
-  const rateModel = record.model.replace(/-(?:low|medium|high)$/, "");
+  const rateModel = antigravityRateModel(record.model);
   return rateModel === record.model ? record : { ...record, rateModel };
 }
 

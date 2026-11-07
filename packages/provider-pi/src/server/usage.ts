@@ -129,6 +129,8 @@ export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {
   kind: "transcripts",
   provider: "pi",
   format: piUsageFormat,
+  // Pi model IDs are `<provider>/<rate model>`.
+  rateModel: (model) => model.slice(model.indexOf("/") + 1),
   directories: Effect.fn("piUsageReader.directories")(function* ({ config, environment }) {
     const path = yield* Path.Path;
     const home = yield* HostProcess.HomeDirectory;
