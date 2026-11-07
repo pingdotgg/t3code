@@ -3,6 +3,7 @@ import {
   type OrchestrationProjectShell,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
+  type PullRequestSummary,
   type ThreadId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -10,6 +11,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -47,6 +49,19 @@ function samePullRequest(
     left.number === right.number &&
     left.url === right.url
   );
+}
+
+function pullRequestPredatesThread(
+  pullRequest: Pick<PullRequestSummary, "state" | "closedAt" | "mergedAt">,
+  createdAt: DateTime.Utc,
+): boolean {
+  const terminalAt =
+    pullRequest.state === "merged"
+      ? pullRequest.mergedAt
+      : pullRequest.state === "closed"
+        ? pullRequest.closedAt
+        : null;
+  return terminalAt != null && Date.parse(terminalAt) < DateTime.toEpochMillis(createdAt);
 }
 
 function pullRequestMatchesProject(
@@ -211,7 +226,10 @@ export const make = Effect.gen(function* () {
 
           const plans = yield* Effect.forEach(group, (thread) =>
             Effect.gen(function* () {
-              let branchPullRequest = detectedReference;
+              let branchPullRequest =
+                detected !== null && pullRequestPredatesThread(detected, thread.createdAt)
+                  ? null
+                  : detectedReference;
               if (
                 branchPullRequest === null &&
                 thread.branch !== null &&
@@ -223,7 +241,8 @@ export const make = Effect.gen(function* () {
                 });
                 if (
                   previous.headBranch === thread.branch &&
-                  (previous.state === "merged" || previous.state === "closed")
+                  (previous.state === "merged" || previous.state === "closed") &&
+                  !pullRequestPredatesThread(previous, thread.createdAt)
                 ) {
                   branchPullRequest = thread.branchPullRequest;
                 }
