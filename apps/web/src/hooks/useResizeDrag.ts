@@ -89,28 +89,27 @@ function scrollbarThumbBeside(handle: HTMLElement, x: number, y: number): Scroll
 function createResizeDrag<T extends HTMLElement>() {
   let drag: ActiveDrag<T> | null = null;
   let thumbDrag: ThumbDrag<T> | null = null;
-  let thumbHover: { handle: T; scroller: Element } | null = null;
+  let hover: { handle: T; thumbScroller: Element | null } | null = null;
 
-  const clearThumbHover = () => {
-    const active = thumbHover;
+  const clearHover = () => {
+    const active = hover;
     if (!active) return;
-    thumbHover = null;
-    active.handle.removeEventListener("pointerleave", clearThumbHover);
-    active.handle.style.removeProperty("cursor");
-    delete active.handle.dataset.scrollbarThumb;
-    active.scroller.removeAttribute("data-scrollbar-thumb-hover");
+    hover = null;
+    active.handle.removeEventListener("pointerleave", clearHover);
+    delete active.handle.dataset.hoverZone;
+    active.thumbScroller?.removeAttribute("data-scrollbar-thumb-hover");
   };
 
-  // The handle covers the thumb, so it marks itself and lends the thumb its native hover colour.
-  const setThumbHover = (handle: T, scroller: Element | null) => {
-    if (thumbHover?.scroller === scroller) return;
-    clearThumbHover();
-    if (!scroller) return;
-    thumbHover = { handle, scroller };
-    handle.style.cursor = "default";
-    handle.dataset.scrollbarThumb = "";
-    scroller.setAttribute("data-scrollbar-thumb-hover", "");
-    handle.addEventListener("pointerleave", clearThumbHover);
+  // Handles style their resize cursor from `data-hover-zone="resize"` instead of plain hover, so
+  // the resize cursor never flashes over a thumb. Over one, the handle lends the thumb its hover
+  // colour, since it covers the thumb's own hover.
+  const setHover = (handle: T, thumbScroller: Element | null) => {
+    if (hover?.handle === handle && hover.thumbScroller === thumbScroller) return;
+    clearHover();
+    hover = { handle, thumbScroller };
+    handle.dataset.hoverZone = thumbScroller ? "scrollbar-thumb" : "resize";
+    thumbScroller?.setAttribute("data-scrollbar-thumb-hover", "");
+    handle.addEventListener("pointerleave", clearHover);
   };
 
   const finishThumbDrag = () => {
@@ -193,7 +192,7 @@ function createResizeDrag<T extends HTMLElement>() {
         : () => {
             finish(false);
             finishThumbDrag();
-            clearThumbHover();
+            clearHover();
           },
     cancel: () => finish(false),
     refresh(bounds?: ResizeBounds) {
@@ -247,7 +246,7 @@ function createResizeDrag<T extends HTMLElement>() {
       const active = drag;
       if (!active && event.pointerType === "mouse") {
         const handle = event.currentTarget;
-        setThumbHover(
+        setHover(
           handle,
           scrollbarThumbBeside(handle, event.clientX, event.clientY)?.scroller ?? null,
         );

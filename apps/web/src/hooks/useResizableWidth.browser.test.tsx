@@ -62,14 +62,12 @@ describe("useResizableWidth", () => {
     // The thumb spans 0-10px; its ends keep grabbing it slightly past its drawn edge.
     for (const thumbEnd of [onThumb, { ...onThumb, clientY: top + 12 }]) {
       await act(() => handle.dispatchEvent(new PointerEvent("pointermove", thumbEnd)));
-      expect(handle.style.cursor).toBe("default");
-      expect(handle.dataset.scrollbarThumb).toBe("");
+      expect(handle.dataset.hoverZone).toBe("scrollbar-thumb");
       expect(scroller.hasAttribute("data-scrollbar-thumb-hover")).toBe(true);
     }
     for (const elsewhere of [besideThumb, belowThumb]) {
       await act(() => handle.dispatchEvent(new PointerEvent("pointermove", elsewhere)));
-      expect(handle.style.cursor).toBe("");
-      expect(handle.dataset.scrollbarThumb).toBeUndefined();
+      expect(handle.dataset.hoverZone).toBe("resize");
       expect(scroller.hasAttribute("data-scrollbar-thumb-hover")).toBe(false);
     }
 
