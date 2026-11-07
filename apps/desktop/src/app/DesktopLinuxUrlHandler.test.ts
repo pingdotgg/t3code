@@ -19,13 +19,14 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
+import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 
 interface RecordedRegistration {
   readonly directories: string[];
   readonly files: Array<{ readonly path: string; readonly content: string }>;
   readonly commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>;
-  readonly copies: Array<{ readonly source: string; readonly destination: string }>;
+  readonly icons: Array<{ readonly path: string; readonly content: Uint8Array }>;
 }
 
 const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {}) =>
@@ -69,7 +70,7 @@ const layerHandler = (
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
     readonly iconSource?: string;
-    readonly iconCopyError?: PlatformError.PlatformError;
+    readonly iconWriteError?: PlatformError.PlatformError;
   } = {},
 ) =>
   DesktopLinuxUrlHandler.layer.pipe(
@@ -91,11 +92,22 @@ const layerHandler = (
           resolveResourcePath: () => Effect.succeedNone,
         }),
         FileSystem.layerNoop({
-          copyFile: (source, destination) =>
-            input.iconCopyError
-              ? Effect.fail(input.iconCopyError)
+          readFile: (path) =>
+            path === input.iconSource
+              ? Effect.succeed(new Uint8Array([1, 2, 3]))
+              : Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "readFile",
+                    description: "missing icon",
+                  }),
+                ),
+          writeFile: (path, content) =>
+            input.iconWriteError
+              ? Effect.fail(input.iconWriteError)
               : Effect.sync(() => {
-                  recorded.copies.push({ source, destination });
+                  recorded.icons.push({ path, content });
                 }),
           readFileString: () => Effect.succeed(input.existingEntry ?? ""),
           makeDirectory: (path) =>
@@ -161,7 +173,7 @@ const emptyRecording = (): RecordedRegistration => ({
   directories: [],
   files: [],
   commands: [],
-  copies: [],
+  icons: [],
 });
 
 describe("DesktopLinuxUrlHandler", () => {
@@ -216,6 +228,152 @@ describe("DesktopLinuxUrlHandler", () => {
         ]);
       });
     },
+  );
+
+  it.effect(
+    "skips current MIME registration but repairs missing and stale caches and defaults",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-registration-" });
+        const applications = path.join(root, "applications");
+        const entry = path.join(applications, "com.t3tools.T3Code.desktop");
+        const cache = path.join(applications, "mimeinfo.cache");
+        const icon = path.join(root, "source.png");
+        const target = path.join(root, "icons", "com.t3tools.T3Code.desktop.png");
+        yield* fs.writeFile(icon, new Uint8Array([1, 2, 3]));
+        const defaults = path.join(root, "mimeapps.list");
+        let cacheFails = false;
+        const commands: string[] = [];
+        const register = Effect.gen(function* () {
+          const handler = yield* DesktopLinuxUrlHandler.DesktopLinuxUrlHandler;
+          yield* handler.register;
+        }).pipe(
+          Effect.provide(
+            DesktopLinuxUrlHandler.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(
+                    DesktopEnvironment.DesktopEnvironment,
+                    makeEnvironment(path, { linuxApplicationsDir: applications }),
+                  ),
+                  Layer.succeed(DesktopAssets.DesktopAssets, {
+                    iconPaths: Effect.succeed({
+                      png: Option.some(icon),
+                      ico: Option.none(),
+                      icns: Option.none(),
+                    }),
+                    resolveResourcePath: () => Effect.succeedNone,
+                  }),
+                  Layer.succeed(
+                    ChildProcessSpawner.ChildProcessSpawner,
+                    ChildProcessSpawner.make((command) =>
+                      Effect.gen(function* () {
+                        assert(ChildProcess.isStandardCommand(command));
+                        commands.push(command.command);
+                        if (command.command === "update-desktop-database" && !cacheFails) {
+                          yield* fs.writeFileString(
+                            cache,
+                            "[MIME Cache]\nx-scheme-handler/t3code=other.desktop;com.t3tools.T3Code.desktop;\n",
+                          );
+                        }
+                        if (command.command === "xdg-mime") {
+                          yield* fs.writeFileString(
+                            defaults,
+                            "[Default Applications]\nx-scheme-handler/t3code=com.t3tools.T3Code.desktop\n",
+                          );
+                        }
+                        return mockProcess(
+                          cacheFails && command.command === "update-desktop-database" ? 1 : 0,
+                        );
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        const launch = register.pipe(
+          Effect.provide(DesktopConfig.layerTest({ XDG_CONFIG_HOME: root })),
+          Effect.provideService(HostProcess.Environment, {}),
+        );
+        yield* launch;
+        assert.deepEqual(commands, ["update-desktop-database", "xdg-mime"]);
+        const past = 1_600_000_000;
+        yield* fs.utimes(entry, past, past);
+        yield* fs.utimes(target, past, past);
+        commands.length = 0;
+        yield* launch;
+        assert.deepEqual(commands, []);
+        assert.equal(Option.getOrThrow((yield* fs.stat(entry)).mtime).getTime(), past * 1000);
+        assert.equal(Option.getOrThrow((yield* fs.stat(target)).mtime).getTime(), past * 1000);
+
+        yield* fs.remove(defaults);
+        commands.length = 0;
+        yield* launch;
+        assert.deepEqual(commands, ["xdg-mime"]);
+        yield* fs.writeFileString(
+          defaults,
+          "[Default Applications]\nx-scheme-handler/t3code=other.desktop;com.t3tools.T3Code.desktop;\n",
+        );
+        commands.length = 0;
+        yield* launch;
+        assert.deepEqual(commands, ["xdg-mime"]);
+        const gnomeDefaults = path.join(root, "gnome-mimeapps.list");
+        yield* fs.writeFileString(
+          gnomeDefaults,
+          "[Default Applications]\nx-scheme-handler/t3code=other.desktop\n",
+        );
+        commands.length = 0;
+        yield* register.pipe(
+          Effect.provide(DesktopConfig.layerTest({ XDG_CONFIG_HOME: root })),
+          Effect.provideService(HostProcess.Environment, { XDG_CURRENT_DESKTOP: "ubuntu:GNOME" }),
+        );
+        assert.deepEqual(commands, ["xdg-mime"]);
+        yield* fs.remove(gnomeDefaults);
+        for (const desktop of ["KDE", "LXQt"]) {
+          commands.length = 0;
+          yield* register.pipe(
+            Effect.provide(DesktopConfig.layerTest({ XDG_CONFIG_HOME: root })),
+            Effect.provideService(HostProcess.Environment, { XDG_CURRENT_DESKTOP: desktop }),
+          );
+          assert.deepEqual(commands, ["xdg-mime"]);
+        }
+
+        for (const contents of [
+          undefined,
+          "[MIME Cache]\nx-scheme-handler/t3code=other.desktop;\n",
+        ]) {
+          if (contents === undefined) yield* fs.remove(cache);
+          else yield* fs.writeFileString(cache, contents);
+          commands.length = 0;
+          yield* launch;
+          assert.deepEqual(commands, ["update-desktop-database", "xdg-mime"]);
+        }
+        yield* fs.utimes(cache, past - 1, past - 1);
+        cacheFails = true;
+        commands.length = 0;
+        yield* launch;
+        assert.deepEqual(commands, ["update-desktop-database", "xdg-mime"]);
+        cacheFails = false;
+        commands.length = 0;
+        yield* launch;
+        assert.deepEqual(commands, ["update-desktop-database", "xdg-mime"]);
+
+        yield* fs.writeFile(icon, new Uint8Array([3, 2, 1]));
+        yield* fs.writeFileString(entry, "Exec=/deleted.AppImage");
+        yield* fs.utimes(cache, past - 1, past - 1);
+        commands.length = 0;
+        yield* launch;
+        assert.deepEqual([...(yield* fs.readFile(target))], [3, 2, 1]);
+        assert.include(
+          yield* fs.readFileString(entry),
+          "Exec=/home/alice/Applications/T3-Code.AppImage %U",
+        );
+        assert.deepEqual(commands, ["update-desktop-database", "xdg-mime"]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("falls back to the process executable outside an AppImage", () => {
@@ -290,22 +448,20 @@ describe("DesktopLinuxUrlHandler", () => {
         }),
       });
       assert.deepEqual(recorded.files, []);
-      assert.deepEqual(recorded.copies, [
-        { source: "/tmp/.mount_T3/resources/icon.png", destination: iconPath },
-      ]);
+      assert.deepEqual(recorded.icons, [{ path: iconPath, content: new Uint8Array([1, 2, 3]) }]);
       assert.equal(recorded.commands.at(-1)?.command, "xdg-mime");
     });
   });
 
-  it.effect("still registers the handler when copying its icon fails", () => {
+  it.effect("still registers the handler when installing its icon fails", () => {
     const recorded = emptyRecording();
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         iconSource: "/tmp/.mount_T3/resources/icon.png",
-        iconCopyError: PlatformError.systemError({
+        iconWriteError: PlatformError.systemError({
           _tag: "PermissionDenied",
           module: "FileSystem",
-          method: "copyFile",
+          method: "writeFile",
           description: "read-only icon directory",
         }),
       });
