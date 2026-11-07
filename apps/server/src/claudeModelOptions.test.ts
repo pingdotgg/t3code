@@ -19,6 +19,9 @@ const selection = (
 
 describe("compileClaudeModelSelection", () => {
   it("compiles context, effort, and settings together", () => {
+    expect(compileClaudeModelSelection(selection("claude-haiku-4-5-20251001", [])).apiModelId).toBe(
+      "claude-haiku-4-5-20251001",
+    );
     expect(
       compileClaudeModelSelection(
         selection("claude-opus-4-6", [
