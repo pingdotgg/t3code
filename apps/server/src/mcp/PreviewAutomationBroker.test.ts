@@ -20,6 +20,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { PreviewBrowserRootError } from "../preview/PreviewBrowserHost.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -88,6 +89,37 @@ it.effect("atomically registers a connected host and correlates its response", (
       });
 
       expect(result).toEqual({ available: true });
+    }),
+  ),
+);
+
+it.effect("allows status to finish starting the server browser", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const delivered = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
+      yield* Stream.runForEach(requests, (request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(delivered, undefined);
+          yield* Deferred.await(ready);
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { available: true },
+          });
+        }),
+      ).pipe(Effect.forkScoped);
+      const pending = yield* broker
+        .invoke({ scope, operation: "status", input: {} })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(delivered);
+      yield* TestClock.adjust("20 seconds");
+      yield* Deferred.succeed(ready, undefined);
+      expect(yield* Fiber.join(pending)).toEqual({ available: true });
     }),
   ),
 );
