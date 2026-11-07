@@ -10,7 +10,9 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -24,6 +26,7 @@ import {
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import type { ProbedOpenCode } from "./versionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import { ServiceUnavailableError } from "@opencode/protocol/errors";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 
 const OPENCODE_PRESENTATION = {
@@ -483,6 +486,15 @@ const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
     .toSorted()
     .join("\n");
 
+// A cold OpenCode 2.2.5 503s model reads for about a minute while its location plugins activate.
+const PLUGIN_ACTIVATION_DEADLINE = "2 minutes";
+
+const isServiceUnavailable = Schema.is(ServiceUnavailableError);
+const isActivatingPlugins = (error: unknown): boolean =>
+  OpenCodeRuntime.isOpenCodeRuntimeError(error)
+    ? isActivatingPlugins(error.cause)
+    : isServiceUnavailable(error) && error.service === "plugin";
+
 /** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
@@ -492,19 +504,27 @@ export const makeOpenCode2ModelLoader = <E>(
     return Effect.suspend(() => {
       let previous: string | undefined;
       let latest: ReadonlyArray<OpenCode2Model> = [];
-      return list.pipe(
-        Effect.repeat({
-          until: (models) => {
-            if (models.length > 0) latest = models;
-            const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
-            const settled = fingerprint !== undefined && fingerprint === previous;
-            previous = fingerprint;
-            return settled;
-          },
-          schedule: Schedule.spaced("250 millis"),
-        }),
+      const settled = (models: ReadonlyArray<OpenCode2Model>) => {
+        if (models.length > 0) latest = models;
+        const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
+        const agreed = fingerprint !== undefined && fingerprint === previous;
+        previous = fingerprint;
+        return agreed;
+      };
+      const agreeingReads = list.pipe(
+        Effect.repeat({ until: settled, schedule: Schedule.spaced("250 millis") }),
+        Effect.delay("250 millis"),
         Effect.catch((error) => (latest.length > 0 ? Effect.succeed(latest) : Effect.fail(error))),
         Effect.timeoutOption("5 seconds"),
+      );
+      // Each read borrows the managed server, so retries well inside its idle TTL keep it alive.
+      return list.pipe(
+        Effect.retry({ while: isActivatingPlugins, schedule: Schedule.spaced("1 second") }),
+        Effect.timeoutOption(PLUGIN_ACTIVATION_DEADLINE),
+        Effect.filterOrElse(
+          (first) => Option.isNone(first) || settled(first.value),
+          () => agreeingReads,
+        ),
         Effect.map((loaded) => {
           // Fresh progress may still be partial, but a warm cache must not freeze slow catalogs.
           if (loaded._tag === "Some") lastLoaded = loaded.value;

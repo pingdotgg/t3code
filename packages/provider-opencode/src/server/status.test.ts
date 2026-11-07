@@ -4,6 +4,8 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import { ServiceUnavailableError } from "@opencode/protocol/errors";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -12,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
@@ -23,6 +26,7 @@ import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
+  makeOpenCode2ModelLoader,
   type OpenCode2Model,
   type OpenCode2Workspace,
 } from "./status.ts";
@@ -1078,5 +1082,33 @@ it.effect("reads a fresh OpenCode 2 directory again once its scan has ended", ()
     NodeAssert.equal(reads.length, 1);
     yield* Deferred.succeed(scanEnded, undefined);
     NodeAssert.deepEqual(yield* Fiber.join(load), scanned);
+  }),
+);
+
+it.effect("keeps reading OpenCode 2 models until its location plugins finish activating", () =>
+  Effect.gen(function* () {
+    const models: ReadonlyArray<OpenCode2Model> = [
+      { providerID: "anthropic", id: "claude-sonnet", name: "Claude Sonnet", variants: [] },
+    ];
+    const activatedAt = (yield* Clock.currentTimeMillis) + 60_000;
+    // OpenCode 2.2.5 holds each model read up to 5 seconds for plugin activation, then 503s.
+    const list = Effect.gen(function* () {
+      const remaining = activatedAt - (yield* Clock.currentTimeMillis);
+      yield* Effect.sleep(Math.min(remaining, 5_000) + 50);
+      if (remaining > 5_000) {
+        return yield* new OpenCodeRuntime.OpenCodeRuntimeError({
+          operation: "model.list",
+          detail: "The OpenCode server could not list its models.",
+          cause: new ServiceUnavailableError({
+            message: "Location plugins did not finish activating",
+            service: "plugin",
+          }),
+        });
+      }
+      return models;
+    });
+    const load = yield* (yield* makeOpenCode2ModelLoader(list)).pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 minutes");
+    NodeAssert.deepEqual(yield* Fiber.join(load), models);
   }),
 );
