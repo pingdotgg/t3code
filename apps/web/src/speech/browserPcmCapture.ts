@@ -4,6 +4,7 @@ import type {
   VoiceStreamingSession,
   VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
+import { requestMicrophone } from "./requestMicrophone";
 import workletUrl from "./pcmWorklet.ts?worker&url";
 
 type PreparedBrowserTranscription = PreparedVoiceTranscription & {
@@ -62,9 +63,7 @@ export function createBrowserPcmCapture(
       const microphoneId = input.getMicrophoneId();
       const captured = await new Promise<MediaStream>((resolve, reject) => {
         const onAbort = () => reject(captureSignal.reason);
-        const permission = navigator.mediaDevices.getUserMedia({
-          audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
-        });
+        const permission = requestMicrophone(microphoneId, captureSignal);
         captureSignal.addEventListener("abort", onAbort, { once: true });
         void permission.then(
           (media) => {
