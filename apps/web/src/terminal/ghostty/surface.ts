@@ -698,6 +698,7 @@ export class GhosttyTerminalSurface {
     input.autocapitalize = "off";
     input.autocomplete = "off";
     input.spellcheck = false;
+    input.setAttribute("autocorrect", "off");
     input.style.cssText =
       "position:absolute;left:4px;top:4px;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none;";
 
@@ -1113,7 +1114,12 @@ export class GhosttyTerminalSurface {
   private readonly onKeyDown = (event: KeyboardEvent) => {
     // A consumed repeat still owes the original encoded press a release.
     if (!event.repeat) this.encodedKeyCodes.delete(event.code);
-    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
+    if (isTerminalAltGraphText(event)) return;
+    if (!this.options.beforeKey(event)) {
+      // A host shortcut that handled the key may have edited the PTY line itself.
+      if (event.defaultPrevented && !this.composing) this.resetInputContext();
+      return;
+    }
     // IME candidates belong to the textarea, even if the key also resembles
     // a local shortcut. Safari signals the initial composition with code 229.
     if (isTerminalCompositionKey(event, this.composing)) {
@@ -1365,9 +1371,13 @@ export class GhosttyTerminalSurface {
 
   // Input the textarea did not produce leaves its text out of step with the PTY line.
   private sendInput(data: string): void {
+    this.resetInputContext();
+    this.options.onData(data);
+  }
+
+  private resetInputContext(): void {
     this.input.value = "";
     this.inputContext = "";
-    this.options.onData(data);
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
@@ -2283,7 +2293,10 @@ export class GhosttyTerminalSurface {
     });
     const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
     this.lastMouseMotionData = resolution.nextMotionData;
-    if (resolution.send) this.options.onData(data);
+    if (!resolution.send) return;
+    // A click can move the application's insertion point away from the typed word.
+    if (action === "press" && !this.composing) this.resetInputContext();
+    this.options.onData(data);
   }
 
   private synchronizeMouseTrackingState(): boolean {

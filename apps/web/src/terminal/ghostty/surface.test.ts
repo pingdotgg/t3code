@@ -438,6 +438,30 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(line.join("")).toBe("tiếng việt");
   });
 
+  it("drops the typed word when a host shortcut edits the line, so a later rewrite cannot reach it", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    const surface = await harness.create({
+      beforeKey: (event) => {
+        if (!(event.metaKey && event.key === "Backspace")) return true;
+        // The thread drawer sends Ctrl+U for Cmd+Backspace itself.
+        event.preventDefault();
+        return false;
+      },
+    });
+
+    for (const char of "tie") {
+      if (!key(surface, char, `Key${char.toUpperCase()}`).defaultPrevented) {
+        surface.input.value += char;
+        surface.input.dispatchEvent(Object.assign(new Event("input"), { isComposing: false }));
+      }
+    }
+    key(surface, "Backspace", "Backspace", { metaKey: true });
+
+    expect(surface.input.value).toBe("");
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["t", "i", "e"]);
+  });
+
   it("commits a composition typed after plain text once, then drops that text at Enter", async () => {
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     const harness = createHarness();
