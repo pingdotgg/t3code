@@ -681,6 +681,12 @@ export function liveThoughtLine(markdown: string): string {
     .replace(/\s+/g, " ")
     .trim();
   if (heading !== undefined) return text;
-  const end = /[.?!]["'”’)]?(?=\s)/.exec(text);
-  return end ? text.slice(0, end.index + end[0].length) : text;
+  for (const end of text.matchAll(/[.?!]["'”’)]?(?=\s)/g)) {
+    // "e.g." and "i.e." never end a sentence.
+    if (end[0][0] === "." && /(?:^|[^\w.])(?:e\.g|i\.e)$/i.test(text.slice(0, end.index))) {
+      continue;
+    }
+    return text.slice(0, end.index + end[0].length);
+  }
+  return text;
 }
