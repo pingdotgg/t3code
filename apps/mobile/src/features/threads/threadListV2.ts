@@ -256,10 +256,17 @@ export function isIdleThread(
     | "pendingGuestMessageCount"
     | "runtime"
     | "blockedOnThreadWait"
+    | "snoozedUntil"
+    | "snoozedAt"
+    | "pendingUserInputAt"
+    | "latestRun"
   >,
+  options: { readonly now: string },
 ): boolean {
   if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
   if (thread.settledOverride === "settled") return false;
+  // Match the open list: snoozed shelves are not idle Done rows.
+  if (effectiveSnoozed(thread, options)) return false;
   return resolveThreadListV2Status(thread) === "ready";
 }
 
@@ -278,14 +285,18 @@ export function countIdleThreads(
       | "pendingGuestMessageCount"
       | "runtime"
       | "blockedOnThreadWait"
+      | "snoozedUntil"
+      | "snoozedAt"
+      | "pendingUserInputAt"
+      | "latestRun"
     >
   >,
-  options?: { readonly excludeThreadId?: string },
+  options: { readonly now: string; readonly excludeThreadId?: string },
 ): number {
   let count = 0;
   for (const thread of threads) {
-    if (options?.excludeThreadId !== undefined && thread.id === options.excludeThreadId) continue;
-    if (isIdleThread(thread)) count += 1;
+    if (options.excludeThreadId !== undefined && thread.id === options.excludeThreadId) continue;
+    if (isIdleThread(thread, options)) count += 1;
   }
   return count;
 }

@@ -230,24 +230,40 @@ describe("countIdleThreads", () => {
   it("counts ready threads, including already-visited ones", () => {
     const ready = idle();
     const blocked = { ...ready, id: ThreadId.make("blocked"), hasPendingApprovals: true };
-    expect(isIdleThread(ready)).toBe(true);
-    expect(isIdleThread(blocked)).toBe(false);
-    expect(countIdleThreads([ready, blocked])).toBe(1);
+    expect(isIdleThread(ready, { now: NOW })).toBe(true);
+    expect(isIdleThread(blocked, { now: NOW })).toBe(false);
+    expect(countIdleThreads([ready, blocked], { now: NOW })).toBe(1);
   });
 
   it("skips settled and archived threads", () => {
     const ready = idle();
     expect(
-      countIdleThreads([
-        { ...ready, settledOverride: "settled" },
-        { ...ready, archivedAt: NOW },
-      ]),
+      countIdleThreads(
+        [
+          { ...ready, settledOverride: "settled" },
+          { ...ready, archivedAt: NOW },
+        ],
+        { now: NOW },
+      ),
     ).toBe(0);
+  });
+
+  it("skips threads still on the snoozed shelf", () => {
+    const ready = idle();
+    const snoozed = {
+      ...ready,
+      id: ThreadId.make("snoozed"),
+      snoozedUntil: "2026-06-03T00:00:00.000Z",
+      snoozedAt: "2026-06-01T00:00:00.000Z",
+    };
+    expect(isIdleThread(snoozed, { now: NOW })).toBe(false);
+    expect(countIdleThreads([ready, snoozed], { now: NOW })).toBe(1);
+    expect(countIdleThreads([ready, snoozed], { now: "2026-06-03T00:00:00.000Z" })).toBe(2);
   });
 
   it("can exclude the open thread", () => {
     const ready = idle();
-    expect(countIdleThreads([ready], { excludeThreadId: ready.id })).toBe(0);
+    expect(countIdleThreads([ready], { now: NOW, excludeThreadId: ready.id })).toBe(0);
   });
 
   it("formats the back-button glyphs like Messages", () => {

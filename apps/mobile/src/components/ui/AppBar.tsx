@@ -188,13 +188,19 @@ export function AppBar(props: AppBarProps) {
                 accessibilityLabel={backAccessibilityLabel ?? "Back"}
                 accessibilityRole="button"
                 onPress={countedListBack}
-                className="h-9 flex-row items-center gap-1 rounded-full bg-screen px-1.5 shadow-sm shadow-adaptive-black-a10-a25"
+                className="h-11 min-w-11 items-center justify-center"
               >
-                <SymbolView name="chevron.left" size={17} tintColorClassName="accent-foreground" />
-                <View className="min-h-[22px] min-w-[22px] items-center justify-center rounded-full bg-foreground px-1.5">
-                  <Text className="text-[12px] font-semibold leading-none tabular-nums text-screen">
-                    {backCountLabel}
-                  </Text>
+                <View className="h-9 flex-row items-center gap-1 rounded-full bg-screen px-1.5 shadow-sm shadow-adaptive-black-a10-a25">
+                  <SymbolView
+                    name="chevron.left"
+                    size={17}
+                    tintColorClassName="accent-foreground"
+                  />
+                  <View className="min-h-[22px] min-w-[22px] items-center justify-center rounded-full bg-foreground px-1.5">
+                    <Text className="text-[12px] font-semibold leading-none tabular-nums text-screen">
+                      {backCountLabel}
+                    </Text>
+                  </View>
                 </View>
               </Pressable>
             </Toolbar.Custom>
