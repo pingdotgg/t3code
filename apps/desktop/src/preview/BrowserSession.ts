@@ -55,8 +55,15 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
   }
 };
 
-// Teams sends Electron User-Agents to an error page before sign-in. Electron allows one listener per session.
-const TEAMS_URL_PATTERNS = ["https://teams.cloud.microsoft/*", "https://teams.microsoft.com/*"];
+// Teams sends Electron User-Agents to an error page before sign-in, and Entra hides passkey sign-in.
+// Electron allows one listener per session.
+const ELECTRON_TOKEN_STRIPPED_URL_PATTERNS = [
+  "https://teams.cloud.microsoft/*",
+  "https://teams.microsoft.com/*",
+  "https://login.microsoftonline.com/*",
+  "https://login.microsoft.com/*",
+  "https://login.live.com/*",
+];
 
 const MAX_PROMPT_URL_LENGTH = 300;
 
@@ -346,7 +353,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
           browserSession.webRequest.onBeforeSendHeaders(
-            { urls: TEAMS_URL_PATTERNS },
+            { urls: ELECTRON_TOKEN_STRIPPED_URL_PATTERNS },
             ({ requestHeaders }, callback) => {
               const userAgent = Object.entries(requestHeaders).find(
                 ([name]) => name.toLowerCase() === "user-agent",
