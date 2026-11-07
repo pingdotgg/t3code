@@ -525,6 +525,18 @@ describe("voice settings", () => {
       speechModelUnloadTimeout: "min_15",
     });
   });
+
+  it("takes a catalog id or an OpenAI-compatible server for the voice front model", () => {
+    expect(DEFAULT_SERVER_SETTINGS.voiceFrontModel).toBe("unsloth/Qwen3-4B-Instruct-2507-GGUF");
+    const override = { url: "http://127.0.0.1:8080/v1", model: "qwen" };
+    expect(decodeServerSettingsPatch({ voiceFrontModel: override })).toEqual({
+      voiceFrontModel: override,
+    });
+    expect(() =>
+      decodeServerSettingsPatch({ voiceFrontModel: { url: "ftp://x", model: "m" } }),
+    ).toThrow();
+    expect(() => decodeServerSettingsPatch({ voiceFrontModel: "" })).toThrow();
+  });
 });
 
 describe("server model preferences", () => {

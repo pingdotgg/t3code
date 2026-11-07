@@ -55,6 +55,8 @@ import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
   CloudSpeechModelId,
   SpeechAcceleration,
+  VoiceFrontModel,
+  DEFAULT_VOICE_FRONT_MODEL,
   SpeechCorrectionCue,
   SpeechCustomWords,
   SpeechLanguage,
@@ -1282,6 +1284,9 @@ export const ServerSettings = Schema.Struct({
   speechModelUnloadTimeout: SpeechModelUnloadTimeout.pipe(
     Schema.withDecodingDefault(Effect.succeed("min_15")),
   ),
+  voiceFrontModel: VoiceFrontModel.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_FRONT_MODEL)),
+  ),
   // Vocabulary shared by everyone who dictates in a project; it lives with the project's environment.
   speechProjectCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   // Null follows textGenerationModelSelection; a selection pins transcript cleanup to its own model.
@@ -1701,6 +1706,7 @@ export const ServerSettingsPatch = Schema.Struct({
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
+  voiceFrontModel: Schema.optionalKey(VoiceFrontModel),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechPostProcessingModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(

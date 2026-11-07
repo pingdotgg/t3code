@@ -115,6 +115,17 @@ export const SpeechModelUnloadTimeout = Schema.Literals([
 ]);
 export type SpeechModelUnloadTimeout = typeof SpeechModelUnloadTimeout.Type;
 
+/** A managed GGUF from the front-model catalog, or an OpenAI-compatible server that already serves one. */
+export const VoiceFrontModel = Schema.Union([
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  Schema.Struct({
+    url: Schema.String.check(Schema.isPattern(/^https?:\/\/\S+$/), Schema.isMaxLength(2000)),
+    model: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  }),
+]);
+export type VoiceFrontModel = typeof VoiceFrontModel.Type;
+export const DEFAULT_VOICE_FRONT_MODEL = "unsloth/Qwen3-4B-Instruct-2507-GGUF";
+
 export const SpeechLanguage = Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16));
 export type SpeechLanguage = typeof SpeechLanguage.Type;
 
