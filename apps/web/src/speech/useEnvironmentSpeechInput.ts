@@ -476,7 +476,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   );
 
   const start = useStableCallback(async () => {
-    if (latestRef.current.input.disabled) return;
+    if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
     if (!grantId) {
       if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
         await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
@@ -496,6 +496,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       controllerRef.current === controller &&
       latestRef.current.input.ownerKey === owner &&
       !latestRef.current.input.disabled;
+    setSetup(INITIAL_SETUP);
     setQueuedStart(prepared);
     let latestStatus: EnvironmentSpeechStatus;
     try {
@@ -539,10 +540,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       );
       if (request !== startRequestRef.current) return;
       // A download cancelled from elsewhere still resolves, so select the model only once it landed.
-      if (
-        modelId !== currentStatus.modelId &&
-        models.some(({ id, state }) => id === modelId && state === "installed")
-      ) {
+      const installed = models.some(({ id, state }) => id === modelId && state === "installed");
+      if (installed && modelId !== currentStatus.modelId) {
         try {
           await runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, modelId));
         } catch {
@@ -559,14 +558,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       const next = await probeSpeechStatus(prepared, true);
       if (request !== startRequestRef.current) return;
       setStatus({ prepared, value: next });
+      const ready =
+        installed && next.supported && next.modelId === modelId && next.state !== "missing-model";
       setSetup((current) => ({
         ...current,
         downloading: false,
-        step: next.supported && next.state !== "missing-model" ? 1 : current.step,
-        error:
-          next.supported && next.state !== "missing-model"
-            ? null
-            : "The model is not ready. Try downloading it again.",
+        step: ready ? 1 : current.step,
+        error: ready ? null : "The model is not ready. Try downloading it again.",
       }));
     } catch {
       if (request !== startRequestRef.current) return;

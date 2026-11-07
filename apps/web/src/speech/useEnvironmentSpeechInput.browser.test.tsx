@@ -139,6 +139,7 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
     Effect.sync(() => {
       mocks.selected.push(modelId);
       if (mocks.selectionFails) throw new Error("selection failed");
+      mocks.statusModelId = modelId;
       return { models: mocks.models };
     }),
   getEnvironmentSpeechModels: vi.fn(() =>
@@ -469,28 +470,40 @@ it.each([
   },
 );
 
-it("closes setup when dictation is cancelled during a catalog read", async () => {
-  setup({ destination: "env-a" });
-  mocks.modelState = "missing-model";
-  mocks.settings = { speechLanguage: "en" };
-  mocks.models = [catalogModel("current", ["en"], true)];
-  const response = Deferred.makeUnsafe<{ models: EnvironmentSpeechModel[] }>();
-  vi.mocked(getEnvironmentSpeechModels).mockReturnValueOnce(Deferred.await(response));
-  await using _screen = await render(<Probe showWizard />);
-  let firstStart!: Promise<void>;
-  await act(() => {
-    firstStart = mocks.voice.start();
-  });
-  await expect.element(page.getByText("Loading transcription models…")).toBeVisible();
-  await act(() => mocks.voice.cancel());
-  expect(mocks.voice.setup.open).toBe(false);
+it.each(["cancel", "failed restart"] as const)(
+  "closes pending catalog setup on %s",
+  async (action) => {
+    setup({ destination: "env-a" });
+    mocks.modelState = "missing-model";
+    mocks.settings = { speechLanguage: "en" };
+    mocks.models = [catalogModel("current", ["en"], true)];
+    const response = Deferred.makeUnsafe<{ models: EnvironmentSpeechModel[] }>();
+    vi.mocked(getEnvironmentSpeechModels).mockReturnValueOnce(Deferred.await(response));
+    await using _screen = await render(<Probe showWizard />);
+    let firstStart!: Promise<void>;
+    await act(() => {
+      firstStart = mocks.voice.start();
+    });
+    await expect.element(page.getByText("Loading transcription models…")).toBeVisible();
+    if (action === "cancel") {
+      await act(() => mocks.voice.cancel());
+    } else {
+      mocks.statusUnavailable = true;
+      await act(() => mocks.voice.start());
+      mocks.statusUnavailable = false;
+    }
+    expect(mocks.voice.setup.open).toBe(false);
 
-  await act(() => mocks.voice.start());
-  Deferred.doneUnsafe(response, Effect.succeed({ models: [catalogModel("stale", ["en"], true)] }));
-  await act(() => firstStart);
-  await expect.element(page.getByRole("heading", { name: "current" })).toBeVisible();
-  expect(mocks.microphoneRequests).toEqual([]);
-});
+    await act(() => mocks.voice.start());
+    Deferred.doneUnsafe(
+      response,
+      Effect.succeed({ models: [catalogModel("stale", ["en"], true)] }),
+    );
+    await act(() => firstStart);
+    await expect.element(page.getByRole("heading", { name: "current" })).toBeVisible();
+    expect(mocks.microphoneRequests).toEqual([]);
+  },
+);
 
 it.each([true, false])(
   "never downloads the English default when no German recommendation is available (catalog offline: %s)",
@@ -526,7 +539,7 @@ it.each([true, false])(
 it.each([
   ["selects the offered model once its download installed it", "installed", ["german"], null],
   [
-    "leaves the selection alone when the download did not land",
+    "does not advance a cancelled download when another model is ready",
     "downloadable",
     [],
     "The model is not ready. Try downloading it again.",
@@ -546,7 +559,7 @@ it.each([
   mocks.models = [catalogModel("english", ["en"], true), catalogModel("german", ["de"], true)];
   mocks.download.mockImplementation(async () => {
     mocks.models = [mocks.models[0]!, { ...mocks.models[1]!, state: landedState }];
-    if (landedState === "installed") mocks.modelState = "ready";
+    mocks.modelState = "ready";
   });
   await using _screen = await render(<Probe />);
   await act(() => mocks.voice.start());
