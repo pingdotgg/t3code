@@ -5,6 +5,7 @@ import {
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
+  type ScheduledTaskSchedule,
   type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertSchedule,
   scheduledTaskThreadMode,
@@ -64,6 +65,9 @@ export interface DraftState {
   readonly enabled: boolean;
   readonly scheduleMode: ScheduleMode;
   readonly intervalMinutes: string;
+  readonly intervalWindowEnabled: boolean;
+  readonly intervalWindowStart: string;
+  readonly intervalWindowEnd: string;
   readonly timeOfDay: string;
   /** Local date and time as a `datetime-local` input value, such as 2026-11-02T15:00. */
   readonly runAt: string;
@@ -109,6 +113,61 @@ export function toDateTimeLocalValue(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+const TIME_OF_DAY = /^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/;
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/** `HH:MM` for a time input. Seconds from `type="time"` are dropped. */
+function canonicalTimeOfDay(value: string): string | null {
+  const match = TIME_OF_DAY.exec(value.trim());
+  if (!match?.[1] || !match[2]) return null;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+function clockMinutes(value: string): number | null {
+  const time = canonicalTimeOfDay(value);
+  if (!time) return null;
+  const [hour, minute] = time.split(":");
+  return Number(hour) * 60 + Number(minute);
+}
+
+function intervalWindowDayLabel(weekdays: readonly number[] | undefined): string {
+  const selected = new Set(weekdays ?? []);
+  if (selected.size === 0 || selected.size === 7) return "every day";
+  if (selected.size === 5 && [1, 2, 3, 4, 5].every((day) => selected.has(day))) return "Mon–Fri";
+  return [...selected]
+    .filter((day) => day >= 0 && day <= 6)
+    .toSorted((left, right) => left - right)
+    .map((day) => WEEKDAY_LABELS[day])
+    .join(", ");
+}
+
+const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
+  if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
+  if (schedule.type === "interval") {
+    const minutes = schedule.everyMs / 60_000;
+    const cadence = Number.isInteger(minutes)
+      ? `Every ${minutes} min`
+      : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
+    const window = schedule.window;
+    if (!window) return cadence;
+    return `${cadence}, ${intervalWindowDayLabel(window.weekdays)} ${window.start}–${window.end}`;
+  }
+  const weekdays = schedule.weekdays ?? [];
+  const days =
+    weekdays.length === 0
+      ? "Daily"
+      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
+        ? "Weekdays"
+        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
+  return `${days} at ${schedule.timeOfDay}`;
+}
+
 export function scheduleDraftErrors(draft: DraftState) {
   if (draft.scheduleMode === "once") {
     const runAt = new Date(draft.runAt);
@@ -119,6 +178,18 @@ export function scheduleDraftErrors(draft: DraftState) {
       return [
         { title: "Invalid run time", description: "That time does not exist in your time zone." },
       ];
+    return [];
+  }
+  if (draft.scheduleMode === "interval") {
+    if (!draft.intervalWindowEnabled) return [];
+    const start = clockMinutes(draft.intervalWindowStart);
+    const end = clockMinutes(draft.intervalWindowEnd);
+    if (start === null || end === null)
+      return [{ title: "Invalid time window", description: "Enter a start and end time." }];
+    if (end <= start)
+      return [{ title: "Invalid time window", description: "End must be after start." }];
+    if (draft.weekdays.size === 0)
+      return [{ title: "Choose days", description: "Select at least one day." }];
     return [];
   }
   if (draft.scheduleMode !== "webhook") return [];
@@ -226,7 +297,20 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   }
   if (draft.scheduleMode === "interval") {
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
-    return { type: "interval", everyMs };
+    if (!draft.intervalWindowEnabled) return { type: "interval", everyMs };
+    const start = canonicalTimeOfDay(draft.intervalWindowStart);
+    const end = canonicalTimeOfDay(draft.intervalWindowEnd);
+    if (start === null || end === null) return null;
+    if (draft.weekdays.size === 0) return null;
+    return {
+      type: "interval",
+      everyMs,
+      window: {
+        start,
+        end,
+        ...(draft.weekdays.size === 7 ? {} : { weekdays: [...draft.weekdays].toSorted() }),
+      },
+    };
   }
   const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
   return {
@@ -239,9 +323,12 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
+  const intervalWindow = schedule.type === "interval" ? schedule.window : undefined;
+  const weekdaySource =
+    schedule.type === "fixed_time" ? schedule.weekdays : intervalWindow?.weekdays;
   const weekdays =
-    schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
-      ? new Set(schedule.weekdays)
+    weekdaySource && weekdaySource.length > 0
+      ? new Set(weekdaySource)
       : new Set([0, 1, 2, 3, 4, 5, 6]);
   return {
     editingId: task.id,
@@ -251,6 +338,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     scheduleMode: schedule.type === "fixed_time" ? "fixed" : schedule.type,
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
+    intervalWindowEnabled: intervalWindow !== undefined,
+    intervalWindowStart: canonicalTimeOfDay(intervalWindow?.start ?? "") ?? "10:00",
+    intervalWindowEnd: canonicalTimeOfDay(intervalWindow?.end ?? "") ?? "20:00",
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
     runAt: schedule.type === "once" ? toDateTimeLocalValue(new Date(schedule.runAt)) : "",
     savedRunAt: schedule.type === "once" ? schedule.runAt : "",

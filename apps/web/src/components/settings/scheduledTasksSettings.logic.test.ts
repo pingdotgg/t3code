@@ -21,6 +21,7 @@ import {
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
   scheduleFromDraft,
+  scheduleLabel,
   taskToDraft,
 } from "./scheduledTasksSettings.logic";
 
@@ -310,6 +311,87 @@ describe("webhook scheduled tasks", () => {
         filters: [{ id: "f1", path: "body.action", op: "in", value: " , " }],
       }),
     ).toBeNull();
+  });
+});
+
+describe("interval time windows", () => {
+  it("keeps an interval without a window unchanged", () => {
+    const draft = taskToDraft(legacyTask);
+    expect(draft.intervalWindowEnabled).toBe(false);
+    expect(draft.weekdays.size).toBe(7);
+    expect(draft.intervalWindowStart).toBe("10:00");
+    expect(draft.intervalWindowEnd).toBe("20:00");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "interval", everyMs: 60_000 });
+    expect(scheduleFromDraft(draft)).not.toHaveProperty("window");
+    expect(scheduleLabel({ type: "interval", everyMs: 60_000 })).toBe("Every 1 min");
+    expect(scheduleLabel({ type: "interval", everyMs: 3_600_000 })).toBe("Every 60 min");
+    expect(scheduleLabel({ type: "interval", everyMs: 30_000 })).toBe("Every 30 sec");
+  });
+
+  it("encodes a window's start, end, and weekdays, and restores them", () => {
+    const window = { start: "10:00", end: "20:00", weekdays: [1, 2, 3, 4, 5] };
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "interval", everyMs: 3_600_000, window },
+    });
+    expect(draft.intervalWindowEnabled).toBe(true);
+    expect(draft.intervalWindowStart).toBe("10:00");
+    expect(draft.intervalWindowEnd).toBe("20:00");
+    expect([...draft.weekdays].toSorted()).toEqual([1, 2, 3, 4, 5]);
+    expect(scheduleFromDraft(draft)).toEqual({ type: "interval", everyMs: 3_600_000, window });
+    expect(scheduleFromDraft({ ...draft, weekdays: new Set([3, 1]) })).toEqual({
+      type: "interval",
+      everyMs: 3_600_000,
+      window: { start: "10:00", end: "20:00", weekdays: [1, 3] },
+    });
+    expect(scheduleLabel({ type: "interval", everyMs: 3_600_000, window })).toBe(
+      "Every 60 min, Mon–Fri 10:00–20:00",
+    );
+    expect(
+      scheduleLabel({
+        type: "interval",
+        everyMs: 3_600_000,
+        window: { start: "10:00", end: "20:00", weekdays: [3, 1] },
+      }),
+    ).toBe("Every 60 min, Mon, Wed 10:00–20:00");
+    expect(scheduleFromDraft({ ...draft, intervalWindowEnd: "10:00" })).toBeNull();
+    expect(scheduleFromDraft({ ...draft, intervalWindowEnd: "09:00" })).toBeNull();
+  });
+
+  it("omits weekdays when every day is selected and drops the window when it is off", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: {
+        type: "interval",
+        everyMs: 3_600_000,
+        window: { start: "10:00", end: "20:00" },
+      },
+    });
+    const daily = {
+      type: "interval" as const,
+      everyMs: 3_600_000,
+      window: { start: "10:00", end: "20:00" },
+    };
+    expect(draft.weekdays.size).toBe(7);
+    expect(scheduleFromDraft(draft)).toEqual(daily);
+    expect(scheduleFromDraft({ ...draft, weekdays: new Set() })).toBeNull();
+    expect(scheduleFromDraft({ ...draft, intervalWindowEnabled: false })).toEqual({
+      type: "interval",
+      everyMs: 3_600_000,
+    });
+    expect(scheduleLabel(daily)).toBe("Every 60 min, every day 10:00–20:00");
+    expect(
+      scheduleLabel({
+        ...daily,
+        window: { start: "10:00", end: "20:00", weekdays: [] },
+      }),
+    ).toBe("Every 60 min, every day 10:00–20:00");
+    expect(
+      scheduleLabel({
+        ...daily,
+        window: { start: "10:00", end: "20:00", weekdays: [0, 1, 2, 3, 4, 5, 6] },
+      }),
+    ).toBe("Every 60 min, every day 10:00–20:00");
   });
 });
 

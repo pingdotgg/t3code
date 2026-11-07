@@ -2,7 +2,37 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-export function formatScheduledTaskInterval(everyMs: number): string {
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
+
+export function formatScheduledTaskInterval(
+  everyMs: number,
+  window?: {
+    readonly start: string;
+    readonly end: string;
+    readonly weekdays?: ReadonlyArray<number>;
+  },
+): string {
+  const interval = formatInterval(everyMs);
+  if (!window) return interval;
+  const minutes = everyMs / MINUTE;
+  const amount = everyMs % MINUTE === 0 && minutes >= 1 ? `Every ${minutes} min` : interval;
+  return `${amount}, ${formatIntervalWindowDays(window.weekdays)} ${window.start}–${window.end}`;
+}
+
+function formatIntervalWindowDays(weekdays: ReadonlyArray<number> | undefined): string {
+  const selected = new Set<number>();
+  for (const day of weekdays ?? []) {
+    if (day >= 0 && day <= 6) selected.add(day);
+  }
+  if (selected.size === 0 || selected.size === 7) return "every day";
+  if (selected.size === 5 && [1, 2, 3, 4, 5].every((day) => selected.has(day))) return "Mon–Fri";
+  return WEEKDAY_ORDER.filter((day) => selected.has(day))
+    .map((day) => WEEKDAY_LABELS[day])
+    .join(", ");
+}
+
+function formatInterval(everyMs: number): string {
   const units = [
     [7 * DAY, "week"],
     [DAY, "day"],

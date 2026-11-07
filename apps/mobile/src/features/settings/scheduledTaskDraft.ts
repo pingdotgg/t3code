@@ -58,6 +58,9 @@ export type ScheduleDraft = {
   readonly runAt: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
+  readonly intervalWindowEnabled: boolean;
+  readonly intervalWindowStart: string;
+  readonly intervalWindowEnd: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
   readonly maxDeliveryAgeMinutes: string;
   readonly replayKey: string;
@@ -74,6 +77,9 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   runAt: "",
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
+  intervalWindowEnabled: false,
+  intervalWindowStart: "10:00",
+  intervalWindowEnd: "20:00",
   signature: null,
   maxDeliveryAgeMinutes: "",
   replayKey: "",
@@ -95,12 +101,25 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
       };
     case "once":
       return { ...DEFAULT_SCHEDULE, mode: "once", runAt: task.schedule.runAt };
-    case "interval":
+    case "interval": {
+      const window = task.schedule.window;
       return {
         ...DEFAULT_SCHEDULE,
         mode: "interval",
         intervalMinutes: String(Math.max(1, task.schedule.everyMs / 60_000)),
+        // No stored days means every day, including an interval that has no window yet.
+        weekdays: window?.weekdays?.length
+          ? [...new Set(window.weekdays)].sort((a, b) => a - b)
+          : [0, 1, 2, 3, 4, 5, 6],
+        ...(window
+          ? {
+              intervalWindowEnabled: true,
+              intervalWindowStart: window.start,
+              intervalWindowEnd: window.end,
+            }
+          : {}),
       };
+    }
     case "webhook":
       return {
         ...DEFAULT_SCHEDULE,
@@ -124,6 +143,27 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
 
 export function parseIntervalMinutes(value: string): number {
   return Number(value.trim().replace(",", "."));
+}
+
+const CLOCK_TIME = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+
+function clockMinutes(value: string): number | null {
+  const match = CLOCK_TIME.exec(value.trim());
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+/** Start is inclusive and end is exclusive, so end must be later the same day. */
+export function isIntervalWindowRange(start: string, end: string): boolean {
+  const startMinutes = clockMinutes(start);
+  const endMinutes = clockMinutes(end);
+  return startMinutes !== null && endMinutes !== null && endMinutes > startMinutes;
+}
+
+function normalizedWeekdays(weekdays: ReadonlyArray<number>): number[] | null {
+  const days = [...new Set(weekdays)].sort((a, b) => a - b);
+  if (days.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) return null;
+  return days;
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
@@ -179,16 +219,28 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
   if (draft.mode === "interval") {
     const minutes = parseIntervalMinutes(draft.intervalMinutes);
     const everyMs = Math.round(minutes * 60_000);
-    return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
+    if (!(minutes >= 1 && Number.isSafeInteger(everyMs))) return null;
+    if (!draft.intervalWindowEnabled) return { type: "interval", everyMs };
+    const weekdays = normalizedWeekdays(draft.weekdays);
+    if (
+      !weekdays ||
+      weekdays.length === 0 ||
+      !isIntervalWindowRange(draft.intervalWindowStart, draft.intervalWindowEnd)
+    ) {
+      return null;
+    }
+    return {
+      type: "interval",
+      everyMs,
+      window: {
+        start: draft.intervalWindowStart.trim(),
+        end: draft.intervalWindowEnd.trim(),
+        ...(weekdays.length === 7 ? {} : { weekdays }),
+      },
+    };
   }
-  const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
-  if (
-    !/^([01]?\d|2[0-3]):[0-5]\d$/.test(draft.timeOfDay) ||
-    weekdays.length === 0 ||
-    weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)
-  ) {
-    return null;
-  }
+  const weekdays = normalizedWeekdays(draft.weekdays);
+  if (!CLOCK_TIME.test(draft.timeOfDay) || !weekdays || weekdays.length === 0) return null;
   return {
     type: "fixed_time",
     timeOfDay: draft.timeOfDay,
@@ -229,6 +281,9 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.runAt,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
+    draft.schedule.intervalWindowEnabled,
+    draft.schedule.intervalWindowStart,
+    draft.schedule.intervalWindowEnd,
     draft.schedule.maxDeliveryAgeMinutes,
     draft.schedule.replayKey,
     draft.schedule.coalesceKey,

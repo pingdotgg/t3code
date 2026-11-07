@@ -160,6 +160,116 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("reschedules a windowed interval that is due after its window has closed", () =>
+  Effect.gen(function* () {
+    vi.stubEnv("TZ", "America/Los_Angeles");
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-07-07T04:00:00.000Z";
+    const due = "2026-07-07T02:30:00.000Z";
+    yield* insertRow(
+      sql,
+      {
+        id: "closed",
+        next: due,
+        enabled: 1,
+        status: "never",
+        scheduleJson: JSON.stringify({
+          type: "interval",
+          everyMs: 3_600_000,
+          window: { start: "10:00", end: "20:00" },
+        }),
+      },
+      now,
+    );
+    yield* insertRow(
+      sql,
+      {
+        id: "open",
+        next: due,
+        enabled: 1,
+        status: "never",
+        scheduleJson: JSON.stringify({
+          type: "interval",
+          everyMs: 3_600_000,
+          window: { start: "10:00", end: "22:00" },
+        }),
+      },
+      now,
+    );
+    yield* insertRow(
+      sql,
+      {
+        id: "closes-in-batch",
+        next: "2026-07-07T03:59:00.000Z",
+        enabled: 1,
+        status: "never",
+        scheduleJson: JSON.stringify({
+          type: "interval",
+          everyMs: 3_600_000,
+          window: { start: "10:00", end: "22:00" },
+        }),
+      },
+      now,
+    );
+    yield* TestClock.setTime(Date.parse(now));
+    const dispatched = yield* Ref.make<Array<string>>([]);
+    yield* Effect.scoped(
+      Layer.build(
+        Layer.provideMerge(
+          ScheduledTaskService.layer,
+          Layer.mergeAll(
+            ManagedPolicy.layerTest(),
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              launch: (input) =>
+                Ref.update(dispatched, (ids) => [...ids, "launched"]).pipe(
+                  Effect.andThen(TestClock.setTime(Date.parse("2026-07-07T05:00:00.000Z"))),
+                  Effect.andThen(
+                    Effect.fail(
+                      new ThreadLaunchService.ThreadLaunchError({
+                        operation: "create-thread",
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        cause: new Error("test launch failure"),
+                      }),
+                    ),
+                  ),
+                ),
+            }),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () => Effect.succeed(false),
+            }),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            NodeCrypto.layer,
+            Layer.mock(Scheduler.Scheduler)({
+              register: (_name, run) => run.pipe(Effect.orDie),
+            }),
+          ),
+        ),
+      ),
+    );
+    const rows = yield* sql<{
+      task_id: string;
+      last_run_status: string;
+      run_count: number;
+      next_run_at: string | null;
+    }>`SELECT task_id, last_run_status, run_count, next_run_at FROM scheduled_tasks`;
+    const byId = new Map(rows.map((row) => [row.task_id, row]));
+    assert.deepEqual(yield* Ref.get(dispatched), ["launched"]);
+    assert.equal(byId.get("closed")?.last_run_status, "never");
+    assert.equal(byId.get("closed")?.run_count, 0);
+    assert.equal(byId.get("closed")?.next_run_at, "2026-07-07T17:00:00.000Z");
+    assert.equal(byId.get("open")?.last_run_status, "failed");
+    assert.equal(byId.get("open")?.run_count, 1);
+    assert.equal(byId.get("closes-in-batch")?.run_count, 0);
+    assert.equal(byId.get("closes-in-batch")?.next_run_at, "2026-07-07T17:00:00.000Z");
+  }).pipe(
+    Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    Effect.provide(SqlitePersistence.layerMemory),
+  ),
+);
+
 it.effect(
   "releases interrupted runs on startup and still executes due tasks, skipping corrupt rows",
   () =>

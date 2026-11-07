@@ -73,6 +73,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   editDraft,
+  isIntervalWindowRange,
   parseIntervalMinutes,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
@@ -120,7 +121,9 @@ function describeSchedule(task: ScheduledTask): string {
     const runAt = new Date(task.schedule.runAt);
     return `Once, ${formatRunAtDate(runAt)} at ${formatRunAtTime(runAt)}`;
   }
-  if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
+  if (task.schedule.type === "interval") {
+    return formatScheduledTaskInterval(task.schedule.everyMs, task.schedule.window);
+  }
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
 }
@@ -151,6 +154,20 @@ function timePickerValue(value: string): Date {
     0,
   );
   return time;
+}
+
+function weekdaysAfterRepeatAction(
+  weekdays: ReadonlyArray<number>,
+  id: string,
+): ReadonlyArray<number> {
+  if (id === "every_day") return DAYS.map((day) => day.index);
+  if (id === "weekdays") return [1, 2, 3, 4, 5];
+  const day = DAYS.find((item) => String(item.index) === id);
+  if (!day) return weekdays;
+  const next = weekdays.includes(day.index)
+    ? weekdays.filter((index) => index !== day.index)
+    : [...weekdays, day.index];
+  return next.length === 0 ? weekdays : next;
 }
 
 function repeatLabel(weekdays: ReadonlyArray<number>): string {
@@ -377,6 +394,75 @@ function PickerRow(props: {
         type="monochrome"
       />
     </Pressable>
+  );
+}
+
+function WeekdayRow(props: {
+  readonly weekdays: ReadonlyArray<number>;
+  readonly onChange: (weekdays: ReadonlyArray<number>) => void;
+}) {
+  return (
+    <SelectRow
+      label="Repeat"
+      value={repeatLabel(props.weekdays)}
+      borderTop
+      actions={[
+        {
+          id: "every_day",
+          title: "Every day",
+          state: props.weekdays.length === 7 ? "on" : undefined,
+        },
+        {
+          id: "weekdays",
+          title: "Weekdays",
+          state: repeatLabel(props.weekdays) === "Weekdays" ? "on" : undefined,
+        },
+        ...DAYS.map((day) => ({
+          id: String(day.index),
+          title: day.label,
+          attributes: { keepsMenuPresented: true },
+          state: props.weekdays.includes(day.index) ? ("on" as const) : undefined,
+        })),
+      ]}
+      onSelect={(id) => props.onChange(weekdaysAfterRepeatAction(props.weekdays, id))}
+    />
+  );
+}
+
+function clockValue(selected: Date): string {
+  return `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
+}
+
+function ClockField(props: {
+  readonly label: string;
+  readonly value: string;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly onDismiss: () => void;
+  readonly onChange: (value: string) => void;
+}) {
+  return (
+    <View>
+      <PickerRow
+        label={props.label}
+        value={formatTime(props.value)}
+        borderTop
+        onPress={props.onToggle}
+      />
+      {props.open ? (
+        <DateTimePicker
+          value={timePickerValue(props.value)}
+          mode="time"
+          display={Platform.OS === "ios" ? "spinner" : "default"}
+          onDismiss={props.onDismiss}
+          onValueChange={(_, selected) => {
+            // Android shows a dialog that closes on pick; iOS stays inline.
+            if (Platform.OS === "android") props.onDismiss();
+            props.onChange(clockValue(selected));
+          }}
+        />
+      ) : null}
+    </View>
   );
 }
 
@@ -675,6 +761,7 @@ function TaskForm({
   });
   const submissionPending = useRef(false);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const [windowClock, setWindowClock] = useState<"start" | "end" | null>(null);
   const [runAtPicker, setRunAtPicker] = useState<"date" | "time" | null>(null);
   const taskMissing =
     draft.task !== null &&
@@ -693,6 +780,7 @@ function TaskForm({
   const offersOnce =
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
+  const offersIntervalWindow = config?.environment.capabilities.intervalScheduleWindows === true;
   const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
   const save = async () => {
     if (
@@ -718,6 +806,17 @@ function TaskForm({
       Dialog.alert(
         "Invalid age limit",
         `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+      );
+      return;
+    }
+    if (
+      draft.schedule.mode === "interval" &&
+      draft.schedule.intervalWindowEnabled &&
+      !offersIntervalWindow
+    ) {
+      Dialog.alert(
+        "Time windows are not available here",
+        "Update this environment to use interval time windows.",
       );
       return;
     }
@@ -1015,6 +1114,7 @@ function TaskForm({
               selected={draft.schedule.mode}
               onSelect={(mode) => {
                 setTimePickerOpen(false);
+                setWindowClock(null);
                 setRunAtPicker(null);
                 setDraft({
                   ...draft,
@@ -1070,45 +1170,11 @@ function TaskForm({
                   }}
                 />
               ) : null}
-              <SelectRow
-                label="Repeat"
-                value={repeatLabel(draft.schedule.weekdays)}
-                borderTop
-                actions={[
-                  {
-                    id: "every_day",
-                    title: "Every day",
-                    state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
-                  },
-                  {
-                    id: "weekdays",
-                    title: "Weekdays",
-                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
-                  },
-                  ...DAYS.map((day) => ({
-                    id: String(day.index),
-                    title: day.label,
-                    attributes: { keepsMenuPresented: true },
-                    state: draft.schedule.weekdays.includes(day.index)
-                      ? ("on" as const)
-                      : undefined,
-                  })),
-                ]}
-                onSelect={(id) => {
-                  const weekdays =
-                    id === "every_day"
-                      ? DAYS.map((day) => day.index)
-                      : id === "weekdays"
-                        ? [1, 2, 3, 4, 5]
-                        : (() => {
-                            const day = DAYS.find((item) => String(item.index) === id);
-                            if (!day) return draft.schedule.weekdays;
-                            return draft.schedule.weekdays.includes(day.index)
-                              ? draft.schedule.weekdays.filter((index) => index !== day.index)
-                              : [...draft.schedule.weekdays, day.index];
-                          })();
-                  setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
-                }}
+              <WeekdayRow
+                weekdays={draft.schedule.weekdays}
+                onChange={(weekdays) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } })
+                }
               />
             </>
           ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined && draft.enabled ? (
@@ -1255,6 +1321,67 @@ function TaskForm({
                   at least 1 minute.
                 </Text>
               ) : null}
+              <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+                <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+                  Time window
+                </Text>
+                <ThemedSwitch
+                  accessibilityLabel="Time window"
+                  disabled={!offersIntervalWindow && !draft.schedule.intervalWindowEnabled}
+                  value={draft.schedule.intervalWindowEnabled}
+                  onValueChange={(intervalWindowEnabled) => {
+                    if (!intervalWindowEnabled) setWindowClock(null);
+                    setDraft({
+                      ...draft,
+                      schedule: { ...draft.schedule, intervalWindowEnabled },
+                    });
+                  }}
+                />
+              </View>
+              {draft.schedule.intervalWindowEnabled ? (
+                <>
+                  <ClockField
+                    label="Start"
+                    value={draft.schedule.intervalWindowStart}
+                    open={windowClock === "start"}
+                    onToggle={() => setWindowClock((open) => (open === "start" ? null : "start"))}
+                    onDismiss={() => setWindowClock(null)}
+                    onChange={(intervalWindowStart) =>
+                      setDraft({
+                        ...draft,
+                        schedule: { ...draft.schedule, intervalWindowStart },
+                      })
+                    }
+                  />
+                  <ClockField
+                    label="End"
+                    value={draft.schedule.intervalWindowEnd}
+                    open={windowClock === "end"}
+                    onToggle={() => setWindowClock((open) => (open === "end" ? null : "end"))}
+                    onDismiss={() => setWindowClock(null)}
+                    onChange={(intervalWindowEnd) =>
+                      setDraft({
+                        ...draft,
+                        schedule: { ...draft.schedule, intervalWindowEnd },
+                      })
+                    }
+                  />
+                  {isIntervalWindowRange(
+                    draft.schedule.intervalWindowStart,
+                    draft.schedule.intervalWindowEnd,
+                  ) ? null : (
+                    <Text className="px-4 pb-3 text-sm text-danger-foreground">
+                      End time must be after the start time.
+                    </Text>
+                  )}
+                  <WeekdayRow
+                    weekdays={draft.schedule.weekdays}
+                    onChange={(weekdays) =>
+                      setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } })
+                    }
+                  />
+                </>
+              ) : null}
             </>
           )}
           <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
@@ -1268,7 +1395,8 @@ function TaskForm({
             />
           </View>
         </SettingsSection>
-        {draft.schedule.mode === "fixed_time" ? (
+        {draft.schedule.mode === "fixed_time" ||
+        (draft.schedule.mode === "interval" && draft.schedule.intervalWindowEnabled) ? (
           <Text className="px-2 text-sm text-foreground-muted">
             Time uses the environment's time zone, which may differ from your phone's.
           </Text>
@@ -1284,7 +1412,15 @@ function TaskForm({
           taskMissing ||
           environmentUnavailable ||
           // The server refuses an enabled webhook task under this policy.
-          (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
+          (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined) ||
+          (draft.schedule.mode === "interval" &&
+            draft.schedule.intervalWindowEnabled &&
+            (!offersIntervalWindow ||
+              draft.schedule.weekdays.length === 0 ||
+              !isIntervalWindowRange(
+                draft.schedule.intervalWindowStart,
+                draft.schedule.intervalWindowEnd,
+              )))
         }
         onPress={() => void save()}
         label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
