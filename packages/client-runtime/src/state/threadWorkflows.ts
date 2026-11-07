@@ -3,6 +3,7 @@ import {
   isCompactionCommandMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
+  type RunId,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
@@ -12,6 +13,17 @@ type Projection = ThreadStructure;
 type Run = Projection["runs"][number];
 type Message = Projection["messages"][number];
 type ProviderSession = Projection["providerSessions"][number];
+
+/** `beforeRunId` for `queued-run.reorder`: place `runId` at `toIndex` in send order. */
+export function beforeRunIdForQueuedMove(input: {
+  readonly orderedRunIds: ReadonlyArray<RunId>;
+  readonly runId: RunId;
+  readonly toIndex: number;
+}): RunId | null {
+  const without = input.orderedRunIds.filter((id) => id !== input.runId);
+  const insertAt = Math.max(0, Math.min(input.toIndex, without.length));
+  return insertAt >= without.length ? null : (without[insertAt] ?? null);
+}
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>(["preparing", "starting", "running", "waiting"]);
 const MERGE_BACK_RUN_STATUSES = new Set<Run["status"]>(["waiting", "completed"]);

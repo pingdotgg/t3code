@@ -74,4 +74,50 @@ describe("threadQueueControlPresentation", () => {
     expect(guest.canEdit).toBe(false);
     expect(guest.canDismiss).toBe(true);
   });
+
+  it("gates moving within a multi-message queue", () => {
+    const middle = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: false,
+      canSendNow: false,
+      index: 1,
+      queueLength: 3,
+      text: "Middle",
+    });
+    expect(middle.canMoveUp).toBe(true);
+    expect(middle.canMoveDown).toBe(true);
+
+    const first = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: false,
+      canSendNow: false,
+      index: 0,
+      queueLength: 2,
+      text: "First",
+    });
+    expect(first.canMoveUp).toBe(false);
+    expect(first.canMoveDown).toBe(true);
+
+    const alone = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: false,
+      canSendNow: false,
+      index: 0,
+      queueLength: 1,
+      text: "Only",
+    });
+    expect(alone.canMoveUp).toBe(false);
+    expect(alone.canMoveDown).toBe(false);
+
+    const busy = resolveThreadQueueRowControls({
+      busy: true,
+      canPromoteToSteer: false,
+      canSendNow: false,
+      index: 1,
+      queueLength: 3,
+      text: "Busy",
+    });
+    expect(busy.canMoveUp).toBe(false);
+    expect(busy.canMoveDown).toBe(false);
+  });
 });
