@@ -367,6 +367,23 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   return "outline";
 }
 
+function ScheduledTasksPolicyNotice({
+  environmentId,
+  label,
+}: {
+  readonly environmentId: EnvironmentId;
+  /** Names the environment where no environment row sits above the notice. */
+  readonly label?: string;
+}) {
+  const denial = managedCapabilityDenial(useManagedPolicy(environmentId), "scheduledTasks");
+  if (denial === undefined) return null;
+  return (
+    <div className="px-3 py-2.5 sm:px-4">
+      <ManagedNotice>{label === undefined ? denial : `${label}: ${denial}`}</ManagedNotice>
+    </div>
+  );
+}
+
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
@@ -581,6 +598,7 @@ function ScheduledTaskEnvironmentList({
                 {connectionStatusTitle(environment.connection)}
               </span>
             </EnvironmentRow>
+            <ScheduledTasksPolicyNotice environmentId={environment.environmentId} />
             {tasks?.map((task) => (
               <ScheduledTaskRow
                 key={task.id}
@@ -592,6 +610,15 @@ function ScheduledTaskEnvironmentList({
           </div>
         );
       })}
+      {loaded
+        .filter((state) => state.tasks?.length === 0)
+        .map(({ environment }) => (
+          <ScheduledTasksPolicyNotice
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            label={settingsScopeEnvironmentLabel(environment, environments)}
+          />
+        ))}
       {taskId && linkedState?.tasks && linkedState.error === null && !linkedTask ? (
         <SettingsRow
           title="Task unavailable"
@@ -692,6 +719,7 @@ function ScheduledTaskEnvironmentSection({
         <SettingsRow title="Loading scheduled tasks…" role="status" />
       ) : (
         <>
+          <ScheduledTasksPolicyNotice environmentId={environment.environmentId} />
           {taskId && !linkedTask ? (
             <SettingsRow
               title="Task unavailable"
@@ -827,7 +855,10 @@ function ScheduledTaskRow({
                   Deliveries
                 </MenuItem>
               ) : (
-                <MenuItem onClick={() => void act("run")}>
+                <MenuItem
+                  disabled={task.blockedByPolicy !== undefined}
+                  onClick={() => void act("run")}
+                >
                   <PlayIcon />
                   Run now
                 </MenuItem>
@@ -1278,7 +1309,9 @@ function ScheduledTaskEditorForm({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
-  const webhookDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "webhookTasks");
+  const managedPolicy = useManagedPolicy(environmentId);
+  const tasksDenial = managedCapabilityDenial(managedPolicy, "scheduledTasks");
+  const webhookDenial = managedCapabilityDenial(managedPolicy, "webhookTasks");
   const [draft, setDraft] = useState<DraftState>(() =>
     task
       ? taskToDraft(task)
@@ -1732,7 +1765,11 @@ function ScheduledTaskEditorForm({
               </ToggleGroup>
             </div>
 
-            {webhookDenial !== undefined ? (
+            {tasksDenial !== undefined ? (
+              <ManagedNotice>
+                {draft.enabled ? `${tasksDenial} Turn this task off to save it.` : tasksDenial}
+              </ManagedNotice>
+            ) : webhookDenial !== undefined ? (
               <ManagedNotice>
                 {draft.scheduleMode === "webhook"
                   ? `${webhookDenial} Switch this task to a time or an interval, or turn it off, to save it.`
@@ -2014,7 +2051,9 @@ function ScheduledTaskEditorForm({
             editingTaskMissing ||
             !connected ||
             !tasksQuery.data ||
-            (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined)
+            (draft.enabled &&
+              (tasksDenial !== undefined ||
+                (draft.scheduleMode === "webhook" && webhookDenial !== undefined)))
           }
           onClick={() => void submit()}
         >

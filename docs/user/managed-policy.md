@@ -75,8 +75,8 @@ Administrative Templates > T3 Code. Set **Organization** whenever you set any ot
 Locks and provider fields go in the two JSON policies, as the same objects a policy file would hold.
 Machines pick up a change at the next Group Policy refresh; run `gpupdate /target:computer /force`
 to apply it now, then restart T3 Code.
-Setting **Allow T3 Connect**, **Allow webhook tasks**, **Allow importing browser cookies**, or
-**Allow usage data** to **Disabled** turns that feature off. Setting any other T3 Code policy to
+Setting **Allow T3 Connect**, **Allow scheduled tasks**, **Allow webhook tasks**, **Allow importing
+browser cookies**, or **Allow usage data** to **Disabled** turns that feature off. Setting any other T3 Code policy to
 **Disabled** restricts nothing, the same as **Not Configured**.
 
 **Windows registry value.** Instead of the template, set the `Policy` value (`REG_SZ`) to the whole policy as one line of JSON,
@@ -246,6 +246,8 @@ so restart T3 Code after that.
 
 ### Other capabilities
 
+- `scheduledTasks: false`: no scheduled task runs, on a timer, by hand, or from a webhook. Existing
+  tasks stay, but cannot be turned back on. Users can still turn them off, edit, or delete them.
 - `webhookTasks: false`: scheduled tasks cannot use webhook triggers. Existing webhook tasks stay
   but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
