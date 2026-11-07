@@ -181,6 +181,8 @@ type McpToolUseCall = typeof McpToolUseCall.Type;
 const McpToolUseExpect = Schema.Struct({
   /** Each entry needs one matching call. */
   calls: Schema.optional(Schema.Array(McpToolUseCall)),
+  /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
+  distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
   /** No call may match any entry. */
   callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
@@ -1701,6 +1703,17 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
     calls.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
+  if (expect.distinctCalls !== undefined) {
+    const expected = expect.distinctCalls.map(({ tool, args }) => ({ tool, input: args ?? {} }));
+    add(
+      "distinctCalls",
+      calls.every((call) => expected.filter((entry) => matches(entry, call)).length <= 1) &&
+        matchesDistinct(
+          expected,
+          calls.map((request) => ({ request, brief: "" })),
+        ),
+    );
+  }
   for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
   for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
   if (expect.order !== undefined) {

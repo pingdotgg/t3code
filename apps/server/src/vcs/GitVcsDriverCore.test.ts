@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -128,6 +129,55 @@ const makeDriverReleasingLock = (
     );
     return { driver, failures };
   });
+
+it.effect("runs background Git in its own lane so user commands never queue behind it", () =>
+  Effect.gen(function* () {
+    const gate = yield* Deferred.make<void>();
+    const starts = yield* Queue.unbounded<string>();
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        yield* Queue.offer(
+          starts,
+          ChildProcess.isStandardCommand(command) ? String(command.args[0]) : "",
+        );
+        return ChildProcessSpawner.makeHandle({
+          ...makeSuccessfulHandle("ok"),
+          exitCode: Deferred.await(gate).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+        });
+      }),
+    );
+    const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provide(layerServerConfig),
+    );
+    const run = (args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "test.gitLane", cwd: "/repo", args: [...args] });
+    const background = yield* Effect.forEach(
+      Array.from({ length: 12 }),
+      () => run(["background"]),
+      {
+        concurrency: "unbounded",
+      },
+    ).pipe(Effect.provideService(GitVcsDriver.BackgroundGitWork, true), Effect.forkChild);
+    const foreground = yield* Effect.forEach(Array.from({ length: 4 }), () => run(["foreground"]), {
+      concurrency: "unbounded",
+    }).pipe(Effect.forkChild);
+
+    yield* TestClock.adjust("2 seconds");
+    const started = yield* Queue.takeAll(starts);
+    assert.deepStrictEqual([...started].toSorted(), [
+      "background",
+      "background",
+      "foreground",
+      "foreground",
+      "foreground",
+      "foreground",
+    ]);
+    yield* Deferred.succeed(gate, undefined);
+    assert.equal((yield* Fiber.join(background)).length, 12);
+    assert.equal((yield* Fiber.join(foreground)).length, 4);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
 
 describe("Git output collection", () => {
   // Git writes in arbitrary chunk sizes; one byte per chunk splits every
@@ -2172,7 +2222,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const upstream = yield* makeTmpDir();
         yield* initRepoWithCommit(upstream);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const emptyTree = yield* git(upstream, ["hash-object", "-t", "tree", NodeOS.devNull]);
+        // Git for Windows rejects the null device as a path, so use an empty file.
+        const emptyDir = yield* makeTmpDir("git-vcs-driver-empty-");
+        yield* writeTextFile(emptyDir, "empty", "");
+        const emptyFile = NodePath.join(emptyDir, "empty");
+        const emptyTree = yield* git(upstream, ["hash-object", "-t", "tree", emptyFile]);
         const root = yield* git(upstream, ["rev-parse", "HEAD"]);
         const rootSource = (yield* driver.getReviewDiffPreview({ cwd: upstream, commitSha: root }))
           .sources[0]!;
@@ -2192,7 +2246,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const sha = yield* git(upstream, ["rev-parse", "HEAD"]);
         const cwd = yield* makeTmpDir();
         yield* git(upstream, ["clone", "--depth=1", NodeURL.pathToFileURL(upstream).href, cwd], {
-          GIT_CONFIG_GLOBAL: NodeOS.devNull,
+          GIT_CONFIG_GLOBAL: emptyFile,
           GIT_CONFIG_NOSYSTEM: "1",
         });
         assert.equal(yield* git(cwd, ["rev-parse", "--is-shallow-repository"]), "true");
