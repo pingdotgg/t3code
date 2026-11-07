@@ -29,5 +29,6 @@ export function subagentCardElapsed(
     agent.completedAt ? [DateTime.toEpochMillis(agent.completedAt)] : [],
   );
   const duration = (live ? nowMs : Math.max(...ends)) - Math.min(...starts);
-  return duration > 0 ? (live ? formatLiveDuration(duration) : formatDuration(duration)) : null;
+  if (live) return formatLiveDuration(duration);
+  return duration > 0 ? formatDuration(duration) : null;
 }

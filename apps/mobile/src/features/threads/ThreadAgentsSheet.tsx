@@ -255,6 +255,6 @@ function useSubagentElapsed(
     },
     nowMs,
   );
-  if (elapsedMs === null || elapsedMs === 0) return null;
+  if (elapsedMs === null || (!running && elapsedMs === 0)) return null;
   return running ? formatLiveDuration(elapsedMs) : formatDuration(elapsedMs);
 }

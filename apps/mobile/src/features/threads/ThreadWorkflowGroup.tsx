@@ -289,6 +289,6 @@ function useElapsedLabel(timing: ElapsedTiming): string | null {
   const live = isActiveSubagentStatus(timing.status);
   const nowMs = useVisibleSecondClock(live);
   const elapsedMs = deriveSubagentElapsedMs(timing, nowMs);
-  if (elapsedMs === null || elapsedMs === 0) return null;
+  if (elapsedMs === null || (!live && elapsedMs === 0)) return null;
   return live ? formatLiveDuration(elapsedMs) : formatDuration(elapsedMs);
 }

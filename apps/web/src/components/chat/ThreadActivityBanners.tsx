@@ -137,10 +137,7 @@ export function runStopNowItem(input: {
     actions: (
       <>
         <span
-          ref={tickTextContent(
-            (nowMs) => formatLiveDuration(Math.max(1_000, nowMs - requestedAtMs)),
-            true,
-          )}
+          ref={tickTextContent((nowMs) => formatLiveDuration(nowMs - requestedAtMs), true)}
           className="tabular-nums"
         />
         {unresponsive && input.canForceStop ? (
@@ -226,10 +223,7 @@ export function backgroundWorkNowItem(input: {
       <>
         {startedAtMs === null ? null : (
           <span
-            ref={tickTextContent(
-              (nowMs) => formatLiveDuration(Math.max(1_000, nowMs - startedAtMs)),
-              true,
-            )}
+            ref={tickTextContent((nowMs) => formatLiveDuration(nowMs - startedAtMs), true)}
             className="tabular-nums"
           />
         )}
