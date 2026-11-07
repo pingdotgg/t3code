@@ -3,6 +3,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
 import {
   AuthPreviewOperateScope,
+  editorOpensFiles,
   type EditorId,
   type EnvironmentId,
   type ProjectId,
@@ -1028,6 +1029,7 @@ export default function FilePreviewPanel({
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
+  const fileEditors = availableEditors.filter(editorOpensFiles);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const previewAvailable = usePreviewAvailable(environmentId);
@@ -1287,7 +1289,7 @@ export default function FilePreviewPanel({
             <OpenInPicker
               environmentId={environmentId}
               keybindings={keybindings}
-              availableEditors={availableEditors}
+              availableEditors={fileEditors}
               enableShortcut={openInShortcutEnabled}
               openInCwd={absolutePath}
               openInCwdIsFile={file.isFile}

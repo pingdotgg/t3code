@@ -515,45 +515,57 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
 it.effect.each([
   { editor: "webstorm", installPath: "Applications/WebStorm 2026.2.app/Contents/MacOS/webstorm" },
   { editor: "idea", installPath: "Applications/IntelliJ IDEA 2026.1.4.app/Contents/MacOS/idea" },
-] as const)(
-  "discovers and launches $editor from a versioned macOS bundle",
-  ({ editor, installPath }) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-versioned-" });
-      const executable = path.join(home, installPath);
-      yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
-      yield* fs.writeFileString(executable, "#!/bin/sh\n");
-      yield* fs.chmod(executable, 0o755);
+  {
+    editor: "github-desktop",
+    installPath: "Applications/GitHub Desktop.app/Contents/Resources/app/static/github.sh",
+  },
+  { editor: "github-desktop", installPath: "GitHubDesktop/bin/github.bat" },
+] as const)("discovers and launches $editor from $installPath", ({ editor, installPath }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-versioned-" });
+    const executable = path.join(home, installPath);
+    yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+    yield* fs.writeFileString(executable, "#!/bin/sh\n");
+    yield* fs.chmod(executable, 0o755);
 
-      let spawned: ChildProcess.StandardCommand | undefined;
-      yield* Effect.gen(function* () {
-        const launcher = yield* ExternalLauncher.ExternalLauncher;
-        assert.include(yield* launcher.resolveAvailableEditors(), editor);
-        yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            platform: "darwin",
-            env: { HOME: home, PATH: path.join(home, "empty") },
-            onSpawn: (command) => {
-              spawned = command;
-            },
-          }),
-        ),
-      );
+    const platform = installPath.endsWith(".bat") ? "win32" : "darwin";
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.include(yield* launcher.resolveAvailableEditors(), editor);
+      yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform,
+          env: { HOME: home, LOCALAPPDATA: home, PATH: path.join(home, "empty") },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
 
-      assert.ok(spawned);
-      assert.equal(spawned.command, executable);
-      assert.deepEqual(spawned.args, [
-        "--line",
-        "12",
-        "--column",
-        "3",
-        "/workspace with spaces/file.ts",
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    assert.ok(spawned);
+    const batchScript = executable.endsWith(".bat");
+    assert.equal(
+      spawned.command,
+      batchScript
+        ? `^"${executable.replaceAll(" ", "^ ")}^" ^"/workspace^ with^ spaces/file.ts:12:4^"`
+        : executable,
+    );
+    assert.equal(spawned.options.shell, batchScript);
+    assert.deepEqual(
+      spawned.args,
+      batchScript
+        ? []
+        : editor === "github-desktop"
+          ? ["/workspace with spaces/file.ts:12:4"]
+          : ["--line", "12", "--column", "3", "/workspace with spaces/file.ts"],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("matches macOS bundles on the name boundary only", () =>

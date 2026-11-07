@@ -1,5 +1,6 @@
 import {
   EDITORS,
+  editorOpensFiles,
   type ContextMenuItem,
   type EditorId,
   type EnvironmentId,
@@ -72,7 +73,9 @@ function buildFileContextMenuItems(input: {
       icon: "folder-tree",
     });
   }
-  const editorIds = input.capabilities.editorIds.filter((id) => id !== "file-manager");
+  const editorIds = input.capabilities.editorIds.filter(
+    (id) => id !== "file-manager" && editorOpensFiles(id),
+  );
   if (editorIds.length > 0) {
     items.push({
       id: "open-with",
