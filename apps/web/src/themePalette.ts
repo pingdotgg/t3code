@@ -3,10 +3,8 @@ import {
   parseThemeSource,
   resolveThemeSource,
   resolveThemeDefinition,
-} from "@t3tools/shared/themeResolution";
-import {
   getStandardPaintedThemeColors,
-  ThemeRgbColor,
+  type ThemeRgbColor,
   THEME_WHITE_FOREGROUND,
   THEME_BLACK_FOREGROUND,
   parseThemeColor,
@@ -30,6 +28,7 @@ export {
   createVividThemeColors,
   getDefaultThemeColors,
   updateThemeColorFamily,
+  resolveThemeDefinition as getThemeColorsForMode,
 } from "@t3tools/shared/themeResolution";
 import type { EnvironmentTheme } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
@@ -45,6 +44,7 @@ import {
   T3_CHAT_THEME,
   RESERVED_THEME_IDS,
   THEME_COLOR_ROLES,
+  DEPRECATED_THEME_COLOR_ROLES,
   type ThemeAppearance,
   type ThemeColorRole,
   type ThemeColors,
@@ -162,7 +162,6 @@ function lenientThemeColorOverrides(
 ): Partial<Record<ThemeColorRole, string>> {
   const overrides: Partial<Record<ThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
-    if (role === "terminalScrollbar" || role === "terminalScrollbarHover") continue;
     const normalized = toCanonicalThemeColor(color);
     if (THEME_COLOR_ROLE_SET.has(role) && normalized) {
       overrides[role as ThemeColorRole] = normalized;
@@ -452,14 +451,14 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 function canonicalizeThemeDefinition(theme: ThemeDefinition): ThemeDefinition {
   return {
     ...theme,
-    colors: decodeThemeColors(getThemeColorsForMode(theme, theme.appearance) ?? theme.colors),
+    colors: decodeThemeColors(resolveThemeDefinition(theme, theme.appearance) ?? theme.colors),
     ...(theme.variants
       ? {
           variants: Object.fromEntries(
             Object.entries(theme.variants).map(([appearance, colors]) => [
               appearance,
               decodeThemeColors(
-                getThemeColorsForMode(theme, appearance as ThemeAppearance) ?? colors,
+                resolveThemeDefinition(theme, appearance as ThemeAppearance) ?? colors,
               ),
             ]),
           ) as ThemeVariants,
@@ -545,15 +544,10 @@ export function singleAppearanceOf(theme: ThemeDefinition): ThemeAppearance | nu
   return modes.length === 1 ? modes[0]! : null;
 }
 
-export function getThemeColorsForMode(
-  theme: ThemeDefinition,
-  mode: ThemeAppearance,
-): ThemeColors | null {
-  return resolveThemeDefinition(theme, mode);
-}
-
 export function getThemeModes(theme: ThemeDefinition): ReadonlyArray<ThemeAppearance> {
-  return (["light", "dark"] as const).filter((mode) => getThemeColorsForMode(theme, mode) !== null);
+  return (["light", "dark"] as const).filter(
+    (mode) => resolveThemeDefinition(theme, mode) !== null,
+  );
 }
 
 export function getThemePreferenceMode(theme: ThemePreference): ThemeAppearance | null {
@@ -790,7 +784,7 @@ function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
 
   const overrides: Partial<Record<ThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
-    if (role === "terminalScrollbar" || role === "terminalScrollbarHover") continue;
+    if (DEPRECATED_THEME_COLOR_ROLES.has(role)) continue;
     if (!THEME_COLOR_ROLE_SET.has(role)) {
       throw new Error(`"${role}" is not a supported theme color role.`);
     }
@@ -1000,7 +994,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
 
   const mode = appearance ?? (palette ? (legacyThemeMode(theme) ?? palette.appearance) : "light");
   const colors = palette
-    ? (getThemeColorsForMode(palette, mode) ?? palette.colors)
+    ? (resolveThemeDefinition(palette, mode) ?? palette.colors)
     : getStandardPaintedThemeColors(mode);
   root.dataset.themeId = palette?.id ?? "t3-code";
   for (const role of THEME_COLOR_ROLES) {
@@ -1039,16 +1033,16 @@ export function resolveDesktopTheme(
     const definition = getThemeDefinition(theme);
     const hasLightMode =
       halves?.light !== undefined ||
-      (definition !== null && getThemeColorsForMode(definition, "light") !== null);
+      (definition !== null && resolveThemeDefinition(definition, "light") !== null);
     const hasDarkMode =
       halves?.dark !== undefined ||
-      (definition !== null && getThemeColorsForMode(definition, "dark") !== null);
+      (definition !== null && resolveThemeDefinition(definition, "dark") !== null);
     return definition && (!hasLightMode || !hasDarkMode) ? definition.appearance : "system";
   }
   if (mode === "light" || mode === "dark") {
     if (halves?.[mode]) return mode;
     const definition = getThemeDefinition(theme);
-    return definition && getThemeColorsForMode(definition, mode) === null
+    return definition && resolveThemeDefinition(definition, mode) === null
       ? definition.appearance
       : mode;
   }
@@ -1072,7 +1066,7 @@ export function parseThemeHalves(raw: string | null): ThemeHalves | null {
       const themeId = value[appearance];
       if (typeof themeId !== "string") continue;
       const definition = getThemeDefinition(themeId);
-      if (!definition || getThemeColorsForMode(definition, appearance) !== null) {
+      if (!definition || resolveThemeDefinition(definition, appearance) !== null) {
         halves[appearance] = definition?.id ?? themeId;
       }
     }

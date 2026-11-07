@@ -3,7 +3,7 @@ import {
   type ThemeEditorColorFamily,
   resolveThemeSource,
   themeSourceFromColors,
-  editThemeSource,
+  setThemeSourceRole,
 } from "@t3tools/shared/themeResolution";
 import type { ThemeSource } from "@t3tools/shared/themePalettes";
 import { MousePointer2Icon, PaintbrushIcon, PlusIcon, XIcon } from "lucide-react";
@@ -72,6 +72,10 @@ function getThemeEditorColorsByAppearance(): ThemeEditorColorsByAppearance {
     light: getThemeEditorDefaults("light"),
     dark: getThemeEditorDefaults("dark"),
   };
+}
+
+function guidedThemeSource(colors: ThemeColors): ThemeSource {
+  return { version: 2, seed: { canvas: colors.canvas, accent: colors.accent } };
 }
 
 function isThemeEditorColor(value: string): boolean {
@@ -145,20 +149,8 @@ export function ThemeEditorPanel({
   const [sourcesByAppearance, setSourcesByAppearance] = useState<
     Record<ThemeAppearance, ThemeSource>
   >(() => ({
-    light: {
-      version: 2,
-      seed: {
-        canvas: getThemeEditorDefaults("light").canvas,
-        accent: getThemeEditorDefaults("light").accent,
-      },
-    },
-    dark: {
-      version: 2,
-      seed: {
-        canvas: getThemeEditorDefaults("dark").canvas,
-        accent: getThemeEditorDefaults("dark").accent,
-      },
-    },
+    light: guidedThemeSource(getThemeEditorDefaults("light")),
+    dark: guidedThemeSource(getThemeEditorDefaults("dark")),
   }));
   const colorsByAppearance = {
     light: resolveThemeSource(sourcesByAppearance.light, "light"),
@@ -211,24 +203,13 @@ export function ThemeEditorPanel({
       setActiveAppearance(nextAppearance);
       // Open unmanaged themes in advanced mode to preserve imported or hand-tuned colors.
       setIsAdvanced(sourceTheme !== null && sourceTheme.managed !== true);
-      setSourcesByAppearance({
-        light:
-          sourceTheme?.sources?.light ??
-          (sourceTheme
-            ? themeSourceFromColors(nextColors.light)
-            : {
-                version: 2,
-                seed: { canvas: nextColors.light.canvas, accent: nextColors.light.accent },
-              }),
-        dark:
-          sourceTheme?.sources?.dark ??
-          (sourceTheme
-            ? themeSourceFromColors(nextColors.dark)
-            : {
-                version: 2,
-                seed: { canvas: nextColors.dark.canvas, accent: nextColors.dark.accent },
-              }),
-      });
+      // Saved sources keep their provenance; legacy colors open as explicit overrides.
+      const sourceFor = (appearance: ThemeAppearance) =>
+        sourceTheme?.sources?.[appearance] ??
+        (sourceTheme
+          ? themeSourceFromColors(nextColors[appearance])
+          : guidedThemeSource(nextColors[appearance]));
+      setSourcesByAppearance({ light: sourceFor("light"), dark: sourceFor("dark") });
       setSelectedRole(null);
       setUsageCount(null);
       setIsInspecting(false);
@@ -290,28 +271,17 @@ export function ThemeEditorPanel({
   const updateColor = (role: ThemeColorRole, value: string) => {
     if (!isThemeEditorColor(value)) return;
     setSourcesByAppearance((current) => {
-      let source = current[activeAppearance];
+      const source = current[activeAppearance];
       if (isAdvanced) {
-        source = editThemeSource(
-          editThemeSource(source, "overrides", role, null),
-          "palette",
-          role,
-          value,
-        );
-      } else {
-        const colors = resolveThemeSource(source, activeAppearance);
-        source = {
-          ...source,
-          seed: { canvas: colors.canvas, accent: colors.accent, [role]: value },
-        };
-        source = editThemeSource(
-          editThemeSource(source, "overrides", role, null),
-          "palette",
-          role,
-          null,
-        );
+        return { ...current, [activeAppearance]: setThemeSourceRole(source, role, value) };
       }
-      return { ...current, [activeAppearance]: source };
+      // Guided edits move a seed; the seeded role then inherits it instead of a stale value.
+      const colors = resolveThemeSource(source, activeAppearance);
+      const seeded = {
+        ...source,
+        seed: { canvas: colors.canvas, accent: colors.accent, [role]: value },
+      };
+      return { ...current, [activeAppearance]: setThemeSourceRole(seeded, role, null) };
     });
   };
 
@@ -326,16 +296,15 @@ export function ThemeEditorPanel({
   };
 
   const selectThemeRole = (role: ThemeColorRole, reveal = false) => {
-    const visibleRole = role;
-    setSelectedRole(visibleRole);
-    if (!THEME_EDITOR_SIMPLE_ROLES.includes(visibleRole)) {
+    setSelectedRole(role);
+    if (!THEME_EDITOR_SIMPLE_ROLES.includes(role)) {
       setIsAdvanced(true);
       setRoleQuery("");
     }
     if (!reveal) return;
 
     requestAnimationFrame(() => {
-      panelRef.current?.querySelector(`[data-theme-color-role="${visibleRole}"]`)?.scrollIntoView({
+      panelRef.current?.querySelector(`[data-theme-color-role="${role}"]`)?.scrollIntoView({
         behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
         block: "nearest",
       });
@@ -564,6 +533,15 @@ export function ThemeEditorPanel({
 
     try {
       const colorsForSave = colorsByAppearance;
+      const sourcesForSave = {
+        ...mergeTarget?.sources,
+        ...Object.fromEntries(
+          (editingTheme ? getThemeModes(editingTheme) : [activeAppearance]).map((mode) => [
+            mode,
+            sourcesByAppearance[mode],
+          ]),
+        ),
+      };
 
       let savedTheme: ThemeDefinition;
       let mergedAppearance: ThemeAppearance | null = null;
@@ -579,15 +557,7 @@ export function ThemeEditorPanel({
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
             version: 2,
-            sources: {
-              ...mergeTarget?.sources,
-              ...Object.fromEntries(
-                (editingTheme ? getThemeModes(editingTheme) : [activeAppearance]).map((mode) => [
-                  mode,
-                  sourcesByAppearance[mode],
-                ]),
-              ),
-            },
+            sources: sourcesForSave,
             id: mergeTarget.id,
             name: mergeTarget.label,
             appearance: mergeTarget.appearance,
@@ -608,15 +578,7 @@ export function ThemeEditorPanel({
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
             version: 2,
-            sources: {
-              ...mergeTarget?.sources,
-              ...Object.fromEntries(
-                (editingTheme ? getThemeModes(editingTheme) : [activeAppearance]).map((mode) => [
-                  mode,
-                  sourcesByAppearance[mode],
-                ]),
-              ),
-            },
+            sources: sourcesForSave,
             id: editingTheme.id,
             name,
             appearance: baseAppearance,
@@ -639,15 +601,7 @@ export function ThemeEditorPanel({
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
             version: 2,
-            sources: {
-              ...mergeTarget?.sources,
-              ...Object.fromEntries(
-                (editingTheme ? getThemeModes(editingTheme) : [activeAppearance]).map((mode) => [
-                  mode,
-                  sourcesByAppearance[mode],
-                ]),
-              ),
-            },
+            sources: sourcesForSave,
             id: mergeTarget.id,
             name: mergeTarget.label,
             appearance: mergeTarget.appearance,
@@ -664,7 +618,7 @@ export function ThemeEditorPanel({
         savedTheme = installCustomTheme(
           parseThemeFile({
             version: 2,
-            sources: { [activeAppearance]: sourcesByAppearance[activeAppearance] },
+            sources: sourcesForSave,
             name,
             appearance: activeAppearance,
             colors: colorsForSave[activeAppearance],
@@ -812,12 +766,7 @@ export function ThemeEditorPanel({
   const resetRole = (role: ThemeColorRole) =>
     setSourcesByAppearance((current) => ({
       ...current,
-      [activeAppearance]: editThemeSource(
-        editThemeSource(current[activeAppearance], "overrides", role, null),
-        "palette",
-        role,
-        null,
-      ),
+      [activeAppearance]: setThemeSourceRole(current[activeAppearance], role, null),
     }));
   const source = sourcesByAppearance[activeAppearance];
   const roleIsExplicit = (role: ThemeColorRole) =>

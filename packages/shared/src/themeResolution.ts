@@ -5,6 +5,7 @@ import {
   T3_CHAT_THEME,
   T3_CODE_LIGHT_THEME_COLORS,
   T3_CODE_DARK_THEME_COLORS,
+  DEPRECATED_THEME_COLOR_ROLES,
   THEME_COLOR_ROLES,
   type ThemeAppearance,
   type ThemeColorRole,
@@ -981,20 +982,22 @@ export function themeSourceFromColors(colors: ThemeColors): ThemeSource {
   return { version: 2, overrides: { ...colors } };
 }
 
-export function editThemeSource(
+/** Authors one role in the palette, or with `null` resets it to inherit; both drop its override. */
+export function setThemeSourceRole(
   source: ThemeSource,
-  kind: "palette" | "overrides",
   role: ThemeColorRole,
   value: string | null,
 ): ThemeSource {
-  const inputs: Partial<Record<ThemeColorRole, string>> = { ...source[kind] };
-  if (value === null) delete inputs[role];
-  else {
+  const palette: Partial<Record<ThemeColorRole, string>> = { ...source.palette };
+  const overrides: Partial<Record<ThemeColorRole, string>> = { ...source.overrides };
+  delete overrides[role];
+  delete palette[role];
+  if (value !== null) {
     const color = toCanonicalThemeColor(value);
     if (!color) throw new Error(`Invalid theme color for "${role}".`);
-    inputs[role] = color;
+    palette[role] = color;
   }
-  return { ...source, [kind]: inputs };
+  return { ...source, palette, overrides };
 }
 
 export function parseThemeSource(value: unknown): ThemeSource {
@@ -1007,7 +1010,7 @@ export function parseThemeSource(value: unknown): ThemeSource {
       throw new Error("Invalid theme inputs.");
     const result: Partial<Record<ThemeColorRole, string>> = {};
     for (const [role, value] of Object.entries(input)) {
-      if (role === "terminalScrollbar" || role === "terminalScrollbarHover") continue;
+      if (DEPRECATED_THEME_COLOR_ROLES.has(role)) continue;
       if (!(THEME_COLOR_ROLES as readonly string[]).includes(role))
         throw new Error(`Unsupported theme role "${role}".`);
       const color = toCanonicalThemeColor(value);

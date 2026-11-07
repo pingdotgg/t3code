@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
-  editThemeSource,
+  setThemeSourceRole,
   parseThemeSource,
   resolveThemeSource,
   themeColorToHex,
@@ -14,16 +14,14 @@ describe("authored theme resolution", () => {
       seed: { canvas: "#101010", accent: "#123456" },
       overrides: { focus: "#ff0000", terminalBackground: "#002200", sidebarForeground: "#abcdef" },
     });
-    const edited = editThemeSource(source, "palette", "accent", "#00ff00");
+    const edited = setThemeSourceRole(source, "accent", "#00ff00");
     const colors = resolveThemeSource(edited, "dark");
     expect(themeColorToHex(colors.focus)).toBe("#ff0000");
     expect(themeColorToHex(colors.terminalCursor)).toBe("#00ff00");
     expect(themeColorToHex(colors.terminalBackground)).toBe("#002200");
     expect(themeColorToHex(colors.sidebarForeground)).toBe("#abcdef");
     expect(
-      themeColorToHex(
-        resolveThemeSource(editThemeSource(edited, "overrides", "focus", null), "dark").focus,
-      ),
+      themeColorToHex(resolveThemeSource(setThemeSourceRole(edited, "focus", null), "dark").focus),
     ).toBe("#00ff00");
     expect(
       resolveThemeSource(parseThemeSource(JSON.parse(JSON.stringify(edited))), "dark"),
@@ -36,7 +34,7 @@ describe("authored theme resolution", () => {
       "light",
     );
     expect(resolveThemeSource(themeSourceFromColors(colors), "light")).toEqual(colors);
-    const edited = editThemeSource(themeSourceFromColors(colors), "palette", "accent", "#ff0000");
+    const edited = setThemeSourceRole(themeSourceFromColors(colors), "accent", "#ff0000");
     expect(resolveThemeSource(edited, "light").focus).toBe(colors.focus);
   });
 });

@@ -48,6 +48,7 @@
             : selection.baseAppearance;
         };
         const themeSelectionStorage = function themeSelectionStorage(storage) {
+          // Inlined because generate-theme-boot serializes this function into index.html.
           const key = "t3code:theme-selection:v1";
           const fields = {
             "t3code:theme": "theme",
@@ -278,8 +279,7 @@
           if (RESERVED_THEME_IDS.includes(themeId)) return null;
           try {
             const parsed = JSON.parse(
-              themeSelectionStorage(window.localStorage).getItem(CUSTOM_THEMES_STORAGE_KEY) ??
-                "null",
+              window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY) ?? "null",
             );
             if (!Array.isArray(parsed)) return null;
             return (

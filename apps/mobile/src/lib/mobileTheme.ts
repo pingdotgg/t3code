@@ -1,5 +1,5 @@
-import { resolveThemeDefinition as getThemeColorsForAppearance } from "@t3tools/shared/themeResolution";
 import {
+  resolveThemeDefinition as getThemeColorsForAppearance,
   themeRgbToOklch,
   oklchToRgbUnclamped,
   linearChannelToSrgb,

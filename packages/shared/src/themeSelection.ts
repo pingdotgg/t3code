@@ -6,6 +6,7 @@ export function themeSelectionStorage(storage: {
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
 }) {
+  // Inlined because generate-theme-boot serializes this function into index.html.
   const key = "t3code:theme-selection:v1";
   const fields: Readonly<Record<string, string>> = {
     "t3code:theme": "theme",

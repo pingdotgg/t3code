@@ -58,12 +58,12 @@ export function readThemeHalvesRaw(): { light?: string; dark?: string } {
   return readStoredThemeHalvesRaw();
 }
 
+const selectionStorage = () => themeSelectionStorage(window.localStorage);
+
 function readStoredThemeHalves(): ThemeHalves | null {
   if (typeof window === "undefined") return null;
   try {
-    return parseThemeHalves(
-      themeSelectionStorage(window.localStorage).getItem(THEME_HALVES_STORAGE_KEY),
-    );
+    return parseThemeHalves(selectionStorage().getItem(THEME_HALVES_STORAGE_KEY));
   } catch {
     return null;
   }
@@ -73,7 +73,7 @@ function readStoredThemeHalves(): ThemeHalves | null {
 function readStoredThemeHalvesRaw(): { light?: string; dark?: string } {
   try {
     const value: unknown = JSON.parse(
-      themeSelectionStorage(window.localStorage).getItem(THEME_HALVES_STORAGE_KEY) ?? "null",
+      selectionStorage().getItem(THEME_HALVES_STORAGE_KEY) ?? "null",
     );
     if (value === null || typeof value !== "object") return {};
     const halves: { light?: string; dark?: string } = {};
@@ -148,7 +148,7 @@ function readStoredFollowSystem(theme: Theme): boolean {
   if (typeof window === "undefined") return theme === "system";
 
   try {
-    const raw = themeSelectionStorage(window.localStorage).getItem(THEME_FOLLOW_SYSTEM_STORAGE_KEY);
+    const raw = selectionStorage().getItem(THEME_FOLLOW_SYSTEM_STORAGE_KEY);
     if (raw === "true") return true;
     if (raw === "false") return false;
   } catch {}
@@ -163,9 +163,7 @@ function isThemePreferenceMode(value: string | null): value is ThemePreferenceMo
 export function readAppearanceModePreference(theme: Theme): ThemePreferenceMode {
   if (typeof window !== "undefined") {
     try {
-      const raw = themeSelectionStorage(window.localStorage).getItem(
-        THEME_APPEARANCE_MODE_STORAGE_KEY,
-      );
+      const raw = selectionStorage().getItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
       if (isThemePreferenceMode(raw)) return raw;
     } catch {}
   }
@@ -177,10 +175,7 @@ export function readAppearanceModePreference(theme: Theme): ThemePreferenceMode 
 function writeAppearanceModePreference(appearanceMode: ThemePreferenceMode): void {
   if (typeof window === "undefined") return;
   try {
-    themeSelectionStorage(window.localStorage).setItem(
-      THEME_APPEARANCE_MODE_STORAGE_KEY,
-      appearanceMode,
-    );
+    selectionStorage().setItem(THEME_APPEARANCE_MODE_STORAGE_KEY, appearanceMode);
   } catch (cause) {
     throw new ThemeStorageError({
       operation: "write",
@@ -194,7 +189,7 @@ export function readThemePreference(): Theme {
   if (typeof window === "undefined") return DEFAULT_THEME_SNAPSHOT.theme;
   let raw: string | null;
   try {
-    raw = themeSelectionStorage(window.localStorage).getItem(STORAGE_KEY);
+    raw = selectionStorage().getItem(STORAGE_KEY);
   } catch (cause) {
     throw new ThemeStorageError({
       operation: "read",
@@ -509,7 +504,7 @@ export function useRenderedAppearance() {
 export function setTheme(next: Theme): boolean {
   if (typeof window === "undefined") return false;
   try {
-    themeSelectionStorage(window.localStorage).patch({
+    selectionStorage().patch({
       [STORAGE_KEY]: next,
       [THEME_APPEARANCE_MODE_STORAGE_KEY]: readAppearanceModePreference(getStored()),
       [THEME_HALVES_STORAGE_KEY]: null,
@@ -570,12 +565,9 @@ function setThemeHalf(appearance: ThemeAppearance, themeId: string | null): bool
     if (themeId === null) delete next[appearance];
     else next[appearance] = themeId;
     if (next.light === undefined && next.dark === undefined) {
-      themeSelectionStorage(window.localStorage).removeItem(THEME_HALVES_STORAGE_KEY);
+      selectionStorage().removeItem(THEME_HALVES_STORAGE_KEY);
     } else {
-      themeSelectionStorage(window.localStorage).setItem(
-        THEME_HALVES_STORAGE_KEY,
-        JSON.stringify(next),
-      );
+      selectionStorage().setItem(THEME_HALVES_STORAGE_KEY, JSON.stringify(next));
     }
   } catch (cause) {
     const error = new ThemeStorageError({
@@ -598,7 +590,7 @@ function setThemeHalf(appearance: ThemeAppearance, themeId: string | null): bool
 function clearThemeHalves(): boolean {
   if (typeof window === "undefined") return false;
   try {
-    themeSelectionStorage(window.localStorage).removeItem(THEME_HALVES_STORAGE_KEY);
+    selectionStorage().removeItem(THEME_HALVES_STORAGE_KEY);
   } catch (cause) {
     const error = new ThemeStorageError({
       operation: "write",

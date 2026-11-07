@@ -90,6 +90,11 @@ export const THEME_COLOR_ROLES = [
 ] as const;
 
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
+// Removed roles that older theme files may still carry; readers drop them.
+export const DEPRECATED_THEME_COLOR_ROLES: ReadonlySet<string> = new Set([
+  "terminalScrollbar",
+  "terminalScrollbarHover",
+]);
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
 export type ThemeColorInputs = Readonly<Partial<Record<ThemeColorRole, string>>>;

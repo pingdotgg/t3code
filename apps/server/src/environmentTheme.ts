@@ -1,4 +1,3 @@
-import { parseThemeSource, resolveThemeSource } from "@t3tools/shared/themeResolution";
 // @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
 // flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
 import * as NodeFS from "node:fs";
@@ -10,6 +9,7 @@ import {
   environmentThemeFileHasColors,
 } from "@t3tools/contracts";
 import { UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
+import { parseThemeSource, resolveThemeSource } from "@t3tools/shared/themeResolution";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";

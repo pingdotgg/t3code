@@ -268,6 +268,8 @@ describe("theme files", () => {
         terminalSelection: "rebeccapurple",
         toolbarControl: "transparent",
         toolbarControlHover: "rgb(10 20 30 / none)",
+        // Removed roles from older files are dropped rather than rejected.
+        terminalScrollbar: "#222222",
       },
     });
 
@@ -278,6 +280,7 @@ describe("theme files", () => {
     expect(themeColorToHex(theme.colors.terminalSelection)).toBe("#663399");
     expect(theme.colors.toolbarControl).toBe("oklch(0 0 0 / 0)");
     expect(themeColorToHex(theme.colors.toolbarControlHover)).toBe("#0a141e00");
+    expect(theme.colors).not.toHaveProperty("terminalScrollbar");
     for (const role of [
       "error",
       "warning",
