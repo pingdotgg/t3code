@@ -19,7 +19,3 @@ export function stepThreadFindIndex(index: number, total: number, delta: number)
   const clamped = clampThreadFindIndex(index, total);
   return (((clamped + delta) % total) + total) % total;
 }
-
-export function formatThreadFindCount(index: number, total: number): string {
-  return total <= 0 ? "0/0" : `${clampThreadFindIndex(index, total) + 1}/${total}`;
-}

@@ -78,6 +78,7 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
+import { getMarkdownFindTarget, requestMarkdownFindOpen } from "./files/markdownFindActionBus";
 import {
   useDeferredValue,
   useEffect,
@@ -1314,6 +1315,21 @@ function OpenCommandPaletteDialog(props: {
       description: "An agent investigates a T3 Code problem and helps file an issue",
       icon: <BugIcon className={ITEM_ICON_CLASS} />,
       run: () => startTriage(triageEnvironmentId),
+    });
+  }
+
+  const markdownFindTarget = getMarkdownFindTarget(null, true);
+  if (markdownFindTarget) {
+    actionItems.push({
+      kind: "action",
+      value: "action:find-in-file",
+      title: "Find in rendered file",
+      searchTerms: ["search", "markdown", "file", "preview"],
+      icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "file.find",
+      run: async () => {
+        requestMarkdownFindOpen(markdownFindTarget);
+      },
     });
   }
 
