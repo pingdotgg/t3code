@@ -16,6 +16,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AgentSessionSource,
+  AuthProvidersManageScope,
   AuthTerminalOperateScope,
   CommandId,
   defaultInstanceIdForDriver,
@@ -34,7 +35,7 @@ import {
   MonitorIcon,
   TerminalIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -85,6 +86,7 @@ import { getProviderSummary } from "../settings/providerStatus";
 import { providerClients } from "../settings/providerDriverMeta";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
+import { ChatGptConnectionButton } from "../settings/ChatGptConnectionButton";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
@@ -906,7 +908,10 @@ function OnboardingCodexSetup({
   readonly onAutoStartConsumed: () => void;
 }) {
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
+  // Switching remounts the ChatGPT card, so the request to start sign-in lives here.
+  const [chatGptRequested, setChatGptRequested] = useState(false);
   const instanceId =
     createdAccount?.instanceId ??
     provider?.instanceId ??
@@ -945,6 +950,17 @@ function OnboardingCodexSetup({
       },
     });
   };
+  const existingState = getOnboardingProviderState(provider);
+  const existingSettled =
+    provider?.auth.status === "authenticated" ||
+    existingState === "checking" ||
+    ((provider?.enabled ?? true) && existingState === "ready");
+  // A policy that owns Codex's launch settings also rules out ChatGPT's own runtime.
+  const chatGptAllowed =
+    managedInstanceLocks(
+      serverConfig.managedPolicy,
+      ProviderDriverKind.make("codex"),
+    )?.configKeys.has("setupMode") !== true;
   return existingChosen ? (
     <AgentCard
       driver="codex"
@@ -952,13 +968,31 @@ function OnboardingCodexSetup({
       terminalOpen={terminalOpen}
       terminalAvailable={canOperateTerminal}
       onOpenTerminal={onOpenTerminal}
+      secondaryControl={
+        chatGptAllowed && !existingSettled ? (
+          <ChatGptConnectionButton
+            size="xs"
+            variant="ghost"
+            disabled={!canManageProviders}
+            onClick={() => {
+              setChatGptRequested(true);
+              changeMode("managed");
+            }}
+          >
+            Continue with ChatGPT
+          </ChatGptConnectionButton>
+        ) : null
+      }
     />
   ) : (
     <CodexSetupSection
       presentation="onboarding"
-      autoStart={createdAccount?.autoStart === true}
+      autoStart={chatGptRequested || createdAccount?.autoStart === true}
       displayName={createdAccount?.displayName}
-      onAutoStartConsumed={onAutoStartConsumed}
+      onAutoStartConsumed={() => {
+        setChatGptRequested(false);
+        onAutoStartConsumed();
+      }}
       environmentId={environmentId}
       instanceId={instanceId}
       provider={provider}
@@ -975,12 +1009,14 @@ function AgentCard({
   terminalOpen,
   terminalAvailable,
   onOpenTerminal,
+  secondaryControl,
 }: {
   readonly driver: OnboardingAgentDriver;
   readonly provider: ServerProvider | undefined;
   readonly terminalOpen: boolean;
   readonly terminalAvailable: boolean;
   readonly onOpenTerminal: () => void;
+  readonly secondaryControl?: ReactNode;
 }) {
   const meta = providerClients.get(ProviderDriverKind.make(driver));
   const displayName =
@@ -989,20 +1025,21 @@ function AgentCard({
   const providerState = getOnboardingProviderState(provider);
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
       <ProviderInstanceIcon
         driverKind={ProviderDriverKind.make(driver)}
         displayName={displayName}
         iconClassName="size-5"
       />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-40">
         <span className="block text-sm font-medium text-foreground">{displayName}</span>
         <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
           {providerState === "ready" ? "Ready to code." : summary.headline}
           {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
         </p>
       </div>
-      <div className="shrink-0">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        {secondaryControl}
         {providerState === "ready" ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
             <CheckIcon className="size-3.5" />
