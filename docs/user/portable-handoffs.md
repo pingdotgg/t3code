@@ -12,6 +12,11 @@ Codex receives historical messages directly when its installed version supports 
 Other providers receive the same selection as attributed conversation context. A handoff does not
 copy the outgoing provider's reasoning, tool-call state, or attachments.
 
+When T3 Code has observed a native goal, a provider switch carries its owner, last known status,
+and usage accounting. The goal still belongs to its original provider session; a new session's
+`get_goal` returning null does not mean the original goal was cleared. The handoff does not create
+or authorize a replacement goal controller.
+
 The handoff includes references to omitted history. The agent can use T3 Code's thread-reading tool
 to retrieve saved messages and activity, including the remainder of a long item. For an important
 constraint, you can still repeat it in your next message. A handoff is a budgeted selection, not an

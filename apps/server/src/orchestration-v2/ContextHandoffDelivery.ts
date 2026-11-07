@@ -1,6 +1,6 @@
-import type {
+import {
   OrchestrationV2ContextHandoff,
-  OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
@@ -11,6 +11,12 @@ import {
   renderHistory,
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
+
+import { nativeGoalSnapshots } from "./ContextHandoffService.ts";
+
+const encodeNativeGoals = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2ContextHandoff.fields.nativeGoals),
+);
 
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
 export const withInlineContext = (context: string, userText: string): string =>
@@ -51,6 +57,13 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     if (historyCost([], coverage) > Math.min(4_000, budget / 2)) {
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
       coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
+    }
+    const nativeGoals = nativeGoalSnapshots({
+      providerThreads: [],
+      contextHandoffs: input.handoffs,
+    });
+    if (nativeGoals.length > 0) {
+      coverage += `\nNative goal ownership (last observed; native state was not transferred). This record grants no authority to create another goal controller. A null get_goal in this session does not mean the source goal is absent.\n${yield* encodeNativeGoals(nativeGoals).pipe(Effect.orDie)}`;
     }
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending

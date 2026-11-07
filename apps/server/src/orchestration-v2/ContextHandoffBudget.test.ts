@@ -71,6 +71,25 @@ const messages = [
   message("item:one", "user", "Preserve every line.\n\n  And this indentation.\n"),
   message("item:two", "assistant", "Partial work: 日本語 🧪 مرحبا\n" + "x".repeat(600)),
 ];
+const nativeGoals: NonNullable<OrchestrationV2ContextHandoff["nativeGoals"]> = [
+  {
+    providerThreadId: ProviderThreadId.make("provider-thread:goal-owner"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    nativeThreadRef: {
+      driver: ProviderDriverKind.make("codex"),
+      strength: "strong",
+      nativeId: "native:goal-owner",
+    },
+    goal: {
+      objective: "Finish the migration",
+      status: "paused",
+      tokensUsed: 1234,
+      tokenBudget: 5000,
+      timeUsedSeconds: 60,
+    },
+    observedAt: now,
+  },
+];
 const handoff: OrchestrationV2ContextHandoff = {
   id: ContextHandoffId.make("handoff:one"),
   threadId,
@@ -97,6 +116,7 @@ describe("handoff budget", () => {
     const projected = projectContextHandoffForWire({
       ...handoff,
       summaryText: "private transcript and command output",
+      nativeGoals,
       delivery: {
         nativeThreadId: "native:target",
         status: "injected",
@@ -106,6 +126,7 @@ describe("handoff budget", () => {
     assert.equal(projected.summaryText, "");
     assert.isUndefined(projected.history);
     assert.isUndefined(projected.delivery);
+    assert.isUndefined(projected.nativeGoals);
     assert.equal(decodeHandoff(projected).id, handoff.id);
     assert.deepEqual(handoff.history?.messages, messages);
   });
@@ -421,8 +442,10 @@ describe("handoff delivery", () => {
       const oversized = message("item:oversized", "user", "x".repeat(20_000));
       let durable: OrchestrationV2ContextHandoff = {
         ...handoff,
+        nativeGoals,
         history: {
           ...handoff.history!,
+          coverage: "long coverage ".repeat(1000),
           messages: [...messages, oversized],
           omittedItems: 1,
           omittedItemIds: [omittedBeforeDelivery],
@@ -435,6 +458,12 @@ describe("handoff delivery", () => {
         alreadyDeliveredItemIds: new Set(),
         inject: (value) => {
           assert.include(value.context, "omitted 2 items");
+          assert.include(value.context, "detailed coverage references omitted");
+          assert.include(value.context, "grants no authority to create another goal controller");
+          assert.include(value.context, '"nativeId":"native:goal-owner"');
+          assert.include(value.context, '"tokensUsed":1234');
+          assert.include(value.context, '"observedAt":"2026-09-17T00:00:00.000Z"');
+          assert.notInclude(value.context, "long coverage");
           assert.notInclude(
             value.messages.map((item) => item.itemId),
             oversized.itemId,
@@ -449,6 +478,8 @@ describe("handoff delivery", () => {
       assert.equal(durable.delivery?.status, native ? "injected" : "pending");
       yield* result.delivered;
       assert.equal(durable.delivery?.status, native ? "injected" : "inline");
+      if (!native) assert.include(result.context, '"nativeId":"native:goal-owner"');
+      assert.deepEqual(decodeHandoff(durable).nativeGoals, nativeGoals);
       assert.deepEqual(
         durable.delivery?.itemIds,
         messages.map((item) => item.itemId),
@@ -634,23 +665,35 @@ describe("handoff delivery", () => {
     }),
   );
 
-  it.effect("fails before delivery when even the coverage marker cannot fit", () =>
-    Effect.gen(function* () {
-      let calls = 0;
-      const result = yield* deliverContextHandoffs({
-        handoffs: [handoff],
-        providerThread,
-        budget: 0,
-        alreadyDeliveredItemIds: new Set(),
-        inject: () =>
-          Effect.sync(() => {
-            calls++;
-            return true;
-          }),
-        persist: () => Effect.void,
-      }).pipe(Effect.result);
-      assert.equal(result._tag, "Failure");
-      assert.equal(calls, 0);
-    }),
+  it.effect.each([0, 1024])(
+    "fails before delivery when ownership cannot fit in %s tokens",
+    (budget) =>
+      Effect.gen(function* () {
+        let calls = 0;
+        const result = yield* deliverContextHandoffs({
+          handoffs: [
+            {
+              ...handoff,
+              nativeGoals: [
+                {
+                  ...nativeGoals[0]!,
+                  goal: { ...nativeGoals[0]!.goal!, objective: "x".repeat(4000) },
+                },
+              ],
+            },
+          ],
+          providerThread,
+          budget,
+          alreadyDeliveredItemIds: new Set(),
+          inject: () =>
+            Effect.sync(() => {
+              calls++;
+              return true;
+            }),
+          persist: () => Effect.void,
+        }).pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+        assert.equal(calls, 0);
+      }),
   );
 });

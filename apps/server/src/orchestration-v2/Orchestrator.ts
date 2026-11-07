@@ -113,6 +113,7 @@ import {
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
 import {
   ContextHandoffServiceV2,
+  contextBoundaryOrdinal,
   readForkHistoryItems,
   readInheritedHandoffItems,
   visibleConversationItems,
@@ -1000,29 +1001,6 @@ function appendContextHandoffId(
   return handoffId === null ? handoffIds : Array.from(new Set([...handoffIds, handoffId]));
 }
 
-/** Ordinal of the latest started fresh-context run. Runs before it never reach a provider again. */
-function contextBoundaryOrdinal(
-  runs: ReadonlyArray<
-    Pick<
-      OrchestrationV2Run,
-      "ordinal" | "freshContext" | "status" | "startedAt" | "restartContinuationOfRunId"
-    >
-  >,
-): number {
-  let boundary = 0;
-  for (const run of runs) {
-    if (
-      run.freshContext === true &&
-      run.status !== "queued" &&
-      !cancelledBeforeStart(run) &&
-      run.ordinal > boundary
-    ) {
-      boundary = run.ordinal;
-    }
-  }
-  return boundary;
-}
-
 /** Threads with no started run (imported, or reserved by another queued run) never cross it. */
 function providerThreadPredatesBoundary(
   providerThread: Pick<OrchestrationV2ProviderThread, "firstRunOrdinal">,
@@ -1339,6 +1317,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.map((records) => records.turnItems),
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
+
+  const readNativeGoalSource = Effect.fn("Orchestrator.readNativeGoalSource")(function* (
+    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "providerThreads">,
+  ) {
+    const { contextHandoffs } = yield* projectionStore
+      .getThreadRecords(projection.thread.id, ["contextHandoffs"])
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: projection.thread.id, cause }),
+        ),
+      );
+    return { providerThreads: projection.providerThreads, contextHandoffs };
+  });
 
   const readInheritedItems = (thread: OrchestrationV2AppThread) =>
     readInheritedHandoffItems(projectionStore, thread).pipe(
@@ -2091,6 +2082,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   to: coveredRuns.at(-1)!.ordinal,
                 },
                 runs: projection.runs,
+                source: yield* readNativeGoalSource(projection),
                 strategy: handoffStrategy,
                 items: [
                   ...(needsFullContext && latestCompletedRun !== undefined
@@ -5343,6 +5335,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   .map((run) => run.id),
           ),
           runs: input.projection.runs,
+          source: yield* readNativeGoalSource(input.projection),
           createdAt: now,
         })
         .pipe(mapDispatchError(input.command));
@@ -7253,6 +7246,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   ? "full_thread_summary"
                   : "delta_since_target_last_seen",
               items: providerSwitchItems,
+              source: yield* readNativeGoalSource(projection),
               runs: projection.runs,
               createdAt: now,
             })

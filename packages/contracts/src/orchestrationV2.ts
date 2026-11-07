@@ -1161,6 +1161,17 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
       omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
     }),
   ),
+  nativeGoals: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        providerThreadId: ProviderThreadId,
+        providerInstanceId: ProviderInstanceId,
+        nativeThreadRef: Schema.NullOr(OrchestrationV2ProviderRef),
+        goal: Schema.NullOr(OrchestrationV2ProviderGoal),
+        observedAt: Schema.DateTimeUtc,
+      }),
+    ),
+  ),
   delivery: Schema.optional(
     Schema.Struct({
       nativeThreadId: Schema.String,
