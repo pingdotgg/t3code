@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import {
   ProviderInstanceId,
@@ -41,7 +43,7 @@ it.effect("distinguishes pending method discovery from an agent with no sign-in 
       Effect.map(Option.getOrThrow),
     );
     assert.deepEqual(ready.methods, []);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 const makeHarness = Effect.gen(function* () {
@@ -112,7 +114,7 @@ it.effect("requires owner consent and provider verification before success", () 
     yield* phase("verifying");
     yield* Deferred.succeed(verified, undefined);
     assert.strictEqual((yield* phase("succeeded")).phase, "succeeded");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("cancellation rejects late consent and permits another login", () =>
@@ -132,7 +134,7 @@ it.effect("cancellation rejects late consent and permits another login", () =>
     );
     const next = yield* controller.start("other");
     assert.notStrictEqual(next.flowId, state.flowId);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("closes admitted provider processes and blocks new ones while login is pending", () =>
@@ -152,7 +154,7 @@ it.effect("closes admitted provider processes and blocks new ones while login is
     assert.isTrue(
       (yield* controller.withAccess!(Effect.void).pipe(Effect.result))._tag === "Failure",
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("shared credential invalidation closes admitted processes before permitting reuse", () =>
@@ -169,7 +171,7 @@ it.effect("shared credential invalidation closes admitted processes before permi
     yield* controller.invalidate!;
     assert.isTrue(closed);
     assert.strictEqual(yield* controller.withAccess!(Effect.succeed("new process")), "new process");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each([
@@ -234,7 +236,7 @@ it.effect.each([
       assert.isNull(verifying.interaction);
       assert.notInclude(verifying.message ?? "", "private-token");
       yield* controller.cancel("owner", state.flowId!);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("shows a device code only to its owner without treating it as authenticated", () =>
@@ -268,7 +270,7 @@ it.effect("shows a device code only to its owner without treating it as authenti
     assert.isNull(other.interaction);
     assert.isNull(other.authorizationUrl);
     yield* controller.cancel("owner", start.flowId!);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each([
@@ -302,7 +304,7 @@ it.effect.each([
       Effect.map(Option.getOrThrow),
     );
     assert.strictEqual(failed.message, message);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 const makeBlockingResponseHarness = Effect.gen(function* () {
@@ -393,7 +395,7 @@ it.effect.each(["cancel", "logout"] as const)(
       assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
       assert.isFalse(yield* harness.controller.isChangingCredentials!);
       assert.notEqual((yield* harness.controller.start("other")).flowId, harness.input.flowId);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(
@@ -415,7 +417,7 @@ it.effect(
       assert.isTrue(yield* Deferred.isDone(harness.cleanupFinished));
       assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
       yield* harness.controller.withAccess!(Effect.void);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("closing the controller scope interrupts and drains its adapter response", () =>
@@ -431,7 +433,7 @@ it.effect("closing the controller scope interrupts and drains its adapter respon
     yield* Fiber.join(closing);
     assert.isTrue(yield* Deferred.isDone(harness.cleanupFinished));
     assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("a failed method refresh keeps the last discovered methods", () =>
@@ -458,7 +460,7 @@ it.effect("a failed method refresh keeps the last discovered methods", () =>
       .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
     assert.deepEqual(state.methods, [method]);
     assert.strictEqual(state.message, "interrupted");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("rebuilding a controller leaves sessions it admitted to their owners", () =>
@@ -475,7 +477,7 @@ it.effect("rebuilding a controller leaves sessions it admitted to their owners",
     );
     yield* Scope.close(scope, Exit.void);
     assert.isFalse(closed);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("profile import stops owned sessions and gates access until credentials are saved", () =>
@@ -514,5 +516,5 @@ it.effect("profile import stops owned sessions and gates access until credential
       yield* controller.withAccess!(Effect.succeed("new credential process")),
       "new credential process",
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

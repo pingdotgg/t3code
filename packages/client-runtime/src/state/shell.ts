@@ -26,12 +26,13 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
-import { subscribeDynamic } from "../rpc/client.ts";
+import { subscribeDynamicWithSession } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
 import {
-  applyShellStreamEvent,
+  applyShellStreamEvents,
+  type ShellStreamEvent,
   mergeShellSnapshotProjects,
   reuseUnchangedThreadShells,
   sameThreadPullRequests,
@@ -81,6 +82,16 @@ function withoutDeferredPullRequests(value: DeferredShellSnapshot): Orchestratio
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
+function groupBySession<A>(entries: ReadonlyArray<readonly [RpcSession, A]>) {
+  const groups: Array<[RpcSession, Array<A>]> = [];
+  for (const [session, value] of entries) {
+    const last = groups.at(-1);
+    if (last?.[0] === session) last[1].push(value);
+    else groups.push([session, [value]]);
+  }
+  return groups;
+}
+
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
@@ -105,8 +116,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     status: shellStatusForSnapshot(cachedSnapshot),
   });
   const awaitingCompletion = yield* Ref.make(false);
-  const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
-  const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
+  // The omissions and server build of the subscription whose snapshot the
+  // in-memory shell last came from; null while it holds only cached data.
+  const authoritativeOmission = yield* Ref.make<string | null>(null);
+  // Items buffered from a previous session keep that session's key.
+  const sessionOmissions = new WeakMap<RpcSession, string | null>();
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
     Option.none(),
   );
@@ -207,14 +221,51 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
   const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
+    omission: string | null,
     pendingLinkIds?: ReadonlySet<ThreadId>,
   ) {
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
-    /* oxlint-disable oxc/no-accumulating-spread -- This copies a fixed-shape state record, not a growing collection. */
     let next = initial;
-    let receivedSnapshot = false;
+    let receivedAuthoritativeSnapshot = false;
+    let deltas: Array<ShellStreamEvent> = [];
+    const flushDeltas = () => {
+      if (deltas.length > 0 && Option.isSome(next.snapshot)) {
+        let sequence = next.snapshot.value.snapshotSequence;
+        let removedAt: Map<ThreadId, number> | undefined;
+        for (const delta of deltas) {
+          if (delta.sequence <= sequence) continue;
+          switch (delta.kind) {
+            case "thread.removed":
+              removedAt ??= new Map(next.removedAt);
+              removedAt.set(delta.threadId, delta.sequence);
+              break;
+            case "thread.updated":
+            case "project.updated":
+            case "project.removed":
+              break;
+            default:
+              continue;
+          }
+          sequence = delta.sequence;
+        }
+        next = {
+          ...next,
+          removedAt: removedAt ?? next.removedAt,
+          snapshot: Option.some(applyShellStreamEvents(next.snapshot.value, deltas)),
+          status: waiting ? "synchronizing" : "live",
+          error: Option.none(),
+        };
+      }
+      deltas = [];
+    };
     for (const item of items) {
+      if (item.kind !== "snapshot" && item.kind !== "synchronized") {
+        deltas.push(item);
+        continue;
+      }
+      // Snapshots can reset the cursor; completion markers change the sync status.
+      flushDeltas();
       if (item.kind === "synchronized") {
         waiting = false;
         if (Option.isSome(next.snapshot)) {
@@ -222,46 +273,24 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         }
         continue;
       }
-      const authoritative =
-        item.kind === "snapshot" && item.resolvedRepositoryIdentityRoots === undefined;
-      const nextSnapshot =
-        item.kind === "snapshot"
-          ? mergeShellSnapshotProjects(
-              Option.getOrNull(next.snapshot),
-              item.snapshot,
-              item.resolvedRepositoryIdentityRoots === undefined
-                ? undefined
-                : {
-                    resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots,
-                  },
-            )
-          : Option.match(next.snapshot, {
-              onNone: () => null,
-              onSome: (snapshot) =>
-                item.sequence > snapshot.snapshotSequence
-                  ? applyShellStreamEvent(snapshot, item)
-                  : snapshot,
-            });
-      if (nextSnapshot === null) continue;
-      receivedSnapshot ||= item.kind === "snapshot";
-      const removal =
-        item.kind === "thread.removed" &&
-        Option.exists(next.snapshot, (snapshot) => item.sequence > snapshot.snapshotSequence)
-          ? item
-          : null;
+      const authoritative = item.resolvedRepositoryIdentityRoots === undefined;
+      const nextSnapshot = mergeShellSnapshotProjects(
+        Option.getOrNull(next.snapshot),
+        item.snapshot,
+        item.resolvedRepositoryIdentityRoots === undefined
+          ? undefined
+          : { resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots },
+      );
+      if (authoritative) receivedAuthoritativeSnapshot = true;
       next = {
         snapshot: Option.some(nextSnapshot),
         status: waiting ? "synchronizing" : "live",
         error: Option.none(),
         generation: authoritative ? ++lastShellGeneration : next.generation,
-        removedAt: authoritative
-          ? EMPTY_REMOVALS
-          : removal === null
-            ? next.removedAt
-            : new Map(next.removedAt).set(removal.threadId, removal.sequence),
+        removedAt: authoritative ? EMPTY_REMOVALS : next.removedAt,
       };
     }
-    /* oxlint-enable oxc/no-accumulating-spread */
+    flushDeltas();
     yield* Ref.set(awaitingCompletion, waiting);
     if (next === initial) return;
     if (pendingLinkIds !== undefined && Option.isSome(next.snapshot)) {
@@ -273,11 +302,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       yield* Ref.set(latestLiveSnapshot, next.snapshot);
     }
     yield* SubscriptionRef.set(state, next);
-    if (receivedSnapshot) {
-      const session = yield* Ref.get(activeSubscriptionSession);
-      if (session !== null) {
-        yield* Ref.set(lastAuthoritativeSession, session);
-      }
+    if (receivedAuthoritativeSnapshot && omission !== null) {
+      yield* Ref.set(authoritativeOmission, omission);
     }
     if (next.snapshot !== initial.snapshot && Option.isSome(next.snapshot)) {
       yield* Queue.offer(persistence, next.snapshot.value);
@@ -359,25 +385,42 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
   yield* setSynchronizing;
   yield* Effect.forkScoped(
-    subscribeDynamic(
+    subscribeDynamicWithSession(
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
-        yield* Ref.set(activeSubscriptionSession, session);
-        const { omitIdleSubagents, omitOlderSettled } = yield* session.initialConfig.pipe(
-          Effect.map((config) => ({
-            omitIdleSubagents: config.shellThreadFamilies === true,
-            omitOlderSettled:
-              config.shellOlderSettled === true && config.shellThreadFamilies === true,
-          })),
-          Effect.orElseSucceed(() => ({ omitIdleSubagents: false, omitOlderSettled: false })),
-        );
+        const { omitIdleSubagents, omitOlderSettled, omissionKey } =
+          yield* session.initialConfig.pipe(
+            Effect.map((config) => {
+              const omitIdleSubagents = config.shellThreadFamilies === true;
+              const omitOlderSettled = config.shellOlderSettled === true && omitIdleSubagents;
+              // Migrations rewrite projections without events, so an upgraded server reloads.
+              const { serverVersion, databaseMigration } = config.environment;
+              return {
+                omitIdleSubagents,
+                omitOlderSettled,
+                omissionKey: JSON.stringify([
+                  omitIdleSubagents,
+                  omitOlderSettled,
+                  serverVersion,
+                  databaseMigration ?? null,
+                ]),
+              };
+            }),
+            Effect.orElseSucceed(() => ({
+              omitIdleSubagents: false,
+              omitOlderSettled: false,
+              omissionKey: null,
+            })),
+          );
+        sessionOmissions.set(session, omissionKey);
         yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
 
-        // Foreground resubscriptions on the same live session can resume from
-        // the in-memory cursor. A new session reloads the authoritative HTTP
-        // snapshot so a valid cursor cannot preserve incomplete cached data.
-        const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
+        // A shell from a server snapshot resumes from its cursor, on this session or a
+        // new one. Cached data, other omissions, or another server build reload the
+        // authoritative HTTP snapshot so a valid cursor cannot preserve stale data.
+        const hasAuthoritativeSnapshot =
+          omissionKey !== null && (yield* Ref.get(authoritativeOmission)) === omissionKey;
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
         if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
@@ -412,7 +455,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
                 ? []
                 : httpSnapshot.value.threads.map((thread) => thread.id),
             );
-            yield* applyItems([{ kind: "snapshot", snapshot }], pendingLinkIds);
+            yield* applyItems([{ kind: "snapshot", snapshot }], omissionKey, pendingLinkIds);
             canResume = true;
             current = yield* SubscriptionRef.get(state);
             if (Option.isSome(current.snapshot)) {
@@ -439,7 +482,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEachArray((items) => applyItems(items))),
+    ).pipe(
+      Stream.runForEachArray((entries) =>
+        Effect.forEach(
+          groupBySession(entries),
+          ([session, items]) => applyItems(items, sessionOmissions.get(session) ?? null),
+          { discard: true },
+        ),
+      ),
+    ),
   );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {
