@@ -4750,4 +4750,24 @@ it("turns a question card into an unanswered quiz-card row", () => {
     answered: false,
   });
   expect(rows.some((entry) => entry.kind === "message")).toBe(false);
+
+  const withChangedFiles = deriveMessagesTimelineRows({
+    timelineEntries: [question, emptyReply],
+    isWorking: false,
+    turnDiffSummaries: [
+      {
+        runId: "turn-1" as never,
+        completedAt: at,
+        assistantMessageId: MessageId.make("empty"),
+        checkpointTurnCount: 1,
+        checkpointRef: "checkpoint-1" as never,
+        status: "ready",
+        files: [{ path: "src/index.ts", kind: "modified", additions: 1, deletions: 0 }],
+      },
+    ],
+    supportsConversationRollback: false,
+  });
+  expect(withChangedFiles.find((entry) => entry.kind === "message")).toMatchObject({
+    assistantTurnDiffSummary: { checkpointTurnCount: 1 },
+  });
 });

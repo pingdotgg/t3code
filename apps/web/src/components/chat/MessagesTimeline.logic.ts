@@ -2202,11 +2202,13 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     // A card ends the turn by design; Codex still closes it with an empty assistant message.
+    // Keep it when it carries the turn's changed files.
     if (
       timelineEntry.message.role === "assistant" &&
       !timelineEntry.message.streaming &&
       timelineEntry.message.text.trim() === "" &&
-      nextRows.at(-1)?.kind === "quiz-card"
+      nextRows.at(-1)?.kind === "quiz-card" &&
+      !turnDiffSummaryByAssistantMessageId.has(timelineEntry.message.id)
     ) {
       continue;
     }
