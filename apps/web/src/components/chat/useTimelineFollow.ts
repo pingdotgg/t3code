@@ -544,7 +544,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
 
   /** Arms the anchor for a message the user just sent, before its run exists. */
   const anchorNewTurn = (threadKey: string, messageId: MessageId) => {
-    followStore.dispatch(visit, { type: "followEnd" });
+    if (readFollow().mode !== "following") return;
     visitScroll().showScrollDebouncer.cancel();
     setShowScrollToBottom(false);
     setTimelineAnchor({ threadKey, messageId });
