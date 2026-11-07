@@ -21,6 +21,8 @@ export function usePullRequestAgentActions(
   const disabled = links.busy || (!pr && !params.initialSummary);
   const start = (task: PullRequestAgentTask, threadId?: string) => {
     if (disabled) return;
+    // Wait for the first linked-threads result so cold opens do not invent a duplicate draft.
+    if (pr && links.isPending && !threadId) return;
     const thread = pullRequestAgentThread(links.threads, threadId);
     if (threadId && threadId !== "new" && !thread) return;
     if (task === "ask" && thread && (!links.canAsk || thread.archivedAt)) {

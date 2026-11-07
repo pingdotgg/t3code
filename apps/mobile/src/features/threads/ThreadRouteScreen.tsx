@@ -188,9 +188,15 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
 function ThreadUnavailableScreen(props: {
   readonly actionLabel: string;
   readonly onAction: () => void;
+  readonly environmentId?: string | null;
+  readonly threadId?: string | null;
 }) {
   return (
-    <ThreadRouteFallbackLayout>
+    <ThreadRouteFallbackLayout
+      environmentId={props.environmentId}
+      threadId={props.threadId}
+      title="Thread unavailable"
+    >
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{
@@ -518,6 +524,8 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
 
   return withInspectorHeader(
     <ThreadUnavailableScreen
+      environmentId={environmentIdRaw}
+      threadId={threadIdRaw}
       actionLabel={
         routeEnvironmentRuntime === null ? "Manage environments" : "Reconnect environment"
       }

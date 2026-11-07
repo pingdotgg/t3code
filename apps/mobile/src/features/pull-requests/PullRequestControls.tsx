@@ -140,7 +140,8 @@ export function PullRequestActionToolbar(props: {
   // Keep the bar mounted from the list summary so PR→diff does not blank chrome.
   if (!props.pr && !props.params.initialSummary) return null;
   const primaryDisabled = pendingReview ? false : agent.disabled;
-  const showPrimary = pendingReview || canOpenThread || Boolean(props.params.initialSummary);
+  // Keep the bar for initialSummary, but do not offer Work on PR until detail exists.
+  const showPrimary = pendingReview || canOpenThread;
   if (Platform.OS === "android") {
     const primary = (
       <Button

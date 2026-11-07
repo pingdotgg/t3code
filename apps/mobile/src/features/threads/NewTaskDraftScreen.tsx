@@ -1024,8 +1024,17 @@ export function NewTaskDraftScreen(props: NewTaskDraftScreenProps) {
     <>
       <ThreadScreenBinding
         environmentId={selectedProject.environmentId}
-        // Same key as the open shell so git/files chrome is not torn down mid-push.
-        headerKey={["new-task", "chrome"]}
+        // Include the draft target so Files/git follow a project or workspace switch.
+        headerKey={[
+          "new-task",
+          "chrome",
+          selectedProject.environmentId,
+          selectedProject.id,
+          flow.workspaceMode,
+          flow.selectedBranchName ?? "",
+          flow.selectedWorktreePath ?? "",
+          composerWorkspaceCwd ?? "",
+        ]}
         header={
           <DraftThreadHeader thread={thread} project={selectedProject} cwd={composerWorkspaceCwd} />
         }

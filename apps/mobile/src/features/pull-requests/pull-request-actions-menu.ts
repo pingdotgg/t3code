@@ -131,15 +131,18 @@ export function buildPullRequestActionsMenu(
   handlers: PullRequestActionsMenuHandlers,
 ): AppBarMenu {
   const items: AppBarMenuItem[] = [];
+  // Reviews only apply to open change requests; comment/title/description can stay on closed ones.
   if (model.open && model.identity) {
+    items.push({
+      id: "submit-review",
+      title: "Submit review",
+      icon: "text.bubble",
+      disabled: !model.canSubmitReview,
+      onPress: handlers.onSubmitReview,
+    });
+  }
+  if (model.identity) {
     items.push(
-      {
-        id: "submit-review",
-        title: "Submit review",
-        icon: "text.bubble",
-        disabled: !model.canSubmitReview,
-        onPress: handlers.onSubmitReview,
-      },
       {
         id: "add-comment",
         title: "Add comment",

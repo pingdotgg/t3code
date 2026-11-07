@@ -32,6 +32,8 @@ const options = {
     "Settings",
     "SettingsAppearance",
     "GitOverview",
+    "AddProject",
+    "AddProjectLocal",
   ],
   routeParamList: {},
   routeGetIdList: {},
@@ -128,6 +130,12 @@ describe("selectWorkspaceDetail", () => {
     } finally {
       setNativelyPoppingWorkspaceRoute(null);
     }
+  });
+
+  it("resets instead of pushing when a creation overlay is already open", () => {
+    const creating = push(push(home(), "AddProject"), "AddProjectLocal");
+    const opened = select(creating, threadA);
+    expect(page(opened)).toEqual({ names: ["Home", "Thread"], index: 1 });
   });
 });
 

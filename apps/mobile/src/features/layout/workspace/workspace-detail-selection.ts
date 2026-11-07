@@ -94,8 +94,9 @@ function canPushWorkspaceDetail<
 >(state: State, sheet: WorkspaceDetailSheet | undefined, popping: string | null) {
   // A native Back in flight must go through RESET so we don't push on top of the leaving card.
   if (sheet || popping) return false;
-  const { workspace } = workspaceRoutesOf(state.routes.slice(0, state.index + 1));
-  return workspace.length === 1 && workspace[0]?.name === "Home";
+  const { workspace, overlays } = workspaceRoutesOf(state.routes.slice(0, state.index + 1));
+  // Overlay stacks (Add project, New task picker) must RESET so Back does not return into them.
+  return overlays.length === 0 && workspace.length === 1 && workspace[0]?.name === "Home";
 }
 
 /** Root stack router overrides that handle `selectWorkspaceDetail`. */

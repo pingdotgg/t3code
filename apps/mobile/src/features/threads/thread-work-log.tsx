@@ -531,6 +531,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       {props.activities[0]?.groupedToolDetail ? (
         <ThreadWorkGroupList
           activities={props.activities}
+          copiedRowId={props.copiedRowId}
           edgeFadeColor={props.edgeFadeColor}
           expandedRows={props.expandedRows}
           groupId={props.anchorKey}
@@ -601,6 +602,7 @@ const WORK_GROUP_MAINTAIN_SCROLL_AT_END = {
 
 function ThreadWorkGroupList(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
+  readonly copiedRowId: string | null;
   readonly edgeFadeColor: string;
   readonly expandedRows: Readonly<Record<string, boolean>>;
   readonly groupId: string;
@@ -703,8 +705,8 @@ function ThreadWorkGroupList(props: {
         }
         // Nested expand/measure needs stable cells; recycle remounts break append height.
         recycleItems={false}
-        // Expand map only — renderRow identity would invalidate every row on each feed tick.
-        extraData={props.expandedRows}
+        // Expand + copy feedback — renderRow identity would invalidate every row on each feed tick.
+        extraData={{ expandedRows: props.expandedRows, copiedRowId: props.copiedRowId }}
         renderItem={renderItem}
         sharedValues={sharedValues}
         onReady={handleReady}

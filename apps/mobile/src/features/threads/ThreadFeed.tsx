@@ -1248,9 +1248,9 @@ function AssistantMarkdownBlocks(props: {
       return streamParts.map((part, partIndex) => {
         if (part.trim().length === 0) return null;
         const settled = !trailing || partIndex < streamParts.length - 1;
-        // Prefix length is stable for finished stream blocks; the live tail uses "live".
+        // Prefix length alone collides when two settled parts share a length; index is stable.
         const partKey = settled
-          ? `markdown:${offset}:settled:${part.length}`
+          ? `markdown:${offset}:settled:${partIndex}`
           : `markdown:${offset}:live`;
         return settled ? (
           <SettledMarkdownText
