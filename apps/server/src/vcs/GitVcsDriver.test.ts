@@ -17,7 +17,12 @@ import { ChildProcessSpawner } from "effect/process";
 import * as Metric from "effect/Metric";
 import { assert, it } from "@effect/vitest";
 
-import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  GitCommandError,
+  VcsProcessExitError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
@@ -277,16 +282,30 @@ it.effect("checkpoint recovery discovers nested HEAD independently of inherited 
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-git-dir-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["init", "empty"]);
+    yield* git(["config", "core.sharedRepository", "group"]);
     const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
-    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }).pipe(
-      Effect.provideService(HostProcess.Environment, {
-        ...(yield* HostProcess.Environment),
-        GIT_DIR: path.join(cwd, ".git"),
-      }),
+    yield* fs.makeDirectory(path.join(cwd, "inherited-objects"));
+    const hostEnv = yield* HostProcess.Environment;
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => process.umask(0o022)),
+      () =>
+        driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }).pipe(
+          Effect.provideService(HostProcess.Environment, {
+            ...hostEnv,
+            GIT_DIR: path.join(cwd, ".git"),
+            GIT_OBJECT_DIRECTORY: path.join(cwd, "inherited-objects"),
+          }),
+        ),
+      (umask) => Effect.sync(() => process.umask(umask)),
     );
     assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
     assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", "empty"])).stdout, "");
     assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git", "index")), originalIndex);
+    if ((yield* HostProcess.Platform) !== "win32") {
+      const blob = (yield* git(["rev-parse", `${checkpointRef}:file.txt`])).stdout.trim();
+      const fanout = yield* fs.stat(path.join(cwd, ".git", "objects", blob.slice(0, 2)));
+      assert.strictEqual(fanout.mode & 0o020, 0o020);
+    }
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
@@ -364,6 +383,81 @@ it.effect("checkpoint capture refuses a truncated nested repository listing", ()
 
     assert.strictEqual(result._tag, "Failure");
     assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint capture removes the batch object directory a killed add leaves", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-killed-add-" });
+    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const gitDir = path.join(cwd, ".git");
+    const objects = path.join(gitDir, "objects");
+    yield* fs.makeDirectory(path.join(objects, "tmp_objdir-bulk-fsync-other"));
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) =>
+          input.args.includes("add")
+            ? fs
+                .makeDirectory(
+                  path.join(
+                    input.env?.GIT_OBJECT_DIRECTORY ?? objects,
+                    "tmp_objdir-bulk-fsync-killed",
+                    "ab",
+                  ),
+                  { recursive: true },
+                )
+                .pipe(
+                  Effect.orDie,
+                  Effect.andThen(
+                    Effect.fail(
+                      new VcsProcessTimeoutError({
+                        operation: input.operation,
+                        command: input.command,
+                        cwd: input.cwd,
+                        timeoutMs: 30_000,
+                      }),
+                    ),
+                  ),
+                )
+            : liveProcess.run(input),
+      }),
+    );
+
+    const result = yield* Effect.result(
+      captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
+    assert.deepEqual(
+      (yield* fs.readDirectory(objects)).filter(
+        (entry) => entry.startsWith("tmp_objdir-") || entry.startsWith("t3-checkpoint-"),
+      ),
+      ["tmp_objdir-bulk-fsync-other"],
+    );
+    assert.deepEqual(
+      (yield* fs.readDirectory(gitDir)).filter((entry) => entry.startsWith("t3-checkpoint-")),
+      [],
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint capture publishes the pack Git writes for a large file", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-large-file-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["config", "core.bigFileThreshold", "1"]);
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+    assert.isNotEmpty(yield* fs.readDirectory(path.join(cwd, ".git", "objects", "pack")));
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
@@ -622,7 +716,10 @@ it.effect.each(
           },
         }),
       );
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-sparse-" });
+      const hostPlatform = yield* HostProcess.Platform;
+      const cwd = yield* fs.makeTempDirectoryScoped({
+        prefix: `t3-checkpoint-sparse-${hostPlatform === "win32" ? ";" : ":"}`,
+      });
       const { git } = yield* makeCheckpointFixture(driver, cwd);
       const write = Effect.fn(function* (name: string, contents: string) {
         yield* fs.makeDirectory(path.dirname(path.join(cwd, name)), { recursive: true });
