@@ -5957,17 +5957,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               event.status === "completed" &&
               nativeThreadId != null
             ) {
+              const next = yield* Deferred.make<ActiveCodexTurnContext | undefined>();
               goalHolds.set(nativeThreadId, {
                 context: input.context,
                 event,
                 completedTurn: input.goalHoldTurn,
-                next: yield* Deferred.make<ActiveCodexTurnContext | undefined>(),
+                next,
               });
               yield* Effect.sleep(CODEX_GOAL_CONTINUATION_GRACE).pipe(
                 Effect.andThen(pauseUncontinuedGoal(nativeThreadId, event)),
                 Effect.andThen(
                   turnTerminalizationPermit.withPermits(1)(releaseGoalHold(nativeThreadId, event)),
                 ),
+                Effect.onInterrupt(() => Deferred.succeed(next, undefined)),
                 // The grace window starts when the turn completes, not when the fiber is scheduled.
                 Effect.forkIn(scope, { startImmediately: true }),
               );
@@ -6556,6 +6558,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     );
                   }),
                 ),
+                Effect.onInterrupt(() => Deferred.succeed(pending, undefined)),
                 Effect.forkIn(scope, { startImmediately: true }),
               );
               return true;
