@@ -415,7 +415,6 @@ it.effect.each(forkCases)(
         createdBy: "user",
         creationSource: "web",
       });
-      yield* TestClock.adjust("1 second");
       const rewoundAt = yield* DateTime.now;
       for (const [threadId, runId] of [
         [sourceThreadId, sourceRunId],

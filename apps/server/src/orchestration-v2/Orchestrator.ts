@@ -7098,7 +7098,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             projectionStore,
             sourceProjection,
             sourceRun,
-            projection.thread.createdAt,
+            projection.thread.id,
           ).pipe(
             Effect.mapError(
               (cause) =>
