@@ -759,6 +759,227 @@ function assertReinjectedInstructions(
   assert.include(text, `<user_request>\n${request}\n</user_request>`);
 }
 
+// With `hydration`, an outputless task_completed meets a TaskOutput result in `order`.
+const runGrokMonitorEndingMidTurn = Effect.fnUntraced(function* (input: {
+  readonly hydration?: "completed" | "failed";
+  readonly order?: "hydration-last" | "hydration-first";
+  readonly hydrations?: number;
+}) {
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const path = yield* Path.Path;
+  const selfInvocation = yield* resolveSelfInvocation();
+  const mockAgentPath = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+  );
+  type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+  let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+  const extNotifications = new Map<
+    string,
+    (payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>
+  >();
+  const promptStarted = yield* Deferred.make<void>();
+  const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+  const promptHeld = yield* Deferred.make<void>();
+  const instanceId = ProviderInstanceId.make("acp-test");
+  const grokFlavor = makeGrokAcpAdapterFlavor(
+    {
+      instanceId,
+      settings: DEFAULT_GROK_SETTINGS,
+      environment: {},
+      hostPlatform: yield* HostProcess.Platform,
+      selfInvocation,
+    },
+    yield* HostProcess.HomeDirectory,
+  );
+  const adapter = yield* makeAcpAdapterV2({
+    instanceId,
+    selfInvocation,
+    testHooks: {
+      afterPromptSettledWithBackgroundWork: () =>
+        Deferred.succeed(promptHeld, undefined).pipe(Effect.asVoid),
+    },
+    flavor: {
+      driver: ACP_TEST_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      enablePostSettleContinuation: true,
+      deferFinalizeForBackgroundWork: true,
+      normalizeToolCall: grokFlavor.normalizeToolCall!,
+      extractBackgroundTaskId: grokFlavor.extractBackgroundTaskId!,
+      isBackgroundCommandTool: grokFlavor.isBackgroundCommandTool!,
+      isPersistentBackgroundTool: grokFlavor.isPersistentBackgroundTool!,
+      extractBackgroundTaskCompletion: grokFlavor.extractBackgroundTaskCompletion!,
+      registerExtensions: ({ runtime, applyBackgroundTaskMutation }) =>
+        registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation),
+      makeRuntime: makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          handleSessionUpdate: (handler) =>
+            Effect.sync(() => {
+              sessionUpdateHandler = handler;
+            }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+          handleExtNotification: (method, schema, handler) =>
+            Effect.sync(() => {
+              extNotifications.set(method, (payload) =>
+                handler(Schema.decodeUnknownSync(schema)(payload)),
+              );
+            }).pipe(Effect.andThen(runtime.handleExtNotification(method, schema, handler))),
+          prompt: () =>
+            Deferred.succeed(promptStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(promptGate)),
+            ),
+        }),
+      }),
+    },
+    continuationRequests: { offer: () => Effect.void },
+  });
+  const threadId = ThreadId.make("thread-acp-grok-monitor-completed-mid-turn");
+  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: process.cwd(),
+  });
+  const modelSelection = { instanceId, model: "default" } as const;
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-acp-grok-monitor-mid-turn"),
+    modelSelection,
+    runtimePolicy,
+  });
+  const monitorToolCallId = "call-monitor-job1";
+  const monitorStatuses: Array<string> = [];
+  const monitorOutputs: Array<string> = [];
+  const terminal = yield* Deferred.make<string>();
+  yield* runtime.events.pipe(
+    Stream.runForEach((event) =>
+      Effect.gen(function* () {
+        if (
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === monitorToolCallId
+        ) {
+          monitorStatuses.push(event.turnItem.status);
+          if (event.turnItem.type === "command_execution") {
+            monitorOutputs.push(event.turnItem.output ?? "");
+          }
+        }
+        if (event.type === "turn.terminal") {
+          yield* Deferred.succeed(terminal, event.status);
+        }
+      }),
+    ),
+    Effect.forkScoped,
+  );
+  const providerThread = yield* runtime.ensureThread({
+    threadId,
+    modelSelection,
+    runtimePolicy,
+  });
+  const now = yield* DateTime.now;
+  yield* runtime
+    .startTurn(
+      makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+    )
+    .pipe(Effect.forkScoped);
+  yield* Deferred.await(promptStarted);
+  const update = (update: EffectAcpSchema.SessionUpdate) =>
+    sessionUpdateHandler!({ sessionId: "mock-session-1", update });
+  const ext = (method: string, update: Record<string, unknown>) =>
+    extNotifications.get(method)!({ sessionId: "mock-session-1", update });
+
+  // Frame order from Grok CLI 1.0.70; every monitor frame precedes the prompt response.
+  const taskId = "a9b6879f-acea-447f-8d25-e0d4bbb2f2a9";
+  const command = "while [ ! -f job1.done ]; do sleep 2; done; echo job1 finished";
+  const xAiMonitorMeta = {
+    "x.ai/tool": { version: 1, name: "monitor", kind: "monitor", label: "Monitor" },
+  };
+  yield* update({
+    sessionUpdate: "tool_call",
+    toolCallId: monitorToolCallId,
+    title: "monitor",
+    rawInput: { command, description: "Watch job1 done file" },
+    _meta: xAiMonitorMeta,
+  });
+  yield* update({
+    sessionUpdate: "tool_call_update",
+    toolCallId: monitorToolCallId,
+    kind: "other",
+    title: "Start monitor: Watch job1 done file",
+    rawInput: {
+      variant: "Monitor",
+      command,
+      description: "Watch job1 done file",
+      timeout_ms: 36000000,
+      persistent: false,
+    },
+    _meta: xAiMonitorMeta,
+  });
+  yield* ext("_x.ai/task_backgrounded", {
+    sessionUpdate: "task_backgrounded",
+    tool_call_id: monitorToolCallId,
+    task_id: taskId,
+    command,
+    monitor_description: "Watch job1 done file",
+    description: "Watch job1 done file",
+  });
+  yield* update({
+    sessionUpdate: "tool_call_update",
+    toolCallId: monitorToolCallId,
+    status: "completed",
+    rawOutput: { type: "Monitor", taskId, timeoutMs: 36000000, persistent: false },
+  });
+  const taskCompleted = ext("_x.ai/task_completed", {
+    sessionUpdate: "task_completed",
+    task_snapshot: {
+      task_id: taskId,
+      command,
+      display_command: "[monitor] Watch job1 done file",
+      ...(input.hydration === undefined ? { output: "job1 finished\n" } : {}),
+    },
+  });
+  const hydration = input.hydration;
+  const hydrate =
+    hydration === undefined
+      ? Effect.void
+      : Effect.forEach(
+          Array.from({ length: input.hydrations ?? 1 }, (_, index) => index),
+          (index) =>
+            update({
+              sessionUpdate: "tool_call",
+              toolCallId: `call-fetch-job1-${index}`,
+              title: "get_command_or_subagent_output",
+              status: "completed",
+              rawInput: { task_id: taskId },
+              rawOutput: {
+                type: "TaskOutput",
+                Result: { task_id: taskId, status: hydration, output: "HYDRATED_RESULT\n" },
+              },
+            }),
+          { discard: true },
+        );
+  if (input.order === "hydration-first") {
+    yield* hydrate;
+    yield* taskCompleted;
+  } else {
+    yield* taskCompleted;
+    yield* hydrate;
+  }
+  yield* update({
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: "ALL_JOBS_DONE" },
+  });
+  yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+
+  yield* Effect.raceFirst(Deferred.await(promptHeld), Deferred.await(terminal));
+  const settled = yield* Deferred.await(terminal).pipe(
+    Effect.timeoutOption("1 minute"),
+    Effect.forkScoped,
+  );
+  yield* TestClock.adjust("1 minute");
+  const terminalStatus = yield* Fiber.join(settled);
+  return { monitorStatuses, monitorOutputs, terminalStatus };
+});
+
 describe("AcpAdapterV2", () => {
   it.live("reports per-turn usage unavailable on a continuation turn that never prompts", () =>
     Effect.gen(function* () {
@@ -9023,6 +9244,41 @@ describe("AcpAdapterV2", () => {
           1,
           "duplicate completions must not offer another continuation",
         );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("finalizes the root turn when a Grok monitor completes before the prompt settles", () =>
+    Effect.gen(function* () {
+      const { monitorStatuses, terminalStatus } = yield* runGrokMonitorEndingMidTurn({});
+      assert.equal(
+        monitorStatuses.at(-1),
+        "completed",
+        "a monitor whose task_completed arrived before the prompt settled must not stay running",
+      );
+      assert.deepEqual(
+        terminalStatus,
+        Option.some("completed"),
+        "the root turn must finalize after end_turn once its only monitor has completed",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    { hydration: "completed", order: "hydration-last", hydrations: 1 },
+    { hydration: "failed", order: "hydration-last", hydrations: 1 },
+    { hydration: "completed", order: "hydration-first", hydrations: 1 },
+    { hydration: "failed", order: "hydration-first", hydrations: 1 },
+    { hydration: "completed", order: "hydration-last", hydrations: 2 },
+  ] as const)(
+    "keeps $hydrations mid-turn $hydration TaskOutput hydration ($order) over an outputless monitor end",
+    (input) =>
+      Effect.gen(function* () {
+        const { hydration } = input;
+        const { monitorStatuses, monitorOutputs, terminalStatus } =
+          yield* runGrokMonitorEndingMidTurn(input);
+        assert.equal(monitorStatuses.at(-1), hydration);
+        assert.equal(monitorOutputs.at(-1), "HYDRATED_RESULT");
+        assert.deepEqual(terminalStatus, Option.some("completed"));
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

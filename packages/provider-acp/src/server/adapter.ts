@@ -3929,15 +3929,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         backgroundCompletion.appendOutput,
                       )
                   : { ...target, status: nextStatus };
-              // BackgroundTaskStarted normalization can reopen this row, so keep the
-              // completion for settlement when no task_completed recorded one.
-              if (
-                backgroundCompletion.status !== "running" &&
-                context.backgroundCommands.get(backgroundCompletion.taskId) === null
-              ) {
+              // BackgroundTaskStarted normalization can reopen this row, so settlement
+              // replays the newest completion; a hydration never undoes a known failure.
+              const cached = context.backgroundCommands.get(backgroundCompletion.taskId);
+              if (backgroundCompletion.status !== "running") {
                 context.backgroundCommands.set(backgroundCompletion.taskId, {
-                  status: backgroundCompletion.status,
-                  output: toolOutputText(hydrated),
+                  status: cached?.status === "failed" ? "failed" : backgroundCompletion.status,
+                  output: !cached
+                    ? toolOutputText(hydrated)
+                    : backgroundCompletion.appendOutput.length > 0
+                      ? backgroundCompletion.appendOutput
+                      : (cached.output ?? toolOutputText(hydrated)),
                 });
               }
               yield* emitTool(context, hydrated);
@@ -6783,13 +6785,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if ((yield* Ref.get(activeSessionId)) !== incoming.sessionId) return;
                     const context = yield* Ref.get(activeTurn);
                     let mutation = incoming;
-                    if (
-                      incoming.status !== "running" &&
-                      context !== null &&
-                      !context.finalized &&
-                      (incoming.report?.kind === "command" ||
-                        context.backgroundCommands.has(incoming.taskId))
-                    ) {
+                    if (incoming.status !== "running" && context !== null && !context.finalized) {
                       const previous = context.backgroundCommands.get(incoming.taskId);
                       const toolCallId = context.toolCallIdsByBackgroundTaskId.get(incoming.taskId);
                       const tool =
