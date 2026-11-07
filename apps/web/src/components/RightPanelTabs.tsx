@@ -1022,8 +1022,68 @@ function RightPanelTab(
   );
 }
 
+export type PullRequestAttentionPulse = {
+  scope: string | null;
+  surfaceId: string | null;
+  requestId: number;
+  key: number;
+};
+
+/** Same focused PR in the same panel with a bumped request id → pulse; a new scope only baselines. */
+export function nextPullRequestAttentionPulse(
+  current: PullRequestAttentionPulse,
+  focused: { scope: string; id: string; requestId: number } | null,
+): PullRequestAttentionPulse {
+  if (focused === null) {
+    return current.surfaceId === null && current.scope === null
+      ? current
+      : { scope: null, surfaceId: null, requestId: 0, key: current.key };
+  }
+  const sameSurface = current.scope === focused.scope && current.surfaceId === focused.id;
+  if (sameSurface && current.requestId !== focused.requestId) {
+    return {
+      scope: focused.scope,
+      surfaceId: focused.id,
+      requestId: focused.requestId,
+      key: current.key + 1,
+    };
+  }
+  if (!sameSurface || current.requestId !== focused.requestId) {
+    return {
+      scope: focused.scope,
+      surfaceId: focused.id,
+      requestId: focused.requestId,
+      key: current.key,
+    };
+  }
+  return current;
+}
+
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+  // widthStorageKey is per-thread in chat, so a thread switch does not inherit the prior baseline.
+  const attentionScope = props.widthStorageKey ?? props.environmentId ?? "";
+  const focusedPullRequestAttention =
+    focusedSurface?.kind === "pull-request"
+      ? {
+          scope: attentionScope,
+          id: focusedSurface.id,
+          requestId: focusedSurface.attentionRequestId ?? 0,
+        }
+      : null;
+  const [pullRequestAttentionPulse, setPullRequestAttentionPulse] = useState({
+    scope: null as string | null,
+    surfaceId: null as string | null,
+    requestId: 0,
+    key: 0,
+  });
+  const nextAttentionPulse = nextPullRequestAttentionPulse(
+    pullRequestAttentionPulse,
+    focusedPullRequestAttention,
+  );
+  if (nextAttentionPulse !== pullRequestAttentionPulse) {
+    setPullRequestAttentionPulse(nextAttentionPulse);
+  }
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
@@ -1521,7 +1581,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           />
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
+      <div className="relative flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
+        {pullRequestAttentionPulse.key > 0 ? (
+          <div
+            key={pullRequestAttentionPulse.key}
+            aria-hidden
+            className="pointer-events-none absolute inset-0 z-20 motion-safe:animate-right-panel-attention-pulse"
+          />
+        ) : null}
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}
