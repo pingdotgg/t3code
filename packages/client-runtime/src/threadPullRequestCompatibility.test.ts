@@ -2,6 +2,7 @@ import type { ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  canStartThreadPullRequestWatch,
   planThreadPullRequestMutation,
   threadPullRequestLinkMode,
 } from "./threadPullRequestCompatibility.ts";
@@ -56,5 +57,29 @@ describe("thread pull request capability negotiation", () => {
         number: reference.number,
       },
     });
+  });
+
+  it("offers a new watch only where the server accepts one", () => {
+    const active = {
+      archivedAt: null,
+      settledAt: null,
+      settledOverride: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: input.threadId },
+    } as const;
+    expect(canStartThreadPullRequestWatch(active)).toBe(true);
+    expect(canStartThreadPullRequestWatch({ ...active, settledOverride: "active" })).toBe(true);
+    expect(canStartThreadPullRequestWatch({ ...active, settledOverride: "settled" })).toBe(false);
+    expect(canStartThreadPullRequestWatch({ ...active, settledAt: "2026-01-01T00:00:00Z" })).toBe(
+      false,
+    );
+    expect(canStartThreadPullRequestWatch({ ...active, archivedAt: "2026-01-01T00:00:00Z" })).toBe(
+      false,
+    );
+    expect(
+      canStartThreadPullRequestWatch({
+        ...active,
+        lineage: { ...active.lineage, relationshipToParent: "subagent" },
+      }),
+    ).toBe(false);
   });
 });
