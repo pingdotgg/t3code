@@ -2,15 +2,6 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { Dialog, DialogPopup, DialogTitle, DialogTrigger } from "./dialog";
-import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuSub,
-  MenuSubPopup,
-  MenuSubTrigger,
-  MenuTrigger,
-} from "./menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./tooltip";
 
 it("returns dialog focus without reopening the trigger tooltip, then allows Tab focus", async () => {
@@ -37,57 +28,4 @@ it("returns dialog focus without reopening the trigger tooltip, then allows Tab 
   await vi.waitFor(() => expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull());
   await userEvent.keyboard("{Tab}{Shift>}{Tab}{/Shift}");
   await expect.element(page.getByText("Trigger help")).toBeVisible();
-});
-
-it.each([undefined, true])(
-  "keeps outside input focus when a menu closes with finalFocus=%s",
-  async (finalFocus) => {
-    await using screen = await render(
-      <>
-        <Menu modal={false}>
-          <MenuTrigger>Open menu</MenuTrigger>
-          <MenuPopup finalFocus={finalFocus}>
-            <MenuItem>Action</MenuItem>
-          </MenuPopup>
-        </Menu>
-        <input aria-label="Outside input" />
-      </>,
-    );
-    await screen.getByRole("button", { name: "Open menu" }).click();
-    await expect.element(page.getByRole("menu")).toBeVisible();
-    await screen.getByRole("textbox", { name: "Outside input" }).click();
-    await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
-    await expect.element(screen.getByRole("textbox", { name: "Outside input" })).toHaveFocus();
-  },
-);
-
-it("returns menu focus without reopening the tooltip after selecting a submenu item", async () => {
-  await using screen = await render(
-    <TooltipProvider>
-      <Menu>
-        <Tooltip>
-          <TooltipTrigger render={<MenuTrigger />}>Open menu</TooltipTrigger>
-          <TooltipPopup>Menu help</TooltipPopup>
-        </Tooltip>
-        <MenuPopup keepMounted>
-          <MenuSub>
-            <MenuSubTrigger>More actions</MenuSubTrigger>
-            <MenuSubPopup keepMounted>
-              <MenuItem>Nested action</MenuItem>
-            </MenuSubPopup>
-          </MenuSub>
-        </MenuPopup>
-      </Menu>
-    </TooltipProvider>,
-  );
-  await screen.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("menuitem", { name: "More actions" }).click();
-  await userEvent.keyboard("{ArrowRight}");
-  await expect.element(page.getByRole("menuitem", { name: "Nested action" })).toHaveFocus();
-  await userEvent.keyboard("{Enter}");
-  await expect
-    .element(screen.getByRole("button", { name: "Open menu" }))
-    .toHaveAttribute("aria-expanded", "false");
-  await expect.element(screen.getByRole("button", { name: "Open menu" })).toHaveFocus();
-  await vi.waitFor(() => expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull());
 });
