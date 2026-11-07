@@ -227,6 +227,7 @@ export function AppBar(props: AppBarProps) {
               disabled={props.confirm.disabled}
               onPress={props.confirm.onPress}
               menuTitle={props.confirm.menu.status ?? props.confirm.menu.title}
+              visibilityPriority="high"
               separateBackground
             >
               {renderNativeHeaderMenuItems(props.confirm.menu.items)}
