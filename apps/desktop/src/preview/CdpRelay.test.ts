@@ -132,8 +132,71 @@ describe("CDP relay", () => {
 });
 
 describe("CDP relay extra sessions", () => {
-  it("gives a second page session the page's commands and events", async () => {
-    const send = vi.fn(async () => ({}));
+  it.each(
+    [
+      { committed: true, newerSucceeds: false, olderSucceeds: false },
+      { committed: true, newerSucceeds: true, olderSucceeds: false },
+      { committed: false, newerSucceeds: true, olderSucceeds: false },
+      { committed: false, newerSucceeds: false, olderSucceeds: true },
+      { committed: false, newerSucceeds: false, olderSucceeds: false },
+    ].flatMap((scenario) => [true, false].map((olderFirst) => ({ ...scenario, olderFirst }))),
+  )(
+    "preserves only committed streams across overlapping starts (%j)",
+    async ({ committed, newerSucceeds, olderSucceeds, olderFirst }) => {
+      const send = vi.fn<CdpRelayTarget["send"]>(async () => ({}));
+      const written: Array<Record<string, unknown>> = [];
+      const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
+      const command = (id: number, method: string, params = {}) =>
+        relay.receive(JSON.stringify({ id, method, params, sessionId: "t3-preview-page" }));
+      const frame = (sessionId: number) =>
+        relay.event("Page.screencastFrame", { data: "x", sessionId }, undefined);
+      const frames = () =>
+        written.filter((message) => message["method"] === "Page.screencastFrame");
+      relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach" }));
+      if (committed) {
+        command(2, "Page.startScreencast");
+        await settle();
+        frame(7);
+        expect(frames()).toHaveLength(1);
+      }
+      await settle();
+      written.length = 0;
+      const older = Promise.withResolvers<unknown>();
+      const newer = Promise.withResolvers<unknown>();
+      send.mockImplementationOnce(() => older.promise).mockImplementationOnce(() => newer.promise);
+      command(3, "Page.startScreencast");
+      command(4, "Page.startScreencast");
+      frame(8);
+      expect(frames()).toEqual([]);
+      for (const [pending, succeeds] of olderFirst
+        ? ([
+            [older, olderSucceeds],
+            [newer, newerSucceeds],
+          ] as const)
+        : ([
+            [newer, newerSucceeds],
+            [older, olderSucceeds],
+          ] as const)) {
+        if (succeeds) pending.resolve({});
+        else pending.reject(new Error("Refused"));
+        await settle();
+      }
+      if (committed) {
+        frame(9);
+        expect(frames()).toEqual([]);
+        command(5, "Page.screencastFrameAck", { sessionId: 7 });
+      }
+      frame(9);
+      frame(9);
+      expect(frames()).toHaveLength(committed || newerSucceeds || olderSucceeds ? 1 : 0);
+      expect(written.filter((message) => message["error"])).toHaveLength(
+        Number(!olderSucceeds) + Number(!newerSucceeds),
+      );
+    },
+  );
+
+  it("bounds screencast delivery independently for each page session", async () => {
+    const send = vi.fn<CdpRelayTarget["send"]>(async () => ({}));
     const written: Array<Record<string, unknown>> = [];
     const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
@@ -165,8 +228,79 @@ describe("CDP relay extra sessions", () => {
     await settle();
     expect(send).toHaveBeenLastCalledWith("Page.startScreencast", {}, undefined, extra);
     written.length = 0;
-    relay.event("Page.screencastFrame", { data: "x" }, undefined);
-    expect(written.map((m) => m["sessionId"])).toEqual(["t3-preview-page", extra]);
+    const frame = (sessionId = 7) =>
+      relay.event("Page.screencastFrame", { data: "x", sessionId }, undefined);
+    for (let i = 0; i < 100; i++) frame();
+    expect(written).toHaveLength(1);
+    expect(written.map((m) => m["sessionId"])).toEqual([extra]);
+
+    relay.receive(
+      JSON.stringify({
+        id: 6,
+        method: "Page.startScreencast",
+        sessionId: "t3-preview-page",
+      }),
+    );
+    await settle();
+    written.length = 0;
+    frame();
+    expect(written.map((m) => m["sessionId"])).toEqual(["t3-preview-page"]);
+    const acknowledge = (sessionId: string, frameId = 7) =>
+      relay.receive(
+        JSON.stringify({
+          id: 7,
+          method: "Page.screencastFrameAck",
+          params: { sessionId: frameId },
+          sessionId,
+        }),
+      );
+    acknowledge(extra);
+    await settle();
+    written.length = 0;
+    frame();
+    frame();
+    expect(written.map((m) => m["sessionId"])).toEqual([extra]);
+    expect(send.mock.calls.filter(([method]) => method === "Page.screencastFrameAck")).toEqual([]);
+
+    relay.receive(JSON.stringify({ id: 8, method: "Page.stopScreencast", sessionId: extra }));
+    relay.receive(JSON.stringify({ id: 9, method: "Page.startScreencast", sessionId: extra }));
+    await settle();
+    written.length = 0;
+    frame(8);
+    expect(written).toEqual([]);
+    acknowledge(extra);
+    await settle();
+    written.length = 0;
+    frame(8);
+    acknowledge(extra); // A late acknowledgement from the previous stream must not release this one.
+    await settle();
+    written.length = 0;
+    frame(8);
+    expect(written).toEqual([]);
+    acknowledge(extra, 8);
+    await settle();
+    written.length = 0;
+    frame(8);
+    expect(written.map((m) => m["sessionId"])).toEqual([extra]);
+
+    const restarting = Promise.withResolvers<unknown>();
+    send.mockReturnValueOnce(restarting.promise);
+    relay.receive(JSON.stringify({ id: 10, method: "Page.startScreencast", sessionId: extra }));
+    relay.receive(
+      JSON.stringify({
+        id: 11,
+        method: "Target.detachFromTarget",
+        params: { sessionId: extra },
+      }),
+    );
+    restarting.resolve({});
+    await settle();
+    written.length = 0;
+    frame(8);
+    expect(written).toEqual([]);
+    // Other protocol events still reach the main page session while its frame is pending.
+    relay.event("Page.loadEventFired", { timestamp: 1 }, undefined);
+    expect(written.map((m) => m["method"])).toEqual(["Page.loadEventFired"]);
   });
 });
 
