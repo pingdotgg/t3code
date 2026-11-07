@@ -14,7 +14,6 @@ vi.hoisted(() => window.localStorage.removeItem("t3code:layout-state:v2"));
 
 import { act, render } from "../../test/render";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
-import { openLayoutNewThreadTab } from "../layout/layoutActions";
 import {
   createLayoutState,
   findLayoutSurfaceTabs,
@@ -24,6 +23,7 @@ import {
 } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import { useLayoutSurfaceSync } from "../layout/surfaceSync";
+import { isMacPlatform } from "../lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
@@ -50,6 +50,20 @@ function pressEscape(): KeyboardEvent {
   const event = new KeyboardEvent("keydown", { key: "Escape", cancelable: true, bubbles: true });
   window.dispatchEvent(event);
   return event;
+}
+
+function pressNewLocalThread() {
+  const mac = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "n",
+      metaKey: mac,
+      ctrlKey: !mac,
+      shiftKey: true,
+      cancelable: true,
+      bubbles: true,
+    }),
+  );
 }
 
 function selectThread(threadKey: string) {
@@ -156,7 +170,9 @@ describe("chat route commands", () => {
     );
     const router = {
       state: {
-        matches: [{ params: { draftId: routeDraft } }],
+        matches: [
+          { routeId: "/_chat", pathname: "/draft/route-draft", params: { draftId: routeDraft } },
+        ],
         location: { pathname: "/draft/route-draft", href: "/draft/route-draft", search: {} },
       },
       navigate,
@@ -170,7 +186,7 @@ describe("chat route commands", () => {
     for (const tab of content) {
       useLayoutStore.getState().openTab(tab);
       navigate.mockClear();
-      expect(openLayoutNewThreadTab()).toBe(true);
+      pressNewLocalThread();
       await vi.waitFor(() => expect(navigate).toHaveBeenCalledOnce());
       const request = navigate.mock.calls[0]![0];
       expect(
