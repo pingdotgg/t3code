@@ -140,6 +140,17 @@ export function upsertRoute(
       insertRoute(routes, route, { aheadOfSameKind: true });
 }
 
+/** Moves a saved route to the front so the next cold start tries it first. */
+export function preferRoute(
+  routes: ReadonlyArray<ConnectionRoute>,
+  routeId: string,
+): ReadonlyArray<ConnectionRoute> {
+  const index = routes.findIndex((route) => connectionRouteId(route.target) === routeId);
+  if (index <= 0) return routes;
+  const preferred = routes[index]!;
+  return [preferred, ...routes.slice(0, index), ...routes.slice(index + 1)];
+}
+
 export function findRouteToSameAddress(
   routes: ReadonlyArray<ConnectionRoute>,
   route: ConnectionRoute,
@@ -354,6 +365,35 @@ export function sendsTokenInClear(
 export function usableRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<ConnectionRoute> {
   const routes = connectionRoutes(entry);
   return routes.filter((route) => !sendsTokenInClear(routes, route));
+}
+
+/**
+ * Drops LAN routes when the device is not on a private network, unless that
+ * would leave the environment with no route at all.
+ */
+export function routesForNetwork(
+  entry: ConnectionCatalogEntry,
+  privateNetworkLikely: boolean,
+): ReadonlyArray<ConnectionRoute> {
+  const routes = usableRoutes(entry);
+  if (privateNetworkLikely) return routes;
+  const withoutLan = routes.filter((route) => connectionRouteKind(route) !== "lan");
+  return withoutLan.length > 0 ? withoutLan : routes;
+}
+
+/** T3 Connect relay and learned/saved t3-connect bearer routes need a DPoP access token. */
+export function routeUsesDpop(route: ConnectionRoute): boolean {
+  if (route.target._tag === "RelayConnectionTarget") return true;
+  const profile = Option.getOrNull(route.profile);
+  return profile?._tag === "BearerConnectionProfile" && profile.authorization === "t3-connect";
+}
+
+export function entryUsesDpop(entry: ConnectionCatalogEntry): boolean {
+  return connectionRoutes(entry).some(routeUsesDpop);
+}
+
+export function routesIncludeLan(routes: ReadonlyArray<ConnectionRoute>): boolean {
+  return routes.some((route) => connectionRouteKind(route) === "lan");
 }
 
 export interface ReportedEndpoint {

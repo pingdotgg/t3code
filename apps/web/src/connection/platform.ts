@@ -74,6 +74,8 @@ function currentNetworkStatus(): "unknown" | "offline" | "online" {
 
 const layerConnectivity = Connectivity.layer({
   status: Effect.sync(currentNetworkStatus),
+  // Browsers rarely expose a reliable cellular/Wi-Fi split; keep LAN routes eligible.
+  privateNetworkLikely: Effect.succeed(true),
   changes: Stream.callback((queue) =>
     Effect.acquireRelease(
       Effect.sync(() => {

@@ -41,6 +41,15 @@ function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "on
   return "unknown";
 }
 
+function privateNetworkLikely(state: Network.NetworkState): boolean {
+  if (state.isConnected !== true) return false;
+  return (
+    state.type === Network.NetworkStateType.WIFI ||
+    state.type === Network.NetworkStateType.ETHERNET ||
+    state.type === Network.NetworkStateType.UNKNOWN
+  );
+}
+
 const layerConnectivity = Connectivity.layer({
   status: Effect.tryPromise({
     try: () => Network.getNetworkStateAsync(),
@@ -49,6 +58,15 @@ const layerConnectivity = Connectivity.layer({
     Effect.match({
       onFailure: () => "unknown" as const,
       onSuccess: networkStatus,
+    }),
+  ),
+  privateNetworkLikely: Effect.tryPromise({
+    try: () => Network.getNetworkStateAsync(),
+    catch: () => undefined,
+  }).pipe(
+    Effect.match({
+      onFailure: () => true,
+      onSuccess: (state) => (state === undefined ? true : privateNetworkLikely(state)),
     }),
   ),
   changes: Stream.callback((queue) =>

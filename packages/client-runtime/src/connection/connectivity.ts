@@ -10,6 +10,11 @@ export class Connectivity extends Context.Service<
   {
     readonly status: Effect.Effect<NetworkStatus>;
     readonly changes: Stream.Stream<NetworkStatus>;
+    /**
+     * False on cellular and similar paths where RFC1918 LAN addresses cannot
+     * be reached. Defaults to true when the platform cannot tell.
+     */
+    readonly privateNetworkLikely: Effect.Effect<boolean>;
   }
 >()("@t3tools/client-runtime/connection/connectivity") {}
 

@@ -277,13 +277,16 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
-  it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>
+  it.effect("becomes ready when the socket opens, before a large config snapshot finishes", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       const session = yield* factory.connect(PREPARED);
       const readyFiber = yield* Effect.forkChild(session.ready);
+      const configFiber = yield* Effect.forkChild(session.initialConfig);
       const socket = yield* awaitSocket(sockets);
       socket.open();
+      yield* Fiber.join(readyFiber);
+
       const request = yield* awaitRequest(socket);
       // Multi-byte text, so parts must be sized in UTF-8 bytes and never split a surrogate pair.
       const config = { ...SERVER_CONFIG, cwd: "/" + "é€😀x".repeat(32 * 1024) };
@@ -301,9 +304,7 @@ describe("RpcSessionFactory", () => {
         yield* TestClock.adjust((bytes.length / 4000) * 1000);
         socket.serverMessage(new TextDecoder().decode(bytes));
       }
-      yield* Fiber.join(readyFiber);
-
-      expect(yield* session.initialConfig).toEqual(config);
+      expect(yield* Fiber.join(configFiber)).toEqual(config);
     }),
   );
 
@@ -966,7 +967,9 @@ describe("RpcSessionFactory", () => {
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       const session = yield* factory.connect(PREPARED);
-      const readyFiber = yield* Effect.forkChild(Effect.flip(session.ready));
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+      const initialConfigFiber = yield* Effect.forkChild(Effect.flip(session.initialConfig));
       const configFiber = yield* session
         .subscribeServerConfig({})
         .pipe(Stream.runHead, Effect.flip, Effect.forkChild);
@@ -975,6 +978,7 @@ describe("RpcSessionFactory", () => {
         .pipe(Stream.runHead, Effect.flip, Effect.forkChild);
       const socket = yield* awaitSocket(sockets);
       socket.open();
+      yield* Fiber.join(readyFiber);
       yield* completeInitialConfig(socket, {
         ...ENCODED_SERVER_CONFIG,
         environment: {
@@ -983,8 +987,12 @@ describe("RpcSessionFactory", () => {
         },
       });
 
-      const error = yield* Fiber.join(readyFiber);
+      const error = yield* Fiber.join(initialConfigFiber);
       expect(error).toMatchObject({
+        reason: "configuration",
+        message: "Connected environment environment-2 does not match environment-1.",
+      });
+      expect(yield* Fiber.join(closedFiber)).toMatchObject({
         reason: "configuration",
         message: "Connected environment environment-2 does not match environment-1.",
       });

@@ -127,6 +127,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const connectivity = Connectivity.Connectivity.of({
     status: SubscriptionRef.get(networkStatus),
     changes: SubscriptionRef.changes(networkStatus),
+    privateNetworkLikely: Effect.succeed(true),
   });
   const layer = RelayEnvironmentDiscovery.layer.pipe(
     Layer.provide(
@@ -381,6 +382,7 @@ describe("RelayEnvironmentDiscovery", () => {
             Layer.succeed(Connectivity.Connectivity, {
               status: SubscriptionRef.get(networkStatus),
               changes: SubscriptionRef.changes(networkStatus),
+              privateNetworkLikely: Effect.succeed(true),
             }),
             Layer.succeed(
               ConnectionWakeups.ConnectionWakeups,

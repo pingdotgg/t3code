@@ -165,6 +165,7 @@ function recordTransitions(supervisor: EnvironmentSupervisor.EnvironmentSupervis
 
 const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?: {
   readonly networkStatus?: NetworkStatus;
+  readonly privateNetworkLikely?: boolean;
   readonly prepare?: (
     attempt: number,
     target: ConnectionTarget,
@@ -195,9 +196,11 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     ReadonlyArray<Deferred.Deferred<never, ConnectionTransientError>>
   >([]);
 
+  const privateNetworkLikely = yield* Ref.make(options?.privateNetworkLikely ?? true);
   const connectivity = Connectivity.Connectivity.of({
     status: SubscriptionRef.get(networkStatus),
     changes: SubscriptionRef.changes(networkStatus),
+    privateNetworkLikely: Ref.get(privateNetworkLikely),
   });
 
   const prepare = Effect.fn("TestConnectionDriver.prepare")(function* (target: ConnectionTarget) {
@@ -251,10 +254,18 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   const connect = Effect.fn("TestConnectionDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
     reportProgress: (progress: ConnectionDriver.ConnectionDriverProgress) => Effect.Effect<void>,
+    options?: ConnectionDriver.ConnectOverRoutesOptions,
   ) {
     yield* reportProgress({ stage: "preparing" });
-    return yield* ConnectionDriver.connectOverRoutes(entry, checkRoute, (route) =>
-      connectRoute(route.target, reportProgress),
+    const onPrivateNetwork = yield* Ref.get(privateNetworkLikely);
+    return yield* ConnectionDriver.connectOverRoutes(
+      entry,
+      checkRoute,
+      (route) => connectRoute(route.target, reportProgress),
+      {
+        privateNetworkLikely: onPrivateNetwork,
+        ...(options?.hedge === undefined ? {} : { hedge: options.hedge }),
+      },
     );
   });
 
@@ -1750,6 +1761,118 @@ describe("EnvironmentSupervisor routes", () => {
       );
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("hedges to relay when a ready LAN route hangs on connect", () =>
+    Effect.gen(function* () {
+      const checkingLan = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Deferred.succeed(checkingLan, undefined).pipe(
+                Effect.andThen(Effect.sleep("100 millis")),
+                Effect.as("answered" as const),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) =>
+          target._tag === "BearerConnectionTarget"
+            ? Effect.never
+            : Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingLan);
+      yield* TestClock.adjust("100 millis");
+      // Head-start classification finishes, LAN connect starts, then the hedge opens relay.
+      yield* TestClock.adjust("250 millis");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("releases the losing hedged session when both routes connect", () =>
+    Effect.gen(function* () {
+      const checkingLan = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Deferred.succeed(checkingLan, undefined).pipe(
+                Effect.andThen(Effect.sleep("100 millis")),
+                Effect.as("answered" as const),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        // LAN acquires a session then stalls in ready so the relay hedge can
+        // win; interrupting that open session must release it.
+        ready: (attempt) => (attempt === 1 ? Effect.sleep("1 second") : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingLan);
+      yield* TestClock.adjust("100 millis");
+      yield* TestClock.adjust("250 millis");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("skips LAN when the device is not on a private network", () =>
+    Effect.gen(function* () {
+      const preparedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>([]);
+      const harness = yield* makeHarness({
+        privateNetworkLikely: false,
+        prepare: (_attempt, target) =>
+          Ref.update(preparedTargets, (current) => [...current, target]).pipe(
+            Effect.as(preparedFor(target)),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(preparedTargets)).toEqual([RELAY_TARGET]);
+    }),
+  );
+
+  it.effect("does not wait for the LAN head-start when only remote routes remain", () =>
+    Effect.gen(function* () {
+      const checking = yield* Ref.make(0);
+      const preparedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>([]);
+      const harness = yield* makeHarness({
+        privateNetworkLikely: false,
+        checkRoute: () =>
+          Ref.update(checking, (count) => count + 1).pipe(
+            Effect.andThen(Effect.sleep("10 seconds")),
+            Effect.as("answered" as const),
+          ),
+        prepare: (_attempt, target) =>
+          Ref.update(preparedTargets, (current) => [...current, target]).pipe(
+            Effect.as(preparedFor(target)),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      // Without a LAN candidate the driver skips reachability classification entirely.
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(checking)).toBe(0);
+      expect(yield* Ref.get(preparedTargets)).toEqual([RELAY_TARGET]);
+    }),
   );
 
   it.effect("tries a slow tailnet route that answered before a dead LAN route", () =>

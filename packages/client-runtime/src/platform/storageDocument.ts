@@ -17,6 +17,12 @@ export const StoredConnectionCredential = Schema.Struct({
 });
 export type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
 
+export const StoredEnvironmentLastConnected = Schema.Struct({
+  environmentId: EnvironmentId,
+  atEpochMs: Schema.Number,
+});
+export type StoredEnvironmentLastConnected = typeof StoredEnvironmentLastConnected.Type;
+
 export const ConnectionCatalogDocument = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   targets: Schema.Array(PersistedConnectionTarget),
@@ -29,6 +35,10 @@ export const ConnectionCatalogDocument = Schema.Struct({
   disabledEnvironmentIds: Schema.Array(EnvironmentId).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
+  // Cold start uses this to connect recently used environments before stale ones.
+  lastConnected: Schema.Array(StoredEnvironmentLastConnected).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type ConnectionCatalogDocument = typeof ConnectionCatalogDocument.Type;
 
@@ -39,6 +49,7 @@ export const EMPTY_CONNECTION_CATALOG_DOCUMENT: ConnectionCatalogDocument = Obje
   credentials: [],
   remoteDpopTokens: [],
   disabledEnvironmentIds: [],
+  lastConnected: [],
 });
 
 export function replaceCatalogValue<A>(
@@ -168,6 +179,11 @@ export function removeConnectionFromCatalog(
       (value) => value,
       environmentId,
     ),
+    lastConnected: removeCatalogValue(
+      next.lastConnected,
+      (value) => value.environmentId,
+      environmentId,
+    ),
     ...(next.githubRoutingPermissions === undefined
       ? {}
       : {
@@ -175,6 +191,23 @@ export function removeConnectionFromCatalog(
             (permission) => permission.environmentId !== environmentId,
           ),
         }),
+  };
+}
+
+export function touchEnvironmentConnectedInCatalog(
+  document: ConnectionCatalogDocument,
+  environmentId: EnvironmentId,
+  atEpochMs: number,
+): ConnectionCatalogDocument {
+  if (!document.targets.some((target) => target.environmentId === environmentId)) {
+    return document;
+  }
+  return {
+    ...document,
+    lastConnected: replaceCatalogValue(document.lastConnected, (value) => value.environmentId, {
+      environmentId,
+      atEpochMs,
+    }),
   };
 }
 

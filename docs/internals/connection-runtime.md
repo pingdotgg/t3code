@@ -76,12 +76,13 @@ require valid credentials.
 
 ## Transport health and data freshness are separate
 
-A socket opening is insufficient evidence that the environment is usable. The
-[RPC session](../../packages/client-runtime/src/rpc/session.ts) waits for the
-initial server configuration before becoming ready. Shell and thread data then
-have their own synchronization state. A failed shell subscription can coexist
-with a healthy connection; labeling that state "reconnecting" promises a
-transport retry that will never happen.
+The [RPC session](../../packages/client-runtime/src/rpc/session.ts) becomes ready
+when the WebSocket opens so the UI can leave "Connecting…" without waiting on a
+large config snapshot. Prefer `initialConfig` / `subscribeServerConfig` when the
+snapshot itself is required. Shell and thread data then have their own
+synchronization state. A failed shell subscription can coexist with a healthy
+connection; labeling that state "reconnecting" promises a transport retry that
+will never happen.
 
 Cached projections remain readable offline. They must neither imply a live
 connection nor overwrite newer live data during a reconnect. Loading and

@@ -55,6 +55,7 @@ export interface RpcSession {
   readonly subscribeServerConfig: (
     input?: ServerConfigSubscriptionInput,
   ) => ServerConfigSubscription;
+  /** Resolves once the WebSocket is open. Prefer `initialConfig` when the snapshot is required. */
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
   /** Frames received so far: proof the socket is alive that needs no reply. */
@@ -366,6 +367,12 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       ),
       Effect.withSpan("environment.initialSync"),
     );
+    // Ready no longer waits on this snapshot, so a mismatched or failed sync
+    // must still end the session; otherwise the supervisor stays "connected".
+    yield* initialConfig.pipe(
+      Effect.catch((error) => Deferred.fail(configSubscriptionClosed, error).pipe(Effect.asVoid)),
+      Effect.forkScoped,
+    );
     const serverConfigEvents = Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(serverConfigUpdates);
@@ -441,8 +448,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       client: protocolClient,
       initialConfig,
       subscribeServerConfig,
+      // Transport is ready when the socket opens. Server config still arrives on
+      // `initialConfig` / `subscribeServerConfig`; waiting for the snapshot here
+      // kept the UI on "Connecting…" for the whole download on a cold host.
       ready: Deferred.await(connected).pipe(
-        Effect.andThen(initialConfig),
         Effect.asVoid,
         Effect.raceFirst(Deferred.await(disconnected)),
       ),

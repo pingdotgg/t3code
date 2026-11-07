@@ -39,6 +39,7 @@ import {
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import { connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const layerClientPresentation = Layer.succeed(
@@ -169,10 +170,12 @@ function layerPairingOnboarding(
     Layer.mock(Persistence.ConnectionTargetStore)({
       list: Effect.succeed([]),
       listDisabled: Effect.succeed([]),
+      listLastConnected: Effect.succeed([]),
     }),
     Layer.mock(Persistence.ConnectionRegistrationStore)({
       register: () => Effect.void,
       setEnabled: () => Effect.void,
+      touchConnected: () => Effect.void,
     }),
     Layer.mock(Persistence.EnvironmentCacheStore)({}),
     Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
@@ -183,13 +186,30 @@ function layerPairingOnboarding(
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
     Layer.succeed(
       Connectivity.Connectivity,
-      Connectivity.Connectivity.of({ status: Effect.succeed("online"), changes: Stream.never }),
+      Connectivity.Connectivity.of({
+        status: Effect.succeed("online"),
+        changes: Stream.never,
+        privateNetworkLikely: Effect.succeed(true),
+      }),
     ),
     Layer.mock(ConnectionDriver.ConnectionDriver)({ connect: () => Effect.never }),
     Layer.succeed(
       ConnectionWakeups.ConnectionWakeups,
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
     ),
+    Layer.mock(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization)({
+      authorizeDpopHttp: (input) =>
+        Effect.succeed({
+          environmentId: input.expectedEnvironmentId,
+          label: "Prefetched",
+          httpBaseUrl: "https://relay.example.test",
+          httpAuthorization: {
+            _tag: "Dpop" as const,
+            accessToken: "prefetch-token",
+            expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+          },
+        }),
+    }),
   );
   return Onboarding.layer.pipe(
     Layer.provideMerge(EnvironmentRegistry.layer.pipe(Layer.provideMerge(dependencies))),

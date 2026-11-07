@@ -18,8 +18,12 @@ import {
   entryWithRoutes,
   mergeLearnedRoutes,
   pendingRouteOrder,
+  preferRoute,
   removedWithRelay,
+  routeUsesDpop,
   routesAfterRemoving,
+  routesForNetwork,
+  routesIncludeLan,
   sendsTokenInClear,
   upsertRoute,
   usableRoutes,
@@ -82,6 +86,37 @@ describe("connection routes", () => {
     expect(insertRoute([LAN, RELAY], TAILNET)).toEqual([LAN, TAILNET, RELAY]);
     expect(insertRoute([TAILNET], LAN)).toEqual([LAN, TAILNET]);
     expect(insertRoute([LAN, TAILNET], RELAY)).toEqual([LAN, TAILNET, RELAY]);
+  });
+
+  it("moves a successful route to the front for the next cold start", () => {
+    const routes = [LAN, TAILNET, RELAY];
+    expect(preferRoute(routes, "relay")).toEqual([RELAY, LAN, TAILNET]);
+    expect(preferRoute(routes, "lan")).toBe(routes);
+    expect(preferRoute(routes, "missing")).toBe(routes);
+  });
+
+  it("skips LAN routes when the device is not on a private network", () => {
+    const entry: ConnectionCatalogEntry = {
+      target: LAN.target,
+      profile: LAN.profile,
+      alternateRoutes: [TAILNET, RELAY],
+      enabled: true,
+    };
+    expect(routesForNetwork(entry, true)).toEqual([LAN, TAILNET, RELAY]);
+    expect(routesForNetwork(entry, false)).toEqual([TAILNET, RELAY]);
+    expect(routesIncludeLan([LAN, TAILNET])).toBe(true);
+    expect(routesIncludeLan([TAILNET, RELAY])).toBe(false);
+    expect(routeUsesDpop(RELAY)).toBe(true);
+    expect(routeUsesDpop(LAN)).toBe(false);
+  });
+
+  it("keeps LAN when it is the only saved route", () => {
+    const entry: ConnectionCatalogEntry = {
+      target: LAN.target,
+      profile: LAN.profile,
+      enabled: true,
+    };
+    expect(routesForNetwork(entry, false)).toEqual([LAN]);
   });
 
   it("keeps a user's order when a saved route is replaced", () => {

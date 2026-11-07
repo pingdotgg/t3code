@@ -165,6 +165,10 @@ export interface EnvironmentSupervisorOptions {
     readonly activeRoute: ConnectionRoute;
     readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
+  /** Persist the route that connected so the next cold start tries it first. */
+  readonly rememberRoute?: (input: {
+    readonly activeRoute: ConnectionRoute;
+  }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
 function retryDelayMs(failureCount: number, random: number): number {
@@ -520,7 +524,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     preferredRoute: Option.Option<string>,
     report: ProgressReporter,
   ) {
-    return yield* driver.connect(yield* attemptEntry(preferredRoute), report);
+    // Route upgrades must try the preferred path serially. Hedging would open the
+    // live route as a backup and look like a successful upgrade on the wrong path.
+    return yield* driver.connect(yield* attemptEntry(preferredRoute), report, {
+      hedge: Option.isNone(preferredRoute),
+    });
   });
 
   // Low-cardinality dimensions for time-to-connected dashboards; the error
@@ -1275,6 +1283,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     };
     const connectedAt = yield* Clock.currentTimeMillis;
     yield* setLease(connectedLease);
+    if (connectedLease.activeRoute !== undefined && options?.rememberRoute !== undefined) {
+      // Persist sticky order for the next cold start only. Applying it to the
+      // live entry would make the active route look preferred and stop
+      // better-route upgrades (for example LAN while connected over relay).
+      yield* options.rememberRoute({ activeRoute: connectedLease.activeRoute });
+    }
     if (options?.learnRoutes !== undefined) {
       yield* learnRoutesFrom(options.learnRoutes, connectedLease).pipe(Effect.forkScoped);
     }

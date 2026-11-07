@@ -13,6 +13,7 @@ import {
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
   setRoutesInCatalog,
+  touchEnvironmentConnectedInCatalog,
   replaceCatalogValue,
   Persistence,
   makeStoredShellSnapshotEncoder,
@@ -104,10 +105,12 @@ function persistenceError(
   operation:
     | "list-targets"
     | "list-disabled-targets"
+    | "list-last-connected"
     | "register-connection"
     | "set-connection-routes"
     | "remove-connection"
     | "set-connection-enabled"
+    | "touch-connection"
     | "load-shell"
     | "save-shell"
     | "load-thread"
@@ -733,6 +736,10 @@ export const layer = Layer.effectContext(
         Effect.map((document) => document.disabledEnvironmentIds),
         Effect.mapError((cause) => persistenceError("list-disabled-targets", cause)),
       ),
+      listLastConnected: catalog.read.pipe(
+        Effect.map((document) => document.lastConnected),
+        Effect.mapError((cause) => persistenceError("list-last-connected", cause)),
+      ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
       register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(
@@ -759,6 +766,15 @@ export const layer = Layer.effectContext(
           return catalog
             .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
             .pipe(Effect.mapError((cause) => persistenceError("set-connection-enabled", cause)));
+        },
+      ),
+      touchConnected: Effect.fn("Persistence.ConnectionRegistrationStore.touchConnected")(
+        function (environmentId, atEpochMs) {
+          return catalog
+            .update((document) =>
+              touchEnvironmentConnectedInCatalog(document, environmentId, atEpochMs),
+            )
+            .pipe(Effect.mapError((cause) => persistenceError("touch-connection", cause)));
         },
       ),
     });

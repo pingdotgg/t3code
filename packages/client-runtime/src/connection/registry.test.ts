@@ -14,14 +14,17 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import {
@@ -167,6 +170,11 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       target: ConnectionTarget,
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
+    readonly initialLastConnected?: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly atEpochMs: number;
+    }>;
+    readonly onDpopPrefetch?: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
   },
 ) {
@@ -205,9 +213,21 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   const storedDisabled = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(options?.initialDisabled ?? []),
   );
+  const storedLastConnected = yield* Ref.make(
+    new Map(
+      (options?.initialLastConnected ?? []).map(
+        (row) => [row.environmentId, row.atEpochMs] as const,
+      ),
+    ),
+  );
   const targetStore = Persistence.ConnectionTargetStore.of({
     list: Ref.get(storedTargets),
     listDisabled: Ref.get(storedDisabled).pipe(Effect.map((ids) => [...ids])),
+    listLastConnected: Ref.get(storedLastConnected).pipe(
+      Effect.map((rows) =>
+        [...rows.entries()].map(([environmentId, atEpochMs]) => ({ environmentId, atEpochMs })),
+      ),
+    ),
   });
   const registrationStore = Persistence.ConnectionRegistrationStore.of({
     register: (registration, routes) =>
@@ -264,6 +284,11 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           next.delete(environmentId);
           return next;
         });
+        yield* Ref.update(storedLastConnected, (current) => {
+          const next = new Map(current);
+          next.delete(environmentId);
+          return next;
+        });
       }),
     setEnabled: (environmentId, enabled) =>
       Ref.update(storedDisabled, (current) => {
@@ -273,6 +298,12 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         } else {
           next.add(environmentId);
         }
+        return next;
+      }),
+    touchConnected: (environmentId, atEpochMs) =>
+      Ref.update(storedLastConnected, (current) => {
+        const next = new Map(current);
+        next.set(environmentId, atEpochMs);
         return next;
       }),
   });
@@ -315,6 +346,34 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   const connectivity = Connectivity.Connectivity.of({
     status: SubscriptionRef.get(networkStatus),
     changes: SubscriptionRef.changes(networkStatus),
+    privateNetworkLikely: Effect.succeed(true),
+  });
+  const dpopPrefetchCalls = yield* Ref.make(0);
+  const wakeups = yield* SubscriptionRef.make<{
+    readonly sequence: number;
+    readonly reason: ConnectionWakeups.ConnectionWakeup;
+  }>({
+    sequence: 0,
+    reason: "application-active",
+  });
+  const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
+    authorizeBearer: () => Effect.die("unused"),
+    authorizeDpop: () => Effect.die("unused"),
+    authorizeDpopHttp: (input) =>
+      Ref.update(dpopPrefetchCalls, (count) => count + 1).pipe(
+        Effect.andThen(options?.onDpopPrefetch?.(input.expectedEnvironmentId) ?? Effect.void),
+        Effect.as({
+          environmentId: input.expectedEnvironmentId,
+          label: "Prefetched",
+          httpBaseUrl: "https://relay.example.test",
+          httpAuthorization: {
+            _tag: "Dpop" as const,
+            accessToken: "prefetch-token",
+            expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+          },
+        }),
+      ),
+    renewDpopBeforeExpiry: () => Effect.die("unused"),
   });
   const profileStore = ConnectionProfileStore.ConnectionProfileStore.of({
     get: (connectionId) =>
@@ -436,12 +495,21 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       return { prepared, session };
     });
   const driver = ConnectionDriver.ConnectionDriver.of({
-    connect: (entry, reportProgress) =>
+    connect: (entry, reportProgress, options) =>
       reportProgress({ stage: "preparing" }).pipe(
         Effect.andThen(
-          ConnectionDriver.connectOverRoutes(entry, checkRoute, (route) =>
-            connectRoute(entry, route),
-          ),
+          Effect.gen(function* () {
+            return yield* ConnectionDriver.connectOverRoutes(
+              entry,
+              checkRoute,
+              (route) => connectRoute(entry, route),
+              {
+                privateNetworkLikely:
+                  options?.privateNetworkLikely ?? (yield* connectivity.privateNetworkLikely),
+                ...(options?.hedge === undefined ? {} : { hedge: options.hedge }),
+              },
+            );
+          }),
         ),
       ),
     preflight: (_entry, route) =>
@@ -466,7 +534,16 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         Layer.succeed(Connectivity.Connectivity, connectivity),
         Layer.succeed(
           ConnectionWakeups.ConnectionWakeups,
-          ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
+          ConnectionWakeups.ConnectionWakeups.of({
+            changes: SubscriptionRef.changes(wakeups).pipe(
+              Stream.drop(1),
+              Stream.map((event) => event.reason),
+            ),
+          }),
+        ),
+        Layer.succeed(
+          RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+          remoteAuthorization,
         ),
         Layer.succeed(ConnectionDriver.ConnectionDriver, driver),
         layerCache,
@@ -488,9 +565,16 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     storedCredentials,
     storedRemoteTokens,
     storedDisabled,
+    storedLastConnected,
     disconnectedSshTargets,
     networkStatus,
     connectedRoutes,
+    dpopPrefetchCalls,
+    wake: (reason: ConnectionWakeups.ConnectionWakeup) =>
+      SubscriptionRef.update(wakeups, (event) => ({
+        sequence: event.sequence + 1,
+        reason,
+      })),
   };
 });
 
@@ -620,6 +704,91 @@ describe("EnvironmentRegistry", () => {
         expect(yield* Ref.get(loadCount)).toBe(2);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
+  );
+
+  it.effect("defers cold start for environments last reached hours ago", () =>
+    Effect.gen(function* () {
+      const started = yield* Ref.make<ReadonlyArray<EnvironmentId>>([]);
+      const freshStarted = yield* Deferred.make<void>();
+      const staleStarted = yield* Deferred.make<void>();
+      const releaseLoads = yield* Deferred.make<void>();
+      const harness = yield* makeHarness([TARGET, SECOND_TARGET], [], [], {
+        initialLastConnected: [{ environmentId: SECOND_TARGET.environmentId, atEpochMs: 0 }],
+        beforeSessionConnect: (environmentId) =>
+          Ref.update(started, (current) => [...current, environmentId]).pipe(
+            Effect.andThen(
+              environmentId === TARGET.environmentId
+                ? Deferred.succeed(freshStarted, undefined)
+                : Deferred.succeed(staleStarted, undefined),
+            ),
+            Effect.andThen(Deferred.await(releaseLoads)),
+          ),
+      });
+
+      yield* TestClock.adjust("6 hours");
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* Effect.forkChild(registry.start);
+
+        yield* Deferred.await(freshStarted);
+        expect(yield* Ref.get(started)).toEqual([TARGET.environmentId]);
+
+        yield* TestClock.adjust("2 seconds");
+        yield* Deferred.await(staleStarted);
+        expect(yield* Ref.get(started)).toEqual([
+          TARGET.environmentId,
+          SECOND_TARGET.environmentId,
+        ]);
+
+        yield* Deferred.succeed(releaseLoads, undefined);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("records when an environment last connected successfully", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        expect(yield* Ref.get(harness.storedLastConnected)).toEqual(
+          new Map([[TARGET.environmentId, 0]]),
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect(
+    "prefetches T3 Connect credentials on start and wake for recent relay environments",
+    () =>
+      Effect.gen(function* () {
+        const prefetches = yield* Queue.unbounded<EnvironmentId>();
+        const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+          onDpopPrefetch: (environmentId) => Queue.offer(prefetches, environmentId),
+        });
+
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.start;
+          expect(yield* Queue.take(prefetches)).toBe(RELAY_TARGET.environmentId);
+          yield* awaitConnectionState(
+            registry,
+            RELAY_TARGET.environmentId,
+            (state) => state.phase === "connected",
+          );
+
+          yield* harness.wake("application-active");
+          expect(yield* Queue.take(prefetches)).toBe(RELAY_TARGET.environmentId);
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
   );
 
   it.effect("does not expose a persisted environment as disconnected while it starts", () =>
@@ -2192,6 +2361,39 @@ describe("EnvironmentRegistry routes", () => {
           .reorderRoutes(LAN_TARGET.environmentId, ["relay"])
           .pipe(Effect.flip);
         expect(error._tag).toBe("ConnectionBlockedError");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("remembers the successful route first without dropping the live session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [LAN_TARGET, RELAY_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+        {
+          checkRoute: (route) =>
+            route.target._tag === "BearerConnectionTarget" ? "silent" : "unchecked",
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          LAN_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
+          RELAY_TARGET,
+          LAN_TARGET,
+        ]);
+        expect(yield* Ref.get(harness.connectedRoutes)).toEqual(["relay"]);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId);
+        expect(entry?.target).toEqual(RELAY_TARGET);
+        expect(entry?.alternateRoutes?.map((route) => route.target)).toEqual([LAN_TARGET]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

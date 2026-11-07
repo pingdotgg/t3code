@@ -43,6 +43,9 @@ import {
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
 
+/** Reuse a prior tunnel host's label when connect returns the same endpoint. */
+const RELAY_ENDPOINT_HINT_TTL_MS = 15 * 60_000;
+
 export interface AuthorizedRemoteEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -81,6 +84,8 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
     readonly authorizeDpopHttp: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly rejectedAccessToken?: string;
+      /** Treat cached tokens as stale this far before expiry. Defaults to the live-socket skew. */
+      readonly refreshSkewMs?: number;
     }) => Effect.Effect<AuthorizedRemoteHttpEnvironment, ConnectionAttemptError>;
     /**
      * Renews a live socket's token before it expires, so the server moves the
@@ -134,6 +139,30 @@ export const make = Effect.gen(function* () {
       readonly token: Effect.Effect<TokenStore.RemoteDpopAccessToken, ConnectionAttemptError>;
     }
   >();
+  const lastRelayEndpoints = new Map<
+    EnvironmentId,
+    {
+      readonly accountId: string;
+      readonly label: string;
+      readonly endpoint: TokenStore.RemoteDpopAccessToken["endpoint"];
+      readonly atEpochMs: number;
+    }
+  >();
+
+  const rememberRelayEndpoint = (token: TokenStore.RemoteDpopAccessToken, atEpochMs: number) => {
+    if (token.accountId === undefined) return;
+    lastRelayEndpoints.set(token.environmentId, {
+      accountId: token.accountId,
+      label: token.label,
+      endpoint: token.endpoint,
+      atEpochMs,
+    });
+  };
+
+  const sameRelayEndpoint = (
+    left: TokenStore.RemoteDpopAccessToken["endpoint"],
+    right: TokenStore.RemoteDpopAccessToken["endpoint"],
+  ) => left.httpBaseUrl === right.httpBaseUrl && left.wsBaseUrl === right.wsBaseUrl;
 
   /**
    * A saved LAN address can belong to another machine on a different network.
@@ -261,11 +290,12 @@ export const make = Effect.gen(function* () {
     identity: ClientCapabilities.CloudSessionIdentity,
   ) {
     yield* assertSession(identity);
-    const clerkToken = yield* cloudSession.clerkToken.pipe(
-      Effect.withSpan("relay.connection.cloudSessionToken.resolve"),
-    );
-    const deviceId = yield* deviceIdentity.deviceId.pipe(
-      Effect.withSpan("relay.connection.deviceIdentity.resolve"),
+    const [clerkToken, deviceId] = yield* Effect.all(
+      [
+        cloudSession.clerkToken.pipe(Effect.withSpan("relay.connection.cloudSessionToken.resolve")),
+        deviceIdentity.deviceId.pipe(Effect.withSpan("relay.connection.deviceIdentity.resolve")),
+      ],
+      { concurrency: 2 },
     );
     yield* assertSession(identity);
     const connected = yield* relay
@@ -286,37 +316,95 @@ export const make = Effect.gen(function* () {
     return connected;
   });
 
+  const createBootstrapProof = Effect.fnUntraced(function* (httpBaseUrl: string) {
+    return yield* signer
+      .createProof({
+        method: "POST",
+        url: environmentEndpointUrl(httpBaseUrl, "/oauth/token"),
+      })
+      .pipe(
+        Effect.mapError(
+          () =>
+            new ConnectionBlockedError({
+              reason: "configuration",
+              detail: "Could not create the environment authorization proof.",
+            }),
+        ),
+      );
+  });
+
   const exchangeDpopToken = Effect.fn("clientRuntime.connection.remote.exchangeDpopToken")(
     function* (
       environmentId: EnvironmentId,
       thumbprint: string,
       identity: ClientCapabilities.CloudSessionIdentity,
     ) {
+      const now = yield* Clock.currentTimeMillis;
+      const priorToken = yield* tokenStore.get(environmentId);
+      const storedHint = lastRelayEndpoints.get(environmentId);
+      // A still-stored token is authoritative for its endpoint. The TTL only
+      // bounds the in-memory hint after the token row was cleared.
+      const reusableHint =
+        Option.isSome(priorToken) &&
+        priorToken.value.accountId === identity.accountId &&
+        priorToken.value.dpopThumbprint === thumbprint
+          ? {
+              accountId: identity.accountId,
+              label: priorToken.value.label,
+              endpoint: priorToken.value.endpoint,
+              atEpochMs: now,
+            }
+          : storedHint !== undefined &&
+              storedHint.accountId === identity.accountId &&
+              now - storedHint.atEpochMs < RELAY_ENDPOINT_HINT_TTL_MS
+            ? storedHint
+            : undefined;
+
+      // Mint the DPoP proof against the last tunnel host while the relay assigns
+      // a bootstrap credential; most renewals land on the same endpoint.
+      const speculativeProof =
+        reusableHint === undefined
+          ? undefined
+          : yield* Effect.forkChild(createBootstrapProof(reusableHint.endpoint.httpBaseUrl));
       const bootstrap = yield* obtainBootstrap(environmentId, identity);
-      const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl, "relay").pipe(
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.withSpan("environment.authorization.descriptor"),
-      );
-      if (descriptor.environmentId !== environmentId) {
-        return yield* environmentMismatchError({
-          expected: environmentId,
-          actual: descriptor.environmentId,
-        });
+      const endpointReused =
+        reusableHint !== undefined && sameRelayEndpoint(reusableHint.endpoint, bootstrap.endpoint);
+      yield* Effect.annotateCurrentSpan({
+        "connection.relay_endpoint_cache": endpointReused ? "hit" : "miss",
+      });
+
+      if (speculativeProof !== undefined && !endpointReused) {
+        yield* Fiber.interrupt(speculativeProof).pipe(Effect.ignore);
       }
-      const bootstrapProof = yield* signer
-        .createProof({
-          method: "POST",
-          url: environmentEndpointUrl(bootstrap.endpoint.httpBaseUrl, "/oauth/token"),
-        })
-        .pipe(
-          Effect.mapError(
-            () =>
-              new ConnectionBlockedError({
-                reason: "configuration",
-                detail: "Could not create the environment authorization proof.",
-              }),
-          ),
-        );
+
+      const labelAndProof: { readonly label: string; readonly proof: string } = endpointReused
+        ? {
+            label: reusableHint.label,
+            proof:
+              speculativeProof !== undefined
+                ? yield* Fiber.join(speculativeProof)
+                : yield* createBootstrapProof(bootstrap.endpoint.httpBaseUrl),
+          }
+        : yield* Effect.all(
+            {
+              label: fetchDescriptor(bootstrap.endpoint.httpBaseUrl, "relay").pipe(
+                Effect.provideService(HttpClient.HttpClient, httpClient),
+                Effect.withSpan("environment.authorization.descriptor"),
+                Effect.flatMap((descriptor) =>
+                  descriptor.environmentId === environmentId
+                    ? Effect.succeed(descriptor.label)
+                    : environmentMismatchError({
+                        expected: environmentId,
+                        actual: descriptor.environmentId,
+                      }),
+                ),
+              ),
+              proof: createBootstrapProof(bootstrap.endpoint.httpBaseUrl),
+            },
+            { concurrency: 2 },
+          );
+      const { label, proof: bootstrapProof } = labelAndProof;
+
       yield* assertSession(identity);
       const access = yield* exchangeRemoteDpopAccessToken({
         httpBaseUrl: bootstrap.endpoint.httpBaseUrl,
@@ -329,15 +417,17 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );
       const issuedAt = yield* Clock.currentTimeMillis;
-      return new TokenStore.RemoteDpopAccessToken({
-        environmentId: descriptor.environmentId,
+      const token = new TokenStore.RemoteDpopAccessToken({
+        environmentId,
         accountId: identity.accountId,
-        label: descriptor.label,
+        label,
         endpoint: bootstrap.endpoint,
         accessToken: access.access_token,
         expiresAtEpochMs: issuedAt + access.expires_in * 1_000,
         dpopThumbprint: thumbprint,
       });
+      rememberRelayEndpoint(token, issuedAt);
+      return token;
     },
   );
 
@@ -359,6 +449,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.withSpan("environment.authorization.dpopKey.resolve"),
     );
+    const refreshSkewMs = input.refreshSkewMs ?? DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS;
     const selected = yield* tokenLock.withPermits(1)(
       Effect.gen(function* () {
         yield* assertSession(identity);
@@ -372,7 +463,7 @@ export const make = Effect.gen(function* () {
           cached.value.environmentId === input.expectedEnvironmentId &&
           cached.value.accountId === identity.accountId &&
           cached.value.dpopThumbprint === thumbprint &&
-          cached.value.expiresAtEpochMs > now + DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS &&
+          cached.value.expiresAtEpochMs > now + refreshSkewMs &&
           cached.value.accessToken !== input.rejectedAccessToken &&
           (owner?.accessToken !== cached.value.accessToken || owner.identity === identity)
         ) {
@@ -380,6 +471,7 @@ export const make = Effect.gen(function* () {
             accessToken: cached.value.accessToken,
             identity,
           });
+          rememberRelayEndpoint(cached.value, now);
           return { token: Effect.succeed(cached.value), fromCache: true };
         }
         if (input.rejectedAccessToken !== undefined) {

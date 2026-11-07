@@ -4,6 +4,7 @@ import {
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
   setRoutesInCatalog,
+  touchEnvironmentConnectedInCatalog,
   removeCatalogValue,
   replaceCatalogValue,
   Persistence,
@@ -27,10 +28,12 @@ function targetPersistenceError(
   operation:
     | "list-targets"
     | "list-disabled-targets"
+    | "list-last-connected"
     | "register-connection"
     | "set-connection-routes"
     | "remove-connection"
-    | "set-connection-enabled",
+    | "set-connection-enabled"
+    | "touch-connection",
   error: ConnectionTransientError,
 ) {
   return new Persistence.ConnectionPersistenceError({
@@ -56,6 +59,10 @@ export const layer = Layer.effectContext(
       listDisabled: catalog.read.pipe(
         Effect.map((document) => document.disabledEnvironmentIds),
         Effect.mapError((error) => targetPersistenceError("list-disabled-targets", error)),
+      ),
+      listLastConnected: catalog.read.pipe(
+        Effect.map((document) => document.lastConnected),
+        Effect.mapError((error) => targetPersistenceError("list-last-connected", error)),
       ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
@@ -85,6 +92,14 @@ export const layer = Layer.effectContext(
             .pipe(
               Effect.mapError((error) => targetPersistenceError("set-connection-enabled", error)),
             ),
+      ),
+      touchConnected: Effect.fn("Persistence.ConnectionRegistrationStore.touchConnected")(
+        (environmentId, atEpochMs) =>
+          catalog
+            .update((document) =>
+              touchEnvironmentConnectedInCatalog(document, environmentId, atEpochMs),
+            )
+            .pipe(Effect.mapError((error) => targetPersistenceError("touch-connection", error))),
       ),
     });
     const profileStore = ProfileStore.make({

@@ -33,6 +33,7 @@ import {
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
+  touchEnvironmentConnectedInCatalog,
 } from "./storageDocument.ts";
 
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocument);
@@ -238,6 +239,30 @@ describe("ConnectionCatalogDocument", () => {
     expect(removeConnectionFromCatalog(registered, ENVIRONMENT_ID)).toEqual(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
     );
+  });
+
+  it("records and clears last-connected timestamps with the environment", () => {
+    const registered = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+    const touched = touchEnvironmentConnectedInCatalog(
+      registered,
+      ENVIRONMENT_ID,
+      1_700_000_000_000,
+    );
+
+    expect(touched.lastConnected).toEqual([
+      { environmentId: ENVIRONMENT_ID, atEpochMs: 1_700_000_000_000 },
+    ]);
+    expect(removeConnectionFromCatalog(touched, ENVIRONMENT_ID).lastConnected).toEqual([]);
+    expect(
+      touchEnvironmentConnectedInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, ENVIRONMENT_ID, 1),
+    ).toBe(EMPTY_CONNECTION_CATALOG_DOCUMENT);
   });
 
   it("stores a DPoP token for a registered relay environment", () => {

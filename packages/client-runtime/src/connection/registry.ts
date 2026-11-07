@@ -1,5 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
@@ -12,6 +14,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   type ConnectionCatalogEntry,
@@ -33,7 +36,7 @@ import type {
   PersistedConnectionTarget,
   SupervisorConnectionState,
 } from "./model.ts";
-import { ConnectionBlockedError } from "./model.ts";
+import { ConnectionBlockedError, DPOP_WAKE_REFRESH_SKEW_MS } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -47,16 +50,23 @@ import {
   connectionRouteId,
   connectionRoutes,
   credentialConnectionId,
+  entryUsesDpop,
   entryWithRoutes,
   findRouteToSameAddress,
   hasSavedBearerRoute,
   mergeLearnedRoutes,
+  preferRoute,
   routesAfterRemoving,
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
+
+/** Environments last reached longer ago than this wait until after recent ones on cold start. */
+const STALE_RECONNECT_AFTER_MS = 6 * 60 * 60 * 1000;
+/** Lets recently used environments open sockets before stale ones compete. */
+const STALE_START_DELAY = Duration.seconds(2);
 
 function unsupportedState(
   entry: ConnectionCatalogEntry,
@@ -219,6 +229,7 @@ export const make = Effect.gen(function* () {
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const persistedTargets = yield* storage.list;
   const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
@@ -368,6 +379,7 @@ export const make = Effect.gen(function* () {
             // before an enabled, compatible environment starts connecting.
             initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
+            rememberRoute: (input) => rememberSuccessfulRoute({ environmentId, ...input }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
@@ -468,21 +480,93 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const startEnvironment = (environmentId: EnvironmentId) =>
+    acquireSupervisor(environmentId).pipe(
+      Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
+    );
+
+  const loadLastConnectedById = Effect.fnUntraced(function* () {
+    return new Map(
+      (yield* storage.listLastConnected.pipe(
+        Effect.orElseSucceed(
+          (): ReadonlyArray<{ environmentId: EnvironmentId; atEpochMs: number }> => [],
+        ),
+      )).map((row) => [row.environmentId, row.atEpochMs] as const),
+    );
+  });
+
+  /**
+   * Warms T3 Connect access tokens before (or while) supervisors open sockets,
+   * so prepare often hits the token cache instead of a full bootstrap exchange.
+   */
+  const prefetchDpopCredentials = Effect.fn("EnvironmentRegistry.prefetchDpopCredentials")(
+    function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const lastConnectedById = yield* loadLastConnectedById();
+      const current = yield* SubscriptionRef.get(entries);
+      yield* Effect.forEach(
+        current.values(),
+        (entry) => {
+          if (!entry.enabled || entry.unsupportedReason !== undefined || !entryUsesDpop(entry)) {
+            return Effect.void;
+          }
+          const lastConnectedAt = lastConnectedById.get(entry.target.environmentId);
+          if (lastConnectedAt !== undefined && now - lastConnectedAt >= STALE_RECONNECT_AFTER_MS) {
+            return Effect.void;
+          }
+          return remote
+            .authorizeDpopHttp({
+              expectedEnvironmentId: entry.target.environmentId,
+              refreshSkewMs: DPOP_WAKE_REFRESH_SKEW_MS,
+            })
+            .pipe(
+              Effect.asVoid,
+              Effect.catch((error) =>
+                Effect.logDebug("Could not prefetch T3 Connect credentials.", {
+                  environmentId: entry.target.environmentId,
+                  error,
+                }),
+              ),
+            );
+        },
+        { concurrency: 2, discard: true },
+      );
+    },
+  );
+
   const start = Effect.gen(function* () {
     if (yield* Ref.getAndSet(started, true)) {
       return;
     }
+    const now = yield* Clock.currentTimeMillis;
+    const lastConnectedById = yield* loadLastConnectedById();
+    const fresh: EnvironmentId[] = [];
+    const stale: EnvironmentId[] = [];
+    for (const environmentId of persistedRoutesByEnvironment.keys()) {
+      const lastConnectedAt = lastConnectedById.get(environmentId);
+      if (lastConnectedAt !== undefined && now - lastConnectedAt >= STALE_RECONNECT_AFTER_MS) {
+        stale.push(environmentId);
+      } else {
+        // Never-connected environments stay immediate so first pairing is not delayed.
+        fresh.push(environmentId);
+      }
+    }
+    // Overlap token mint with supervisor connect for recently used T3 Connect envs.
+    yield* prefetchDpopCredentials().pipe(Effect.forkIn(registryScope));
+    yield* Effect.forEach(fresh, startEnvironment, {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    if (stale.length === 0) return;
     yield* Effect.forEach(
-      persistedRoutesByEnvironment.keys(),
+      stale,
       (environmentId) =>
-        acquireSupervisor(environmentId).pipe(
-          Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
-        ),
+        Effect.sleep(STALE_START_DELAY).pipe(Effect.andThen(startEnvironment(environmentId))),
       {
         concurrency: "unbounded",
         discard: true,
       },
-    );
+    ).pipe(Effect.forkIn(registryScope));
   }).pipe(Effect.withSpan("EnvironmentRegistry.start"));
 
   const installEntryLocked = Effect.fn("EnvironmentRegistry.installEntryLocked")(function* (
@@ -916,6 +1000,68 @@ export const make = Effect.gen(function* () {
     typeof globalThis.location === "undefined" || globalThis.location.protocol !== "https:";
 
   /**
+   * Persist route order without restarting the live supervisor. `installEntryLocked`
+   * would tear the session down; learned and sticky updates only need the catalog.
+   */
+  const publishRoutesLocked = Effect.fn("EnvironmentRegistry.publishRoutesLocked")(function* (
+    environmentId: EnvironmentId,
+    next: ConnectionCatalogEntry,
+  ) {
+    yield* registrations.setRoutes(environmentId, persistedRoutes(next));
+    const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+    if (lease !== undefined) {
+      yield* SubscriptionRef.update(serviceScopes, (current) =>
+        new Map(current).set(environmentId, { ...lease, entry: next }),
+      );
+    }
+    yield* SubscriptionRef.update(entries, (current) => new Map(current).set(environmentId, next));
+  });
+
+  /**
+   * The route that just connected moves first so the next cold start tries it
+   * before a dead LAN or other slower path from the previous network.
+   */
+  const rememberSuccessfulRoute = Effect.fn("EnvironmentRegistry.rememberSuccessfulRoute")(
+    function* (input: {
+      readonly environmentId: EnvironmentId;
+      readonly activeRoute: ConnectionRoute;
+    }) {
+      return yield* withLeaseLock(
+        input.environmentId,
+        Effect.gen(function* () {
+          if ((yield* Ref.get(platformEnvironmentIds)).has(input.environmentId)) {
+            return Option.none<ConnectionCatalogEntry>();
+          }
+          const entry = (yield* SubscriptionRef.get(entries)).get(input.environmentId);
+          if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
+          const now = yield* Clock.currentTimeMillis;
+          yield* registrations.touchConnected(input.environmentId, now).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Could not record the last connection time.", {
+                environmentId: input.environmentId,
+                error,
+              }),
+            ),
+          );
+          const current = connectionRoutes(entry);
+          const routes = preferRoute(current, connectionRouteId(input.activeRoute.target));
+          if (routes === current) return Option.none<ConnectionCatalogEntry>();
+          const next = entryWithRoutes(entry, routes);
+          yield* publishRoutesLocked(input.environmentId, next);
+          return Option.some(next);
+        }),
+      ).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not remember the successful connection route.", {
+            environmentId: input.environmentId,
+            error,
+          }).pipe(Effect.as(Option.none<ConnectionCatalogEntry>())),
+        ),
+      );
+    },
+  );
+
+  /**
    * Learned routes reuse the active route's credential, so they do not revoke pull request routing
    * trust the way a newly paired address does.
    */
@@ -956,16 +1102,7 @@ export const make = Effect.gen(function* () {
           }
           yield* profiles.put(profile);
         }
-        yield* registrations.setRoutes(input.environmentId, persistedRoutes(next));
-        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(input.environmentId);
-        if (lease !== undefined) {
-          yield* SubscriptionRef.update(serviceScopes, (current) =>
-            new Map(current).set(input.environmentId, { ...lease, entry: next }),
-          );
-        }
-        yield* SubscriptionRef.update(entries, (current) =>
-          new Map(current).set(input.environmentId, next),
-        );
+        yield* publishRoutesLocked(input.environmentId, next);
         return Option.some(next);
       }),
     ).pipe(
@@ -1137,6 +1274,17 @@ export const make = Effect.gen(function* () {
   );
   yield* connectivity.changes.pipe(
     Stream.runForEach((status) => SubscriptionRef.set(networkStatus, status)),
+    Effect.forkScoped,
+  );
+  yield* wakeups.changes.pipe(
+    Stream.filter(
+      (reason) =>
+        reason === "application-active" ||
+        reason === "application-active-probe" ||
+        reason === "application-active-long" ||
+        reason === "network-changed",
+    ),
+    Stream.runForEach(() => prefetchDpopCredentials()),
     Effect.forkScoped,
   );
 
