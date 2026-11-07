@@ -542,7 +542,8 @@ it.effect.each(["run.interrupt", "thread.stop"] as const)(
       yield* createWatchingThread(parentThreadId, 1);
       yield* send(parentThreadId, "first", "start_immediately");
       const childThreadId = yield* delegate(parentThreadId, "child task");
-      assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(childThreadId, 2))));
+      yield* watch(childThreadId, 2);
+      assert.deepEqual((yield* threadState(childThreadId)).watched, [2]);
       const grandchildThreadId = yield* delegate(childThreadId, "grandchild task");
       yield* send(childThreadId, "child follow-up", "queue_after_active");
 
