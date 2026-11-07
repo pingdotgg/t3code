@@ -830,9 +830,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           Fiber.await(probe).pipe(
             Effect.map((exit) => ({ _tag: "ProbeCompleted" as const, exit })),
           ),
-          takeConnectedSignal.pipe(
-            Effect.map((signal) => ({ _tag: "Signal" as const, signal })),
-          ),
+          takeConnectedSignal.pipe(Effect.map((signal) => ({ _tag: "Signal" as const, signal }))),
           Effect.sleep(Duration.nanos(remaining > 0n ? remaining : 0n)).pipe(
             Effect.as({ _tag: "TimedOut" as const }),
           ),
