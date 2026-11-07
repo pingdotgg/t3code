@@ -1,8 +1,8 @@
 import type { AnyRouter } from "@tanstack/react-router";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { dismissContextMenu } from "../contextMenuFallback";
-import { findLayoutTab } from "../layout/layoutModel";
-import { useLayoutStore } from "../layout/layoutStore";
+import { findLayoutTab, selectFocusedTab } from "../layout/layoutModel";
+import { selectIntendedLayout, useLayoutStore } from "../layout/layoutStore";
 import { useRightPanelStore } from "../rightPanelStore";
 
 const AREA_SELECTOR = "[data-workspace-area]";
@@ -333,6 +333,13 @@ export function createWorkspaceFocusController(doc: Document) {
     const label = lost.getAttribute("aria-label");
     requestAnimationFrame(() => {
       if (doc.activeElement !== doc.body || !doc.hasFocus() || isWorkspaceElementVisible(lost))
+        return;
+      const layout = selectIntendedLayout();
+      if (
+        tabId &&
+        findLayoutTab(layout, (tab) => tab.id === tabId) &&
+        selectFocusedTab(layout)?.id !== tabId
+      )
         return;
       const remounted = Array.from(doc.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
         (element) =>

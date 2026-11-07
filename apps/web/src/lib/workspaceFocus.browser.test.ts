@@ -488,4 +488,40 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(firstComposer.button);
     expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(firstTab.id);
   });
+
+  it("keeps layout focus where it moved when the pane it left goes inert", () => {
+    using fixture = setup();
+    const original = useLayoutStore.getState().layout;
+    using _restore = { [Symbol.dispose]: () => useLayoutStore.setState({ layout: original }) };
+    const frames: FrameRequestCallback[] = [];
+    using _frames = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => frames.push(callback));
+    const openDraft = (draftId: string) => {
+      useLayoutStore
+        .getState()
+        .openTab(
+          { kind: "chat", target: { kind: "draft", draftId: DraftId.make(draftId) } },
+          { placement: "new-column" },
+        );
+      return selectFocusedTab(useLayoutStore.getState().layout)!;
+    };
+    const chatTab = openDraft("inert-chat");
+    const terminalTab = openDraft("inert-terminal");
+    const nextTab = openDraft("inert-next");
+    const chat = fixture.append("<div></div>");
+    chat.dataset.layoutTabId = chatTab.id;
+    fixture.area("composer", 2, chat);
+    const terminalPane = fixture.append("<div></div>");
+    terminalPane.dataset.layoutTabId = terminalTab.id;
+    const terminal = fixture.area("terminal", 5, terminalPane);
+    useLayoutStore.getState().focusTab(terminalTab.id);
+    terminal.button.focus();
+    useLayoutStore.getState().focusTab(nextTab.id);
+    terminal.button.blur();
+    terminalPane.inert = true;
+    for (const frame of frames.splice(0)) frame(0);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(nextTab.id);
+    expect(document.activeElement).toBe(document.body);
+  });
 });
