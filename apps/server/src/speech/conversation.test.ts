@@ -86,18 +86,18 @@ const scripted = (updates: readonly Omit<SpeechStreamUpdate, "revision">[], utte
   return { stream, nexts: () => nexts };
 };
 
-const say = (samples: number, voicedUntil: number | undefined, words: string) => ({
+const say = (samples: number, voicedUntil: number | undefined, words: string | null) => ({
   samples,
   ...(voicedUntil === undefined ? {} : { voicedUntil }),
-  text: { committed: words, tentative: "" },
+  text: words === null ? null : { committed: words, tentative: "" },
 });
 
 it.live("splits continuous audio into utterances at the pause the words call for", () => {
   const script = scripted(
     [
       say(8000, 8000, "Run the tests."),
-      say(16000, 8000, "Run the tests."),
-      say(24000, 8000, "Run the tests."),
+      say(16000, 8000, null),
+      say(24000, 8000, null),
       say(8000, 4000, "And"),
     ],
     "Run the tests.",

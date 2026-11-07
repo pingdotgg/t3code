@@ -37,6 +37,8 @@ export const runConversationSocket = Effect.fn("speech.runConversationSocket")(f
   let stream: SpeechService.SpeechStream | undefined;
   let detector = makeTurnDetector();
   let silentSamples = 0;
+  // Updates carry text only when it changed, so the utterance's latest text is kept here.
+  let text = "";
   let ended = false;
   const close = Effect.fn("speech.closeConversation")(function* (
     event: SpeechConversationEvent | undefined,
@@ -75,7 +77,7 @@ export const runConversationSocket = Effect.fn("speech.runConversationSocket")(f
       if (!stream) return yield* fail("Start the voice conversation before sending audio.");
       const update = yield* stream.feed(data);
       yield* send({ type: "update", revision: update.revision, text: update.text });
-      const text = update.text ? `${update.text.committed}${update.text.tentative}` : "";
+      if (update.text) text = `${update.text.committed}${update.text.tentative}`;
       const turn = detector.observe({
         samples: update.samples,
         voicedUntil: update.voicedUntil,
@@ -86,6 +88,7 @@ export const runConversationSocket = Effect.fn("speech.runConversationSocket")(f
       if (turn.ended) {
         const utterance = yield* stream.next;
         detector.reset();
+        text = "";
         if (utterance.trim()) yield* send({ type: "utterance", text: utterance });
       }
       if (silentSamples >= idleSamples) yield* close({ type: "idle" }, 1000);
