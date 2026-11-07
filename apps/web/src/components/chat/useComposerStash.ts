@@ -32,6 +32,7 @@ import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { pendingDraftWork } from "./pendingDraftWork";
+import { countPreparingComposerImages } from "./preparingComposerImages";
 import {
   previewAnnotationContextRecord,
   reviewCommentContextRecord,
@@ -479,6 +480,16 @@ export function useComposerStash(input: {
       } else {
         setIsStashMenuOpen((open) => !open);
       }
+      return;
+    }
+    // The snapshot only holds compressed images; a still-compressing one would land in the
+    // emptied composer instead of travelling with this entry.
+    if (countPreparingComposerImages(attachmentTargetKey) > 0) {
+      toastManager.add({
+        type: "info",
+        title: "Still compressing a pasted image.",
+        description: "Stash again once it finishes compressing.",
+      });
       return;
     }
     const stashedFiles: PersistedComposerFileAttachment[] = [];
