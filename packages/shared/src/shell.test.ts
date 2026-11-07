@@ -122,8 +122,9 @@ describe("readEnvironmentFromLoginShell", () => {
       const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bash-env-"));
       try {
         const shellPath = `${NodePath.join(home, "bin")}:/usr/bin:/bin`;
+        const bashEnv = NodePath.join(home, "env.bash");
         NodeFS.writeFileSync(
-          NodePath.join(home, ".bash_profile"),
+          bashEnv,
           [
             `export PATH=${JSON.stringify(shellPath)}`,
             `trap 'echo -ne "\\033]0;\${BASH_COMMAND}\\007"' DEBUG`,
@@ -134,10 +135,11 @@ describe("readEnvironmentFromLoginShell", () => {
           readEnvironmentFromLoginShell(
             "/bin/bash",
             ["XDG_DATA_HOME", "PATH"],
-            (file, args, options) =>
-              NodeChildProcess.execFileSync(file, args, {
+            // Non-interactive bash reads only BASH_ENV, not the host's /etc startup files that -il runs.
+            (file, [, command = ""], options) =>
+              NodeChildProcess.execFileSync(file, ["-c", command], {
                 ...options,
-                env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "dumb" },
+                env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "dumb", BASH_ENV: bashEnv },
               }),
           ),
         ).toEqual({ PATH: shellPath });
