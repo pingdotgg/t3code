@@ -611,78 +611,107 @@ const layerSecretResolver = Layer.succeed(SecretResolver.SecretResolver, {
   invalidate: () => Effect.void,
 });
 
-it.effect.each([1, 9009])(
-  "Test connection preserves Windows exit %s guidance across the wire",
-  (exitCode) =>
-    Effect.gen(function* () {
-      const { host } = yield* fixture();
-      const service = yield* DeviceService.make.pipe(
-        Effect.provideService(DeviceHost.DeviceHost, host),
-        Effect.provideService(ProcessRunner.ProcessRunner, {
-          run: () => Effect.die("Testing SSH does not install local tools"),
-        }),
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die("Testing SSH makes no hub requests")),
-        ),
-        Effect.provideService(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make((command) => {
-            if (command._tag !== "StandardCommand") return Effect.die("Unexpected command");
-            const config = command.args.includes("-G");
-            const windows = command.args.includes("echo %OS% $env:OS");
-            return Effect.succeed(
-              ChildProcessSpawner.makeHandle({
-                pid: ChildProcessSpawner.ProcessId(123),
-                stdout: Stream.make(
-                  new TextEncoder().encode(
-                    config ? "hostname 192.0.2.1\nport 22\n" : windows ? "Windows_NT\r\n" : "",
-                  ),
-                ),
-                stderr: Stream.make(new TextEncoder().encode("private SSH diagnostics")),
-                all: Stream.empty,
-                exitCode: Effect.succeed(
-                  ChildProcessSpawner.ExitCode(config || windows ? 0 : exitCode),
-                ),
-                isRunning: Effect.succeed(false),
-                kill: () => Effect.void,
-                stdin: Sink.drain,
-                getInputFd: () => Sink.drain,
-                getOutputFd: () => Stream.empty,
-                unref: Effect.succeed(Effect.void),
-              }),
-            );
-          }),
-        ),
-      );
-      const error = yield* service
-        .testHost({ kind: "ssh", id: "windows", label: "Windows test", target: "windows.test" })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "DeviceHostUnavailableError",
-        hostId: "windows",
-        hostLabel: "Windows test",
-        reason:
-          "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
-      });
-      const codec = Schema.fromJsonString(DeviceError);
-      const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
-      expect(decoded.message).toBe(
-        "Windows test is unavailable: Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
-      );
-      expect(decoded.message).not.toContain("private SSH diagnostics");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          ServerSettings.layerTest(),
-          layerSecretResolver,
-          ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-probe-" }),
-          NodeCrypto.layer,
-          NetService.layer,
-        ).pipe(Layer.provideMerge(NodeServices.layer)),
+const WINDOWS_HOST_GUIDANCE = new SshDeviceHost.SshWindowsHostError({ cause: null }).message;
+
+it.effect.each([
+  {
+    name: "Windows exit 1",
+    exitCode: 1,
+    stderr: "private SSH diagnostics",
+    reason: WINDOWS_HOST_GUIDANCE,
+  },
+  {
+    name: "Windows exit 9009",
+    exitCode: 9009,
+    stderr: "private SSH diagnostics",
+    reason: WINDOWS_HOST_GUIDANCE,
+  },
+  {
+    name: "untrusted host key",
+    exitCode: 255,
+    stderr: "Host key verification failed.\r\n",
+    reason:
+      "The host key of probe.test is not trusted on the machine running this T3 Code server. Connect to it once with ssh from there and accept the key, or use a host name that is already in its known_hosts.",
+  },
+  {
+    name: "unrecognized SSH failure",
+    exitCode: 255,
+    stderr: "private SSH diagnostics",
+    reason: "Could not connect to this host over SSH.",
+  },
+])("Test connection preserves $name guidance across the wire", ({ exitCode, stderr, reason }) =>
+  Effect.gen(function* () {
+    const { host } = yield* fixture();
+    const service = yield* DeviceService.make.pipe(
+      Effect.provideService(DeviceHost.DeviceHost, host),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die("Testing SSH does not install local tools"),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Testing SSH makes no hub requests")),
       ),
-      Effect.scoped,
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand") return Effect.die("Unexpected command");
+          const config = command.args.includes("-G");
+          const windows = command.args.includes("echo %OS% $env:OS");
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(123),
+              stdout: Stream.make(
+                new TextEncoder().encode(
+                  config ? "hostname 192.0.2.1\nport 22\n" : windows ? "Windows_NT\r\n" : "",
+                ),
+              ),
+              stderr: Stream.make(new TextEncoder().encode(stderr)),
+              all: Stream.empty,
+              exitCode: Effect.succeed(
+                ChildProcessSpawner.ExitCode(config || windows ? 0 : exitCode),
+              ),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          );
+        }),
+      ),
+    );
+    const error = yield* service
+      .testHost({
+        kind: "ssh",
+        id: "probe",
+        label: "Probe test",
+        target: "probe.test",
+        port: 2222,
+      })
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "DeviceHostUnavailableError",
+      hostId: "probe",
+      hostLabel: "Probe test",
+      reason,
+    });
+    const codec = Schema.fromJsonString(DeviceError);
+    const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
+    expect(decoded.message).toBe(`Probe test is unavailable: ${reason}`);
+    expect(decoded.message).not.toContain("private SSH diagnostics");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest(),
+        layerSecretResolver,
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-probe-" }),
+        NodeCrypto.layer,
+        NetService.layer,
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
+    Effect.scoped,
+  ),
 );
 
 it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
