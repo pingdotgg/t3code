@@ -2434,7 +2434,8 @@ export const make = Effect.gen(function* () {
     string,
     { readonly readAtMs: number; readonly value: string | null }
   >();
-  const rememberPrLookupGitState = Effect.fn("GitManager.rememberPrLookupGitState")(function* <E>(
+  // Runs for each git value on every PR lookup. A hit is a Map read, and a miss runs traced git.
+  const rememberPrLookupGitState = Effect.fnUntraced(function* <E>(
     cwd: string,
     key: string,
     fresh: boolean,
