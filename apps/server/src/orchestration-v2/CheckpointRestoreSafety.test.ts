@@ -34,6 +34,7 @@ it.effect.each([
   "sibling",
   "shared-provider",
   "conversation",
+  "resumed-child",
 ] as const)("preserves overlapping workspace files, owner=%s", (owner) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -64,13 +65,24 @@ it.effect.each([
       id: otherId,
       projectId,
       deletedAt: null,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: otherId },
+      lineage: {
+        parentThreadId: owner === "resumed-child" ? threadId : null,
+        relationshipToParent: owner === "resumed-child" ? "subagent" : null,
+        rootThreadId: owner === "resumed-child" ? threadId : otherId,
+      },
+      status: "completed",
+      activeRunId: null,
+      activityRunStatus: owner === "resumed-child" ? "starting" : null,
+      pendingRuntimeRequest: null,
+      pendingBackgroundTasks: [],
       worktreePath:
-        owner === "ancestor" || owner === "conversation"
-          ? parent
-          : owner === "nested"
-            ? nested
-            : sibling,
+        owner === "resumed-child"
+          ? cwd
+          : owner === "ancestor" || owner === "conversation"
+            ? parent
+            : owner === "nested"
+              ? nested
+              : sibling,
     };
     const projection = {
       thread: {
@@ -251,4 +263,195 @@ it.effect.each([
       );
       assert.equal(result, isolated);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([
+  { name: "completed child", isolated: true },
+  { name: "completed native child", isolated: true },
+  { name: "native child still running", isolated: false },
+  { name: "native child with running tool", isolated: false },
+  { name: "native child with active provider", isolated: false },
+  { name: "native child with provider background task", isolated: false },
+  { name: "native child with parent background task", isolated: false },
+  { name: "native child with unrelated parent task", isolated: false },
+  { name: "native child with another provider parent task", isolated: true },
+  { name: "native child with unattributed parent task", isolated: false },
+  { name: "native child grandchild with root background task", isolated: false },
+  { name: "missing task record", isolated: false },
+  { name: "task belongs to another child", isolated: false },
+  { name: "completed child with pending task", isolated: false },
+  { name: "grandchild through fork", isolated: false },
+  { name: "completed grandchild", isolated: true },
+  { name: "archived completed child", isolated: true },
+  { name: "unrelated child", isolated: false },
+  { name: "sibling with the same root", isolated: false },
+  { name: "fork", isolated: false },
+  { name: "side chat", isolated: false },
+  { name: "running child", isolated: false },
+  { name: "starting child", isolated: false },
+  { name: "pending request", isolated: false },
+  { name: "background work", isolated: false },
+  { name: "held queue", isolated: false },
+  { name: "failed child", isolated: false },
+  { name: "different worktree", isolated: false },
+  { name: "missing ancestor", isolated: false },
+  { name: "cyclic ancestry", isolated: false },
+] as const)("parent file restore with $name: $isolated", ({ name, isolated }) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-restore-child-" });
+    const nested = path.join(worktreePath, "nested");
+    yield* fileSystem.makeDirectory(nested);
+    const parentId = ThreadId.make("restore-parent");
+    const childId = ThreadId.make("restore-child");
+    const ancestorId = ThreadId.make("restore-ancestor");
+    const child = {
+      id: childId,
+      projectId: ProjectId.make("restore-project"),
+      deletedAt: null,
+      archivedAt: name === "archived completed child" ? "2026-01-01T00:00:00Z" : null,
+      worktreePath: name === "different worktree" ? nested : worktreePath,
+      activeRunId: name === "running child" ? "child-run" : null,
+      activityRunStatus: name === "starting child" ? "starting" : null,
+      latestRunId: name.includes("native child") ? null : "child-run",
+      creationSource: name.includes("native child") ? "provider" : "user",
+      forkedFrom: { type: "node", nodeId: "child-task" },
+      status: name.includes("native child")
+        ? "idle"
+        : name === "running child"
+          ? "running"
+          : name === "failed child"
+            ? "failed"
+            : "completed",
+      pendingRuntimeRequest: name === "pending request" ? { id: "approval" } : null,
+      pendingBackgroundTasks: name === "background work" ? [{ taskId: "background" }] : [],
+      lineage: {
+        parentThreadId:
+          name === "completed grandchild" ||
+          name === "native child grandchild with root background task" ||
+          name === "grandchild through fork" ||
+          name === "missing ancestor" ||
+          name === "cyclic ancestry"
+            ? ancestorId
+            : name === "unrelated child" || name === "sibling with the same root"
+              ? ThreadId.make("another-parent")
+              : parentId,
+        relationshipToParent: name === "fork" || name === "side chat" ? "fork" : "subagent",
+        rootThreadId: parentId,
+        sideChat: name === "side chat",
+      },
+    };
+    const ancestor = {
+      ...child,
+      id: ancestorId,
+      forkedFrom: { type: "node", nodeId: "ancestor-task" },
+      lineage: {
+        ...child.lineage,
+        relationshipToParent: name === "grandchild through fork" ? "fork" : "subagent",
+        parentThreadId: name === "cyclic ancestry" ? childId : parentId,
+      },
+    };
+    const children =
+      name === "completed grandchild" ||
+      name === "native child grandchild with root background task" ||
+      name === "grandchild through fork" ||
+      name === "cyclic ancestry"
+        ? [child, ancestor]
+        : [child];
+    const projections = {
+      getShellSnapshot: () =>
+        Effect.succeed({
+          threads: children.filter((child) => child.archivedAt === null),
+          archivedThreads: children.filter((child) => child.archivedAt !== null),
+        }),
+      getCheckpointContext: () =>
+        Effect.succeed({
+          checkpointScopes: [],
+          runs: name === "held queue" ? [{ status: "queued" }] : [],
+        }),
+      getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+      getThreadRecords: (
+        _threadId: unknown,
+        _fields: readonly string[],
+        filter: { subagentIds?: string[]; turnItemStatuses?: string[] } = {},
+      ) =>
+        Effect.succeed({
+          providerThreads:
+            _threadId === parentId &&
+            (name.includes("parent") ||
+              name === "native child grandchild with root background task") &&
+            name.includes("native child")
+              ? [
+                  {
+                    providerInstanceId:
+                      name === "native child with another provider parent task"
+                        ? "other-provider"
+                        : "claude",
+                    status: "idle",
+                    pendingBackgroundTasks: [
+                      {
+                        taskId: "background",
+                        kind: "command",
+                        parentTaskId:
+                          name === "native child with unattributed parent task"
+                            ? undefined
+                            : name === "native child with unrelated parent task"
+                              ? "unrelated-task"
+                              : "native-task",
+                      },
+                    ],
+                  },
+                ]
+              : name === "native child with active provider"
+                ? [{ status: "active", pendingBackgroundTasks: [] }]
+                : name === "native child with provider background task"
+                  ? [{ status: "idle", pendingBackgroundTasks: [{ taskId: "background" }] }]
+                  : [],
+          turnItems:
+            name === "side chat" ||
+            (filter.turnItemStatuses !== undefined && name === "native child with running tool")
+              ? [{ type: "command_execution", status: "running" }]
+              : [],
+          subagents:
+            name === "missing task record"
+              ? []
+              : [
+                  {
+                    id: filter.subagentIds?.[0],
+                    providerInstanceId: "claude",
+                    nativeTaskRef: { nativeId: "native-task" },
+                    childThreadId:
+                      name === "task belongs to another child"
+                        ? "another-child"
+                        : filter.subagentIds?.[0] === "ancestor-task"
+                          ? ancestorId
+                          : childId,
+                    origin: name.includes("native child") ? "provider_native" : "app_owned",
+                    status:
+                      name === "native child still running" ||
+                      name === "completed child with pending task"
+                        ? "running"
+                        : "completed",
+                  },
+                ],
+        }),
+    };
+    const result = yield* isCheckpointRestoreIsolated(
+      { id: parentId, worktreePath },
+      { cwd: worktreePath },
+      { fileSystem, path, projections: projections as never, projects: {} as never },
+    );
+    assert.equal(result, isolated);
+    if (isolated) {
+      // Admission is not the last check: a child resumed before execution must block restore.
+      child.activityRunStatus = "starting";
+      const resumed = yield* isCheckpointRestoreIsolated(
+        { id: parentId, worktreePath },
+        { cwd: worktreePath },
+        { fileSystem, path, projections: projections as never, projects: {} as never },
+      );
+      assert.isFalse(resumed);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
