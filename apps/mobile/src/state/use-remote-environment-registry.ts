@@ -166,8 +166,15 @@ export function useRemoteConnections() {
   const onConnectPress = (pairingUrl?: string, expectedEnvironmentId?: EnvironmentId) =>
     pairEnvironment(pairingUrl ?? connectionPairingUrl, expectedEnvironmentId);
 
-  const onReconnectEnvironment = (environmentId: EnvironmentId) =>
-    controller.retryEnvironment(environmentId);
+  const onReconnectEnvironment = (environmentId: EnvironmentId) => {
+    const environment = connectedEnvironments.find(
+      (candidate) => candidate.environmentId === environmentId,
+    );
+    // A retry does nothing while the environment is switched off.
+    return environment?.isEnabled === false
+      ? controller.setEnvironmentEnabled(environmentId, true)
+      : controller.retryEnvironment(environmentId);
+  };
   const onSetEnvironmentEnabled = (environmentId: EnvironmentId, enabled: boolean) =>
     controller.setEnvironmentEnabled(environmentId, enabled);
   const onUpdateEnvironment = (
