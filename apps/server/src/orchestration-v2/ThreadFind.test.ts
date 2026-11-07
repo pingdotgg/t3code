@@ -528,7 +528,8 @@ describe("V2 thread find", () => {
     "searches inherited fork history through the fork boundary, using source item identities",
     () =>
       Effect.gen(function* () {
-        const projection = yield* setup;
+        yield* createProject(projectId);
+        const projection = yield* ProjectionStore.ProjectionStoreV2;
         const parent = ThreadId.make("thread:parent");
         const laterRun = RunId.make("run:later");
         const parentRun = RunId.make("run:parent");
@@ -547,12 +548,12 @@ describe("V2 thread find", () => {
           {
             ...child,
             id: EventId.make("child:fork"),
-            type: "thread.metadata-updated",
             payload: {
               ...child.payload,
               forkedFrom: { type: "run", threadId: parent, runId: parentRun },
             },
           },
+          run(),
         ]);
         yield* putItems([item("local", 1, "needle")]);
         const inherited = yield* projection.searchThread({ threadId, query: "needle" });
@@ -627,7 +628,8 @@ describe("V2 thread find", () => {
 
   it.effect("invalidates a cached fork search when its empty source gains its first message", () =>
     Effect.gen(function* () {
-      const projection = yield* setup;
+      yield* createProject(projectId);
+      const projection = yield* ProjectionStore.ProjectionStoreV2;
       const parent = ThreadId.make("thread:empty-parent");
       const parentRun = RunId.make("run:empty-parent");
       yield* commit([thread(parent, projectId), run(parent, parentRun)]);
@@ -637,12 +639,12 @@ describe("V2 thread find", () => {
         {
           ...child,
           id: EventId.make("child:empty-fork"),
-          type: "thread.metadata-updated",
           payload: {
             ...child.payload,
             forkedFrom: { type: "run", threadId: parent, runId: parentRun },
           },
         },
+        run(),
       ]);
       yield* putItems([item("local", 1, "needle")]);
       assert.equal((yield* projection.searchThread({ threadId, query: "needle" })).totalMatches, 1);

@@ -960,6 +960,10 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,
+          getForkSourceRunIds: () =>
+            Effect.succeed(
+              parentRecords.runs.filter((run) => run.status !== "rolled_back").map((run) => run.id),
+            ),
           getTurnStartContext,
           getRuntimeRecoveryProjection: () =>
             Effect.as(failReadIfRunning, {
