@@ -116,7 +116,9 @@ export function DesktopUpdateStatusIcon({
     return <DesktopUpdateDownloadingIcon percent={downloadPercent ?? null} />;
   }
   if (status === "downloaded") return <DesktopUpdateDownloadedIcon />;
-  if (status === "everything") return <CircleArrowUpIcon className="size-4" />;
+  if (status === "idle" || status === "everything") {
+    return <CircleArrowUpIcon className="size-4" />;
+  }
 
   return (
     <RefreshIcon
