@@ -82,7 +82,7 @@ interface BranchToolbarBranchSelectorProps {
   ref?: Ref<BranchToolbarBranchSelectorHandle>;
   className?: string;
   displayMode?: "toolbar" | "panel";
-  /** Composer only: one chip for the branch, workspace mode, and machine. */
+  /** Composer only: one chip for the branch and workspace mode. */
   renderWorkspaceMenu?: (branch: {
     label: string;
     disabled: boolean;
