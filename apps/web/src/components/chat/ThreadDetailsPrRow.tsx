@@ -288,7 +288,7 @@ export function ThreadDetailsPrRow({
                   }
                 />
                 <div className="min-w-0 truncate text-foreground/75">
-                  PR checks: {describePullRequestChecks(detail.checks)}
+                  {describePullRequestChecks(detail.checks)}
                 </div>
               </div>
             ) : null}

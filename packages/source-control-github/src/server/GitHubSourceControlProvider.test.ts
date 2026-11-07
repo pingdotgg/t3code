@@ -483,7 +483,10 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
         assert.lengthOf(graphqlCalls, 1);
         const query = graphqlCalls[0]!.query;
         assert.lengthOf(query.match(/fragment\s+\w*PullRequestNode\b/g) ?? [], 1);
-        if (!cloud) assert.notMatch(query, /mergeQueue|isInMergeQueue/);
+        assert.deepStrictEqual(
+          graphqlCalls[0]!.lookups.map((lookup) => lookup["mergeQueue"]),
+          [cloud, cloud],
+        );
       }).pipe(Effect.provide(layer));
     },
   );

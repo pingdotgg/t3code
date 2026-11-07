@@ -1608,7 +1608,7 @@ export function PullRequestDetailPanel({
               ) : (
                 <PullRequestChecksStatusLine
                   className="text-muted-foreground"
-                  aria-label={checksSummary ? `PR checks: ${checksSummary}` : "PR checks"}
+                  aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
                   icon={
                     checksState !== null ? (
                       <PullRequestChecksPopover
@@ -1621,7 +1621,7 @@ export function PullRequestDetailPanel({
                       <CircleDotIcon aria-hidden className="size-3.5" />
                     )
                   }
-                  label={checksSummary ? `PR checks: ${checksSummary}` : null}
+                  label={checksSummary}
                 />
               )
             ) : tab === "timeline" ? (

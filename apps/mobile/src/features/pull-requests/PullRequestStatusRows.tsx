@@ -109,13 +109,12 @@ export function PullRequestChecksRow(props: RowProps) {
   return (
     <Animated.View layout={PR_ROW_LAYOUT}>
       <PullRequestCardRow
-        title="PR checks"
-        detail={checks.title}
+        title={checks.title}
         icon={checks.icon}
         tint={checks.tint}
         value={checks.count}
         compact
-        accessibilityLabel={`PR checks, ${checks.label}`}
+        accessibilityLabel={`Checks, ${checks.label}`}
         expanded={expanded}
         onPress={() => setExpanded(!expanded)}
       />
@@ -165,7 +164,7 @@ export function PullRequestChecksRow(props: RowProps) {
             <Text className="px-4 py-3 text-xs text-foreground-muted">No checks reported.</Text>
           ) : null}
           <PullRequestCardRow
-            title="Open PR checks on provider"
+            title="Open checks on provider"
             icon="arrow.up.right"
             onPress={() =>
               void Linking.openURL(

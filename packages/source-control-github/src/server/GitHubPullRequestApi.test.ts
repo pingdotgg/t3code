@@ -976,7 +976,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
       expect(mockedExecute).toHaveBeenCalledTimes(1);
       expect(callAt(0)).toMatchObject({ kind: "graphql", host: "github.example" });
-      expect(queryAt(0)).not.toContain("isInMergeQueue");
+      expect(varsAt(0)).toMatchObject({ mergeQueue: false });
     }),
   );
 
