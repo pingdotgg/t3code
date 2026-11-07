@@ -338,6 +338,26 @@ function listCapabilityModels(input: {
   return { listed, omitted: visible.length - listed.length };
 }
 
+/** Names advertised slugs to retry with: same last `/` segment first, else a short list. */
+function advertisedModelsHint(models: ReadonlyArray<ServerProviderModel>, requested: string) {
+  const lastSegment = (slug: string) => slug.slice(slug.lastIndexOf("/") + 1).toLowerCase();
+  const wanted = lastSegment(requested);
+  const close = models.filter((model) => lastSegment(model.slug) === wanted);
+  if (close.length > 0) {
+    return `Did you mean ${close
+      .slice(0, LISTED_MODEL_LIMIT)
+      .map((model) => model.slug)
+      .join(", ")}?`;
+  }
+  const listed = models
+    .toSorted((a, b) => Number(a.isLegacy ?? false) - Number(b.isLegacy ?? false))
+    .slice(0, LISTED_MODEL_LIMIT);
+  const omitted = models.length - listed.length;
+  return `Advertised models: ${listed.map((model) => model.slug).join(", ")}${
+    omitted > 0 ? ` and ${omitted} more; orchestrator_capabilities with search finds them` : ""
+  }.`;
+}
+
 /** Option ids and allowed values are all a delegating agent needs; labels are UI copy. */
 function capabilityModelOption(descriptor: ProviderOptionDescriptor): OrchestratorMcpModelOption {
   const defaultValue = getProviderOptionCurrentValue(descriptor);
@@ -1430,7 +1450,7 @@ const make = Effect.gen(function* () {
     ) {
       return yield* failure(
         "model_unavailable",
-        `Model ${requestedModel} is not advertised by provider ${instanceId}.`,
+        `Model ${requestedModel} is not advertised by provider ${instanceId}. ${advertisedModelsHint(provider.models, requestedModel)}`,
       );
     }
 
