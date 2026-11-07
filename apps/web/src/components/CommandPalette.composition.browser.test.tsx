@@ -134,6 +134,17 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
   });
 });
 
+it("moves focus on Tab when the folder path has nothing to complete", async () => {
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("Local folder", { exact: true }).click();
+  const input = page.getByRole("combobox");
+  await input.fill("/workspace/zzz");
+  await userEvent.keyboard("{Tab}");
+  await expect.element(input).not.toHaveFocus();
+  await expect.element(input).toHaveValue("/workspace/zzz");
+});
+
 it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
