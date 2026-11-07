@@ -319,6 +319,24 @@ export function DevicePreviewScreen({
                 />
               </View>
             </>
+          ) : preview?.identityPending ? (
+            <>
+              <AppText className="text-center text-sm text-foreground-muted">
+                Waiting for the host to list this device again.
+              </AppText>
+              <View className="items-center">
+                <Button
+                  label="Refresh devices"
+                  tone="secondary"
+                  onPress={() => {
+                    void retryHost({
+                      environmentId,
+                      input: { retryHostId: preview.session.hostId },
+                    });
+                  }}
+                />
+              </View>
+            </>
           ) : state.error ? (
             <>
               <AppText selectable className="text-center text-sm text-foreground-muted">
