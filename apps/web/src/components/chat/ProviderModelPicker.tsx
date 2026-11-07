@@ -71,7 +71,10 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
 }
 
 /** What a docked effort column needs from its picker: the model it serves. */
-export const DockedPickerContext = createContext<{ modelLabel: string }>({ modelLabel: "" });
+export const DockedPickerContext = createContext<{ modelLabel: string; modelName: string }>({
+  modelLabel: "",
+  modelName: "",
+});
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
@@ -425,7 +428,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         touchBackdrop
       >
         {props.effortColumn ? (
-          <DockedPickerContext value={{ modelLabel: triggerTitle }}>
+          <DockedPickerContext value={{ modelLabel: triggerTitle, modelName: triggerLabel }}>
             <div className="flex max-h-(--available-height) flex-col">
               {/* One fixed height, so a model with more options never resizes the popup. Short
                   windows shrink it and keep the footer. */}

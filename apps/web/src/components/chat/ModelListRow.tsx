@@ -10,6 +10,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { titleWhenClipped } from "./clippedTitle";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -34,11 +35,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: (instanceId: ProviderInstanceId, slug: string) => void;
 }) {
-  const model = {
-    slug: props.slug,
-    name: props.name,
-    subProvider: props.subProvider,
-  };
+  const displayName = getDisplayModelName(props);
 
   const row = (
     <ComboboxItem
@@ -66,16 +63,16 @@ export const ModelListRow = memo(function ModelListRow(props: {
         indicatorBackground="var(--popover)"
         badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
       />
-      <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
-        <div
-          className="min-w-0 truncate text-sm font-normal leading-snug"
-          // Names the row in full on hover only when it is cut off.
-          onPointerEnter={(event) => {
-            const name = event.currentTarget;
-            name.title = name.scrollWidth > name.clientWidth ? getDisplayModelName(model) : "";
-          }}
-        >
-          {getDisplayModelName(model)}
+      <div
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        onPointerEnter={titleWhenClipped(
+          [...new Set([displayName, props.subProvider, props.providerDisplayName])]
+            .filter(Boolean)
+            .join(" · "),
+        )}
+      >
+        <div className="min-w-0 truncate text-sm font-normal leading-snug">
+          {displayName}
           {/* The logo is decorative, so name the provider for screen readers. */}
           <span className="sr-only">, {props.providerDisplayName}</span>
         </div>

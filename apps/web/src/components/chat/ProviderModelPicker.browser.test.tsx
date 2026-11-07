@@ -169,3 +169,52 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
 });
+
+it("names a row's cut-off sub-provider and its provider instance on hover", async () => {
+  const instanceId = ProviderInstanceId.make("opencode-zen");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("opencode"),
+      displayName: "OpenCode Zen",
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const name = "DeepSeek V4.1 Flash Free";
+  const subProvider = "Alibaba Cloud International Model Studio";
+  const options = new Map([[instanceId, [{ slug: "deepseek-v4.1-flash", name, subProvider }]]]);
+
+  await using screen = await render(
+    <ProviderModelPicker
+      environmentId={null}
+      activeInstanceId={instanceId}
+      model="deepseek-v4.1-flash"
+      lockedProvider={null}
+      instanceEntries={entries}
+      modelOptionsByInstance={options}
+      triggerAriaLabel="Choose model"
+      onInstanceModelChange={() => {}}
+    />,
+  );
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  const label = page.getByRole("option", { name: new RegExp(name) }).getByText(subProvider);
+  const clipped = label.element();
+  await vi.waitFor(() => expect(clipped.scrollWidth).toBeGreaterThan(clipped.clientWidth));
+
+  await userEvent.hover(label);
+  await vi.waitFor(() => {
+    const title = clipped.closest("[title]")?.getAttribute("title") ?? "";
+    const hint = "hover title of a row with a cut-off sub-provider";
+    expect(title, hint).toContain(name);
+    expect(title, hint).toContain(subProvider);
+    expect(title, hint).toContain("OpenCode Zen");
+  });
+});
