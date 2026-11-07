@@ -123,7 +123,10 @@ vi.mock("../state/preferences", async () => {
   return { mobilePreferencesAtom: Atom.make({ _tag: "Initial" }) };
 });
 vi.mock("../lib/composerContextClipboard", () => ({ importComposerContextClipboard: vi.fn() }));
-vi.mock("../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
+vi.mock("../lib/useUniwindTheme", () => ({
+  useUniwindTheme: () => ({}),
+  useThemeFontFamilies: () => ({ regular: undefined }),
+}));
 vi.mock("../lib/nativeComposerTheme", () => ({ createNativeComposerTheme: () => ({}) }));
 vi.mock("../lib/contextChipIconSource", () => ({ contextChipIconUri: () => "" }));
 vi.mock("../features/settings/appearance/useScaledTextRole", () => ({

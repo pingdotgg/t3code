@@ -9,9 +9,14 @@ import {
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
 } from "@t3tools/contracts";
+import type { ThemeDefinition } from "@t3tools/shared/themePalettes";
 
 export const DEFAULT_SANS_FONT_STACK =
   '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif';
+
+const ABSOLUTELY_REPLY_FONT_STACK = '"Source Serif 4", Georgia, serif';
+const ABSOLUTELY_SANS_FONT_STACK = '"DM Sans"';
+const ABSOLUTELY_CODE_FONT_STACK = '"JetBrains Mono"';
 
 // Some engines map `ui-monospace` to a proportional font, so prefer concrete names.
 export const DEFAULT_CODE_FONT_STACK =
@@ -62,6 +67,8 @@ export interface AppearanceFontPreferences {
   readonly sans: string;
   readonly code: string;
   readonly composer: string;
+  readonly reply: string;
+  readonly typography?: ThemeDefinition["typography"];
   readonly sizeInterface: number;
   readonly sizePrompt: number;
   readonly sizeCode: number;
@@ -74,10 +81,26 @@ export function applyAppearanceFontVariables(
   root: HTMLElement,
   preferences: AppearanceFontPreferences,
 ): void {
+  const absolutely = preferences.typography === "absolutely";
+  if (absolutely) root.dataset.typography = "absolutely";
+  else delete root.dataset.typography;
   const families: ReadonlyArray<readonly [variable: string, custom: string, fallback: string]> = [
-    ["--font-sans", preferences.sans, DEFAULT_SANS_FONT_STACK],
-    ["--font-mono", preferences.code, DEFAULT_CODE_FONT_STACK],
+    [
+      "--font-sans",
+      preferences.sans.trim() || (absolutely ? ABSOLUTELY_SANS_FONT_STACK : ""),
+      DEFAULT_SANS_FONT_STACK,
+    ],
+    [
+      "--font-mono",
+      preferences.code.trim() || (absolutely ? ABSOLUTELY_CODE_FONT_STACK : ""),
+      DEFAULT_CODE_FONT_STACK,
+    ],
     ["--font-composer", preferences.separate ? preferences.composer : "", "var(--font-sans)"],
+    [
+      "--font-reply",
+      preferences.reply.trim() || (absolutely ? ABSOLUTELY_REPLY_FONT_STACK : ""),
+      "var(--font-sans)",
+    ],
   ];
   for (const [variable, custom, fallback] of families) {
     const list = cssFontFamilies(custom);
@@ -88,10 +111,24 @@ export function applyAppearanceFontVariables(
     }
   }
 
+  for (const [variable, value] of [
+    ["--font-size-reply", "0.9375rem"],
+    ["--leading-reply", "1.4666666667"],
+    ["--font-size-user-message", "0.9375rem"],
+    ["--leading-user-message", "1.3333333333"],
+  ] as const) {
+    if (absolutely) root.style.setProperty(variable, value);
+    else root.style.removeProperty(variable);
+  }
+
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
   root.style.setProperty(
     "--font-size-prompt",
-    preferences.separate ? `${clampPromptFontSize(preferences.sizePrompt)}px` : "var(--text-sm)",
+    preferences.separate
+      ? `${clampPromptFontSize(preferences.sizePrompt)}px`
+      : absolutely
+        ? "15px"
+        : "var(--text-sm)",
   );
   const code = clampCodeFontSize(preferences.sizeCode);
   root.style.setProperty("--font-size-code", `${code}px`);
