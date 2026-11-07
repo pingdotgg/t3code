@@ -51,10 +51,9 @@ export function userFacingDatabaseErrorMessage(cause: unknown): string | undefin
 
 const CAPABILITY_REJECTION_MESSAGES: Record<string, (provider: string) => string> = {
   queued_messages: (p) => `${p} cannot queue messages behind an active run.`,
-  active_steering: (p) =>
-    `${p} cannot redirect an active run. Stop it first, then send the message.`,
+  active_steering: (p) => `${p} can't take a message mid-reply. Queue it, or stop the reply first.`,
   interrupt_restart_steering: (p) =>
-    `${p} cannot redirect an active run. Stop it first, then send the message.`,
+    `${p} can't restart a reply, which changing the model or account needs. Queue the message, or stop the reply first.`,
   interrupt: (p) => `${p} cannot stop a run once it has started.`,
   native_fork: (p) => `${p} cannot fork this thread natively.`,
   fork_from_turn: (p) => `${p} cannot fork from an earlier point in this thread.`,
