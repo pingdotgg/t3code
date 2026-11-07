@@ -2581,22 +2581,23 @@ function OpenCommandPaletteDialog(props: {
       const completion = highlightedEntry
         ? { name: highlightedEntry.name, isComplete: true }
         : getFilesystemBrowseTabCompletion(visibleBrowseEntries, browsePath.filterQuery);
-      const completeTab =
-        highlightedItemValue === "browse:up"
-          ? () => void browseUp()
-          : completion?.isComplete
-            ? () => void browseTo(completion.name)
-            : completion && !pinnedCloneDirectoryName
-              ? () => {
-                  setHighlightedItemValue(null);
-                  setQuery(`${getBrowseDirectoryPath(query)}${completion.name}`);
-                }
-              : null;
+      const canComplete =
+        highlightedItemValue === "browse:up" ||
+        completion?.isComplete ||
+        (completion !== null && !pinnedCloneDirectoryName);
       // Nothing to complete: let Tab move focus like it does in any other input.
-      if (!completeTab) return;
+      // While entries load, keep Tab so a fast typist is not thrown out of the field.
+      if (!canComplete && !isBrowsePending) return;
       (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
       event.preventDefault();
-      completeTab();
+      if (highlightedItemValue === "browse:up") {
+        void browseUp();
+      } else if (completion?.isComplete) {
+        void browseTo(completion.name);
+      } else if (completion && !pinnedCloneDirectoryName) {
+        setHighlightedItemValue(null);
+        setQuery(`${getBrowseDirectoryPath(query)}${completion.name}`);
+      }
       return;
     }
 
