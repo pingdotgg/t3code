@@ -47,8 +47,9 @@ import * as TextToSpeech from "./speech/TextToSpeech.ts";
 import * as FrontModel from "./voice/FrontModel.ts";
 import * as CloudSpeech from "./speech/CloudSpeech.ts";
 import { speechHttpApiLayer } from "./speech/http.ts";
-import { speechConversationRouteLayer } from "./speech/conversation.ts";
 import { speechStreamRouteLayer } from "./speech/stream.ts";
+import { voiceCallRouteLayer } from "./voice/callSocket.ts";
+import * as VoiceConversationService from "./voice/VoiceConversationService.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -787,7 +788,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
     speechStreamRouteLayer,
-    speechConversationRouteLayer,
+    voiceCallRouteLayer.pipe(Layer.provide(VoiceConversationService.layer)),
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),

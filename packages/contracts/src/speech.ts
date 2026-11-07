@@ -292,43 +292,6 @@ export const SpeechStreamEvent = Schema.Union([
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
 
-const TurnSilenceMs = Schema.Int.check(Schema.isBetween({ minimum: 300, maximum: 10_000 }));
-
-export const SpeechConversationCommand = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("start"),
-    options: SpeechTranscriptionOptions,
-    endSilenceMs: Schema.optional(TurnSilenceMs),
-    endSilenceLongMs: Schema.optional(TurnSilenceMs),
-  }),
-  Schema.Struct({ type: Schema.Literal("stop") }),
-]);
-export type SpeechConversationCommand = typeof SpeechConversationCommand.Type;
-
-export const SpeechConversationEvent = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("ready") }),
-  // One per audio frame, in order; clients use it as the acknowledgement.
-  Schema.Struct({
-    type: Schema.Literal("update"),
-    revision: Schema.Int,
-    text: Schema.NullOr(SpeechStreamText),
-  }),
-  Schema.Struct({ type: Schema.Literal("speech-start") }),
-  Schema.Struct({ type: Schema.Literal("utterance"), text: Schema.String }),
-  Schema.Struct({ type: Schema.Literal("idle") }),
-  // Binary frames for this seq follow; see encodeSpeechAudioFrame.
-  Schema.Struct({
-    type: Schema.Literal("speak"),
-    seq: Schema.Int,
-    text: Schema.String,
-    sampleRate: Schema.Int,
-  }),
-  // Drop this seq's audio and every earlier seq's, including anything already buffered.
-  Schema.Struct({ type: Schema.Literal("cut"), seq: Schema.Int }),
-  Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
-]);
-export type SpeechConversationEvent = typeof SpeechConversationEvent.Type;
-
 /** Server-to-client speech audio: `[seq u32 LE][Float32 PCM, native little-endian]`. */
 export function encodeSpeechAudioFrame(seq: number, pcm: Float32Array): Uint8Array {
   const frame = new Uint8Array(4 + pcm.byteLength);

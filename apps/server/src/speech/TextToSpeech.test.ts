@@ -47,5 +47,14 @@ it.effect("renders a chunk per sentence on one worker, unloaded once speech goes
     expect(disposed).toBe(0);
     yield* TestClock.adjust("5 minutes");
     expect(disposed).toBe(1);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* tts.hold;
+        yield* TestClock.adjust("10 minutes");
+        expect([loads.length, disposed]).toEqual([2, 1]);
+      }),
+    );
+    yield* TestClock.adjust("5 minutes");
+    expect(disposed).toBe(2);
   }).pipe(Effect.scoped, Effect.provide(Layer.merge(store, NodeServices.layer)));
 });

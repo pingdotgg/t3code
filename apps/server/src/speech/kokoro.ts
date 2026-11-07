@@ -71,7 +71,9 @@ process.on("message", async (message) => {
       await tts.generate("Ready.", { voice: "af_heart" });
       process.send({ type: "t3-tts-reply", ok: true });
     } else if (message.kind === "speak") {
-      const audio = await tts.generate(message.text, { voice: message.voice });
+      // An unknown voice, such as one from a newer client, falls back to the default.
+      const voice = tts.voices && !Object.hasOwn(tts.voices, message.voice) ? "af_heart" : message.voice;
+      const audio = await tts.generate(message.text, { voice });
       process.send({ type: "t3-tts-reply", ok: true, pcm: audio.audio,
         sampleRate: audio.sampling_rate });
     }
