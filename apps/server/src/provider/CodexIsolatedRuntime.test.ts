@@ -48,8 +48,7 @@ it.effect(
                 leases--;
               }),
           ),
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - No compatibility advisory is undefined, not void.
-        compatibility: () => Effect.succeed(undefined),
+        compatibility: () => Effect.undefined,
         start: Effect.die("Installation must be explicit"),
         cancel: () => Effect.die("unused"),
         state: Effect.die("unused"),
