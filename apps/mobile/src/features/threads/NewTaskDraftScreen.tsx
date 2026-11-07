@@ -25,7 +25,7 @@ import {
   usePreventRemove,
   useRoute,
 } from "@react-navigation/native";
-import { startTransition, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { KeyboardController } from "react-native-keyboard-controller";
@@ -155,6 +155,7 @@ type NewTaskDraftScreenProps = {
 function NewTaskDraftPromptEditor(props: {
   readonly draftKey: string | null;
   readonly onChangeText: (value: string) => void;
+  readonly onFocus?: () => void;
 }) {
   const prompt = useComposerDraft(props.draftKey).text;
   return (
@@ -162,6 +163,7 @@ function NewTaskDraftPromptEditor(props: {
       draftKey={props.draftKey}
       value={prompt}
       onChangeText={props.onChangeText}
+      onFocus={props.onFocus}
       placeholder="Ask anything"
       multiline
       style={{ minHeight: 64 }}
@@ -169,26 +171,8 @@ function NewTaskDraftPromptEditor(props: {
   );
 }
 
-/** Shell first so the native push is not blocked by composer/flow hooks. */
+/** ThreadRouteScreen already shells the push; mount the draft body without a second deferral. */
 export function NewTaskDraftScreen(props: NewTaskDraftScreenProps) {
-  const [bodyReady, setBodyReady] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers the draft composer until after the open-shell paints
-  useEffect(() => {
-    startTransition(() => {
-      setBodyReady(true);
-    });
-  }, []);
-  if (!bodyReady) {
-    return (
-      <ThreadScreenFallback header={<NewTaskDraftShellHeader />} headerKey={["new-task", "chrome"]}>
-        {null}
-      </ThreadScreenFallback>
-    );
-  }
-  return <NewTaskDraftBody {...props} />;
-}
-
-function NewTaskDraftBody(props: NewTaskDraftScreenProps) {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
   const projects = useProjects();
   const flow = useNewTaskFlow();
@@ -439,6 +423,10 @@ function NewTaskDraftBody(props: NewTaskDraftScreenProps) {
     if (props.draftId) {
       return;
     }
+    // Empty scopes while heavyReady is false means "not ready", not "no projects".
+    if (!flow.scopesReady) {
+      return;
+    }
     if (lastInitialProjectRefRef.current !== props.initialProjectRef) {
       lastInitialProjectRefRef.current = props.initialProjectRef;
       appliedInitialProjectKeyRef.current = null;
@@ -526,6 +514,7 @@ function NewTaskDraftBody(props: NewTaskDraftScreenProps) {
   }, [
     goBack,
     isFocused,
+    flow.scopesReady,
     projectScopes,
     projects,
     flow.draftKey,
@@ -539,13 +528,10 @@ function NewTaskDraftBody(props: NewTaskDraftScreenProps) {
   ]);
 
   const { loadBranches } = flow;
-  const [draftChromeReady, setDraftChromeReady] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers draft header + branch fetch until after the open-shell paints
-  useEffect(() => {
-    startTransition(() => {
-      setDraftChromeReady(true);
-    });
-  }, []);
+  // Stay on the light shell until the composer is focused — avoids a ThreadDetailScreen
+  // mount cliff that kept open-settle above 1s even when the hero was already visible.
+  const [draftLive, setDraftLive] = useState(false);
+  const draftChromeReady = draftLive;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests the selected project's branch list from the server once per project
   useEffect(() => {
     if (!draftChromeReady) return;
@@ -728,9 +714,16 @@ function NewTaskDraftBody(props: NewTaskDraftScreenProps) {
     return message.messageId;
   }
 
-  // Keep the current surface until the local draft selection is ready. Publishing
-  // an empty loading surface here flashes between two already-cached threads.
-  if (!selectedProject) return null;
+  // Keep chrome + a draft composer while the catalog resolves — avoid a blank body gap.
+  if (!selectedProject) {
+    return (
+      <ThreadScreenFallback header={<NewTaskDraftShellHeader />} headerKey={["new-task", "chrome"]}>
+        <View className="flex-1 justify-end gap-3 p-4">
+          <NewTaskDraftPromptEditor draftKey={flow.draftKey} onChangeText={flow.setPrompt} />
+        </View>
+      </ThreadScreenFallback>
+    );
+  }
 
   const setupBlockReason =
     isIncomingShareReady && !isImportingShare
@@ -903,6 +896,35 @@ function NewTaskDraftBody(props: NewTaskDraftScreenProps) {
             Your draft is saved on this device. Connect to an environment to choose its first model.
           </Text>
           <NewTaskDraftPromptEditor draftKey={flow.draftKey} onChangeText={flow.setPrompt} />
+        </View>
+      </ThreadScreenFallback>
+    );
+  }
+  // Ultra-light shell until focus — static copy only; live hero/composer wait for engagement.
+  if (!draftLive) {
+    return (
+      <ThreadScreenFallback header={<NewTaskDraftShellHeader />} headerKey={["new-task", "chrome"]}>
+        <View className="flex-1">
+          <View className="flex-1 items-center justify-center gap-2 px-6">
+            <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
+              What should we build?
+            </Text>
+            <Text className="text-center text-foreground-muted">Tap below to start typing</Text>
+          </View>
+          <View className="gap-2 p-4 pb-1">
+            <Pressable
+              accessibilityLabel="Ask anything"
+              accessibilityRole="button"
+              accessibilityHint="Focuses the composer"
+              onPress={() => {
+                flow.armHeavyReady();
+                setDraftLive(true);
+              }}
+              className="min-h-16 justify-center rounded-2xl bg-grouped-card px-4 py-3"
+            >
+              <Text className="text-foreground-muted">Ask anything</Text>
+            </Pressable>
+          </View>
         </View>
       </ThreadScreenFallback>
     );

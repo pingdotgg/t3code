@@ -133,6 +133,10 @@ export function branchBadgeLabel(input: {
 
 type NewTaskFlowContextValue = {
   readonly activeNewTask: { readonly pendingKey: string | null } | null;
+  /** False until deferred scope/VCS work arms — do not treat empty projectScopes as "no projects" yet. */
+  readonly scopesReady: boolean;
+  /** Arms project scopes / VCS after the open shell; call when the draft composer engages. */
+  readonly armHeavyReady: () => void;
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
@@ -227,7 +231,7 @@ export function NewTaskFlowProvider(
     routeDraftId?: string;
   }>,
 ) {
-  // Heavy scope/VCS work waits until after the draft route's first paint.
+  // Heavy scope/VCS work waits until after the draft route's first paint; focus can arm it early.
   const flowActive = props.active !== false;
   const [heavyReadyForActive, setHeavyReadyForActive] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- arms project scopes and git queries after the new-thread shell paints
@@ -237,6 +241,12 @@ export function NewTaskFlowProvider(
       setHeavyReadyForActive(true);
     });
   }, [flowActive]);
+  const armHeavyReady = () => {
+    if (!flowActive || heavyReadyForActive) return;
+    startTransition(() => {
+      setHeavyReadyForActive(true);
+    });
+  };
   const heavyReady = flowActive && heavyReadyForActive;
   const projects = useProjects();
   const threads = useThreadShells();
@@ -871,6 +881,8 @@ export function NewTaskFlowProvider(
 
   const value = {
     activeNewTask,
+    scopesReady: heavyReady,
+    armHeavyReady,
     projectScopes,
     selectedEnvironmentId,
     selectedProjectKey,
