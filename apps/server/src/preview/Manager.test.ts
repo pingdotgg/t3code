@@ -85,6 +85,8 @@ it.layer(layer)("PreviewManager", (it) => {
       const manager = yield* PreviewManager.PreviewManager;
       const collector = yield* collectEvents;
       const opened = yield* manager.open({ threadId, runtime: "server", reveal: false });
+      // The test server has no desktop browser channel.
+      expect(opened.headless).toBe(true);
       yield* manager.requestReveal({ threadId, tabId: opened.tabId, force: true });
       const first = (yield* manager.list({ threadId })).sessions[0];
       expect(first?.reveal).toBe(true);

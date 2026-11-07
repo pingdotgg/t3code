@@ -27,6 +27,8 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+
+import * as ServerConfig from "../config.ts";
 import { PreviewControlRequiredError } from "@t3tools/contracts";
 
 export class PreviewManager extends Context.Service<
@@ -120,6 +122,10 @@ const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 /** @public */
 export const make = Effect.gen(function* PreviewManagerMake() {
   const random = yield* SecureRandom.SecureRandom;
+  const config = yield* ServerConfig.ServerConfig;
+  // Without a desktop browser channel no desktop can draw server tabs, so publish them headless.
+  const serverTabsHeadless =
+    config.desktopBrowserFd === undefined || config.desktopBrowserControlFd === undefined;
   const serverEpoch = yield* random.uuidV4();
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
   const eventsPubSub = yield* PubSub.unbounded<PreviewEvent>();
@@ -193,6 +199,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           ? { automationOwner: input.automationOwner }
           : {}),
         ...(input.reveal === undefined ? {} : { reveal: input.reveal }),
+        ...(runtime === "server" && serverTabsHeadless ? { headless: true } : {}),
         updatedAt,
       };
       yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
