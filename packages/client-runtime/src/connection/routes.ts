@@ -6,12 +6,12 @@ import {
 } from "@t3tools/shared/hostClassification";
 import {
   EnvironmentId,
-  LAN_GATEWAY_ROUTE_PREFIX,
   type DesktopSshEnvironmentTarget,
   type LanGatewayPeerAdvertisement,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
+import { gatewayPeerHttpBaseUrl } from "../environment/endpoint.ts";
 import {
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
@@ -430,11 +430,6 @@ export function routeGatewayEnvironmentId(route: ConnectionRoute): EnvironmentId
   return profile?._tag === "BearerConnectionProfile" ? profile.gatewayEnvironmentId : undefined;
 }
 
-function gatewayHttpBaseUrl(gatewayHttpBaseUrl: string, peerEnvironmentId: EnvironmentId): string {
-  const origin = new URL(gatewayHttpBaseUrl).origin;
-  return `${origin}${LAN_GATEWAY_ROUTE_PREFIX}/${peerEnvironmentId}/`;
-}
-
 function gatewayWsBaseUrl(httpBaseUrl: string): string {
   const url = new URL(httpBaseUrl);
   return `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}${url.pathname}`;
@@ -444,6 +439,7 @@ function gatewayWsBaseUrl(httpBaseUrl: string): string {
  * Upserts reverse-proxy routes through a Connect/LAN gateway host for peers it
  * advertises that match this catalog entry. Routes drop when the host stops
  * advertising the peer. They borrow the peer's paired bearer when possible.
+ * A peer paired through this gateway already has that path as its primary route.
  */
 export function mergeGatewayRoutes(input: {
   readonly entry: ConnectionCatalogEntry;
@@ -452,15 +448,32 @@ export function mergeGatewayRoutes(input: {
   readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
 }): ReadonlyArray<ConnectionRoute> | null {
   const { entry, gatewayEnvironmentId } = input;
-  let gatewayOrigin: string;
-  try {
-    gatewayOrigin = new URL(input.gatewayHttpBaseUrl).origin;
-  } catch {
-    return null;
-  }
+  if (!URL.canParse(input.gatewayHttpBaseUrl)) return null;
+  const gatewayHttpBase = input.gatewayHttpBaseUrl;
   const peerEnvironmentId = entry.target.environmentId;
   const advertised = input.advertised.some((peer) => peer.environmentId === peerEnvironmentId);
   const saved = connectionRoutes(entry);
+
+  const routeSignature = (routes: ReadonlyArray<ConnectionRoute>) =>
+    routes
+      .map(
+        (route) =>
+          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
+      )
+      .join("\n");
+
+  // Pairing through the gateway stores the hop on the primary route; do not add a learned duplicate.
+  if (
+    saved.some(
+      (route) => routeGatewayEnvironmentId(route) === gatewayEnvironmentId && !isLearned(route),
+    )
+  ) {
+    const withoutLearned = saved.filter(
+      (route) => !(isLearned(route) && routeGatewayEnvironmentId(route) === gatewayEnvironmentId),
+    );
+    return routeSignature(saved) === routeSignature(withoutLearned) ? null : withoutLearned;
+  }
+
   const sharedCredential = (() => {
     for (const route of saved) {
       if (isLearned(route) || route.target._tag !== "BearerConnectionTarget") continue;
@@ -473,15 +486,7 @@ export function mergeGatewayRoutes(input: {
     return undefined;
   })();
 
-  const routeSignature = (routes: ReadonlyArray<ConnectionRoute>) =>
-    routes
-      .map(
-        (route) =>
-          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
-      )
-      .join("\n");
-
-  // Pair on the LAN first; without a borrowed bearer the gateway route cannot authenticate.
+  // Without a borrowed bearer the gateway route cannot authenticate (pair on LAN or through the gateway).
   if (sharedCredential === undefined) {
     const withoutGateway = saved.filter(
       (route) => routeGatewayEnvironmentId(route) !== gatewayEnvironmentId,
@@ -503,7 +508,7 @@ export function mergeGatewayRoutes(input: {
 
   let next: ReadonlyArray<ConnectionRoute> = kept;
   if (advertised) {
-    const httpBaseUrl = gatewayHttpBaseUrl(gatewayOrigin, peerEnvironmentId);
+    const httpBaseUrl = gatewayPeerHttpBaseUrl(gatewayHttpBase, peerEnvironmentId);
     const existing = kept.find((route) => connectionRouteId(route.target) === connectionId);
     const route: ConnectionRoute = {
       target: new BearerConnectionTarget({

@@ -1,9 +1,12 @@
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
+import { EnvironmentId } from "@t3tools/contracts";
+
 import {
   deriveWsBaseUrl,
   environmentEndpointUrl,
+  gatewayPeerHttpBaseUrl,
   normalizeHttpBaseUrl,
   withGatewayTicket,
 } from "./endpoint.ts";
@@ -14,6 +17,19 @@ describe("advertised endpoint helpers", () => {
     expect(normalizeHttpBaseUrl("wss://example.com/socket")).toBe("https://example.com/");
     expect(deriveWsBaseUrl("https://example.com/api")).toBe("wss://example.com/");
     expect(deriveWsBaseUrl("http://127.0.0.1:3773")).toBe("ws://127.0.0.1:3773/");
+  });
+
+  it("keeps a LAN gateway peer prefix when normalizing base URLs", () => {
+    const peer = EnvironmentId.make("env_peer");
+    expect(
+      normalizeHttpBaseUrl(`https://gateway.example/__t3_gateway/${peer}/api/auth/session?x=1`),
+    ).toBe(`https://gateway.example/__t3_gateway/${peer}/`);
+    expect(deriveWsBaseUrl(`https://gateway.example/__t3_gateway/${peer}/`)).toBe(
+      `wss://gateway.example/__t3_gateway/${peer}/`,
+    );
+    expect(gatewayPeerHttpBaseUrl("https://gateway.example/path", peer)).toBe(
+      `https://gateway.example/__t3_gateway/${peer}/`,
+    );
   });
 
   it("keeps a LAN gateway's peer prefix but never its ticket when rewriting paths", () => {

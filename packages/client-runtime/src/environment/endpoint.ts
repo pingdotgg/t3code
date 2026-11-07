@@ -1,12 +1,18 @@
-import { LAN_GATEWAY_ROUTE_PREFIX } from "@t3tools/contracts";
+import { LAN_GATEWAY_ROUTE_PREFIX, type EnvironmentId } from "@t3tools/contracts";
+import { gatewayPathPrefix } from "@t3tools/shared/advertisedEndpoint";
 import * as Option from "effect/Option";
 
 export * from "@t3tools/shared/advertisedEndpoint";
 
-/** The `/__t3_gateway/:id` root of a peer reached through a LAN gateway, or "" for any other URL. */
-export const gatewayPathPrefix = (url: URL): string => {
-  const [, root, peer] = url.pathname.split("/");
-  return `/${root}` === LAN_GATEWAY_ROUTE_PREFIX && peer ? `/${root}/${peer}` : "";
+export { gatewayPathPrefix };
+
+/** Join a gateway host origin with `/__t3_gateway/:peerId/` for pairing or learned routes. */
+export const gatewayPeerHttpBaseUrl = (
+  gatewayHttpBaseUrl: string,
+  peerEnvironmentId: EnvironmentId,
+): string => {
+  const origin = new URL(gatewayHttpBaseUrl).origin;
+  return `${origin}${LAN_GATEWAY_ROUTE_PREFIX}/${peerEnvironmentId}/`;
 };
 
 export const environmentEndpointUrl = (httpBaseUrl: string, pathname: string): string => {

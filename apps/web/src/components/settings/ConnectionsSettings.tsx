@@ -19,6 +19,7 @@ import {
   managedCapabilityDenial,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
+import { gatewayPeerHttpBaseUrl } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -103,6 +104,7 @@ import { useDesktopUpdateState } from "~/state/desktopUpdate";
 import {
   type EnvironmentPresentation,
   useEnvironment,
+  useEnvironmentHttpBaseUrl,
   useEnvironments,
   usePrimaryEnvironment,
 } from "~/state/environments";
@@ -138,7 +140,7 @@ import {
   CloudRemoteEnvironmentRows,
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
-import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
+import { AddEnvironmentDialog, type GatewayPairingPrefill } from "./AddEnvironmentDialog";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -147,34 +149,75 @@ const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
 const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
 
+function AdvertisedGatewayPeerRow({
+  host,
+  peer,
+  onAdd,
+}: {
+  readonly host: EnvironmentPresentation;
+  readonly peer: { readonly environmentId: EnvironmentId; readonly label: string };
+  readonly onAdd: (prefill: GatewayPairingPrefill) => void;
+}) {
+  const gatewayHttpBaseUrl = useEnvironmentHttpBaseUrl(host.environmentId);
+  const hostUrl = gatewayHttpBaseUrl ?? host.displayUrl;
+  return (
+    <div className="flex items-center justify-between gap-3 py-1">
+      <div className="min-w-0">
+        <div className="truncate text-sm text-foreground">{peer.label}</div>
+        <div className="truncate text-2xs text-muted-foreground">via {host.label}</div>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={hostUrl === null}
+        onClick={() => {
+          if (hostUrl === null) return;
+          onAdd({
+            host: gatewayPeerHttpBaseUrl(hostUrl, peer.environmentId),
+            expectedEnvironmentId: peer.environmentId,
+            gatewayEnvironmentId: host.environmentId,
+            peerLabel: peer.label,
+          });
+        }}
+      >
+        Add
+      </Button>
+    </div>
+  );
+}
+
 function AdvertisedGatewayPeersNotice({
   hosts,
   knownEnvironmentIds,
+  onAddPeer,
 }: {
   readonly hosts: ReadonlyArray<EnvironmentPresentation>;
   readonly knownEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly onAddPeer: (prefill: GatewayPairingPrefill) => void;
 }) {
   const unknown = hosts.flatMap((host) =>
     (host.serverConfig?.lanGatewayPeers ?? [])
       .filter((peer) => !knownEnvironmentIds.has(peer.environmentId))
-      .map((peer) => ({
-        gatewayLabel: host.label,
-        peerLabel: peer.label,
-      })),
+      .map((peer) => ({ host, peer })),
   );
   if (unknown.length === 0) return null;
   return (
     <SettingsRow
-      title="Gateway peers not paired here yet"
-      description={
-        <>
-          {unknown.map((item) => item.peerLabel).join(", ")} {unknown.length === 1 ? "is" : "are"}{" "}
-          advertised by a LAN gateway host. Pair {unknown.length === 1 ? "it" : "them"} once on the
-          LAN (or Tailscale), then the gateway route appears automatically while that host is
-          reachable.
-        </>
-      }
-    />
+      title="Discovered on LAN gateway"
+      description="These machines are reachable through a connected gateway host. Add one here with its pairing code (no LAN reachability required on this device)."
+    >
+      <div className="flex flex-col gap-1">
+        {unknown.map(({ host, peer }) => (
+          <AdvertisedGatewayPeerRow
+            key={`${host.environmentId}:${peer.environmentId}`}
+            host={host}
+            peer={peer}
+            onAdd={onAddPeer}
+          />
+        ))}
+      </div>
+    </SettingsRow>
   );
 }
 
@@ -368,13 +411,16 @@ function ConnectionsSettingsContent({
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
+  const [gatewayPairPrefill, setGatewayPairPrefill] = useState<GatewayPairingPrefill | null>(null);
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const handleAddBackendDialogOpenChange = (open: boolean) => {
     setAddBackendDialogOpen(open);
     if (open) {
       setRouteTarget(null);
+      setGatewayPairPrefill(null);
     } else {
       setSavedBackendError(null);
+      setGatewayPairPrefill(null);
     }
   };
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
@@ -1637,8 +1683,16 @@ function ConnectionsSettingsContent({
               <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
             ) : null}
             <AddEnvironmentDialog
+              key={
+                gatewayPairPrefill
+                  ? `gateway:${gatewayPairPrefill.gatewayEnvironmentId}:${gatewayPairPrefill.expectedEnvironmentId}`
+                  : routeTarget
+                    ? `route:${routeTarget.environmentId}`
+                    : "add"
+              }
               open={addBackendDialogOpen}
               routeTarget={routeTarget}
+              gatewayPairPrefill={gatewayPairPrefill}
               error={savedBackendError}
               savedEnvironments={savedEnvironments}
               onOpenChange={handleAddBackendDialogOpenChange}
@@ -1655,6 +1709,7 @@ function ConnectionsSettingsContent({
             onSetEnabled={handleSetSavedBackendEnabled}
             onRemove={handleRemoveSavedBackend}
             onAddRoute={(target) => {
+              setGatewayPairPrefill(null);
               setRouteTarget(target);
               setSavedBackendError(null);
               setAddBackendDialogOpen(true);
@@ -1666,6 +1721,12 @@ function ConnectionsSettingsContent({
           knownEnvironmentIds={
             new Set(environments.map((environment) => environment.environmentId))
           }
+          onAddPeer={(prefill) => {
+            setRouteTarget(null);
+            setGatewayPairPrefill(prefill);
+            setSavedBackendError(null);
+            setAddBackendDialogOpen(true);
+          }}
         />
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}

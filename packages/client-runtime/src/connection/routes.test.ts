@@ -545,6 +545,35 @@ describe("gateway routes", () => {
     ).toBeNull();
   });
 
+  it("does not add a learned route when the peer was paired through this gateway", () => {
+    const pairedThroughGateway: ConnectionCatalogEntry = {
+      target: new BearerConnectionTarget({
+        environmentId: PEER_ID,
+        label: "Desk",
+        connectionId: "bearer:peer:https://connect-host.example",
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: "bearer:peer:https://connect-host.example",
+          environmentId: PEER_ID,
+          label: "Desk",
+          httpBaseUrl: `https://connect-host.example/__t3_gateway/${PEER_ID}/`,
+          wsBaseUrl: `wss://connect-host.example/__t3_gateway/${PEER_ID}/`,
+          gatewayEnvironmentId: GATEWAY_ID,
+        }),
+      ),
+      enabled: true,
+    };
+    expect(
+      mergeGatewayRoutes({
+        entry: pairedThroughGateway,
+        gatewayEnvironmentId: GATEWAY_ID,
+        gatewayHttpBaseUrl: gatewayOrigin,
+        advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+      }),
+    ).toBeNull();
+  });
+
   it("ignores advertisements for other peers", () => {
     expect(
       mergeGatewayRoutes({

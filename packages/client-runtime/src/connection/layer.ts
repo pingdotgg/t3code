@@ -81,7 +81,9 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
   const layerRegistry = EnvironmentRegistry.layer.pipe(
     Layer.provide(Layer.mergeAll(layerDriver, layerGatewayHop)),
   );
-  const layerOnboarding = ConnectionOnboarding.layer.pipe(Layer.provide(layerRegistry));
+  const layerOnboarding = ConnectionOnboarding.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerRegistry, layerGatewayHop)),
+  );
   const layerConnectionServices = Layer.mergeAll(
     layerRegistry,
     RelayEnvironmentDiscovery.layer,

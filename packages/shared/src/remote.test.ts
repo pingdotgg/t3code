@@ -60,6 +60,28 @@ describe("remote", () => {
     });
   });
 
+  it("keeps a LAN gateway peer prefix when pairing through a gateway host", () => {
+    expect(
+      resolveRemotePairingTarget({
+        host: "https://gateway.example.com/__t3_gateway/env_peer/",
+        pairingCode: "pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://gateway.example.com/__t3_gateway/env_peer/",
+      wsBaseUrl: "wss://gateway.example.com/__t3_gateway/env_peer/",
+    });
+    expect(
+      resolveRemotePairingTarget({
+        pairingUrl: "https://gateway.example.com/__t3_gateway/env_peer/pair#token=pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://gateway.example.com/__t3_gateway/env_peer/",
+      wsBaseUrl: "wss://gateway.example.com/__t3_gateway/env_peer/",
+    });
+  });
+
   it("treats a protocol-relative host as https", () => {
     expect(
       resolveRemotePairingTarget({
