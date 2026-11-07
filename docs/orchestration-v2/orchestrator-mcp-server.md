@@ -542,7 +542,15 @@ results use the latest assistant content from the final work turn.
   caller, list and search cover one project: its own unless `projectId` is given.
 - A tool that changes another thread needs the calling thread's live run, and
   the target's runtime and interaction modes may not be broader than the
-  caller's. This is the same privilege ceiling as child creation.
+  caller's. This is the same privilege ceiling as child creation, but it is
+  not a delegation: the refusal names the target thread, both pairs of modes,
+  and the two ways out (lower that thread's mode, or `delegate_task`, which
+  starts its own thread at the caller's modes). The ceiling reads the thread's
+  committed mode, so it applies to every mode of `t3_thread_send`, `queue`
+  included, even when the new turn would inherit an existing mode rather than
+  choose one. Because threads default to `full-access`, an agent paired below
+  full access cannot write to them at all until the user lowers the thread or
+  raises the pairing.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the

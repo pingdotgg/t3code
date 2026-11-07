@@ -53,6 +53,13 @@ Then choose what the agent may do:
   threads in every project. A thread it starts or steers cannot run with more
   permissions than the mode you chose.
 
+A thread the agent did not start is held to that same ceiling. Because new
+threads use the project's default permission mode, which is **Full access**
+unless you change it, an agent paired below **Full access** cannot message,
+steer or stop those threads until you lower the thread's mode or raise the
+pairing. Reading them is always allowed. An agent that needs to do work on its
+own should use `delegate_task`, which starts a thread at the caller's own modes.
+
 ## Claude Code
 
 ```sh

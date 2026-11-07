@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
+import { interactionModeRank, runtimeModeRank } from "./delegatedTaskModes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 /**
@@ -111,14 +111,33 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
   } satisfies Caller;
 });
 
+/**
+ * A thread write is not delegated work: it has no parent, and its reader is an
+ * agent that cannot narrow anything. A refusal therefore names the thread, both
+ * modes, and the two ways out, so it is not retried unchanged. Child and
+ * interaction wording stays in `delegatedTaskModes` for the calls that start work.
+ */
 export const assertTargetWithinLimits = (
   limits: CallerLimits,
-  target: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
-) =>
-  resolveRuntimeMode(limits.runtimeMode, target.runtimeMode).pipe(
-    Effect.andThen(resolveInteractionMode(limits.interactionMode, target.interactionMode)),
-    Effect.asVoid,
+  target: {
+    readonly id: ThreadId;
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+  },
+): Effect.Effect<void, OrchestratorMcpFailure> => {
+  // The codes are shared with peer forwarding (RemoteDelegation.isModeRefusal),
+  // so only the message is thread-specific.
+  const runtimeAbove = runtimeModeRank(target.runtimeMode) > runtimeModeRank(limits.runtimeMode);
+  const interactionAbove =
+    interactionModeRank(target.interactionMode) > interactionModeRank(limits.interactionMode);
+  if (!runtimeAbove && !interactionAbove) return Effect.void;
+  return Effect.fail(
+    new OrchestratorMcpFailure({
+      code: runtimeAbove ? "runtime_mode_escalation_denied" : "interaction_mode_escalation_denied",
+      message: `Thread ${target.id} runs in ${target.runtimeMode}/${target.interactionMode}, above the modes this agent may write at (${limits.runtimeMode}/${limits.interactionMode}). A tool that changes another thread may not target one broader than its own. Ask the user to lower that thread's permission mode, or use delegate_task, which starts its own thread at the caller's modes.`,
+    }),
   );
+};
 
 /** Background subagents retain credentials until provider exit; archived threads and other instances cannot act. */
 export const isLiveCallerShell = (
