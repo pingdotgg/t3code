@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
@@ -135,6 +136,17 @@ function installFromElectronCache(electronDir) {
   return false;
 }
 
+export function verifyElectronZip(fileName, bytes, checksums) {
+  const expected = checksums[fileName];
+  if (!expected) {
+    throw new Error(`No checksum for ${fileName} in electron's checksums.json`);
+  }
+  const actual = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+  if (actual !== expected) {
+    throw new Error(`Checksum mismatch for ${fileName}: expected ${expected}, got ${actual}`);
+  }
+}
+
 function downloadElectronRuntime(electronDir, version) {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-electron-"));
   const zipPath = NodePath.join(tempDir, `electron-v${version}-${hostPlatform}-${hostArch}.zip`);
@@ -153,6 +165,11 @@ function downloadElectronRuntime(electronDir, version) {
       "-o",
       zipPath,
     ]);
+    verifyElectronZip(
+      NodePath.basename(zipPath),
+      NodeFS.readFileSync(zipPath),
+      JSON.parse(NodeFS.readFileSync(NodePath.join(electronDir, "checksums.json"), "utf8")),
+    );
     if (hostPlatform === "darwin") {
       runChecked("ditto", ["-x", "-k", zipPath, NodePath.join(electronDir, "dist")]);
     } else {
