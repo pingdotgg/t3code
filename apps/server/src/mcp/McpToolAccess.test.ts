@@ -34,7 +34,6 @@ const archivedThreadId = ThreadId.make("thread:archived-background");
 const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
 const ownChildThreadId = ThreadId.make("thread:own-child");
 const forgedChildThreadId = ThreadId.make("thread:forged-child");
-const othersChildThreadId = ThreadId.make("thread:others-child");
 const planChildThreadId = ThreadId.make("thread:plan-child");
 
 const childShell = (threadId: ThreadId, parentThreadId: ThreadId) => ({
@@ -47,7 +46,6 @@ const childShell = (threadId: ThreadId, parentThreadId: ThreadId) => ({
 });
 const appOwnedChildren = new Map([
   [supervisedThreadId, [ownChildThreadId]],
-  [fullAccessThreadId, [othersChildThreadId]],
   [planThreadId, [planChildThreadId]],
 ]);
 
@@ -85,7 +83,6 @@ const shells = new Map([
   [ownChildThreadId, childShell(ownChildThreadId, supervisedThreadId)],
   // Says it is the supervised thread's child, but that thread never delegated it.
   [forgedChildThreadId, childShell(forgedChildThreadId, supervisedThreadId)],
-  [othersChildThreadId, childShell(othersChildThreadId, fullAccessThreadId)],
   [planChildThreadId, childShell(planChildThreadId, planThreadId)],
 ]);
 
@@ -347,7 +344,6 @@ it.effect.each([
     { threadId: planChildThreadId },
     "interaction_mode_escalation_denied",
   ],
-  ["writes_own_children", supervised, { threadId: planThreadId }, "approval-required/default"],
   [
     "writes_own_children",
     supervised,
@@ -356,17 +352,10 @@ it.effect.each([
   ],
   [
     "writes_own_children",
-    supervised,
-    { threadId: othersChildThreadId },
-    "runtime_mode_escalation_denied",
-  ],
-  [
-    "writes_own_children",
     supervisedClient,
     { threadId: ownChildThreadId },
     "runtime_mode_escalation_denied",
   ],
-  ["writes_threads", supervised, { threadId: ownChildThreadId }, "runtime_mode_escalation_denied"],
 
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],

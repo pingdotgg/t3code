@@ -48,7 +48,7 @@ const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
   ...shared,
   dependencies: [...shared.dependencies, DocumentText.DocumentText],
   description:
-    "Send uploaded attachments. Targets must fit your modes, except your delegated child's runtime mode. No retry key. Success does not mean the provider read them or finished.",
+    "Send uploaded attachments as a new message to a thread. No retry key. Target modes cannot exceed yours, except your child's runtime mode. Success does not mean the provider read them or finished.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     message: Schema.optional(Schema.String.check(Schema.isMaxLength(120000))),

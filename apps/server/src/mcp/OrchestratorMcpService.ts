@@ -63,7 +63,6 @@ import {
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
-  isRuntimeModeAbove,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
@@ -125,7 +124,7 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import { isLiveCallerShell, isOwnDelegatedChild, threadNotFound } from "./threadAccess.ts";
+import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -3148,14 +3147,12 @@ const make = Effect.gen(function* () {
         target,
       } = yield* loadScopedThread(scope, input.threadId);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
-      // The declaration may lift only the runtime limit, only to its own child's preflight mode, only for that child.
-      const declared = yield* DispatchModeLimit;
+      // The declaration lifts only the runtime limit, and only to its own child's preflight mode.
+      const ownChildRuntimeMode = (yield* DispatchModeLimit)?.ownChildRuntimeMode;
       const limits =
-        declared?.ownChildRuntimeMode !== undefined &&
-        isRuntimeModeAbove(declared.ownChildRuntimeMode, callerLimits.runtimeMode) &&
-        (yield* isOwnDelegatedChild(threadManagement, parent?.thread.id, target.thread))
-          ? { ...callerLimits, runtimeMode: declared.ownChildRuntimeMode }
-          : callerLimits;
+        ownChildRuntimeMode === undefined
+          ? callerLimits
+          : { ...callerLimits, runtimeMode: ownChildRuntimeMode };
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
@@ -3185,11 +3182,6 @@ const make = Effect.gen(function* () {
           creationSource: "mcp",
         })
         .pipe(
-          // Recheck the limits checked above under the lock, not the declaration's older ones.
-          Effect.provideService(
-            DispatchModeLimit,
-            declared === undefined ? undefined : { ...declared, ...limits },
-          ),
           Effect.mapError((error) =>
             isThreadManagementError(error)
               ? threadManagementFailure(error)

@@ -23,8 +23,6 @@ export interface DispatchModeLimitValue extends DispatchModes {
   readonly refused?: Ref.Ref<DispatchModeRefusal | undefined>;
   /** Set when `runtimeMode` was lifted above the caller's to its own delegated child's preflight mode. */
   readonly ownChildRuntimeMode?: RuntimeMode;
-  /** The calling thread. Commands to its app-owned children recheck its interaction mode under its lock. */
-  readonly callerThreadId?: ThreadId;
 }
 
 export const DispatchModeLimit = Context.Reference<DispatchModeLimitValue | undefined>(
@@ -43,15 +41,6 @@ export const exceededDispatchModeLimit = (
     : interactionModeRank[modes.interactionMode] > interactionModeRank[limit.interactionMode]
       ? "interaction"
       : undefined;
-
-/** A limit lowered to the interaction mode its caller has now. */
-export const narrowToInteractionMode = <Limit extends DispatchModes>(
-  limit: Limit,
-  interactionMode: ProviderInteractionMode,
-): Limit =>
-  interactionModeRank[interactionMode] < interactionModeRank[limit.interactionMode]
-    ? { ...limit, interactionMode }
-    : limit;
 
 /** The administrator's `limits.maxRuntimeMode`, which applies to every caller, the user included. */
 export interface RuntimeModeCeiling {

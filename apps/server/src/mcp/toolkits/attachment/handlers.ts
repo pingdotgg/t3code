@@ -3,7 +3,6 @@ import {
   type ChatAttachment,
   MessageId,
   OrchestratorMcpFailure,
-  isRuntimeModeAbove,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -11,11 +10,9 @@ import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
-import { DispatchModeLimit } from "../../../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "../../delegatedTaskModes.ts";
-import { isOwnDelegatedChild, newCommandId, readThread, unavailable } from "../../threadAccess.ts";
+import { newCommandId, readThread, unavailable } from "../../threadAccess.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 export function resolveAttachmentReferences(
@@ -88,24 +85,7 @@ export const layer = McpToolAccess.toLayer(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
-            const {
-              caller,
-              threads,
-              limits: callerLimits,
-              projection,
-            } = yield* readThread(input.threadId, ["messages"]);
-            const declared = yield* DispatchModeLimit;
-            const limits =
-              declared?.ownChildRuntimeMode !== undefined &&
-              isRuntimeModeAbove(declared.ownChildRuntimeMode, callerLimits.runtimeMode) &&
-              (yield* isOwnDelegatedChild(threads, caller?.id, projection.thread))
-                ? { ...callerLimits, runtimeMode: declared.ownChildRuntimeMode }
-                : callerLimits;
-            yield* resolveRuntimeMode(limits.runtimeMode, projection.thread.runtimeMode);
-            yield* resolveInteractionMode(
-              limits.interactionMode,
-              projection.thread.interactionMode,
-            );
+            const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
             if (projection.thread.archivedAt !== null)
               return yield* new OrchestratorMcpFailure({
                 code: "invalid_request",
@@ -129,10 +109,6 @@ export const layer = McpToolAccess.toLayer(
               createdBy: "agent",
               creationSource: "mcp",
             }).pipe(
-              Effect.provideService(
-                DispatchModeLimit,
-                declared === undefined ? undefined : { ...declared, ...limits },
-              ),
               Effect.mapError((error) =>
                 error._tag === "AttachmentClaimError"
                   ? new OrchestratorMcpFailure({
