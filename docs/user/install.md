@@ -39,9 +39,10 @@ Run `t3 help` or `t3 --help` for the full reference. To start in a new working
 directory, use an explicit path such as `t3 ./my-project`. A bare directory name
 is accepted only if it already exists.
 
-If `t3` or `t3 start` reports an already running server, connect to that server
-instead. Stop it before starting a replacement, or use a different `--base-dir`
-for an independent server.
+If `t3` or `t3 start` reports an already running server, run the `t3 pair`
+command it names and open the pairing URL to connect to that server. Stop it
+before starting a replacement, or use a different `--base-dir` for an
+independent server.
 
 To try T3 Code once without installing it, run `npx t3@latest` instead (needs
 Node.js for `npx`).
