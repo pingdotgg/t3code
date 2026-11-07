@@ -246,6 +246,7 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
       <Button
         size="icon-sm-pill"
         aria-label="Stop recording"
+        className="ms-auto"
         disabled={phase !== "recording"}
         onClick={() => {
           const recorder = capture.current?.recorder;

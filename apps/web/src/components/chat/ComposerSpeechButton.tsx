@@ -95,7 +95,6 @@ function RecordingStatus(props: { level: number; recordingLimitSeconds?: number 
   return (
     <>
       <VoiceWaveform level={props.level} />
-      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
       <span className="shrink-0 text-secondary-label text-xs tabular-nums">
         {formatElapsed(elapsedSeconds)}
         {props.recordingLimitSeconds !== undefined
@@ -120,7 +119,7 @@ function ComposerSpeechStatus(props: {
 
   return (
     <div
-      className="flex h-7 min-w-0 flex-1 items-center gap-2"
+      className="flex h-7 min-w-0 flex-1 items-center justify-end gap-2"
       role="status"
       aria-live={isRecording ? "off" : "polite"}
       aria-label={presentation.status}
@@ -250,16 +249,16 @@ export function ComposerSpeechRecordingPill(props: {
 
   return (
     <VoiceInputPill>
-      <ComposerSpeechCancelButton
-        state={props.state}
-        shortcutLabel={props.cancelShortcutLabel ?? null}
-        onCancel={props.onCancel}
-      />
       <ComposerSpeechStatus
         state={props.state}
         progress={props.progress}
         level={props.level}
         recordingLimitSeconds={props.recordingLimitSeconds}
+      />
+      <ComposerSpeechCancelButton
+        state={props.state}
+        shortcutLabel={props.cancelShortcutLabel ?? null}
+        onCancel={props.onCancel}
       />
       {props.state.phase === "post-processing" ? (
         <Button

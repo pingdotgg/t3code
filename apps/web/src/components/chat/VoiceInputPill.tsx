@@ -1,7 +1,9 @@
 import { memo, useEffect, useRef, type ReactNode } from "react";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 
-const WAVEFORM_BAR_COUNT = 28;
+const WAVEFORM_BAR_COUNT = 12;
+// A silent bar is a 2px dot: 2px of the bar's 14px height.
+const WAVEFORM_MIN_SCALE = 2 / 14;
 const WAVEFORM_BAR_IDS = Array.from({ length: WAVEFORM_BAR_COUNT }, (_, index) => String(index));
 
 export const VoiceWaveform = memo(function VoiceWaveform(props: { level: number }) {
@@ -17,24 +19,20 @@ export const VoiceWaveform = memo(function VoiceWaveform(props: { level: number 
     barsRef.current.forEach((bar, index) => {
       if (!bar) return;
       const level = levels[index] ?? 0;
-      bar.style.opacity = String(0.22 + level * 0.78);
-      bar.style.transform = `scaleY(${prefersReducedMotion ? 0.35 : Math.max(0.08, level)})`;
+      bar.style.transform = `scaleY(${prefersReducedMotion ? 0.35 : Math.max(WAVEFORM_MIN_SCALE, level)})`;
     });
   }, [prefersReducedMotion, props.level]);
 
   return (
-    <div
-      aria-hidden
-      className="flex h-5 min-w-0 flex-1 items-center justify-between gap-px overflow-hidden"
-    >
+    <div aria-hidden className="flex h-5 min-w-0 items-center justify-end gap-0.5 overflow-hidden">
       {WAVEFORM_BAR_IDS.map((id, index) => (
         <span
           key={id}
           ref={(bar) => {
             barsRef.current[index] = bar;
           }}
-          className="h-full w-0.5 shrink-0 origin-center rounded-full bg-primary opacity-25 transition-[transform,opacity] duration-100 ease-out motion-reduce:transition-none"
-          style={{ transform: `scaleY(${prefersReducedMotion ? 0.35 : 0.08})` }}
+          className="h-3.5 w-0.5 shrink-0 origin-center rounded-full bg-primary transition-transform duration-100 ease-out motion-reduce:transition-none"
+          style={{ transform: `scaleY(${prefersReducedMotion ? 0.35 : WAVEFORM_MIN_SCALE})` }}
         />
       ))}
     </div>
@@ -46,7 +44,7 @@ export function VoiceInputPill({ children }: { children: ReactNode }) {
     // Same height as the toolbar's icon buttons, so starting a recording never resizes the composer.
     <div
       data-slot="voice-input-pill"
-      className="flex h-8 w-48 min-w-0 shrink-0 items-center gap-2 sm:h-7 sm:w-64"
+      className="flex h-8 w-48 max-w-full min-w-0 shrink-0 items-center gap-2 sm:h-7 sm:w-64"
     >
       {children}
     </div>
