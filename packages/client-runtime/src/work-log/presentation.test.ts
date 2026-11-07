@@ -4,6 +4,7 @@ import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/con
 import * as DateTime from "effect/DateTime";
 
 import {
+  formatRunningFor,
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
@@ -202,5 +203,17 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("formatRunningFor", () => {
+  it.each([
+    [0, "for 0s"],
+    [1_900, "for 1s"],
+    [59_999, "for 59s"],
+    [65_400, "for 1m 5s"],
+    [3_720_000, "for 1h 2m"],
+  ])("counts whole seconds while a command runs: %i ms", (elapsedMs, text) => {
+    expect(formatRunningFor(elapsedMs)).toBe(text);
   });
 });
