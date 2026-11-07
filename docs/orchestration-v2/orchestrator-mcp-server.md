@@ -267,9 +267,12 @@ original brief, prior findings, responses, and unresolved objections. Track each
 round by its own `taskId` and use a distinct `clientRequestId` per round, stable
 across retries of that round.
 A follow-up that needs the same child's conversation goes through `t3_thread_send`
-on its `childThreadId`. After the original task completes, that follow-up runs as a
-fresh task in the child thread; it does not reopen the completed task or change its
-published result.
+on its `childThreadId`. After the original task completes or is interrupted, that
+follow-up runs as a fresh task in the child thread with its conversation intact; it
+does not reopen the completed task or change its published result.
+For a linked-environment child, send to `remoteChild.threadId` with
+`remoteChild.environmentId`, then use `t3_thread_wait` for the returned `runId`
+and `t3_thread_read` for its result; the original remote task no longer follows it.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command
