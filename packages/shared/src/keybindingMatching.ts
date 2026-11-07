@@ -50,6 +50,13 @@ export function isMacPlatform(platform: string): boolean {
   return /mac|iphone|ipad|ipod/i.test(platform);
 }
 
+// AltGr types text unless the result is a plain letter or digit, which a shortcut may use.
+export function isAltGraphText(
+  event: Pick<ShortcutEventLike, "key" | "getModifierState">,
+): boolean {
+  return event.getModifierState?.("AltGraph") === true && !/^[a-z0-9]$/i.test(event.key);
+}
+
 export function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
   if (normalized === "esc") return "escape";
@@ -95,12 +102,7 @@ export function matchesKeybindingShortcut(
   shortcut: KeybindingShortcut,
   platform: string,
 ): boolean {
-  if (
-    !isMacPlatform(platform) &&
-    event.getModifierState?.("AltGraph") &&
-    !/^[a-z0-9]$/i.test(event.key)
-  )
-    return false;
+  if (!isMacPlatform(platform) && isAltGraphText(event)) return false;
   if (!matchesKeybindingShortcutModifiers(event, shortcut, platform)) return false;
   return resolveEventKeys(event).has(shortcut.key);
 }

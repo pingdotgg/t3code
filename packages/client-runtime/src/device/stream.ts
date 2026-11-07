@@ -9,7 +9,9 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
+import { isAltGraphText } from "@t3tools/shared/keybindingMatching";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
+import { iosModifierKeys, usKey, usKeyStrokes, type UsKeyStroke } from "./iosKeyboard.ts";
 import type { DevicePlatform } from "@t3tools/contracts";
 
 export type DeviceStreamStatus = "connecting" | "streaming" | "error";
@@ -310,7 +312,8 @@ export interface DeviceStreamClient {
   readonly setMjpegImage: (image: HTMLImageElement | null) => void;
   /** Normalized 0..1 coordinates in the displayed frame. */
   readonly sendTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
-  readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
+  /** iOS only: `usLayout: false` sends the key places, for a simulator keyboard that is not US. */
+  readonly sendKey: (event: KeyboardEvent, phase: "down" | "up", usLayout?: boolean) => void;
   /** Android only: iOS input is HID key codes, which cannot carry arbitrary text. */
   readonly sendText: (text: string) => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
@@ -370,6 +373,11 @@ const HID_USAGE_BY_CODE: Readonly<Record<string, number>> = {
   MetaRight: 0xe7,
 };
 
+function typedCharacter(event: KeyboardEvent): string | null {
+  if (event.metaKey || (event.ctrlKey && !isAltGraphText(event))) return null;
+  return [...event.key].length === 1 ? event.key : null;
+}
+
 function hidUsageForCode(code: string): number | null {
   if (/^Key[A-Z]$/.test(code)) return 0x04 + (code.charCodeAt(3) - 65);
   if (/^Digit[1-9]$/.test(code)) return 0x1e + (code.charCodeAt(5) - 49);
@@ -426,6 +434,61 @@ export function createDeviceStreamClient(
   let decodedVideoGeneration: number | null = null;
   let iosInputAdmitted = false;
   let iosInputUnavailable = false;
+  const iosHeldModifiers = new Set<string>();
+  const iosPressedKeys = new Map<string, number>();
+  const sendIosKey = (type: "down" | "up", usage: number) =>
+    send(taggedJson(IOS_MSG_KEY, { type, usage }));
+  const sendIosCode = (type: "down" | "up", code: string) => {
+    const usage = hidUsageForCode(code);
+    if (usage !== null) sendIosKey(type, usage);
+  };
+  const syncIosModifiers = (event: KeyboardEvent | null, phase: "down" | "up" = "down") => {
+    // Windows reports AltGr as Ctrl+Alt. Option alone is the AltGr of Apple layouts.
+    const altGraph = event?.getModifierState?.("AltGraph") === true;
+    for (const [flag, code] of iosModifierKeys()) {
+      const held = event?.[flag] === true && !(altGraph && flag === "ctrlKey");
+      if (held === iosHeldModifiers.has(code) || (held && phase === "up")) continue;
+      if (held) iosHeldModifiers.add(code);
+      else iosHeldModifiers.delete(code);
+      sendIosCode(held ? "down" : "up", code);
+    }
+  };
+  const typeIosStrokes = (strokes: UsKeyStroke[]) => {
+    syncIosModifiers(null);
+    for (const { code, shift, option } of strokes) {
+      if (option) sendIosCode("down", "AltLeft");
+      if (shift) sendIosCode("down", "ShiftLeft");
+      sendIosCode("down", code);
+      sendIosCode("up", code);
+      if (shift) sendIosCode("up", "ShiftLeft");
+      if (option) sendIosCode("up", "AltLeft");
+    }
+  };
+  const pressIosKey = (event: KeyboardEvent, usLayout: boolean) => {
+    if (event.isComposing || event.key === "Dead" || /^(Shift|Control|Alt|Meta)/.test(event.code)) {
+      return;
+    }
+    const character = typedCharacter(event);
+    // Keypad keys type the same character on every layout.
+    if (usLayout && character !== null && !event.code.startsWith("Numpad")) {
+      const strokes = usKeyStrokes(character);
+      if (strokes) return typeIosStrokes(strokes);
+    }
+    const usShortcutCode = usLayout && character === null ? usKey(event.key)?.code : undefined;
+    const usage = hidUsageForCode(usShortcutCode ?? event.code);
+    if (usage === null) return;
+    syncIosModifiers(event);
+    sendIosKey("down", usage);
+    // macOS browsers fire no keyup for a key pressed while Cmd is held.
+    if (event.metaKey) sendIosKey("up", usage);
+    else iosPressedKeys.set(event.code, usage);
+  };
+  const releaseIosKey = (event: KeyboardEvent) => {
+    const usage = iosPressedKeys.get(event.code);
+    iosPressedKeys.delete(event.code);
+    if (usage !== undefined) sendIosKey("up", usage);
+    syncIosModifiers(event, "up");
+  };
   let timestamp = 0;
   let awaitingKeyframe = true;
   let screen: DeviceScreenSize | null = null;
@@ -1379,19 +1442,18 @@ export function createDeviceStreamClient(
       const action = phase === "begin" ? "down" : phase === "move" ? "move" : "up";
       send(JSON.stringify({ type: "touch", action, x, y }));
     },
-    sendKey: (event, phase) => {
+    sendKey: (event, phase, usLayout = true) => {
       if (avcc) {
-        const usage = hidUsageForCode(event.code);
-        if (usage !== null) send(taggedJson(IOS_MSG_KEY, { type: phase, usage }));
+        if (phase === "down") pressIosKey(event, usLayout);
+        else releaseIosKey(event);
         return;
       }
       if (phase !== "down") return;
       if (event.key === "Escape") return send(JSON.stringify({ type: "back" }));
       const keycode = ANDROID_KEYCODE_BY_KEY[event.key];
       if (keycode !== undefined) return send(JSON.stringify({ type: "key", keycode }));
-      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
-        send(JSON.stringify({ type: "text", text: event.key }));
-      }
+      const text = typedCharacter(event);
+      if (text !== null) send(JSON.stringify({ type: "text", text }));
     },
     sendText: (text) => {
       if (avcc) return;
