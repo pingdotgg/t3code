@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   buildSubscriptionUsageSnapshot,
   createWidgetRefresher,
+  subscriptionUsageTimeline,
   WIDGET_REFRESH_INTERVAL,
 } from "./subscriptionUsageSnapshot";
 
@@ -133,6 +134,68 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.providers[0]?.detail).toBe("Subscription remaining");
     expect(snapshot.providers[0]?.windows[0]?.remaining).toBe(20);
   });
+  it.each(["codex", "claudeAgent"])(
+    "excludes failed hub readings from healthy %s quota, account count, and expiry",
+    (driver) => {
+      const input = new Map([
+        [
+          EnvironmentId.make("env"),
+          {
+            entry: { target: { label: "Remote" } },
+            serverConfig: {
+              providers: [provider({ driver: ProviderDriverKind.make(driver) })],
+              usageLimitSources: [
+                {
+                  id: UsageLimitSourceId.make("hub"),
+                  kind: "cliproxy" as const,
+                  label: "Hub",
+                  checkedAt,
+                  accounts: [
+                    {
+                      id: "failed",
+                      driver: ProviderDriverKind.make(driver),
+                      usageLimits: {
+                        checkedAt: "2026-09-05T11:00:00.000Z",
+                        windows: [{ ...window, usedPercent: 0, resetsAt: checkedAt }],
+                        unavailable: { reason: "probeFailed" as const, message: "token secret" },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      ]);
+      const snapshot = buildSubscriptionUsageSnapshot(input, deepLink);
+      expect(snapshot.checkedAt).toBe(now);
+      expect(snapshot.providers).toEqual([
+        expect.objectContaining({
+          name: driver === "codex" ? "Codex" : "Claude",
+          detail: "Subscription remaining",
+          totalWindows: 1,
+          windows: [expect.objectContaining({ remaining: 60 })],
+          expiresAt: now + 10 * 60_000,
+        }),
+      ]);
+      expect(JSON.stringify(snapshot)).not.toContain("token secret");
+      expect(subscriptionUsageTimeline(snapshot, now)[1]?.props.providers[0]?.windows).toEqual([]);
+
+      input.get(EnvironmentId.make("env"))!.serverConfig.providers = [];
+      const failedOnly = buildSubscriptionUsageSnapshot(input, deepLink);
+      expect(failedOnly.checkedAt).toBe(0);
+      expect(failedOnly.providers).toEqual([
+        {
+          name: driver === "codex" ? "Codex" : "Claude",
+          detail: "No limits available",
+          windows: [],
+          expiresAt: 0,
+          totalWindows: 0,
+        },
+      ]);
+      expect(JSON.stringify(failedOnly)).not.toContain("token secret");
+    },
+  );
 });
 
 describe("widget refresh probes", () => {
