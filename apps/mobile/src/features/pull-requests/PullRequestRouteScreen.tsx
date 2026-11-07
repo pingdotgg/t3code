@@ -39,7 +39,7 @@ import {
   pullRequestDiffInitialPosition,
 } from "./pullRequestDiffDebug";
 import { usePullRequestDiffHighlightFiles } from "./usePullRequestDiffHighlightFiles";
-import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { isDocumentationChangedFile, isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
@@ -935,18 +935,21 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const [collapsedIds, setCollapsedIds] = useState<readonly string[]>(EMPTY_IDS);
   const [visibleFileId, setVisibleFileId] = useState<string | null>(null);
   const nativeView = useRef<NativeReviewDiffViewHandle>(null);
-  // The filter the current jump was made under. Hiding or showing test files replaces the rows,
-  // so a jump made under the other filter has to run again. Native applies the entry
+  // The filter the current jump was made under. Hiding or showing filtered files replaces the
+  // rows, so a jump made under another filter has to run again. Native applies the entry
   // destination before its first viewport, so the first one counts as made.
-  const jumpedUnder = useRef<boolean | null>(filter.hideTestFiles);
-  const hasTestFiles =
+  const fileFilterKey = `${filter.hideTestFiles}:${filter.hideDocumentationFiles}`;
+  const jumpedUnder = useRef<string | null>(fileFilterKey);
+  const hasFilterableFiles =
     result.parsed.kind === "files" &&
-    result.parsed.files.some((file) => isTestChangedFile(file.path));
+    result.parsed.files.some(
+      (file) => isTestChangedFile(file.path) || isDocumentationChangedFile(file.path),
+    );
   const jumpStarted = () =>
-    jumpedUnder.current !== null && (!hasTestFiles || jumpedUnder.current === filter.hideTestFiles);
+    jumpedUnder.current !== null && (!hasFilterableFiles || jumpedUnder.current === fileFilterKey);
   const scrollToFile = (fileId: string) => {
     if (!nativeView.current) return;
-    jumpedUnder.current = filter.hideTestFiles;
+    jumpedUnder.current = fileFilterKey;
     void nativeView.current.scrollToFile(fileId, false).catch(() => {
       jumpedUnder.current = null;
     });
@@ -991,7 +994,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       nativeView,
       jumpStarted,
       setJumpStarted: (started) => {
-        jumpedUnder.current = started ? filter.hideTestFiles : null;
+        jumpedUnder.current = started ? fileFilterKey : null;
       },
       onDebug: bridge.onDebug,
       loadMore,
@@ -1004,11 +1007,15 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     );
   };
   const visibleFile = data.files.find((file) => file.id === visibleFileId) ?? targetFile;
-  const toggleTestFiles = () => {
+  const toggleFileFilter = (toggle: () => void) => {
     setJumpPath(visibleFile?.path ?? route.params.path);
     setSelectedRowId(null);
-    filter.toggle();
+    toggle();
   };
+  const hiddenKinds = [
+    filter.hideTestFiles ? "tests" : null,
+    filter.hideDocumentationFiles ? "docs" : null,
+  ].filter(Boolean);
   const title = commit ? "Commit changes" : "Changes";
   const seekingFile = !targetFile && result.nextCursor !== null;
   const loadingDiff = (result.isPending && !data.rows.length) || (seekingFile && !result.error);
@@ -1016,7 +1023,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     <View className="flex-1 android:bg-header ios:bg-screen">
       <AppBar
         title={title}
-        subtitle={`${commit ? commit.slice(0, 7) : `#${route.params.number}`} · ${data.files.length} ${data.files.length === 1 ? "file" : "files"}${filter.hideTestFiles && filter.hiddenCount ? ` · ${filter.hiddenCount} ${filter.hiddenCount === 1 ? "test" : "tests"} hidden` : ""}`}
+        subtitle={`${commit ? commit.slice(0, 7) : `#${route.params.number}`} · ${data.files.length} ${data.files.length === 1 ? "file" : "files"}${filter.hiddenCount && hiddenKinds.length ? ` · ${filter.hiddenCount} ${hiddenKinds.join(" + ")} hidden` : ""}`}
         onBack={() => navigation.goBack()}
         menus={[
           {
@@ -1063,7 +1070,14 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                 title: "Hide test files",
                 icon: "line.3.horizontal.decrease",
                 selected: filter.hideTestFiles,
-                onPress: toggleTestFiles,
+                onPress: () => toggleFileFilter(filter.toggleTests),
+              },
+              {
+                id: "hide-docs",
+                title: "Hide documentation",
+                icon: "doc.text",
+                selected: filter.hideDocumentationFiles,
+                onPress: () => toggleFileFilter(filter.toggleDocumentation),
               },
               ...(selectedRow && selectedFile && canCommentOnDiff
                 ? [
@@ -1210,9 +1224,33 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
             !seekingFile ? (
             <View style={{ paddingTop: contentTopInset }}>
               <EmptyState
-                title="Only test files changed"
-                detail="Test files are hidden from this review."
-                action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
+                title={
+                  filter.hideTestFiles && filter.hideDocumentationFiles
+                    ? "Only tests and docs changed"
+                    : filter.hideDocumentationFiles
+                      ? "Only documentation changed"
+                      : "Only test files changed"
+                }
+                detail={
+                  filter.hideTestFiles && filter.hideDocumentationFiles
+                    ? "Test and documentation files are hidden from this review."
+                    : filter.hideDocumentationFiles
+                      ? "Documentation files are hidden from this review."
+                      : "Test files are hidden from this review."
+                }
+                action={
+                  <Button
+                    label={
+                      filter.hideTestFiles && filter.hideDocumentationFiles
+                        ? "Show all files"
+                        : filter.hideDocumentationFiles
+                          ? "Show documentation"
+                          : "Show test files"
+                    }
+                    tone="contrast"
+                    onPress={filter.showAll}
+                  />
+                }
                 variant="plain"
               />
             </View>

@@ -12,6 +12,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   Columns2Icon,
+  BookTextIcon,
   FlaskConicalOffIcon,
   FolderTreeIcon,
   PilcrowIcon,
@@ -39,7 +40,8 @@ import {
   useDiffPanelStore,
 } from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
-import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { isDocumentationChangedFile, isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { useHideDocumentationFiles } from "./diffs/useHideDocumentationFiles";
 import { useHideTestFiles } from "./diffs/useHideTestFiles";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -237,6 +239,7 @@ export default function DiffPanel({
     Schema.Boolean,
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
+  const [hideDocumentationFiles, setHideDocumentationFiles] = useHideDocumentationFiles();
   const [baseRefQuery, setBaseRefQuery] = useState("");
   // The open commit menu keeps the list it opened with, so rows do not move under the pointer.
   const [openCommitMenu, setOpenCommitMenu] = useState<ReviewBranchCommitsResult | null>(null);
@@ -649,10 +652,16 @@ export default function DiffPanel({
   const testFileCount = renderableFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
+  const documentationFileCount = renderableFiles.filter((file) =>
+    isDocumentationChangedFile(resolveFileDiffPath(file)),
+  ).length;
   // Hiding is display-only: lazy loading indexes into the full list. A requested file stays visible.
   const isFileShown = (file: FileDiffMetadata) => {
     const path = resolveFileDiffPath(file);
-    return !hideTestFiles || path === selectedFilePath || !isTestChangedFile(path);
+    if (path === selectedFilePath) return true;
+    if (hideTestFiles && isTestChangedFile(path)) return false;
+    if (hideDocumentationFiles && isDocumentationChangedFile(path)) return false;
+    return true;
   };
   const shownFileEntries = renderableFileEntries.filter(({ fileDiff }) => isFileShown(fileDiff));
   const shownFileKeys = shownFileEntries.map((file) => file.fileKey);
@@ -1249,6 +1258,28 @@ export default function DiffPanel({
               {hideTestFiles
                 ? `Show ${testFileCount} hidden test ${testFileCount === 1 ? "file" : "files"}`
                 : "Hide test files"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+        {documentationFileCount > 0 && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label="Hide documentation files"
+                  variant="ghost"
+                  size="sm"
+                  pressed={hideDocumentationFiles}
+                  onPressedChange={(pressed) => setHideDocumentationFiles(Boolean(pressed))}
+                />
+              }
+            >
+              <BookTextIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {hideDocumentationFiles
+                ? `Show ${documentationFileCount} hidden documentation ${documentationFileCount === 1 ? "file" : "files"}`
+                : "Hide documentation"}
             </TooltipPopup>
           </Tooltip>
         )}
