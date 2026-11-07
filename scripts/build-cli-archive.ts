@@ -55,6 +55,7 @@ const StageWorkspaceConfig = Schema.Struct({
   allowBuilds: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
   patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  ignoredOptionalDependencies: Schema.optional(Schema.Array(Schema.String)),
   nodeLinker: Schema.optional(Schema.Literals(["hoisted"])),
 });
 const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceConfig));

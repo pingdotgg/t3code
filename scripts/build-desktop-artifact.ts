@@ -86,6 +86,7 @@ const StageWorkspaceConfig = Schema.Struct({
   allowBuilds: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
   patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  ignoredOptionalDependencies: Schema.optional(Schema.Array(Schema.String)),
   packageExtensions: Schema.optional(
     Schema.Record(
       Schema.String,
@@ -1590,6 +1591,42 @@ const stageClerkPasskeyNativeBinaries = Effect.fn("stageClerkPasskeyNativeBinari
   }
 });
 
+const NODE_LLAMA_CPP_BINARY_PACKAGES = [
+  "linux-arm64",
+  "linux-armv7l",
+  "linux-riscv64",
+  "linux-x64",
+  "linux-x64-cuda",
+  "linux-x64-cuda-ext",
+  "linux-x64-vulkan",
+  "mac-arm64-metal",
+  "mac-x64",
+  "win-arm64",
+  "win-x64",
+  "win-x64-cuda",
+  "win-x64-cuda-ext",
+  "win-x64-vulkan",
+] as const;
+
+// node-llama-cpp's arm builds also claim x64, so pnpm installs them on every Linux x64 target. CUDA
+// builds add 200-420 MB and need a matching CUDA runtime; Vulkan, Metal and the CPU build cover
+// GPUs without them. Its model downloader's reflink helper is never used.
+export function resolveStageIgnoredOptionalDependencies(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+) {
+  const arches = arch === "universal" ? ["arm64", "x64"] : [arch];
+  const shipped = (name: string) =>
+    !name.includes("cuda") &&
+    arches.some((target) => new RegExp(`^${platform}-${target}(-|$)`).test(name));
+  return [
+    "@reflink/reflink",
+    ...NODE_LLAMA_CPP_BINARY_PACKAGES.filter((name) => !shipped(name)).map(
+      (name) => `@node-llama-cpp/${name}`,
+    ),
+  ];
+}
+
 export function createStageWorkspaceConfig(input: {
   readonly platform: typeof BuildPlatform.Type;
   readonly arch: typeof BuildArch.Type;
@@ -1620,6 +1657,7 @@ export function createStageWorkspaceConfig(input: {
       ? { patchedDependencies }
       : {}),
     ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
+    ignoredOptionalDependencies: resolveStageIgnoredOptionalDependencies(platform, arch),
     packageExtensions: STAGE_PACKAGE_EXTENSIONS,
   };
 }
@@ -2814,10 +2852,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ...(platform === "win"
       ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
       : {
-          // ONNX Runtime's addon loads its sibling library by path, which Electron cannot extract.
+          // These addons load sibling libraries by path, which Electron cannot extract.
           asarUnpack: [
             "**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}",
             "**/node_modules/onnxruntime-node/bin/**/*",
+            // llama.cpp loads its CPU and GPU backends from the addon's directory.
+            "**/node_modules/@node-llama-cpp/*/bins/**/*",
           ],
         }),
     extraResources: [

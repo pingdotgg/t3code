@@ -42,6 +42,7 @@ import {
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
+  resolveStageIgnoredOptionalDependencies,
   resolveBuildOptions,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
@@ -617,6 +618,34 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
       },
     );
+  });
+
+  it("stages one CPU and one non-CUDA GPU build of the front model per target", () => {
+    const shipped = (platform: "mac" | "linux" | "win", arch: "x64" | "arm64" | "universal") => {
+      const ignored = resolveStageIgnoredOptionalDependencies(platform, arch);
+      assert.include(ignored, "@reflink/reflink");
+      return [
+        "linux-arm64",
+        "linux-armv7l",
+        "linux-riscv64",
+        "linux-x64",
+        "linux-x64-cuda",
+        "linux-x64-cuda-ext",
+        "linux-x64-vulkan",
+        "mac-arm64-metal",
+        "mac-x64",
+        "win-arm64",
+        "win-x64",
+        "win-x64-cuda",
+        "win-x64-cuda-ext",
+        "win-x64-vulkan",
+      ].filter((name) => !ignored.includes(`@node-llama-cpp/${name}`));
+    };
+    assert.deepStrictEqual(shipped("linux", "x64"), ["linux-x64", "linux-x64-vulkan"]);
+    assert.deepStrictEqual(shipped("linux", "arm64"), ["linux-arm64"]);
+    assert.deepStrictEqual(shipped("win", "x64"), ["win-x64", "win-x64-vulkan"]);
+    assert.deepStrictEqual(shipped("mac", "arm64"), ["mac-arm64-metal"]);
+    assert.deepStrictEqual(shipped("mac", "universal"), ["mac-arm64-metal", "mac-x64"]);
   });
 
   it.effect("ships Cursor platform assets outside asar for spawning and native loading", () =>

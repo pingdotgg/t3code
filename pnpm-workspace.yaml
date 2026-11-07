@@ -32,6 +32,10 @@ allowBuilds:
   utf-8-validate: false
   workerd: false
 
+# node-llama-cpp's model downloader is never used; its copy-on-write helper ships no license file.
+ignoredOptionalDependencies:
+  - "@reflink/reflink"
+
 catalog:
   "@alchemy.run/axiom": 2.0.0-beta.85
   "@alchemy.run/cloudflare": 2.0.0-beta.85
