@@ -4,6 +4,7 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import {
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  getUserQueuedThreadRuns,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
@@ -30,6 +31,127 @@ const capabilities = (input?: {
   }) as never;
 
 describe("thread workflows", () => {
+  it("skips message metadata classification when no runs are queued", () => {
+    let metadataReads = 0;
+    const messages = Object.freeze(
+      Array.from({ length: 1_000 }, (_, index) =>
+        Object.freeze({
+          id: `message-${index}`,
+          text: "Completed history",
+          get delegatedCompletion() {
+            metadataReads++;
+            return undefined;
+          },
+        }),
+      ),
+    );
+    const runs = Object.freeze(
+      (
+        [
+          "completed",
+          "interrupted",
+          "cancelled",
+          "failed",
+          "preparing",
+          "starting",
+          "running",
+          "waiting",
+        ] as const
+      ).map((status, ordinal) => Object.freeze({ id: status, status, ordinal })),
+    );
+    const projection = {
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs,
+      messages,
+      providerThreads: [],
+      providerTurns: [],
+      providerSessions: [],
+    } as unknown as OrchestrationV2ThreadProjection;
+
+    expect(getUserQueuedThreadRuns(projection)).toEqual([]);
+    expect(deriveThreadQueueWorkflowState(projection)).toMatchObject({
+      queuedRuns: [],
+      isHeld: false,
+      canPromoteToSteer: false,
+      canSendNow: false,
+    });
+    expect(getUserQueuedThreadRuns({ runs: [], messages: projection.messages })).toEqual([]);
+    expect(metadataReads).toBe(0);
+  });
+
+  it("still classifies history with a queued follow-up and preserves missing messages", () => {
+    let metadataReads = 0;
+    const messages = Object.freeze(
+      Array.from({ length: 1_000 }, (_, index) =>
+        Object.freeze({
+          id: `message-${index}`,
+          get delegatedCompletion() {
+            metadataReads++;
+            return undefined;
+          },
+        }),
+      ),
+    );
+    const queued = { id: "queued", status: "queued", userMessageId: "missing", ordinal: 2 };
+    const projection = {
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs: [{ id: "active", status: "running", ordinal: 1 }, queued],
+      messages,
+      providerThreads: [],
+      providerTurns: [],
+      providerSessions: [],
+    } as unknown as OrchestrationV2ThreadProjection;
+
+    expect(getUserQueuedThreadRuns(projection)).toEqual([queued]);
+    expect(metadataReads).toBe(1_000);
+    expect(deriveThreadQueueWorkflowState(projection).queuedRuns).toEqual([
+      { run: queued, text: "Queued message", attachments: [], messageId: "missing" },
+    ]);
+    expect(metadataReads).toBe(2_000);
+  });
+
+  it.each(["delegatedCompletion", "notification"] as const)(
+    "keeps a held automatic-only queue hidden when %s is defined but null",
+    (field) => {
+      const projection = {
+        thread: { id: "thread", activeProviderThreadId: null },
+        runs: [{ id: "automatic", status: "queued", userMessageId: "message", queueHeld: true }],
+        messages: [{ id: "message", [field]: null }],
+        providerThreads: [],
+        providerTurns: [],
+        providerSessions: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+
+      expect(getUserQueuedThreadRuns(projection)).toEqual([]);
+      expect(deriveThreadQueueWorkflowState(projection)).toMatchObject({
+        queuedRuns: [],
+        isHeld: true,
+        canSendNow: true,
+      });
+    },
+  );
+
+  it("preserves guest text, attachments and context in a queued follow-up", () => {
+    const context = {
+      version: 1,
+      records: [],
+      guest: { guestMessageId: "guest", name: "Guest", text: "Guest words" },
+    };
+    const attachments = [
+      { type: "image", id: "image", name: "image.png", mimeType: "image/png", sizeBytes: 64 },
+    ];
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs: [{ id: "queued", status: "queued", userMessageId: "message", ordinal: 1 }],
+      messages: [{ id: "message", text: "Attributed provider text", context, attachments }],
+      providerThreads: [],
+      providerTurns: [],
+      providerSessions: [],
+    } as never);
+
+    expect(state.queuedRuns[0]).toMatchObject({ text: "Guest words", context, attachments });
+  });
+
   it("allows a completed thread to switch providers after its session detaches", () => {
     const projection = {
       thread: {
