@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
@@ -49,6 +50,16 @@ export const UsageCategoryCost = Schema.Struct({
   output: Schema.Number,
 });
 export type UsageCategoryCost = typeof UsageCategoryCost.Type;
+
+export const UsageThreadTotals = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+  categoryCostUsd: UsageCategoryCost,
+  unsplitCostUsd: Schema.Number,
+  unpricedRecords: NonNegativeInt,
+});
+export type UsageThreadTotals = typeof UsageThreadTotals.Type;
 
 export const UsageBucket = Schema.Struct({
   day: UsageDay,
@@ -126,6 +137,7 @@ export const UsageModelFilter = Schema.Struct({
 export type UsageModelFilter = typeof UsageModelFilter.Type;
 
 export const UsageSummaryInput = Schema.Struct({
+  includeThreadUsage: Schema.optional(Schema.Boolean),
   sinceDay: UsageDay,
   untilDay: UsageDay,
   /** IANA bucketing zone; offsets fail across DST boundaries. */
@@ -139,6 +151,16 @@ export const UsageSummaryInput = Schema.Struct({
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
 export const UsageSummary = Schema.Struct({
+  threadContexts: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        threadId: TrimmedNonEmptyString,
+        usage: ThreadTokenUsageSnapshot,
+        updatedAt: Schema.String,
+      }),
+    ),
+  ),
+  threadUsage: Schema.optional(Schema.Array(UsageThreadTotals)),
   contractVersion: Schema.Number,
   readAt: Schema.String,
   timeZone: TrimmedNonEmptyString,

@@ -205,6 +205,8 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
     inputs: () => inputs,
     updateSettings,
     summary: (input = INPUT) => atoms.usageSummary({ environmentId: TARGET.environmentId, input }),
+    threadSummary: (input = INPUT) =>
+      atoms.threadUsageSummary({ environmentId: TARGET.environmentId, input }),
   };
 });
 
@@ -296,6 +298,21 @@ it.effect("keeps the cached usage summary when the awaited refresh fails", () =>
       ]);
       expect(AsyncResult.isSuccess(harness.registry.get(summary))).toBe(true);
       expect(harness.requests()).toBe(2);
+      unmount();
+    }),
+  ),
+);
+
+it.effect("settles thread usage only after a refreshing source completes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeRefreshingHarness(Effect.void);
+      const summary = harness.threadSummary();
+      const unmount = harness.registry.mount(summary);
+      expect((yield* settledSummary(harness.registry, summary)).sources).toEqual([
+        cursorSource(false),
+      ]);
+      expect(harness.inputs()).toEqual([INPUT, { ...INPUT, awaitRefresh: true }]);
       unmount();
     }),
   ),

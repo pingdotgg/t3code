@@ -77,6 +77,7 @@ function layerTestFor(state: {
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
   beforeRemoteStatus?: Effect.Effect<void>;
   beforeLocalStatus?: Effect.Effect<void>;
+  localStatusIncludeCheckoutDetailsValues?: Array<boolean | undefined>;
   fileSystem?: FileSystem.FileSystem;
   pullCurrentBranch?: GitWorkflowService.GitWorkflowService["Service"]["pullCurrentBranch"];
 }) {
@@ -95,11 +96,14 @@ function layerTestFor(state: {
     ),
     Layer.provide(
       Layer.mock(GitWorkflowService.GitWorkflowService)({
-        localStatus: () =>
+        localStatus: (input) =>
           Effect.suspend(() => {
             state.localStatusCalls += 1;
+            state.localStatusIncludeCheckoutDetailsValues?.push(input.includeCheckoutDetails);
+            const { checkoutDetails: _checkoutDetails, ...ordinaryStatus } =
+              state.currentLocalStatus;
             return (state.beforeLocalStatus ?? Effect.void).pipe(
-              Effect.as(state.currentLocalStatus),
+              Effect.as(input.includeCheckoutDetails ? state.currentLocalStatus : ordinaryStatus),
             );
           }),
         currentBranch: () => Effect.sync(() => state.currentLocalStatus.refName),
@@ -166,6 +170,60 @@ function layerBackgroundPolicy(shouldRunScopeWork: (scope: BackgroundScope) => b
 }
 
 describe("VcsStatusBroadcaster", () => {
+  it.effect("publishes checkout metadata changes to detail subscribers", () => {
+    const firstDetails = {
+      commit: "1111111111111111111111111111111111111111",
+      committedAt: "2026-11-04T10:00:00.000Z",
+      headUpdatedAt: "2026-11-04T10:00:00.000Z",
+      originMainCommit: null,
+      behindOriginMain: null,
+    };
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: { ...baseLocalStatus, checkoutDetails: firstDetails },
+      currentRemoteStatus: null,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      localStatusIncludeCheckoutDetailsValues: [],
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.refreshLocalStatus("/repo");
+      const subscribed = yield* Deferred.make<void>();
+      const published = yield* Deferred.make<VcsStatusLocalResult>();
+      yield* broadcaster
+        .streamStatus({ cwd: "/repo", includeRemote: false, includeCheckoutDetails: true })
+        .pipe(
+          Stream.runForEach((event) => {
+            if (event._tag === "snapshot") return Deferred.succeed(subscribed, undefined);
+            if (event._tag === "localUpdated") return Deferred.succeed(published, event.local);
+            return Effect.void;
+          }),
+          Effect.forkScoped,
+        );
+      yield* Deferred.await(subscribed);
+      state.localStatusIncludeCheckoutDetailsValues = [];
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        checkoutDetails: {
+          ...firstDetails,
+          commit: "2222222222222222222222222222222222222222",
+          committedAt: "2026-11-04T11:00:00.000Z",
+        },
+      };
+      yield* broadcaster.refreshLocalStatus("/repo");
+
+      assert.isTrue(state.localStatusIncludeCheckoutDetailsValues?.at(-1));
+      assert.deepStrictEqual((yield* Deferred.await(published)).checkoutDetails, {
+        ...firstDetails,
+        commit: "2222222222222222222222222222222222222222",
+        committedAt: "2026-11-04T11:00:00.000Z",
+      });
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
   it.effect("refreshes queued behind a running one share the next git status read", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,

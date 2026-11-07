@@ -107,6 +107,7 @@ const GitResolvedPullRequest = Schema.Struct({
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
 export const VcsStatusInput = Schema.Struct({
+  includeCheckoutDetails: Schema.optional(Schema.Boolean),
   cwd: TrimmedNonEmptyStringSchema,
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
@@ -214,6 +215,15 @@ const VcsStatusChangeRequest = Schema.Struct({
 });
 
 const VcsStatusLocalShape = {
+  checkoutDetails: Schema.optional(
+    Schema.Struct({
+      commit: Schema.String,
+      committedAt: Schema.String,
+      headUpdatedAt: Schema.NullOr(Schema.String),
+      behindOriginMain: Schema.NullOr(NonNegativeInt),
+      originMainCommit: Schema.NullOr(Schema.String),
+    }),
+  ),
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
   hasPrimaryRemote: Schema.Boolean,
