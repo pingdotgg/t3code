@@ -14,6 +14,11 @@ vi.mock("react-native-keyboard-controller", () => ({
 vi.mock("../lib/useMobileNavigationTheme", () => ({
   useMobileNavigationTheme: () => ({ colors: { card: "white" } }),
 }));
+vi.mock("../features/layout/workspace/navigation-tabs", async () => {
+  const { NAVIGATION_TAB_ORDER } =
+    await import("../features/layout/workspace/navigation-tab-order");
+  return { useEnabledNavigationTabs: () => NAVIGATION_TAB_ORDER };
+});
 vi.mock("./native-layout-metrics", () => ({
   useDeviceType: () => "phone",
   useNativeLayoutMetrics: () => null,
