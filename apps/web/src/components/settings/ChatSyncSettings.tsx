@@ -20,7 +20,7 @@ const chatSyncPermissionsAtom = environmentAtomList(
 
 function statusText(status: ChatSyncStatus): string {
   if (status.state === "running") {
-    return `Syncing… takes a few minutes; OminaX reconnects for a few seconds near the end.${status.message ? ` ${status.message}` : ""}`;
+    return `Syncing… takes a few minutes; OminaX restarts for about 30 seconds near the end.${status.message ? ` ${status.message}` : ""}`;
   }
   if (status.state === "succeeded") {
     if (status.addedChats !== null) {
@@ -66,7 +66,7 @@ export function ChatSyncSection() {
       <SettingsRow
         {...searchableSetting("chat-sync")}
         serverScoped
-        description="Adds the T3 Code chats this server doesn't have yet. Chats active in the last hour wait for a later sync."
+        description="Adds the T3 Code chats this server doesn't have yet, restarting OminaX for about 30 seconds. It waits while any agent is still alive, and chats active in the last hour wait for a later sync."
         status={text}
         control={
           <Button

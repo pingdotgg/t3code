@@ -17,6 +17,21 @@
 #   T3_LEARN_COPY_TO     OminaX's home folder (default ~/.ominax, or ~/.t3-learn before the rename)
 #   T3_LEARN_UNIT        OminaX's systemd user unit (default ominax.service, or t3learn.service before the rename)
 #   T3_LEARN_PORT        port of that unit (default 3780)
+
+# Counts processes in a unit's cgroup other than its launcher, server and resource monitor. Each live
+# agent keeps a reaper sh there even between runs, so stopping the unit with any present kills work.
+live_agents() {
+  local pid argv
+  find "$1" -name cgroup.procs -exec cat {} + 2>/dev/null | while read -r pid; do
+    argv=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null) || continue
+    case "$argv" in
+      "" | *" __service-launcher " | *" serve " | */t3-resource-monitor" ") ;;
+      *) echo "$pid" ;;
+    esac
+  done | wc -l
+}
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+
 set -euo pipefail
 
 CHECKOUT=${T3_LEARN_CHECKOUT:-$(cd "$(dirname "$0")/.." && pwd)}
@@ -200,11 +215,13 @@ for dir in attachments browser-artifacts; do
 done
 [ -e "$LEARN/userdata/settings.json" ] || cp "$STAGE/userdata/settings.json" "$LEARN/userdata/settings.json"
 
-# Stopping cuts off whatever T3 Learn is running, so a busy T3 Learn waits for the next run.
+# Stopping cuts off whatever OminaX is running, including idle agents, so a busy OminaX waits for the next run.
 # Not provider_threads: a row can stay 'active' long after its run was cancelled.
 busy=$(count "$target" "SELECT
   (SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE status IN ('preparing','starting','running','waiting'))
 + (SELECT COUNT(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending')")
+cgroup=$(systemctl --user show -p ControlGroup --value "$UNIT")
+[ -z "$cgroup" ] || busy=$((busy + $(live_agents "/sys/fs/cgroup$cgroup")))
 if [ "$busy" != 0 ]; then
   say "OminaX has $busy item(s) running; nothing added. Run again when it is idle."
   rm -rf "$STAGE"
