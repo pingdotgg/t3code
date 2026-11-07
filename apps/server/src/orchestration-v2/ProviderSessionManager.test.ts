@@ -2840,6 +2840,48 @@ it.effect(
     }),
 );
 
+it.effect.each([true, false])(
+  "ProviderSessionManagerV2 only expires background work's idle pin when it can survive process exit (process-bound: %s)",
+  (backgroundTasksEndWithProcess) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const pending = yield* Ref.make(true);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
+          "provider-session-manager-background-pin",
+        );
+
+        yield* TestClock.adjust("5 hours");
+
+        assert.equal(yield* manager.isLive(providerSessionId), backgroundTasksEndWithProcess);
+        assert.equal((yield* Ref.get(state)).closeCount, backgroundTasksEndWithProcess ? 0 : 1);
+        assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+
+        yield* Ref.set(pending, false);
+        yield* TestClock.adjust("30 minutes");
+
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.deepStrictEqual(yield* rosters, [
+          backgroundTasksEndWithProcess ? [] : ["dev-server"],
+          ["dev-server"],
+        ]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 30 * 60_000,
+            backgroundTasksEndWithProcess,
+            hasPendingBackgroundWork: Ref.get(pending),
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 keeps the roster of a runtime whose tasks can outlive it", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
