@@ -17,7 +17,11 @@ function compactLabel(value: unknown, maxLength = MAX_LABEL_LENGTH): string | un
   if (typeof value !== "string") return undefined;
   const text = value.replaceAll(/\s+/g, " ").trim();
   if (text.length === 0) return undefined;
-  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+  if (text.length <= maxLength) return text;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(maxLength - 2);
+  const end = last >= 0xd800 && last <= 0xdbff ? maxLength - 2 : maxLength - 1;
+  return `${text.slice(0, end)}…`;
 }
 
 /** A bounded label that keeps its id suffix whole whenever it fits. */
