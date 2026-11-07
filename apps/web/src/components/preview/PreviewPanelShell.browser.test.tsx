@@ -21,11 +21,13 @@ const INLINE_SIZE: PreviewPanelInlineSize = {
   observeRow: () => noop,
 };
 
-function Workspace(props: { open: boolean; showOpener?: boolean }) {
+function Workspace(props: { open: boolean; showOpener?: boolean; openerInert?: boolean }) {
   return (
     <div className="flex h-96">
       <div className="flex-1">
-        {props.showOpener === false ? null : <input aria-label="Composer" />}
+        {props.showOpener === false ? null : (
+          <input aria-label="Composer" inert={props.openerInert} />
+        )}
         <button type="button" data-right-panel-toggle>
           Toggle right panel
         </button>
@@ -60,6 +62,18 @@ describe("PreviewPanelShell", () => {
     await screen.rerender(<Workspace open showOpener={false} />);
 
     await screen.rerender(<Workspace open={false} showOpener={false} />);
+    await expect.element(page.getByRole("button", { name: "Toggle right panel" })).toHaveFocus();
+  });
+
+  it("falls back to the panel toggle when the opener no longer takes focus", async () => {
+    await using screen = await render(<Workspace open={false} />);
+    page.getByRole("textbox", { name: "Composer" }).element().focus();
+
+    await screen.rerender(<Workspace open />);
+    page.getByRole("button", { name: "Open a surface" }).element().focus();
+    await screen.rerender(<Workspace open openerInert />);
+
+    await screen.rerender(<Workspace open={false} openerInert />);
     await expect.element(page.getByRole("button", { name: "Toggle right panel" })).toHaveFocus();
   });
 });

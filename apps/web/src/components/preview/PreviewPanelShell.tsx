@@ -52,6 +52,7 @@ function PreviewPanelShellFrame(
   const maximized = props.maximized ?? false;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const returnedFocus = useRef(false);
+  const opener = useRef<Element | null>(null);
   const { width, handlers, observeRow } = props.inlineSize;
   // Width animates only for an open or close. Any other width change disables
   // the transition in the same commit that changes the width, so the browser
@@ -98,19 +99,28 @@ function PreviewPanelShellFrame(
       });
     };
   }, [collapsible, hostRef]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves focus to the toggle and sets inert on the host DOM node before a collapse paints
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- returns focus to the opener or toggle and sets inert on the host DOM node before a collapse paints
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    const doc = host.ownerDocument;
     const collapsed = collapsible && !open;
-    if (!collapsed) returnedFocus.current = false;
-    // Move focus before making its current owner inert, while the toggle is reachable.
-    if (collapsed && host.contains(host.ownerDocument.activeElement)) {
-      const toggle = host.ownerDocument.querySelector<HTMLButtonElement>(
-        "[data-right-panel-toggle]",
-      );
-      toggle?.focus();
-      returnedFocus.current = toggle !== null && host.ownerDocument.activeElement === toggle;
+    if (!collapsed) {
+      returnedFocus.current = false;
+      // Runs before requestWorkspaceFocus moves focus into the panel on a later frame.
+      opener.current = doc.activeElement;
+    }
+    // Move focus before making its current owner inert, while the target is reachable.
+    if (collapsed && host.contains(doc.activeElement)) {
+      // focus() is a no-op on a detached, inert or hidden element, so activeElement confirms it took.
+      const takesFocus = (target: Element | null) => {
+        if (!(target instanceof HTMLElement) || target === doc.body) return false;
+        target.focus();
+        return doc.activeElement === target;
+      };
+      returnedFocus.current =
+        (!host.contains(opener.current) && takesFocus(opener.current)) ||
+        takesFocus(doc.querySelector("[data-right-panel-toggle]"));
     }
     host.toggleAttribute("inert", collapsed);
   }, [collapsible, open, hostRef]);
