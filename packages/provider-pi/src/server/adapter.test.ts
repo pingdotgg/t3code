@@ -3589,8 +3589,12 @@ describe("PiAdapterV2", () => {
         { ...custom, content: "   " },
         custom,
         custom,
+        { ...custom, customType: undefined },
       ]) {
-        yield* fake.emit({ type: "message_start", message });
+        yield* fake.emit({
+          type: "message_start",
+          message: { ...message, content: "Unfinished custom output" },
+        });
         yield* fake.emit({ type: "message_end", message });
       }
       yield* fake.emit({ type: "response", command: "prompt", success: true });
@@ -3614,7 +3618,11 @@ describe("PiAdapterV2", () => {
       }
       assert.deepEqual(
         notices.map((item) => item.message),
-        Array(2).fill("[command-result] Command finished\nwith details"),
+        [
+          "[command-result] Command finished\nwith details",
+          "[command-result] Command finished\nwith details",
+          "Command finished\nwith details",
+        ],
       );
       assert.notEqual(notices[0]!.id, notices[1]!.id);
       assert.notEqual(notices[0]!.nodeId, notices[1]!.nodeId);
