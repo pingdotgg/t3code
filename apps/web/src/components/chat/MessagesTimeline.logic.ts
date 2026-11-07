@@ -1510,6 +1510,9 @@ function deriveTimelineTurnFolds(
   });
 }
 
+const hasChangedFiles = (summary: TurnDiffSummary | undefined) =>
+  summary !== undefined && (summary.files.length > 0 || (summary.filesTotal?.count ?? 0) > 0);
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
@@ -2208,7 +2211,7 @@ export function deriveMessagesTimelineRows(input: {
       !timelineEntry.message.streaming &&
       timelineEntry.message.text.trim() === "" &&
       nextRows.at(-1)?.kind === "quiz-card" &&
-      !turnDiffSummaryByAssistantMessageId.has(timelineEntry.message.id)
+      !hasChangedFiles(turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id))
     ) {
       continue;
     }

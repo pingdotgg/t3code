@@ -4770,4 +4770,22 @@ it("turns a question card into an unanswered quiz-card row", () => {
   expect(withChangedFiles.find((entry) => entry.kind === "message")).toMatchObject({
     assistantTurnDiffSummary: { checkpointTurnCount: 1 },
   });
+
+  const withNoChanges = deriveMessagesTimelineRows({
+    timelineEntries: [question, emptyReply],
+    isWorking: false,
+    turnDiffSummaries: [
+      {
+        runId: "turn-1" as never,
+        completedAt: at,
+        assistantMessageId: MessageId.make("empty"),
+        checkpointTurnCount: 1,
+        checkpointRef: "checkpoint-1" as never,
+        status: "ready",
+        files: [],
+      },
+    ],
+    supportsConversationRollback: false,
+  });
+  expect(withNoChanges.some((entry) => entry.kind === "message")).toBe(false);
 });
