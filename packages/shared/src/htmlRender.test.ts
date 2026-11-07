@@ -4,6 +4,8 @@ import {
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  readHtmlRenderPointerHeld,
+  readHtmlRenderPointerRelease,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
@@ -130,5 +132,30 @@ describe("htmlRenderFromToolItem", () => {
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }
+  });
+});
+describe("readHtmlRenderPointerHeld", () => {
+  it("reads only a boolean from a pointer-held notification", () => {
+    const notification = (params: unknown) => ({
+      jsonrpc: "2.0",
+      method: "t3/notifications/pointer-held",
+      params,
+    });
+    expect(readHtmlRenderPointerHeld(notification({ held: true }))).toBe(true);
+    expect(readHtmlRenderPointerHeld(notification({ held: false }))).toBe(false);
+    expect(readHtmlRenderPointerHeld(notification({ held: 1 }))).toBe(undefined);
+    expect(readHtmlRenderPointerHeld(notification(null))).toBe(undefined);
+    for (const pointerId of [1, "1", null, NaN]) {
+      expect(
+        readHtmlRenderPointerRelease({
+          jsonrpc: "2.0",
+          method: "t3/notifications/pointer-release",
+          params: { pointerId },
+        }),
+      ).toBe(pointerId === 1 ? 1 : undefined);
+    }
+    expect(readHtmlRenderPointerHeld({ ...notification({ held: true }), method: "x" })).toBe(
+      undefined,
+    );
   });
 });
