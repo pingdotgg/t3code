@@ -10,7 +10,7 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useEffect, useRef, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
@@ -22,7 +22,11 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
-import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
+import {
+  resolveFileModifierClickAction,
+  useFileContextMenu,
+  type FileContextMenuAction,
+} from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
@@ -190,7 +194,12 @@ export default function FileBrowserPanel({
       const position = pointerIsFresh
         ? { x: pointer.x, y: pointer.y }
         : { x: anchorRect.left, y: anchorRect.bottom };
-      const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+      const fileTarget = {
+        environmentId,
+        filePath: relativePath,
+        workspaceRoot: cwd,
+        isDirectory: item.path.endsWith("/"),
+      };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
@@ -472,8 +481,31 @@ export default function FileBrowserPanel({
     });
   }, [entryKinds, model, selectedPath, selectedPathRevealId]);
 
+  const handleModifierClickCapture = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const action = resolveFileModifierClickAction(event, { modClickSelects: true });
+    if (action === null) return;
+    const itemPath = event.nativeEvent
+      .composedPath()
+      .find(
+        (node): node is HTMLElement =>
+          node instanceof HTMLElement && node.hasAttribute("data-item-path"),
+      )
+      ?.getAttribute("data-item-path");
+    if (!itemPath) return;
+    const handled = fileContextMenu.activateModifierClick(action, {
+      environmentId,
+      filePath: itemPath.replace(/\/$/, ""),
+      workspaceRoot: cwd,
+      isDirectory: itemPath.endsWith("/"),
+    });
+    if (!handled) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
   return (
     <div
+      onClickCapture={handleModifierClickCapture}
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
       // Capture runs before the tree's shadow-internal row handler opens the menu.

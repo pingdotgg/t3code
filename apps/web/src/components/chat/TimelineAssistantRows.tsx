@@ -11,7 +11,11 @@ import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { ChangedFilesCard } from "./ChangedFilesTree";
-import { useFileContextMenuHandler } from "../../fileContextMenu";
+import {
+  type FileContextMenuTarget,
+  resolveFileModifierClickAction,
+  useFileContextMenu,
+} from "../../fileContextMenu";
 import { useAssistantMessageText, useProject, useThreadShell } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
@@ -348,7 +352,14 @@ function AssistantChangedFilesSectionInner({
       ? { environmentId: thread.environmentId, projectId: thread.projectId }
       : null,
   );
-  const onFileContextMenu = useFileContextMenuHandler(ctx.activeThreadEnvironmentId);
+  const fileContextMenu = useFileContextMenu(ctx.activeThreadEnvironmentId);
+  const fileTarget = (filePath: string): FileContextMenuTarget => ({
+    environmentId: ctx.activeThreadEnvironmentId,
+    filePath,
+    workspaceRoot: ctx.workspaceRoot,
+    repositoryRoot:
+      thread?.worktreePath == null ? activeProject?.repositoryIdentity?.rootPath : undefined,
+  });
 
   return (
     <ChangedFilesCard
@@ -362,19 +373,14 @@ function AssistantChangedFilesSectionInner({
       }
       onOpenTurnDiff={onOpenTurnDiff}
       onFileContextMenu={(filePath, event) =>
-        onFileContextMenu(
-          {
-            environmentId: ctx.activeThreadEnvironmentId,
-            filePath,
-            workspaceRoot: ctx.workspaceRoot,
-            repositoryRoot:
-              thread?.worktreePath == null
-                ? activeProject?.repositoryIdentity?.rootPath
-                : undefined,
-          },
-          event,
-        )
+        void fileContextMenu.show(fileTarget(filePath), { x: event.clientX, y: event.clientY })
       }
+      onFileModifierClick={(filePath, event) => {
+        const action = resolveFileModifierClickAction(event, { modClickSelects: false });
+        return (
+          action !== null && fileContextMenu.activateModifierClick(action, fileTarget(filePath))
+        );
+      }}
     />
   );
 }
