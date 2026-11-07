@@ -142,6 +142,13 @@ const browserTestProject = {
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
         },
+        // userEvent has no press-and-hold, which a text-selecting drag needs.
+        mouseDown: async ({ page }) => {
+          await page.mouse.down();
+        },
+        mouseUp: async ({ page }) => {
+          await page.mouse.up();
+        },
       },
     },
   },

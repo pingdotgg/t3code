@@ -1075,7 +1075,7 @@ diff --git a/package.json b/package.json
 index 0cc43c4a7d..60b7d17d61 100644
 --- a/package.json
 +++ b/package.json
-@@ -60,6 +60,18 @@
+@@ -60,6 +60,22 @@
      "./worker/worker-portable.js": {
        "types": "./dist/worker/worker-portable.d.ts",
        "import": "./dist/worker/worker-portable.js"
@@ -1087,6 +1087,10 @@ index 0cc43c4a7d..60b7d17d61 100644
 +    "./utils/getFiletypeFromFileName": {
 +      "types": "./dist/utils/getFiletypeFromFileName.d.ts",
 +      "import": "./dist/utils/getFiletypeFromFileName.js"
++    },
++    "./utils/iterateOverDiff": {
++      "types": "./dist/utils/iterateOverDiff.d.ts",
++      "import": "./dist/utils/iterateOverDiff.js"
 +    },
 +    "./utils/parsePatchFiles": {
 +      "types": "./dist/utils/parsePatchFiles.d.ts",
