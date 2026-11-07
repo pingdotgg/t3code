@@ -73,13 +73,14 @@ function CitationMarkers({
               rect.left < bounds.right,
           );
         button.hidden = !rect;
-        if (rect) {
-          const rectKey = `${rect.right}:${rect.bottom}`;
+        if (rect && anchor) {
+          const sourceRight = anchor.source.getBoundingClientRect().right;
+          const rectKey = `${sourceRight}:${rect.bottom}`;
           const occurrence = occurrences.get(rectKey) ?? 0;
           occurrences.set(rectKey, occurrence + 1);
           const base = Math.min(
             Math.max(0, bounds.width - 20),
-            Math.max(0, rect.right - bounds.left + 3),
+            Math.max(0, sourceRight - bounds.left + 3),
           );
           const offset = occurrence * 22;
           const left =

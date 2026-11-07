@@ -13,14 +13,17 @@ it("keeps source observations across typing and releases virtualized sources", a
   mocks.findAnchor.mockReset();
   const viewport = document.createElement("div");
   const source = document.createElement("p");
-  source.textContent = "hello";
+  viewport.style.cssText = "position: fixed; left: 0; top: 0; width: 400px; height: 100px";
+  source.style.width = "200px";
+  source.textContent = "hello again";
   viewport.append(source);
   document.body.append(viewport);
   using _fixture = { [Symbol.dispose]: () => viewport.remove() };
   mocks.findAnchor.mockImplementation(() => {
     if (!viewport.contains(source)) return null;
     const range = document.createRange();
-    range.selectNodeContents(source);
+    range.setStart(source.firstChild!, 0);
+    range.setEnd(source.firstChild!, 5);
     return { source, range };
   });
   const prompt = serializeAssistantCitation({
@@ -50,6 +53,9 @@ it("keeps source observations across typing and releases virtualized sources", a
     expect(markers[0]!.style.left).not.toBe("");
     expect(markers[0]!.style.left).not.toBe(markers[1]!.style.left);
     expect(markers[0]!.style.top).toBe(markers[1]!.style.top);
+    expect(
+      Number.parseFloat(markers[0]!.style.left) + viewport.getBoundingClientRect().left,
+    ).toBeGreaterThanOrEqual(source.getBoundingClientRect().right);
   });
   using disconnect = vi.spyOn(MutationObserver.prototype, "disconnect");
   const searches = mocks.findAnchor.mock.calls.length;
