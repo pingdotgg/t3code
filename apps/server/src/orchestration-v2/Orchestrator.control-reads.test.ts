@@ -1,3 +1,9 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as SecretDeliveries from "../secrets/SecretDeliveries.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -1699,7 +1705,50 @@ it.effect("records secret delivery metadata without reopening a deleted item", (
       creationSource: "web",
     });
     const run = (yield* projections.getThreadProjection(threadId)).runs[0]!;
-    const turnItemId = TurnItemId.make("a".repeat(64));
+    const turnItemId = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+        const filePath = `${directory}/credential`;
+        yield* fs.writeFileString(filePath, "synthetic-receipt-retry", { mode: 0o600 });
+        const values = new Map<string, Uint8Array>();
+        let attempts = 0;
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ServerSecretStore.ServerSecretStore)({
+            directory,
+            get: (name) => Effect.sync(() => Option.fromNullishOr(values.get(name))),
+            create: (name, bytes) => Effect.sync(() => void values.set(name, bytes)),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: orchestrator.getThreadRecords,
+            dispatch: (command) =>
+              orchestrator.dispatch(
+                command.type === "secret_delivery.record" && attempts++ === 0
+                  ? { ...command, nodeId: NodeId.make("temporarily-unavailable") }
+                  : command,
+              ),
+          }),
+        );
+        const service = yield* SecretDeliveries.SecretDeliveries.pipe(
+          Effect.provide(SecretDeliveries.layer.pipe(Layer.provide(dependencies))),
+        );
+        const input = {
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId!,
+          filePath,
+          label: "Generated credential",
+          clientRequestId: "receipt-retry",
+        };
+        assert.equal((yield* service.publish(input).pipe(Effect.flip)).reason, "record_failed");
+        const receipt = yield* service.publish(input);
+        assert.equal(attempts, 2);
+        assert.equal((yield* service.publish(input)).deliveryId, receipt.deliveryId);
+        assert.equal(attempts, 2);
+        return receipt.deliveryId;
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
     for (const [index, secretStatus] of (
       ["available", "deleted", "available"] as const
     ).entries()) {

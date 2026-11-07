@@ -19,15 +19,24 @@ export type SendSecretInput = typeof SendSecretInput.Type;
 export class SecretDeliveryError extends Schema.TaggedError<SecretDeliveryError>()(
   "SecretDeliveryError",
   {
-    reason: Schema.Literals(["invalid_file", "unavailable", "storage_failed", "record_failed"]),
+    reason: Schema.Literals([
+      "invalid_file",
+      "unsupported_host",
+      "unavailable",
+      "storage_failed",
+      "record_failed",
+    ]),
   },
 ) {
   override get message(): string {
     return {
-      invalid_file: "Use an owner-private regular UTF-8 file of at most 64 KiB, without symlinks.",
+      invalid_file:
+        'Use an absolute canonical path to a non-empty, owner-private regular UTF-8 file of at most 64 KiB, without symlinks. On macOS use cd -P "$TMPDIR" then mktemp "$(pwd -P)/t3-secret.XXXXXX".',
+      unsupported_host:
+        "Sending secrets requires a POSIX host; Windows hosts are not supported yet.",
       unavailable: "This secret delivery is unavailable.",
       storage_failed: "Could not access secret delivery storage.",
-      record_failed: "Could not record the secret delivery. Retry with the same clientRequestId.",
+      record_failed: "Could not record the secret delivery. Retry the operation.",
     }[this.reason];
   }
 }

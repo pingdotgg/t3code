@@ -25,6 +25,8 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 
 // Value-free tombstones keep retry keys from recreating deleted or expired deliveries.
@@ -43,6 +45,8 @@ const Stored = Schema.fromJsonString(
 type Stored = typeof Stored.Type;
 const encode = Schema.encodeEffect(Stored);
 const decode = Schema.decodeUnknownEffect(Stored);
+const isProjectionError = Schema.is(OrchestratorProjectionError);
+const isThreadNotFound = Schema.is(ProjectionStoreThreadNotFoundError);
 const storageError = () => new SecretDeliveryError({ reason: "storage_failed" });
 const unavailable = () => new SecretDeliveryError({ reason: "unavailable" });
 const nameFor = (id: string) => `secret-delivery-${id}`;
@@ -71,6 +75,7 @@ async function readPrivateFile(filePath: string): Promise<string> {
       (before.mode & 0o077) !== 0 ||
       process.getuid === undefined ||
       before.uid !== process.getuid() ||
+      before.size === 0 ||
       before.size > MAX_BYTES
     )
       throw new Error();
@@ -136,10 +141,33 @@ const make = Effect.gen(function* () {
     return stored.value;
   });
   const record = Effect.fn("SecretDeliveries.record")(function* (stored: Stored) {
+    const projection = yield* threads
+      .getThreadRecords(stored.threadId, ["turnItems"], {
+        turnItemTypes: ["secret_delivery"],
+        messageRoles: [],
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          isProjectionError(error) && isThreadNotFound(error.cause)
+            ? unavailable()
+            : new SecretDeliveryError({ reason: "record_failed" }),
+        ),
+      );
+
+    if (projection.thread.deletedAt !== null) return yield* unavailable();
+    if (
+      projection.turnItems.some(
+        (item) =>
+          item.id === stored.deliveryId &&
+          item.type === "secret_delivery" &&
+          item.secretStatus === stored.status,
+      )
+    )
+      return;
     yield* threads
       .dispatch({
         type: "secret_delivery.record",
-        commandId: CommandId.make(`secret-delivery:${stored.deliveryId}:${stored.status}`),
+        commandId: CommandId.make(`secret-delivery:${NodeCrypto.randomUUID()}`),
         threadId: stored.threadId,
         runId: stored.runId,
         nodeId: stored.nodeId,
@@ -173,7 +201,7 @@ const make = Effect.gen(function* () {
     input: SecretDeliveryInput,
   ) {
     const stored = yield* load(input.deliveryId);
-    // A fork's inherited copy names the fork's thread, so it never matches.
+    // Retrieval must name the original thread.
     if (stored.threadId !== input.threadId) return yield* unavailable();
     // The item must still be in its thread: a deleted thread's delivery is unreadable.
     const projection = yield* threads
@@ -183,6 +211,7 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(unavailable));
     if (
+      projection.thread.deletedAt !== null ||
       !projection.turnItems.some(
         (item) =>
           item.id === input.deliveryId &&
@@ -203,6 +232,8 @@ const make = Effect.gen(function* () {
       if (Option.isSome(existing)) {
         stored = yield* expire(existing.value);
       } else {
+        if (process.getuid === undefined)
+          return yield* new SecretDeliveryError({ reason: "unsupported_host" });
         const value = yield* Effect.tryPromise({
           try: () => readPrivateFile(input.filePath),
           catch: () => new SecretDeliveryError({ reason: "invalid_file" }),
@@ -252,13 +283,26 @@ const make = Effect.gen(function* () {
       yield* load(match[1]).pipe(
         Effect.flatMap(expire),
         Effect.flatMap(record),
-        Effect.catch(() => Effect.logWarning("Could not recover a secret delivery")),
+        Effect.catch((error) =>
+          error.reason === "unavailable"
+            ? Effect.void
+            : Effect.logWarning("Could not recover a secret delivery"),
+        ),
       );
     }
   }).pipe(
     lock.withPermits(1),
     Effect.catch(() => Effect.logWarning("Could not recover secret deliveries")),
   );
+  // The singleton delivery owner has not been published yet: no delivery writer can be active.
+  // Only startup removes crash leftovers; hourly sweeps must not race a live store write.
+  if (store.directory !== undefined) {
+    for (const file of yield* fs.readDirectory(store.directory)) {
+      if (/^secret-delivery-[a-f0-9]{64}\.bin\.[a-f0-9-]{36}\.tmp$/.test(file)) {
+        yield* fs.remove(NodePath.join(store.directory, file));
+      }
+    }
+  }
   yield* sweep;
   yield* sweep.pipe(
     Effect.delay("1 hour"),

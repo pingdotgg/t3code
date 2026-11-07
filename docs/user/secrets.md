@@ -60,9 +60,11 @@ hours.
 ## When an agent sends you a secret
 
 An agent that creates or finds a credential for you, such as a new database password, can send it as
-a private card instead of printing it in the chat. The card shows only its label until you select
-**Reveal**. **Copy** puts the value on your clipboard without showing it. **Hide** clears it from
-the screen, as does leaving the thread or putting the app or tab in the background.
+a private card instead of printing it in the chat. Sending currently requires a POSIX environment
+host (Linux or macOS); Windows hosts are not supported yet. The card shows only its label until you
+select **Reveal**. **Copy** puts the value on your clipboard without showing it. If your browser blocks
+Copy, reveal the value and copy the text yourself. **Hide** clears it from the screen, as does leaving
+the thread, switching tabs, minimizing the desktop window, or backgrounding the mobile app.
 
 You can reveal or copy it from web, desktop, or mobile for 24 hours, and only from the original
 thread with a connection that can operate it. Forked threads and guest shares show the card without

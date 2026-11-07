@@ -153,7 +153,7 @@ function AvailableSecretDelivery(props: {
           <Button
             label={state.value === null ? "Reveal" : "Hide"}
             fullWidth
-            disabled={busy}
+            disabled={state.value === null && busy}
             loading={state.pending === "reveal"}
             onPress={() => (state.value === null ? void reveal.reveal() : reveal.hide())}
           />

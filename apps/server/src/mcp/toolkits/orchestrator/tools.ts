@@ -199,7 +199,7 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 const SendSecretTool = Tool.make("send_secret", {
   description:
-    "Deliver a secret to the user in this thread for 24 hours. Generate it directly into an owner-private regular UTF-8 file outside the repository (at most 64 KiB), without printing or reading its contents into tool output. Pass only filePath, a non-sensitive label, and a stable clientRequestId for retries. Preserves the source file and exact text. Returns metadata only; never paste secrets into chat or tool arguments. There is no agent retrieval tool.",
+    'Deliver a secret to the user in this thread for 24 hours. Requires a POSIX host (Linux/macOS), not Windows. Generate it directly into a non-empty owner-private regular UTF-8 file outside the repository (at most 64 KiB). Use an absolute canonical filePath without symlinks: on macOS use cd -P "$TMPDIR" then mktemp "$(pwd -P)/t3-secret.XXXXXX", without printing or reading its contents into tool output. Pass only filePath, a non-sensitive label, and a stable clientRequestId for retries; reuse returns the original delivery even if the file or label changes. Retry a recording failure with the same key. Preserves the source file and exact text. Returns metadata only; never paste secrets into chat or tool arguments. There is no agent retrieval tool.',
   parameters: SendSecretInput,
   success: SecretDeliveryReceipt,
   failure: OrchestratorMcpFailure,
