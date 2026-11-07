@@ -37,7 +37,6 @@ import { isInvalidCursorTeamId, makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
-import * as CursorKeychain from "./CursorKeychain.ts";
 import * as CursorUsageAccounts from "./CursorUsageAccounts.ts";
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
@@ -56,8 +55,7 @@ export type CursorDriverEnv =
   | Path.Path
   | HttpClient.HttpClient
   | CursorSdk.CursorSdk
-  | ProviderHost.ProviderHost
-  | CursorKeychain.CursorKeychain;
+  | ProviderHost.ProviderHost;
 
 export const CursorDriver: ProviderDriver<
   CursorSettings,
@@ -74,12 +72,11 @@ export const CursorDriver: ProviderDriver<
   usage: {
     kind: "scan",
     provider: "cursor",
-    scan: ({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
+    scan: ({ instances, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
       CursorUsageAccounts.CursorUsageAccounts.pipe(
         Effect.flatMap((accounts) =>
           accounts.scan({
             instances,
-            keychainUsageEnabled: settings.cursorKeychainUsageEnabled,
             windowStartMs,
             retentionCutoffMs,
             awaitRefresh,
@@ -99,7 +96,6 @@ export const CursorDriver: ProviderDriver<
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const httpClient = yield* HttpClient.HttpClient;
-    const keychain = yield* CursorKeychain.CursorKeychain;
     const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -242,23 +238,16 @@ export const CursorDriver: ProviderDriver<
                 !isInvalidCursorTeamId(processEnv.CURSOR_TEAM_ID)
               ),
             (snapshot) =>
-              host.settings.get.pipe(
-                Effect.flatMap((settings) =>
-                  readCursorUsageLimits(
-                    effectiveConfig,
-                    { ...processEnv, CURSOR_API_KEY: access?.apiKey },
-                    settings.cursorKeychainUsageEnabled,
-                    access?.team?.id,
-                  ),
-                ),
-                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
-              ),
+              readCursorUsageLimits(
+                effectiveConfig,
+                { ...processEnv, CURSOR_API_KEY: access?.apiKey },
+                access?.team?.id,
+              ).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
           ),
         ),
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(CursorKeychain.CursorKeychain, keychain),
       Effect.map(stampSnapshot),
       Effect.tap((provider) =>
         Effect.sync(() => {
