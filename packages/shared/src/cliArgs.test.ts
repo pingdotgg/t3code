@@ -3,6 +3,19 @@ import { describe, expect, it } from "vite-plus/test";
 import { parseCliArgs, tokenizeCliArgs } from "./cliArgs.ts";
 
 describe("tokenizeCliArgs", () => {
+  it.each([
+    {
+      input: "--model gpt-6.1-sol \\\n--strict-config",
+      expected: ["--model", "gpt-6.1-sol", "--strict-config"],
+    },
+    { input: "--model gpt-\\\n6.1-sol", expected: ["--model", "gpt-6.1-sol"] },
+    { input: '--config "model=gpt-\\\n6.1-sol"', expected: ["--config", "model=gpt-6.1-sol"] },
+    { input: "--config 'model=gpt-\\\n6.1-sol'", expected: ["--config", "model=gpt-\\\n6.1-sol"] },
+    { input: "\\\n", expected: [] },
+  ])("handles line continuations in $input", ({ input, expected }) => {
+    expect(tokenizeCliArgs(input)).toEqual(expected);
+  });
+
   it("preserves escaped double quotes outside quoted values", () => {
     expect(tokenizeCliArgs(String.raw`--config model=\"gpt-6.1-sol\" --strict-config`)).toEqual([
       "--config",
