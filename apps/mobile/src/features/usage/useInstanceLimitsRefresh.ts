@@ -45,7 +45,7 @@ export function useInstanceLimitsRefresh(
         if (!disposed)
           timer = setTimeout(
             refresh,
-            usageLimitsRefreshDelay(environmentId, selectionKey.resources),
+            Math.max(30_000, usageLimitsRefreshDelay(environmentId, selectionKey.resources)),
           );
       };
       void refreshEnvironmentLimits(registry, environmentId, {

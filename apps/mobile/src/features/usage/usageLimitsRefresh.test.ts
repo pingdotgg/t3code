@@ -203,3 +203,40 @@ it.each(["sign-in", "account-switch", "restart"] as const)(
     }
   },
 );
+
+it("paces automatic retries when the server retains an overdue reading", async () => {
+  vi.useFakeTimers({ now: 9_000_000 });
+  const environmentId = EnvironmentId.make("mobile-limits-overdue-retry");
+  const refresh = vi.fn(() =>
+    Promise.resolve(
+      AsyncResult.success({
+        providers: state.providers.map((provider): ServerProvider => ({
+          ...provider,
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+          usageLimits: { checkedAt: "2026-01-01T00:00:00Z", windows: [], refreshAfter: 8_999_000 },
+        })),
+      }),
+    ),
+  );
+  const { registry } = setup(refresh);
+  const unmount = registry.mount(limitsAutoRefreshSetAtom(environmentIdsKey([environmentId])));
+  try {
+    await refreshEnvironmentLimits(registry, environmentId, { automatic: true });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  } finally {
+    unmount();
+    registry.dispose();
+    vi.useRealTimers();
+  }
+});

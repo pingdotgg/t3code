@@ -193,9 +193,12 @@ const limitsAutoRefreshAtom = Atom.family((environmentId: EnvironmentId) =>
             () => {
               void refresh();
             },
-            usageLimitsRefreshDelay(
-              environmentId,
-              environmentLimitsRefreshKeys(get.registry, environmentId),
+            Math.max(
+              30_000,
+              usageLimitsRefreshDelay(
+                environmentId,
+                environmentLimitsRefreshKeys(get.registry, environmentId),
+              ),
             ),
           );
       }
