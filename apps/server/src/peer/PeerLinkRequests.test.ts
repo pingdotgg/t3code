@@ -520,25 +520,26 @@ it.live("the agent asks without waiting, and the user links the box after its tu
       ).toMatchObject({ kind: "user_input" });
       expect(yield* a.projections.getSettlementCandidates(threadId)).toEqual([]);
 
-      // Once the user writes in the thread again, the card stops asking but stays answerable.
+      // Once anyone writes in the thread again, even another agent, the card stops asking but
+      // stays answerable.
       const wroteAt = DateTime.add(card.startedAt!, { seconds: 1 });
       yield* a.sink.write({
-        commandId: CommandId.make("command:user-writes:laptop"),
+        commandId: CommandId.make("command:agent-writes:laptop"),
         events: [
           {
-            id: EventId.make("event:user-writes"),
+            id: EventId.make("event:agent-writes"),
             type: "message.updated",
             threadId,
             occurredAt: wroteAt,
             payload: {
-              createdBy: "user",
-              creationSource: "web",
-              id: MessageId.make("message:user-writes"),
+              createdBy: "agent",
+              creationSource: "server",
+              id: MessageId.make("message:agent-writes"),
               threadId,
               runId: null,
               nodeId: null,
               role: "user",
-              text: "Something else",
+              text: "The other task finished.",
               attachments: [],
               streaming: false,
               createdAt: wroteAt,
