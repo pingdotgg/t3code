@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createThreadNotificationGate,
+  isSnoozedForNotification,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
 
@@ -9,13 +10,15 @@ const working: ThreadNotificationObservation = {
   attention: null,
   settled: false,
   completedAt: null,
+  snoozed: false,
 };
 const completed = (at: number): ThreadNotificationObservation => ({
   attention: null,
   settled: true,
   completedAt: at,
+  snoozed: false,
 });
-const visible = { archived: false, quiet: false };
+const visible = { archived: false, quiet: false, snoozed: false };
 
 function harness() {
   const notify = vi.fn();
@@ -29,6 +32,25 @@ function harness() {
 }
 
 describe("createThreadNotificationGate", () => {
+  it("does not notify completion while the thread is snoozed", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe({ ...completed(1), snoozed: true }, { ...visible, snoozed: true });
+    expect(notify).not.toHaveBeenCalled();
+    observe(completed(1));
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("still notifies attention while the thread is snoozed", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe(
+      { attention: "run-1:approval", settled: false, completedAt: null, snoozed: true },
+      { ...visible, snoozed: true },
+    );
+    expect(notify.mock.calls).toEqual([["thread", "input"]]);
+  });
+
   it("notifies a completion immediately and only once", () => {
     const { notify, observe } = harness();
     observe(working);
@@ -57,7 +79,12 @@ describe("createThreadNotificationGate", () => {
   it("notifies attention once and still notifies the subsequent completion", () => {
     const { notify, observe } = harness();
     observe(working);
-    const attention = { attention: "run-1:approval", settled: false, completedAt: null };
+    const attention = {
+      attention: "run-1:approval",
+      settled: false,
+      completedAt: null,
+      snoozed: false,
+    };
     observe(attention);
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
     observe({ ...attention });
@@ -74,7 +101,7 @@ describe("createThreadNotificationGate", () => {
     const { notify, observe } = harness();
     observe(working);
     observe(completed(1));
-    observe({ attention: "run-1:limited", settled: false, completedAt: null });
+    observe({ attention: "run-1:limited", settled: false, completedAt: null, snoozed: false });
     observe(completed(1));
     expect(notify.mock.calls).toEqual([
       ["thread", "completion"],
@@ -109,5 +136,37 @@ describe("createThreadNotificationGate", () => {
       gate.observe("thread", working, completed(1), visible);
       expect(notify.mock.calls).toEqual([["thread", "completion"]]);
     }
+  });
+});
+
+describe("isSnoozedForNotification", () => {
+  const wakeAt = Date.parse("2026-01-01T12:00:00.000Z");
+  const snoozedThread = {
+    snoozedAt: "2026-01-01T11:00:00.000Z",
+    snoozedUntil: new Date(wakeAt).toISOString(),
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+  };
+
+  it("is snoozed before the wake time", () => {
+    expect(isSnoozedForNotification(snoozedThread, null, wakeAt - 1)).toBe(true);
+  });
+
+  it("keeps a completion from the snooze suppressed when processed after the wake", () => {
+    expect(isSnoozedForNotification(snoozedThread, wakeAt - 1, wakeAt + 60_000)).toBe(true);
+  });
+
+  it("does not suppress a completion from before the snooze processed after the wake", () => {
+    const snoozedAt = Date.parse(snoozedThread.snoozedAt);
+    expect(isSnoozedForNotification(snoozedThread, snoozedAt - 1, wakeAt + 60_000)).toBe(false);
+  });
+
+  it("does not suppress a completion after the wake time", () => {
+    expect(isSnoozedForNotification(snoozedThread, wakeAt + 1, wakeAt + 60_000)).toBe(false);
+  });
+
+  it("does not suppress after an early wake for attention", () => {
+    const raised = { ...snoozedThread, hasPendingApprovals: true };
+    expect(isSnoozedForNotification(raised, wakeAt - 1, wakeAt - 1)).toBe(false);
   });
 });

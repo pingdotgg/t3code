@@ -1,3 +1,8 @@
+import {
+  effectiveSnoozed,
+  type ThreadSnoozeShell,
+} from "@t3tools/client-runtime/state/thread-settled";
+
 export type ThreadNotificationKind = "input" | "completion";
 
 export interface ThreadNotificationObservation {
@@ -7,6 +12,23 @@ export interface ThreadNotificationObservation {
   readonly settled: boolean;
   /** When the latest run completed, if it did. */
   readonly completedAt: number | null;
+  /** The thread is intentionally hidden until its snooze wake time. */
+  readonly snoozed: boolean;
+}
+
+/**
+ * Whether completion notifications are suppressed by snooze. A completion that landed
+ * during the snooze stays suppressed even when its update is processed after the wake.
+ */
+export function isSnoozedForNotification(
+  thread: ThreadSnoozeShell,
+  completedAt: number | null,
+  now: number,
+): boolean {
+  if (effectiveSnoozed(thread, { now: new Date(now).toISOString() })) return true;
+  if (completedAt === null) return false;
+  if (thread.snoozedAt != null && completedAt < Date.parse(thread.snoozedAt)) return false;
+  return effectiveSnoozed(thread, { now: new Date(completedAt).toISOString() });
 }
 
 export function createThreadNotificationGate<Key>(
@@ -22,10 +44,11 @@ export function createThreadNotificationGate<Key>(
       key: Key,
       prior: ThreadNotificationObservation | undefined,
       next: ThreadNotificationObservation,
-      options: { readonly archived: boolean; readonly quiet: boolean },
+      options: { readonly archived: boolean; readonly quiet: boolean; readonly snoozed: boolean },
     ): void {
       // The first sighting, archived threads, and stopped or silent runs never notify completion.
-      if (!prior || options.archived || options.quiet) skip(key, next.completedAt);
+      if (!prior || options.archived || options.quiet || options.snoozed)
+        skip(key, next.completedAt);
       if (!prior || options.archived) return;
       if (next.attention && next.attention !== prior.attention) {
         notify(key, "input");
