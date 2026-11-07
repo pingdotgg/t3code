@@ -1591,6 +1591,8 @@ interface ActiveAcpSubagent {
   nextChildOrdinal: number;
   terminalStatusProjected: boolean;
   readonly toolState: Pick<ActiveAcpTurn, "tools" | "toolUpdatesSkipped" | "toolStartedAt">;
+  // ACP has no interrupted tool status; keep forced interruption across late updates.
+  readonly interruptedToolIds: Set<string>;
   readonly toolSessionIds: Map<string, string>;
 }
 
@@ -3023,23 +3025,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (toolCall.content.type !== "content") return;
             const text = acpContentBlockDisplayText(toolCall.content.content);
             if (text === undefined || text.length === 0) return;
-            toolCall = setToolOutputText(
-              previous ?? {
-                toolCallId: toolCall.toolCallId,
-                status: "inProgress",
-                data: { toolCallId: toolCall.toolCallId },
-              },
-              `${previous?.data.rawOutput == null ? (textFromUnknown(previous?.data.content) ?? "") : toolOutputText(previous)}${text}`,
-            );
-          } else if (
-            toolCall.data.content !== undefined &&
-            toolCall.data.rawOutput === undefined &&
-            unknownRecord(previous?.data.rawOutput)?.type === "Text"
-          ) {
-            toolCall = { ...toolCall, data: { ...toolCall.data, rawOutput: null } };
+            const content: unknown[] = Array.isArray(previous?.data.content)
+              ? [...previous.data.content]
+              : [];
+            const last = unknownRecord(content.at(-1));
+            const lastContent = unknownRecord(last?.content);
+            if (
+              last?.type === "content" &&
+              lastContent?.type === "text" &&
+              typeof lastContent.text === "string"
+            ) {
+              content[content.length - 1] = {
+                ...last,
+                content: { ...lastContent, text: `${lastContent.text}${text}` },
+              };
+            } else {
+              content.push({ type: "content", content: { type: "text", text } });
+            }
+            toolCall = {
+              toolCallId: toolCall.toolCallId,
+              data: { content },
+            };
           }
           const merged = mergeToolCallState(previous, toolCall);
           projectedStatus ??= owner === undefined ? undefined : stoppedToolStatus(owner, merged);
+          if (merged.status !== "failed") subagent.interruptedToolIds.delete(key);
+          if (projectedStatus === "interrupted") subagent.interruptedToolIds.add(key);
+          if (merged.status === "failed" && subagent.interruptedToolIds.has(key))
+            projectedStatus = "interrupted";
           context.tools.set(key, merged);
           if (
             projectedStatus === undefined &&
@@ -3221,6 +3234,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
             },
+            interruptedToolIds: new Set(),
             toolSessionIds: new Map(),
           };
           subagent.task = task;
@@ -3549,7 +3563,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 )
                   continue;
                 subagent.toolState.toolUpdatesSkipped.delete(key);
-                yield* projectSubagentTool(subagent, toolSessionId, tool, toolStatus(tool.status));
+                yield* projectSubagentTool(
+                  subagent,
+                  toolSessionId,
+                  tool,
+                  toolStatus(tool.status),
+                  context,
+                );
               }
             }
             if (
@@ -3629,7 +3649,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   subagent,
                   notification.sessionId,
                   tool,
-                  stoppedToolStatus(owner.owner, tool),
+                  undefined,
+                  owner.owner,
                 );
               }
             }
@@ -5287,7 +5308,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   subagent,
                   notification.sessionId,
                   toolCall,
-                  stoppedToolStatus(context, toolCall),
+                  undefined,
+                  context,
                 );
               }
               return;

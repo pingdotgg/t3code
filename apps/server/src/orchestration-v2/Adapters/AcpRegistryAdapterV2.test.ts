@@ -1881,6 +1881,16 @@ describe("AcpRegistryAdapterV2", () => {
             toolCallId: "shared-tool",
             content: [{ type: "content", content: { type: "text", text: "display" } }],
           }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            rawOutput: { type: "Text", text: "vendor" },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [{ type: "content", content: { type: "text", text: "display" } }],
+          }),
           claudeMarker("tools complete"),
           claudeFrames.idle("end_turn"),
           claudeFrames.closeRequest,
@@ -1904,12 +1914,14 @@ describe("AcpRegistryAdapterV2", () => {
         childTools.map((item) => item.output),
         [
           [{ type: "content", content: { type: "text", text: "one" } }],
-          { type: "Text", text: "onetwo" },
-          { type: "Text", text: "onetwo" },
+          [{ type: "content", content: { type: "text", text: "onetwo" } }],
+          [{ type: "content", content: { type: "text", text: "onetwo" } }],
           [{ type: "content", content: { type: "text", text: "replacement" } }],
           [],
           { stdout: "structured", stderr: "" },
           { stdout: "structured", stderr: "" },
+          { type: "Text", text: "vendor" },
+          { type: "Text", text: "vendor" },
         ],
       );
       assert.equal(new Set(childTools.map((item) => item.id)).size, 1);
@@ -1980,6 +1992,11 @@ describe("AcpRegistryAdapterV2", () => {
             status: "failed",
           }),
           update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "stopped-tool",
+            content: [{ type: "content", content: { type: "text", text: "stopping" } }],
+          }),
+          update("child-1", {
             sessionUpdate: "tool_call_content_chunk",
             toolCallId: "stopped-tool",
             content: { type: "content", content: { type: "text", text: "cancelled" } },
@@ -2028,9 +2045,51 @@ describe("AcpRegistryAdapterV2", () => {
       );
       assert.deepEqual(
         tools.map((item) => item.status),
-        ["interrupted", "interrupted"],
+        ["interrupted", "interrupted", "interrupted"],
       );
-      assert.deepEqual(tools.at(-1)?.output, { type: "Text", text: "cancelled" });
+      assert.deepEqual(tools.at(-1)?.output, [
+        { type: "content", content: { type: "text", text: "stoppingcancelled" } },
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps native child tools interrupted after idle and late output", () =>
+    Effect.gen(function* () {
+      const { update, childState } = claudeFrames;
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...claudeFrames.prompt(1),
+        ...claudeChild.slice(0, -1),
+        update("child-1", {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "unfinished",
+          status: "in_progress",
+        }),
+        childState(CLAUDE_ROOT_SESSION, "child-1", "idle"),
+        update("child-1", {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "unfinished",
+          content: { type: "content", content: { type: "text", text: "late" } },
+        }),
+        claudeMarker("late native output"),
+        claudeFrames.idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("late native output");
+      const tools = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        tools.map((tool) => tool.status),
+        ["running", "interrupted", "interrupted"],
+      );
+      assert.deepEqual(tools.at(-1)?.output, [
+        { type: "content", content: { type: "text", text: "late" } },
+      ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -2246,7 +2305,9 @@ describe("AcpRegistryAdapterV2", () => {
           assert.equal(nestedTool.turnItem.threadId, row.subagent.childThreadId);
           if (nestedTool.turnItem.type === "dynamic_tool") {
             assert.deepEqual(nestedTool.turnItem.input, { command: "cat nested/package.json" });
-            assert.deepEqual(nestedTool.turnItem.output, { type: "Text", text: "onetwo" });
+            assert.deepEqual(nestedTool.turnItem.output, [
+              { type: "content", content: { type: "text", text: "onetwo" } },
+            ]);
             assert.equal(nestedTool.turnItem.status, "completed");
           }
           const toolUpdates = nested.flatMap((event) =>
@@ -2260,9 +2321,9 @@ describe("AcpRegistryAdapterV2", () => {
             toolUpdates.map((item) => item.output),
             [
               null,
-              { type: "Text", text: "one" },
-              { type: "Text", text: "onetwo" },
-              { type: "Text", text: "onetwo" },
+              [{ type: "content", content: { type: "text", text: "one" } }],
+              [{ type: "content", content: { type: "text", text: "onetwo" } }],
+              [{ type: "content", content: { type: "text", text: "onetwo" } }],
             ],
           );
         }
