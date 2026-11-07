@@ -35,6 +35,13 @@ const CLI_RESPONSE_TIMEOUT_MS = 17_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const isDesktopAppActivationResponse = Schema.is(DesktopAppActivationResponse);
 const isDesktopUpdateCommandResponse = Schema.is(DesktopUpdateCommandResponse);
+const isDesktopAppControlResponse = (
+  response: unknown,
+  request: DesktopAppControlRequest,
+): response is DesktopAppControlResponse =>
+  request.type === "open-workspace"
+    ? isDesktopAppActivationResponse(response)
+    : isDesktopUpdateCommandResponse(response);
 
 export class DesktopAppSshUnsupportedError extends Schema.TaggedError<DesktopAppSshUnsupportedError>()(
   "DesktopAppSshUnsupportedError",
@@ -154,11 +161,7 @@ export async function sendDesktopAppControlRequest(input: {
         });
         return;
       }
-      if (
-        !(input.request.type === "open-workspace"
-          ? isDesktopAppActivationResponse(parsed)
-          : isDesktopUpdateCommandResponse(parsed))
-      ) {
+      if (!isDesktopAppControlResponse(parsed, input.request)) {
         finish({ type: "failure", error: new Error("The desktop app response is invalid.") });
         return;
       }

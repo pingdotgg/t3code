@@ -52,14 +52,14 @@ const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
   on: () => Effect.void,
 } satisfies ElectronApp.ElectronApp["Service"]);
 
-const layerElectronDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
+const electronDialog = ElectronDialog.ElectronDialog.of({
   pickFolder: () => Effect.succeedNone,
   pickFiles: () => Effect.succeed([]),
   showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
   showErrorBox: () => Effect.void,
-} satisfies ElectronDialog.ElectronDialog["Service"]);
+});
 
-const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
+const desktopUpdates = DesktopUpdates.DesktopUpdates.of({
   getState: Effect.die("unexpected getState"),
   isActionActive: Effect.succeed(false),
   isInstallActive: Effect.succeed(false),
@@ -72,7 +72,7 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   download: Effect.die("unexpected download"),
   install: Effect.die("unexpected install"),
   installPrepared: () => Effect.die("unexpected installPrepared"),
-} satisfies DesktopUpdates.DesktopUpdates["Service"]);
+});
 
 const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -109,6 +109,11 @@ const configureMenu = (
   selectedAction: Deferred.Deferred<string>,
   applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
   environment: Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> = {},
+  overrides: {
+    readonly updates?: Partial<DesktopUpdates.DesktopUpdates["Service"]>;
+    readonly dialog?: Partial<ElectronDialog.ElectronDialog["Service"]>;
+    readonly command?: Partial<DesktopUpdateCommand.DesktopUpdateCommand["Service"]>;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
@@ -118,7 +123,9 @@ const configureMenu = (
       DesktopApplicationMenu.layer.pipe(
         Layer.provideMerge(layerElectronMenu(applicationMenuTemplate)),
         Layer.provideMerge(layerDesktopWindow(selectedAction)),
-        Layer.provideMerge(layerDesktopUpdates),
+        Layer.provideMerge(
+          Layer.succeed(DesktopUpdates.DesktopUpdates, { ...desktopUpdates, ...overrides.updates }),
+        ),
         Layer.provide(
           Layer.mock(DesktopUpdateCommand.DesktopUpdateCommand, {
             request: (request) =>
@@ -128,9 +135,12 @@ const configureMenu = (
                 ok: true,
                 status: "cancelled",
               }),
+            ...overrides.command,
           }),
         ),
-        Layer.provideMerge(layerElectronDialog),
+        Layer.provideMerge(
+          Layer.succeed(ElectronDialog.ElectronDialog, { ...electronDialog, ...overrides.dialog }),
+        ),
         Layer.provideMerge(layerElectronApp),
         Layer.provideMerge(
           DesktopEnvironment.layer({ ...environmentInput, ...environment }).pipe(
@@ -142,6 +152,70 @@ const configureMenu = (
   );
 
 describe("DesktopApplicationMenu", () => {
+  it.effect("shows why the shared updater could not accept a menu request", () =>
+    Effect.gen(function* () {
+      const template = yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const shown = yield* Deferred.make<Electron.MessageBoxOptions>();
+      yield* configureMenu(
+        yield* Deferred.make<string>(),
+        template,
+        { platform: "darwin" },
+        {
+          updates: {
+            check: () =>
+              Effect.succeed({
+                checked: true,
+                state: {
+                  enabled: true,
+                  status: "available",
+                  channel: "latest",
+                  currentVersion: "1.2.3",
+                  availableVersion: "1.2.4",
+                  downloadedVersion: null,
+                  hostArch: "arm64",
+                  appArch: "arm64",
+                  runningUnderArm64Translation: false,
+                  releaseNotes: [],
+                  omittedReleaseCount: 0,
+                  downloadPercent: null,
+                  checkedAt: null,
+                  message: null,
+                  errorContext: null,
+                  canRetry: false,
+                },
+              }),
+          },
+          command: {
+            request: (request) =>
+              Effect.succeed({
+                version: 1,
+                requestId: request.requestId,
+                ok: false,
+                code: "renderer-unavailable",
+                message: "An update confirmation is already in progress.",
+              }),
+          },
+          dialog: {
+            showMessageBox: (options) =>
+              Deferred.succeed(shown, options).pipe(
+                Effect.as({ response: 0, checkboxChecked: false }),
+              ),
+          },
+        },
+      );
+      const application = (yield* Deferred.await(template))[0];
+      if (!Array.isArray(application?.submenu)) throw new Error("Expected app menu.");
+      const item = application.submenu.find((item) => item.label === "Check for Updates...");
+      if (typeof item?.click !== "function") throw new Error("Expected update menu action.");
+      item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      assert.deepInclude(yield* Deferred.await(shown), {
+        type: "warning",
+        title: "Could not update T3 Code",
+        detail: "An update confirmation is already in progress.",
+      });
+    }),
+  );
+
   it.effect("leaves the accelerator to Chromium instead of injecting a paste", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();

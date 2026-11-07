@@ -1,3 +1,4 @@
+import { T3UpdateCheck } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLI_RELEASE_BASE_URL_ENV,
@@ -59,6 +60,7 @@ const ReleaseIndex = Schema.Array(
     draft: Schema.optional(Schema.Boolean),
   }),
 );
+const encodeUpdateCheck = Schema.encodeEffect(Schema.fromJsonString(T3UpdateCheck));
 const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
 
 const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
@@ -321,12 +323,12 @@ export const runUpdateCommand = Effect.fn("cli.update.command")(function* (flags
             ? "Update cancelled. No update was started."
             : "No updates are currently offered by this desktop updater."
         : flags.json
-          ? JSON.stringify(result)
+          ? yield* encodeUpdateCheck(result)
           : `${result.pathway}: ${result.state}. ${result.reason ?? ""}`,
     );
   }
   if (flags.check) {
-    const result = {
+    const result: T3UpdateCheck = {
       schema: "t3.update-check.v1",
       coordinated: false,
       owner: "standalone",
@@ -337,7 +339,7 @@ export const runUpdateCommand = Effect.fn("cli.update.command")(function* (flags
       reason:
         "This standalone CLI updates its own runtime and service; it does not coordinate a desktop app.",
     };
-    return yield* Console.log(flags.json ? JSON.stringify(result) : result.reason);
+    return yield* Console.log(flags.json ? yield* encodeUpdateCheck(result) : result.reason);
   }
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);

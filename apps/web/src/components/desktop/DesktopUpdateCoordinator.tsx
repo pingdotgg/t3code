@@ -1,5 +1,6 @@
 import type { DesktopUpdateCommandRequest, DesktopUpdateState } from "@t3tools/contracts";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { downloadLocalUpdate, installLocalUpdate } from "../sidebar/SidebarUpdatePill";
 import { useUpdateEverything } from "../sidebar/useUpdateEverything";
 import { UpdateEverythingDialog } from "../sidebar/UpdateEverythingDialog";
@@ -11,7 +12,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 
 export function DesktopUpdateCoordinator() {
   const command = window.desktopBridge?.updateCommand;
-  const [rendererId] = useState(() => crypto.randomUUID());
+  const [rendererId] = useState(() => SecureRandom.uuidV4Unsafe());
+  const latestRequestId = useRef<string | null>(null);
   const [request, setRequest] = useState<DesktopUpdateCommandRequest | null>(null);
   const [prepared, setPrepared] = useState<DesktopUpdateState | null>(null);
   const action = prepared?.enabled ? resolveDesktopUpdateButtonAction(prepared) : "none";
@@ -22,17 +24,11 @@ export function DesktopUpdateCoordinator() {
   const receive = useEffectEvent(async (incoming: DesktopUpdateCommandRequest) => {
     if (!command) return;
     const bridge = window.desktopBridge!;
-    if (request !== null) {
-      await command.complete({
-        version: 1,
-        requestId: incoming.requestId,
-        ok: false,
-        code: "internal-error",
-        message: "An update is already in progress.",
-      });
-      return;
-    }
+    // The host serializes requests. A newer token supersedes a cancelled or expired confirmation.
+    latestRequestId.current = incoming.requestId;
+    setRequest(null);
     let current = await bridge.getUpdateState();
+    if (latestRequestId.current !== incoming.requestId) return;
     if (
       current.status === "idle" ||
       current.status === "up-to-date" ||
@@ -40,6 +36,7 @@ export function DesktopUpdateCoordinator() {
     ) {
       current = (await bridge.checkForUpdate()).state;
     }
+    if (latestRequestId.current !== incoming.requestId) return;
     if (current.status === "checking" || current.status === "downloading") {
       await command.complete({
         version: 1,
@@ -89,6 +86,7 @@ export function DesktopUpdateCoordinator() {
     });
     void command.setReady(true, rendererId);
     return () => {
+      latestRequestId.current = null;
       unsubscribe();
       void command.setReady(false, rendererId);
     };
@@ -119,20 +117,22 @@ export function DesktopUpdateCoordinator() {
       return;
     try {
       const bridge = window.desktopBridge!;
-      await everything.run({
-        ...(action === "download"
-          ? {
-              downloadLocal: (reportError) =>
-                downloadLocalUpdate(bridge, { notifyDownloaded: false, reportError }),
-            }
-          : {}),
-        ...(action !== "none"
-          ? {
-              installLocal: (reportError) =>
-                installLocalUpdate(bridge, reportError, localVersion ?? undefined),
-            }
-          : {}),
-      });
+      await everything
+        .run({
+          ...(action === "download"
+            ? {
+                downloadLocal: (reportError) =>
+                  downloadLocalUpdate(bridge, { notifyDownloaded: false, reportError }),
+              }
+            : {}),
+          ...(action !== "none"
+            ? {
+                installLocal: (reportError) =>
+                  installLocalUpdate(bridge, reportError, localVersion ?? undefined),
+              }
+            : {}),
+        })
+        .finally(() => command.finish(currentRequest.requestId));
     } catch (error) {
       toastManager.add(
         stackedThreadToast({
@@ -141,8 +141,6 @@ export function DesktopUpdateCoordinator() {
           description: error instanceof Error ? error.message : "The coordinated update failed.",
         }),
       );
-    } finally {
-      await command.finish(currentRequest.requestId);
     }
   };
   if (!request) return null;

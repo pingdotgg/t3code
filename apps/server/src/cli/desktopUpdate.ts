@@ -61,8 +61,12 @@ export const requestDesktopUpdate = Effect.fn("cli.update.desktop")(function* (i
   }
   const result = response.value;
   if (!result.ok) {
-    if (input.check) return { ...check, reason: result.message };
-    return yield* new DesktopCliUpdateError({ reason: result.message });
+    const reason =
+      result.code === "invalid-request"
+        ? "This desktop app cannot coordinate t3 update. Update the desktop app first. No standalone update was attempted."
+        : result.message;
+    if (input.check) return { ...check, reason };
+    return yield* new DesktopCliUpdateError({ reason });
   }
   if ("check" in result) return result.check;
   if ("status" in result) return result.status;

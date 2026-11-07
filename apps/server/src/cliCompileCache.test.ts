@@ -70,6 +70,10 @@ it.live("loads the CLI with its cache settings only when the command needs it", 
       coordinated: false,
     });
     expect(yield* fs.exists(`${root}/home`)).toBe(false);
+    const globalFlags = yield* run({}, ["--log-level", "debug", "update", "--check", "--json"]);
+    expect(globalFlags.exitCode).toBe(0);
+    expect(globalFlags.stderr).toContain("CACHE=disabled");
+    expect(yield* fs.exists(`${root}/home`)).toBe(false);
     const launcher = yield* run({ T3CODE_HOME: "" }, ["__service-launcher"]);
     expect(launcher.exitCode).toBe(1);
     expect(launcher.stderr).toContain("[service-launcher] T3CODE_HOME is required");

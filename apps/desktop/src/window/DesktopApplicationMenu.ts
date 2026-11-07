@@ -72,11 +72,20 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
   const result = yield* updates.check("menu");
   const updateState = result.state;
   if (updateState.status === "available" || updateState.status === "downloaded") {
-    yield* (yield* DesktopUpdateCommand.DesktopUpdateCommand).request({
+    const response = yield* (yield* DesktopUpdateCommand.DesktopUpdateCommand).request({
       version: 1,
       requestId: "menu-update",
       type: "update",
     });
+    if (!response.ok) {
+      yield* electronDialog.showMessageBox({
+        type: "warning",
+        title: "Could not update T3 Code",
+        message: "The coordinated updater is unavailable.",
+        detail: response.message,
+        buttons: ["OK"],
+      });
+    }
     return;
   }
 

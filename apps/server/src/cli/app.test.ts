@@ -141,12 +141,17 @@ async function startFakeDesktop<
 }
 
 const fakeDesktop = Effect.fn(function* (
-  input: Omit<Parameters<typeof startFakeDesktop>[0], "platform" | "userId">,
+  input: Omit<
+    Parameters<typeof startFakeDesktop<DesktopAppActivationRequest>>[0],
+    "platform" | "userId"
+  >,
 ) {
   const platform = yield* HostProcess.Platform;
   const userId = yield* HostProcess.UserId;
   return yield* Effect.acquireRelease(
-    Effect.promise(() => startFakeDesktop({ ...input, platform, userId })),
+    Effect.promise(() =>
+      startFakeDesktop<DesktopAppActivationRequest>({ ...input, platform, userId }),
+    ),
     (server) => Effect.promise(() => server.close()),
   );
 });
@@ -407,29 +412,39 @@ it.effect("routes a legacy desktop shim's update and read-only check through des
       NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-desktop-update-")),
     );
     const restore = setProcessEnv("T3CODE_CLI_PATH", NodePath.join(root, "bin/t3"));
+    let unsupported = false;
     const desktop = yield* Effect.promise(() =>
       startFakeDesktop<DesktopUpdateCommandRequest>({
         baseDir: root,
         platform,
         userId,
-        reply: (request) => ({
-          version: 1,
-          requestId: request.requestId,
-          ok: true,
-          ...(request.type === "update-check"
+        reply: (request) =>
+          unsupported
             ? {
-                check: {
-                  schema: "t3.update-check.v1",
-                  coordinated: true,
-                  owner: "desktop",
-                  pathway: "desktop-coordinated",
-                  currentVersion: "0.1.7",
-                  targetVersion: "0.1.8",
-                  state: "ready",
-                },
+                version: 1,
+                requestId: request.requestId,
+                ok: false,
+                code: "invalid-request",
+                message: "The desktop app request is invalid.",
               }
-            : { status: "cancelled" }),
-        }),
+            : {
+                version: 1,
+                requestId: request.requestId,
+                ok: true,
+                ...(request.type === "update-check"
+                  ? {
+                      check: {
+                        schema: "t3.update-check.v1",
+                        coordinated: true,
+                        owner: "desktop",
+                        pathway: "desktop-coordinated",
+                        currentVersion: "0.1.7",
+                        targetVersion: "0.1.8",
+                        state: "ready",
+                      },
+                    }
+                  : { status: "cancelled" }),
+              },
       }),
     );
     try {
@@ -450,6 +465,13 @@ it.effect("routes a legacy desktop shim's update and read-only check through des
         assert.isTrue(Exit.isFailure(refused));
       }
       assert.equal(desktop.received.length, 3);
+      unsupported = true;
+      const oldDesktop = yield* runCli(["update", "--base-dir", root]).pipe(Effect.flip);
+      expect(oldDesktop).toMatchObject({
+        _tag: "DesktopCliUpdateError",
+        reason:
+          "This desktop app cannot coordinate t3 update. Update the desktop app first. No standalone update was attempted.",
+      });
     } finally {
       restore();
       yield* Effect.promise(() => desktop.close());
