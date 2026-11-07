@@ -318,6 +318,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             <LinkedPullRequestRow
               key={linkedPullRequestKey(line)}
               line={line}
+              environmentId={environmentId}
               separator={index < linkedPrLines.length - 1}
               surfaceClassName="text-grouped-card"
               openPullRequest={openPullRequest}

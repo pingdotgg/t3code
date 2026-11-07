@@ -141,7 +141,11 @@ export function PullRequestLinkPreview({
                 </p>
                 {card.author === undefined ? null : (
                   <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    <PullRequestActorAvatar actor={card.author} className="size-4" />
+                    <PullRequestActorAvatar
+                      actor={card.author}
+                      environmentId={target.environmentId}
+                      className="size-4"
+                    />
                     <span className="min-w-0 truncate">{authorLabel}</span>
                     {preview === null ? null : (
                       <>
