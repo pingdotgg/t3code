@@ -13,21 +13,34 @@ export function visibleThreadPullRequests(
 
 export interface ThreadPullRequestIdentityFilter {
   readonly number?: number | undefined;
+  readonly repository?: string | undefined;
   readonly url?: string | undefined;
 }
 
 const LIST_PULL_REQUEST_NUMBER = /^#?(\d+)$/;
-const LIST_PULL_REQUEST_URL = /^\S*\/pulls?\/\d+(?:[/?#]\S*)?$/i;
+const LIST_PULL_REQUEST_REPO_NUMBER = /^([\w.-]+\/[\w.-]+)#(\d+)$/;
+/** GitHub `/pull/n`, Azure `/pullrequest/n`, GitLab `/-/merge_requests/n`. */
+const LIST_PULL_REQUEST_URL = /^\S*\/(?:pulls?|pullrequest|-\/merge_requests)\/\d+(?:[/?#]\S*)?$/i;
+const LIST_PULL_REQUEST_STATES = new Set<PullRequestState>(["open", "closed", "merged"]);
 
-/** Parses `t3_thread_list`'s `pullRequest` string: `open`, `#n` / `n`, or a pull URL. */
+/** Parses `t3_thread_list`'s `pullRequest` string: state, `#n` / `n`, `owner/repo#n`, or a pull URL. */
 export function parseThreadListPullRequestFilter(value: string): {
   readonly pullRequestStates?: ReadonlyArray<PullRequestState>;
   readonly pullRequest?: ThreadPullRequestIdentityFilter;
 } | null {
   const trimmed = value.trim();
-  if (trimmed.toLowerCase() === "open") return { pullRequestStates: ["open"] };
+  const state = trimmed.toLowerCase();
+  if (LIST_PULL_REQUEST_STATES.has(state as PullRequestState)) {
+    return { pullRequestStates: [state as PullRequestState] };
+  }
   const numberMatch = LIST_PULL_REQUEST_NUMBER.exec(trimmed);
   if (numberMatch !== null) return { pullRequest: { number: Number(numberMatch[1]) } };
+  const repoNumberMatch = LIST_PULL_REQUEST_REPO_NUMBER.exec(trimmed);
+  if (repoNumberMatch !== null) {
+    return {
+      pullRequest: { repository: repoNumberMatch[1], number: Number(repoNumberMatch[2]) },
+    };
+  }
   if (LIST_PULL_REQUEST_URL.test(trimmed)) return { pullRequest: { url: trimmed } };
   return null;
 }
@@ -48,10 +61,16 @@ function pullRequestUrlMatches(query: string, url: string): boolean {
 
 /** Whether a visible link matches an MCP list pullRequest identity filter. */
 export function threadPullRequestMatchesIdentity(
-  link: Pick<ThreadPullRequestLink, "number" | "url">,
+  link: Pick<ThreadPullRequestLink, "number" | "repository" | "url">,
   filter: ThreadPullRequestIdentityFilter,
 ): boolean {
   if (filter.number !== undefined && link.number !== filter.number) return false;
+  if (
+    filter.repository !== undefined &&
+    link.repository.toLowerCase() !== filter.repository.toLowerCase()
+  ) {
+    return false;
+  }
   if (filter.url !== undefined && !pullRequestUrlMatches(filter.url, link.url)) return false;
   return filter.number !== undefined || filter.url !== undefined;
 }
@@ -137,7 +156,7 @@ export function threadPullRequestSearchTerms(thread: {
 
 const PULL_REQUEST_NUMBER_QUERY = /^#?\d+$/;
 const PULL_REQUEST_REPO_NUMBER_QUERY = /^[\w.-]+\/[\w.-]+#\d+$/;
-const PULL_REQUEST_URL_NUMBER = /^\S*\/pulls?\/\d+(?:[/?#]\S*)?$/i;
+const PULL_REQUEST_URL_NUMBER = LIST_PULL_REQUEST_URL;
 /** Same floor as palette reference matching: short URL prefixes hit too many threads. */
 const PULL_REQUEST_REFERENCE_PREFIX_MIN = 8;
 /** Same stripping as palette field queries for numbered pull-request lookups. */
