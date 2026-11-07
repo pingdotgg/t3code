@@ -11,7 +11,7 @@ import {
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
 import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
-import { isInScrollView, workspaceAreaProps } from "../../lib/workspaceFocus";
+import { canReturnFocusTo, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
@@ -52,9 +52,8 @@ function ResizablePreviewPanelShell(props: PreviewPanelShellProps) {
 // Prefers the element focus entered the panel from, falling back to the panel toggle.
 function returnFocus(host: HTMLElement, origin: HTMLElement | null) {
   const { ownerDocument } = host;
-  // focus() is a no-op on an inert, disabled or hidden origin, so activeElement says whether it took.
-  // An origin scrolled out of view is skipped: scrolling the timeline back would stop it following a turn.
-  if (origin?.isConnected && !host.contains(origin) && isInScrollView(origin)) {
+  // focus() is a no-op on a disabled origin, so activeElement says whether it took.
+  if (origin?.isConnected && !host.contains(origin) && canReturnFocusTo(origin)) {
     origin.focus({ preventScroll: true });
     if (ownerDocument.activeElement === origin) return true;
   }
@@ -140,6 +139,8 @@ function PreviewPanelShellFrame(
     if (collapsed && host.contains(host.ownerDocument.activeElement)) {
       returnedFocus.current = returnFocus(host, focusOrigin.current);
     }
+    // An origin belongs to one open; the next one records its own.
+    if (collapsed) focusOrigin.current = null;
     host.toggleAttribute("inert", collapsed);
   }, [collapsible, open, hostRef]);
   return (

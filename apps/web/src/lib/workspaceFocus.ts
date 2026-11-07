@@ -65,12 +65,22 @@ function scrollingAncestors(target: HTMLElement) {
   return scrollers;
 }
 
-export function isInScrollView(target: HTMLElement) {
+function isInScrollView(target: HTMLElement) {
   const rect = target.getBoundingClientRect();
   return scrollingAncestors(target).every((scroller) => {
     const box = scroller.getBoundingClientRect();
     return rect.bottom > box.top && rect.top < box.bottom;
   });
+}
+
+/**
+ * Whether focus can go back to an element without surprising the user: it is still in a
+ * visible workspace area (a closing drawer drops its area) and in view, so no list scrolls.
+ */
+export function canReturnFocusTo(element: HTMLElement) {
+  return (
+    workspaceArea(element) !== null && isWorkspaceElementVisible(element) && isInScrollView(element)
+  );
 }
 
 /**

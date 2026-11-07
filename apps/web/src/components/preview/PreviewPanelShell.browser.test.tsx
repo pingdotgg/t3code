@@ -9,7 +9,9 @@ import { PreviewPanelShell } from "./PreviewPanelShell";
 function Workspace(props: { open: boolean; present?: boolean; children?: ReactNode }) {
   return (
     <div>
-      <input aria-label="Message New thread" />
+      <div data-workspace-area="composer">
+        <input aria-label="Message New thread" />
+      </div>
       <button type="button" aria-label="Toggle right panel" data-right-panel-toggle />
       {(props.present ?? true) ? (
         <PreviewPanelShell mode="inline" open={props.open}>
@@ -86,7 +88,11 @@ describe("PreviewPanelShell focus", () => {
   it("falls back to the toggle without scrolling when the origin has scrolled out of view", async () => {
     const layout = (open: boolean) => (
       <div>
-        <div data-testid="timeline" style={{ height: 100, overflowY: "auto" }}>
+        <div
+          data-testid="timeline"
+          data-workspace-area="conversation"
+          style={{ height: 100, overflowY: "auto" }}
+        >
           <button type="button">Copy message</button>
           <div style={{ height: 2000 }} />
         </div>
@@ -107,6 +113,45 @@ describe("PreviewPanelShell focus", () => {
 
     await expect.element(screen.getByRole("button", { name: "Toggle right panel" })).toHaveFocus();
     expect(timeline.scrollTop).toBe(1500);
+  });
+
+  it("falls back to the toggle when the origin's drawer is closing", async () => {
+    // A closing drawer stays mounted for its exit animation but is no longer a workspace area.
+    const layout = (open: boolean, drawerOpen: boolean) => (
+      <div>
+        <div data-workspace-area={drawerOpen ? "terminal" : undefined}>
+          <input aria-label="Terminal input" />
+        </div>
+        <button type="button" aria-label="Toggle right panel" data-right-panel-toggle />
+        <PreviewPanelShell mode="inline" open={open}>
+          <div role="region" aria-label="Open a surface" tabIndex={-1} />
+        </PreviewPanelShell>
+      </div>
+    );
+    await using screen = await render(layout(false, true));
+    await userEvent.click(screen.getByRole("textbox", { name: "Terminal input" }));
+    await screen.rerender(layout(true, true));
+    await act(() => screen.getByRole("region", { name: "Open a surface" }).element().focus());
+    await screen.rerender(layout(true, false));
+
+    await screen.rerender(layout(false, false));
+
+    await expect.element(screen.getByRole("button", { name: "Toggle right panel" })).toHaveFocus();
+  });
+
+  it("does not return focus to the origin of an earlier open", async () => {
+    await using screen = await render(<Workspace open={false} />);
+    await openPanelFromComposer(screen);
+    await screen.rerender(<Workspace open={false} />);
+    const composer = screen.getByRole("textbox", { name: "Message New thread" });
+    await expect.element(composer).toHaveFocus();
+    await act(() => composer.element().blur());
+    await screen.rerender(<Workspace open />);
+    await act(() => screen.getByRole("region", { name: "Open a surface" }).element().focus());
+
+    await screen.rerender(<Workspace open={false} />);
+
+    await expect.element(screen.getByRole("button", { name: "Toggle right panel" })).toHaveFocus();
   });
 
   it("returns focus to the toggle when a panel opened from it collapses", async () => {
