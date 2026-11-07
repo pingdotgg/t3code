@@ -39,6 +39,9 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   var tabs = ["threads", "pullRequests", "usage", "settings"] {
     didSet { if tabs != oldValue { updateItems() } }
   }
+  var pullRequestsTitle = "PRs" {
+    didSet { itemsByTab["pullRequests"]?.accessibilityLabel = pullRequestsTitle }
+  }
   var selectedTab = "threads" { didSet { updateSelection() } }
   var selectedColor: UIColor = .systemBlue { didSet { tabBar.tintColor = selectedColor } }
   var compact = false {
@@ -102,7 +105,7 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   private func prepareItems() {
     let iconBundle = Bundle(for: Self.self).url(forResource: "T3NativeControlIcons", withExtension: "bundle").flatMap(Bundle.init(url:))
     let pullRequestIcon = UIImage(named: "pull-request", in: iconBundle, compatibleWith: nil)?.withRenderingMode(.alwaysTemplate)
-    let labels = ["threads": "Chats", "pullRequests": "PRs", "usage": "Usage", "settings": "Settings"]
+    let labels = ["threads": "Chats", "pullRequests": pullRequestsTitle, "usage": "Usage", "settings": "Settings"]
     let symbols = ["threads": "text.bubble", "usage": "chart.bar.xaxis", "settings": "gearshape"]
     for (tab, label) in labels {
       let icon = tab == "pullRequests" ? pullRequestIcon : UIImage(systemName: symbols[tab] ?? "circle")
