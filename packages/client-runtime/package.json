@@ -239,6 +239,10 @@
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
     },
+    "./state/lanGateway": {
+      "types": "./src/state/lanGateway.ts",
+      "default": "./src/state/lanGateway.ts"
+    },
     "./state/environmentHttpAuth": {
       "types": "./src/state/environmentHttpAuth.ts",
       "default": "./src/state/environmentHttpAuth.ts"

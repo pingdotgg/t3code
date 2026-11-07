@@ -48,6 +48,7 @@ import {
   appendOrchestrationProtocol,
   orchestrationProtocolCompatibilityError,
 } from "./compatibility.ts";
+import * as GatewayHop from "./gatewayHop.ts";
 import { credentialConnectionId } from "./routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
@@ -125,6 +126,8 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+  const gatewayHop = yield* GatewayHop.GatewayHopAuthorization;
+  const httpClient = yield* HttpClient.HttpClient;
 
   return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
     entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
@@ -145,10 +148,20 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         actual: profile.environmentId,
       });
     }
+    const hop =
+      profile.gatewayEnvironmentId === undefined
+        ? { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl }
+        : yield* gatewayHop
+            .withGatewayTicket({
+              gatewayEnvironmentId: profile.gatewayEnvironmentId,
+              httpBaseUrl: profile.httpBaseUrl,
+              wsBaseUrl: profile.wsBaseUrl,
+            })
+            .pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
     if (profile.authorization === "t3-connect") {
       const authorized = yield* remote.authorizeDpop({
         expectedEnvironmentId: target.environmentId,
-        directEndpoint: { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
+        directEndpoint: { httpBaseUrl: hop.httpBaseUrl, wsBaseUrl: hop.wsBaseUrl },
       });
       return { ...authorized, target } satisfies PreparedConnection;
     }
@@ -165,8 +178,8 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     }
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: profile.httpBaseUrl,
-      wsBaseUrl: profile.wsBaseUrl,
+      httpBaseUrl: hop.httpBaseUrl,
+      wsBaseUrl: hop.wsBaseUrl,
       bearerToken: credential.token,
       connectionMethod: "direct",
     });

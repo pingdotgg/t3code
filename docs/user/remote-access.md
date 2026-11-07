@@ -149,6 +149,19 @@ shown there apply only to the route marked **In use**; other routes are not
 checked. Direct pairing and T3 Connect have separate sessions and may grant
 different permissions.
 
+### Reach LAN peers through a Connect host
+
+When one machine is already on T3 Connect, it can reverse-proxy to other T3
+Code environments on its private network or Tailscale so your phone or browser
+reaches those peers through the Connect host's tunnel. The peers do not need
+T3 Connect themselves.
+
+On the Connect-linked host, turn on **LAN gateway** in Settings → Labs, then
+add each peer by its LAN or Tailscale URL in **Settings → Connections**. Pair
+each peer on the LAN (or Tailscale) once from the client that will use it; while
+the Connect host is reachable, a gateway route for that peer appears
+automatically. Only private, loopback, and Tailscale addresses can be added.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in

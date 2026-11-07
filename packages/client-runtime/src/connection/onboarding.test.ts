@@ -25,6 +25,7 @@ import {
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionDriver from "./driver.ts";
+import * as GatewayHop from "./gatewayHop.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
@@ -190,6 +191,7 @@ function layerPairingOnboarding(
       ConnectionWakeups.ConnectionWakeups,
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
     ),
+    GatewayHop.layer,
   );
   return Onboarding.layer.pipe(
     Layer.provideMerge(EnvironmentRegistry.layer.pipe(Layer.provideMerge(dependencies))),

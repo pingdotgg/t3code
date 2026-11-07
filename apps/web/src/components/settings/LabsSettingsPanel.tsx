@@ -23,6 +23,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <PromptSuggestionsRow />
+        <LanGatewayRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
@@ -184,6 +185,35 @@ function PromptSuggestionsRow() {
             updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
           }
           aria-label="Suggest next prompt"
+        />
+      }
+    />
+  );
+}
+
+function LanGatewayRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("lan-gateway-beta")}
+      settingKeys={["lanGatewayEnabled"]}
+      description={
+        <>
+          Reverse-proxy LAN or Tailscale peers through this Connect-linked machine. Add peers in{" "}
+          <Link to="/settings/connections" className="underline underline-offset-2">
+            Connections
+          </Link>
+          ; pair each on the LAN once.
+        </>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["lanGatewayEnabled"]}
+          checked={settings.lanGatewayEnabled}
+          onCheckedChange={(checked) => updateSettings({ lanGatewayEnabled: Boolean(checked) })}
+          aria-label="LAN gateway"
         />
       }
     />

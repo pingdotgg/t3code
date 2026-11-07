@@ -29,6 +29,11 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
      * interface. A bare 100.64.0.0/10 address could belong to any VPN.
      */
     network: Schema.optionalKey(Schema.Literal("tailscale")),
+    /**
+     * When set, this route reaches the peer through that environment's LAN
+     * gateway reverse-proxy. The resolver mints a `gatewayTicket` against it.
+     */
+    gatewayEnvironmentId: Schema.optionalKey(EnvironmentId),
   },
 ) {}
 

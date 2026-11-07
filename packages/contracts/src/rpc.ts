@@ -27,6 +27,14 @@ import {
   PeerLinkSummary,
 } from "./peerLink.ts";
 import {
+  LanGatewayAddInput,
+  LanGatewayError,
+  LanGatewayListResult,
+  LanGatewayPeerSummary,
+  LanGatewayRemoveInput,
+  LanGatewayRemoveResult,
+} from "./lanGateway.ts";
+import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
   ChatGptImportProfileInput,
@@ -521,6 +529,9 @@ export const WS_METHODS = {
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
+  lanGatewayList: "lanGateway.list",
+  lanGatewayAdd: "lanGateway.add",
+  lanGatewayRemove: "lanGateway.remove",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -843,6 +854,24 @@ const WsPeerLinksUnlinkRpc = Rpc.make(WS_METHODS.peerLinksUnlink, {
 const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, {
   payload: PeerLinkRequestAnswerInput,
   error: Schema.Union([PeerLinkRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsLanGatewayListRpc = Rpc.make(WS_METHODS.lanGatewayList, {
+  payload: Schema.Struct({}),
+  success: LanGatewayListResult,
+  error: Schema.Union([LanGatewayError, EnvironmentAuthorizationError]),
+});
+
+const WsLanGatewayAddRpc = Rpc.make(WS_METHODS.lanGatewayAdd, {
+  payload: LanGatewayAddInput,
+  success: LanGatewayPeerSummary,
+  error: Schema.Union([LanGatewayError, EnvironmentAuthorizationError]),
+});
+
+const WsLanGatewayRemoveRpc = Rpc.make(WS_METHODS.lanGatewayRemove, {
+  payload: LanGatewayRemoveInput,
+  success: LanGatewayRemoveResult,
+  error: Schema.Union([LanGatewayError, EnvironmentAuthorizationError]),
 });
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
@@ -2095,6 +2124,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
+  WsLanGatewayListRpc,
+  WsLanGatewayAddRpc,
+  WsLanGatewayRemoveRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,

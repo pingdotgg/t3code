@@ -28,6 +28,7 @@ import { ModelCapabilities, ProviderOptionDescriptor } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
+import { LanGatewayPeerAdvertisement } from "./lanGateway.ts";
 import { ServerSettings } from "./settings.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
@@ -664,6 +665,11 @@ export const ServerConfig = Schema.Struct({
   environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
   /** Stream-only and opt-in; the source stream emits the current set on subscribe. */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
+  /**
+   * Peers this host reverse-proxies when `settings.lanGatewayEnabled` is on.
+   * Absent or empty when the gateway is off.
+   */
+  lanGatewayPeers: Schema.optionalKey(ForwardCompatibleArray(LanGatewayPeerAdvertisement)),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 

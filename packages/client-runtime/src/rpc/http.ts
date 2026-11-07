@@ -83,9 +83,14 @@ export const layerRemoteHttpClient = (
 
 const remoteApiBaseUrl = (httpBaseUrl: string): string => {
   const url = new URL(httpBaseUrl);
+  const gatewayTicket = url.searchParams.get("gatewayTicket");
   url.pathname = "/";
   url.search = "";
   url.hash = "";
+  // Peer calls through a LAN gateway need the hop ticket on every request.
+  if (gatewayTicket !== null && gatewayTicket.length > 0) {
+    url.searchParams.set("gatewayTicket", gatewayTicket);
+  }
   return url.toString();
 };
 

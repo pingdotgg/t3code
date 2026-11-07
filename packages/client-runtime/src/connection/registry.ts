@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type LanGatewayPeerAdvertisement } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -37,6 +37,7 @@ import { ConnectionBlockedError } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
+import * as GatewayHop from "./gatewayHop.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import {
   PullRequestRoutingPermissions,
@@ -50,6 +51,7 @@ import {
   entryWithRoutes,
   findRouteToSameAddress,
   hasSavedBearerRoute,
+  mergeGatewayRoutes,
   mergeLearnedRoutes,
   routesAfterRemoving,
   upsertRoute,
@@ -219,6 +221,7 @@ export const make = Effect.gen(function* () {
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
+  const gatewayHop = yield* GatewayHop.GatewayHopAuthorization;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const persistedTargets = yield* storage.list;
   const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
@@ -368,6 +371,8 @@ export const make = Effect.gen(function* () {
             // before an enabled, compatible environment starts connecting.
             initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
+            learnGatewayPeers: (input) =>
+              learnGatewayPeers({ gatewayEnvironmentId: environmentId, ...input }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
@@ -386,6 +391,11 @@ export const make = Effect.gen(function* () {
                 ? setCompatibility(environmentId, state.lastFailure)
                 : Effect.void,
             ),
+            Effect.forkIn(scope),
+          );
+          yield* SubscriptionRef.changes(supervisor.prepared).pipe(
+            Stream.runForEach((prepared) => gatewayHop.remember(environmentId, prepared)),
+            Effect.ensuring(gatewayHop.remember(environmentId, Option.none())),
             Effect.forkIn(scope),
           );
           return supervisor;
@@ -976,6 +986,90 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.as(Option.none<ConnectionCatalogEntry>())),
       ),
     );
+  });
+
+  const persistRouteUpdate = Effect.fn("EnvironmentRegistry.persistRouteUpdate")(function* (
+    environmentId: EnvironmentId,
+    entry: ConnectionCatalogEntry,
+    routes: ReadonlyArray<ConnectionRoute>,
+  ) {
+    const next = entryWithRoutes(entry, routes);
+    const previousProfiles = new Map(
+      connectionRoutes(entry).map((route) => [
+        connectionRouteId(route.target),
+        Option.getOrNull(route.profile),
+      ]),
+    );
+    for (const route of routes) {
+      const profile = Option.getOrNull(route.profile);
+      if (profile === null || previousProfiles.get(connectionRouteId(route.target)) === profile) {
+        continue;
+      }
+      yield* profiles.put(profile);
+    }
+    yield* registrations.setRoutes(environmentId, persistedRoutes(next));
+    const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+    if (lease !== undefined) {
+      yield* SubscriptionRef.update(serviceScopes, (current) =>
+        new Map(current).set(environmentId, { ...lease, entry: next }),
+      );
+    }
+    yield* SubscriptionRef.update(entries, (current) => new Map(current).set(environmentId, next));
+    return next;
+  });
+
+  const learnGatewayPeers = Effect.fn("EnvironmentRegistry.learnGatewayPeers")(function* (input: {
+    readonly gatewayEnvironmentId: EnvironmentId;
+    readonly gatewayHttpBaseUrl: string;
+    readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
+  }) {
+    const catalog = yield* SubscriptionRef.get(entries);
+    const peerIds = new Set<EnvironmentId>();
+    if (input.advertised.length === 0) {
+      // Drop learned gateway routes for peers that already carry one for this host.
+      for (const [environmentId, entry] of catalog) {
+        if (
+          connectionRoutes(entry).some((route) => {
+            const profile = Option.getOrNull(route.profile);
+            return (
+              profile?._tag === "BearerConnectionProfile" &&
+              profile.gatewayEnvironmentId === input.gatewayEnvironmentId
+            );
+          })
+        ) {
+          peerIds.add(environmentId);
+        }
+      }
+    } else {
+      for (const peer of input.advertised) peerIds.add(peer.environmentId);
+    }
+    for (const peerEnvironmentId of peerIds) {
+      if (peerEnvironmentId === input.gatewayEnvironmentId) continue;
+      yield* withLeaseLock(
+        peerEnvironmentId,
+        Effect.gen(function* () {
+          if ((yield* Ref.get(platformEnvironmentIds)).has(peerEnvironmentId)) return;
+          const entry = (yield* SubscriptionRef.get(entries)).get(peerEnvironmentId);
+          if (entry === undefined) return;
+          const routes = mergeGatewayRoutes({
+            entry,
+            gatewayEnvironmentId: input.gatewayEnvironmentId,
+            gatewayHttpBaseUrl: input.gatewayHttpBaseUrl,
+            advertised: input.advertised,
+          });
+          if (routes === null) return;
+          yield* persistRouteUpdate(peerEnvironmentId, entry, routes);
+        }),
+      ).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not save LAN gateway routes for a peer.", {
+            gatewayEnvironmentId: input.gatewayEnvironmentId,
+            peerEnvironmentId,
+            error,
+          }),
+        ),
+      );
+    }
   });
 
   const removeRoute = Effect.fn("EnvironmentRegistry.removeRoute")(function* (

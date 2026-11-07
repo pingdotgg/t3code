@@ -71,6 +71,12 @@ requests must not follow redirects. These restrictions keep endpoint discovery
 from turning into arbitrary relay egress or exposing another service on the
 environment host.
 
+Reaching other machines on a Connect host's private or Tailscale network is an
+app-level reverse proxy on that host
+([LAN gateway](../../apps/server/src/gateway/LanGateway.ts)), not a change to
+the tunnel's loopback-origin rules. The relay still only dials the host; the
+host proxies to allowlisted private peers.
+
 ## A link outlives a connector process
 
 CLI authorization, desired exposure, and a running connector have different
