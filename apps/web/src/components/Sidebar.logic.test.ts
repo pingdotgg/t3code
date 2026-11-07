@@ -7,6 +7,9 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   shouldCreateNewThreadInCurrentProject,
+  buildBulkCopyPullRequestLinksContextMenuItem,
+  collectVisiblePullRequestUrls,
+  isSidebarIdleThread,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
@@ -42,7 +45,14 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -58,6 +68,104 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+const pullRequestLink = (
+  number: number,
+  source: ThreadPullRequestLink["source"] = "created",
+): ThreadPullRequestLink => ({
+  host: "github.com",
+  repository: "pingdotgg/t3code",
+  number,
+  url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+  source,
+  linkedAt: "2026-01-01T00:00:00.000Z",
+  snapshot: null,
+  stack: null,
+});
+
+describe("collectVisiblePullRequestUrls", () => {
+  it("dedupes URLs in first-seen order and skips dismissed stack members", () => {
+    expect(
+      collectVisiblePullRequestUrls([
+        { pullRequests: [pullRequestLink(1), pullRequestLink(2, "stack-dismissed")] },
+        { pullRequests: [pullRequestLink(2), pullRequestLink(1), pullRequestLink(3)] },
+        { pullRequests: undefined },
+      ]),
+    ).toEqual([
+      "https://github.com/pingdotgg/t3code/pull/1",
+      "https://github.com/pingdotgg/t3code/pull/2",
+      "https://github.com/pingdotgg/t3code/pull/3",
+    ]);
+  });
+});
+
+describe("buildBulkCopyPullRequestLinksContextMenuItem", () => {
+  it("hides the action when nothing is linked", () => {
+    expect(buildBulkCopyPullRequestLinksContextMenuItem({ urlCount: 0 })).toBeNull();
+  });
+
+  it("labels the action with the unique link count", () => {
+    expect(buildBulkCopyPullRequestLinksContextMenuItem({ urlCount: 3 })).toEqual({
+      id: "copy-pr-links",
+      label: "Copy PR links (3)",
+    });
+  });
+});
+
+describe("isSidebarIdleThread", () => {
+  const now = "2026-01-01T12:00:00.000Z";
+
+  it("keeps unsettled finished threads including pinned, and drops settled, snoozed, and Working", () => {
+    // Finished run → idle. Runtime "idle" is still Working.
+    const idle = makeThreadFixture({
+      id: ThreadId.make("idle"),
+      settledOverride: null,
+      pinnedAt: null,
+      runtime: null,
+      latestRun: null,
+    });
+    expect(isSidebarIdleThread(idle, { now })).toBe(true);
+    expect(
+      isSidebarIdleThread(
+        makeThreadFixture({
+          id: ThreadId.make("pinned-idle"),
+          settledOverride: null,
+          pinnedAt: "2026-01-01T00:00:00.000Z",
+          runtime: null,
+          latestRun: null,
+        }),
+        { now },
+      ),
+    ).toBe(true);
+    expect(isSidebarIdleThread({ ...idle, settledOverride: "settled" }, { now })).toBe(false);
+    expect(
+      isSidebarIdleThread(
+        {
+          ...idle,
+          snoozedUntil: "2026-01-01T18:00:00.000Z",
+          snoozedAt: "2026-01-01T00:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toBe(false);
+    expect(
+      isSidebarIdleThread(
+        {
+          ...idle,
+          runtime: {
+            status: "idle",
+            activeRunId: null,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            providerName: "Codex",
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+        { now },
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;

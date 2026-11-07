@@ -1,9 +1,13 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import {
+  threadPullRequestSearchTerms,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import {
   isAtomCommandInterrupted,
@@ -21,6 +25,7 @@ import {
   type ContextMenuItem,
   type EnvironmentId,
   type ThreadId,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
@@ -182,6 +187,31 @@ export function resolveSidebarThreadSection(input: {
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";
+}
+
+/**
+ * Idle threads: unsettled, unsnoozed, and not in Working. Pinned idle threads count.
+ */
+export function isSidebarIdleThread(
+  thread: Pick<
+    SidebarThreadSummary,
+    | "settledOverride"
+    | "snoozedAt"
+    | "snoozedUntil"
+    | "hasActionableProposedPlan"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingSubagentRequest"
+    | "interactionMode"
+    | "latestRun"
+    | "runtime"
+  >,
+  input: { readonly now: string; readonly configLoaded?: boolean },
+): boolean {
+  const configLoaded = input.configLoaded ?? true;
+  if (configLoaded && thread.settledOverride === "settled") return false;
+  if (configLoaded && effectiveSnoozed(thread, { now: input.now })) return false;
+  return !isThreadWorking(thread);
 }
 
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
@@ -636,6 +666,34 @@ export function buildBulkUnpinContextMenuItem(input: {
 }): ContextMenuItem<"unpin"> | null {
   if (input.pinnedCount === 0) return null;
   return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
+}
+
+/** Unique visible PR URLs across threads, first-seen order. */
+export function collectVisiblePullRequestUrls(
+  threads: ReadonlyArray<{
+    readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+  }>,
+): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const thread of threads) {
+    for (const link of visibleThreadPullRequests(thread.pullRequests ?? [])) {
+      if (seen.has(link.url)) continue;
+      seen.add(link.url);
+      urls.push(link.url);
+    }
+  }
+  return urls;
+}
+
+export function buildBulkCopyPullRequestLinksContextMenuItem(input: {
+  urlCount: number;
+}): ContextMenuItem<"copy-pr-links"> | null {
+  if (input.urlCount === 0) return null;
+  return {
+    id: "copy-pr-links",
+    label: `Copy PR links (${input.urlCount})`,
+  };
 }
 
 export interface ThreadStatusPill {
