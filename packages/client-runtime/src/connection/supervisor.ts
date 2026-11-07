@@ -524,8 +524,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     let attemptSpan = Option.none<Tracer.Span>();
     const traced = Effect.gen(function* () {
       attemptSpan = Option.some(yield* Effect.currentSpan.pipe(Effect.orDie));
-      yield* annotateTarget(target);
       yield* Effect.annotateCurrentSpan({
+        "environment.id": target.environmentId,
+        "environment.target.kind": target._tag,
         "connection.attempt": attempt,
         "connection.generation": generation,
         "connection.retry.failure_count": Option.match(pendingRetry, {

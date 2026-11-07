@@ -5,6 +5,7 @@ import {
   type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
@@ -430,6 +432,14 @@ describe("EnvironmentSupervisor", () => {
 
   it.effect("converts unexpected driver defects into retryable failures", () =>
     Effect.gen(function* () {
+      const relaySpans: Array<Tracer.NativeSpan> = [];
+      const relayTracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          relaySpans.push(span);
+          return span;
+        },
+      });
       const harness = yield* makeHarness({
         prepare: (attempt) =>
           attempt === 1
@@ -438,7 +448,10 @@ describe("EnvironmentSupervisor", () => {
       });
       const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
+      }).pipe(
+        Effect.provide(harness.dependencies),
+        Effect.provideService(RelayClientTracer, Option.some(relayTracer)),
+      );
 
       const failed = yield* awaitState(
         supervisor.state,
@@ -451,6 +464,9 @@ describe("EnvironmentSupervisor", () => {
           message: "Test environment connection failed unexpectedly.",
         },
       });
+      const attempt = relaySpans.find((span) => span.name === "relay.connection.attempt");
+      expect(attempt?.attributes.get("connection.outcome")).toBe("failed");
+      expect(attempt?.attributes.has("environment.label")).toBe(false);
 
       yield* TestClock.adjust("3 seconds");
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
@@ -1210,12 +1226,23 @@ describe("EnvironmentSupervisor", () => {
 
   it.effect("releases and reconnects a relay session when credentials change", () =>
     Effect.gen(function* () {
+      const relaySpans: Array<Tracer.NativeSpan> = [];
+      const relayTracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          relaySpans.push(span);
+          return span;
+        },
+      });
       const harness = yield* makeHarness({
         prepare: () => Effect.succeed(preparedFor(RELAY_TARGET)),
       });
       const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
+      }).pipe(
+        Effect.provide(harness.dependencies),
+        Effect.provideService(RelayClientTracer, Option.some(relayTracer)),
+      );
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.wake("credentials-changed");
@@ -1226,6 +1253,14 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      const attempts = relaySpans.filter((span) => span.name === "relay.connection.attempt");
+      expect(attempts).toHaveLength(2);
+      for (const span of attempts) {
+        expect(span.attributes.get("environment.id")).toBe(RELAY_TARGET.environmentId);
+        expect(span.attributes.get("environment.target.kind")).toBe(RELAY_TARGET._tag);
+        expect(span.attributes.has("environment.label")).toBe(false);
+      }
+      expect(supervisor.target.label).toBe(RELAY_TARGET.label);
     }),
   );
 
