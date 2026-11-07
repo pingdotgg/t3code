@@ -179,6 +179,8 @@ export function BranchPicker({
               <LegendList<string>
                 ref={attachBranchList}
                 data={filteredItems}
+                // Rows whose item is unchanged keep their render, and with it a stale index.
+                extraData={filteredItems}
                 keyExtractor={(item) => item}
                 {...(getItemType ? { getItemType } : {})}
                 renderItem={({ item, index }) => renderItem(item, index)}
