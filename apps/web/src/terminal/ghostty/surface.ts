@@ -787,6 +787,8 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.cancelSynchronizedRenderTimer();
     this.lastMouseMotionData = "";
+    // A fresh PTY has none of the typed text an IME could rewrite.
+    if (!this.composing) this.resetInputContext();
     this.core.resetAndWrite(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
@@ -1371,7 +1373,7 @@ export class GhosttyTerminalSurface {
 
   // Input the textarea did not produce leaves its text out of step with the PTY line.
   private sendInput(data: string): void {
-    this.resetInputContext();
+    if (!this.composing) this.resetInputContext();
     this.options.onData(data);
   }
 

@@ -457,9 +457,31 @@ describe("GhosttyTerminalSurface visibility", () => {
       }
     }
     key(surface, "Backspace", "Backspace", { metaKey: true });
-
     expect(surface.input.value).toBe("");
-    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["t", "i", "e"]);
+
+    for (const char of "vi") {
+      if (!key(surface, char, `Key${char.toUpperCase()}`).defaultPrevented) {
+        surface.input.value += char;
+        surface.input.dispatchEvent(Object.assign(new Event("input"), { isComposing: false }));
+      }
+    }
+    // A restart elsewhere resets this view onto a fresh PTY.
+    surface.resetAndWrite("$ ");
+    expect(surface.input.value).toBe("");
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["t", "i", "e", "v", "i"]);
+  });
+
+  it("keeps an active composition when a paste is sent", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+
+    surface.input.dispatchEvent(new Event("compositionstart"));
+    surface.input.value = "にほ";
+    surface.input.dispatchEvent(Object.assign(new Event("input"), { isComposing: true }));
+    paste(surface, "x");
+
+    expect(surface.input.value).toBe("にほ");
   });
 
   it("commits a composition typed after plain text once, then drops that text at Enter", async () => {
