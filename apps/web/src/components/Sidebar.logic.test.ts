@@ -310,6 +310,16 @@ describe("resolveSidebarThreadStatus", () => {
       }),
     ).toBe("waiting");
   });
+
+  it("treats an in-flight commit, push, or PR as working ahead of ready", () => {
+    expect(resolveSidebarThreadStatus(idle, { sourceControlBusy: true })).toBe("working");
+    expect(
+      resolveSidebarThreadStatus(
+        { ...idle, hasPendingUserInput: true },
+        { sourceControlBusy: true },
+      ),
+    ).toBe("input");
+  });
 });
 
 describe("searchSidebarThreads", () => {

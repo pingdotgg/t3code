@@ -187,6 +187,20 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
   });
 
+  it("treats an in-flight commit, push, or PR as working ahead of ready", () => {
+    const thread = presentThreadShell(
+      environmentId,
+      decodeThreadShell(makeRawThreadShell({ status: "completed" })),
+    );
+    expect(resolveThreadListV2Status(thread, { sourceControlBusy: true })).toBe("working");
+    expect(
+      resolveThreadListV2Status(
+        { ...thread, hasPendingUserInput: true },
+        { sourceControlBusy: true },
+      ),
+    ).toBe("input");
+  });
+
   it.each([
     { roster: "dev server", task: { kind: "command" }, status: "ready" },
     { roster: "dev server watchdog", task: { kind: "monitor" }, status: "ready" },

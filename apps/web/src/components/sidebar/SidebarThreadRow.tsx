@@ -1,4 +1,4 @@
-import { useAtomMount } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -70,7 +70,8 @@ import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
-import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
+import { isThreadStackedActionRunning } from "@t3tools/client-runtime/state/vcs";
+import { vcsActionManager, vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
@@ -713,7 +714,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     : null;
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const status = resolveSidebarThreadStatus(thread);
+  const stackedActionThreads = useAtomValue(vcsActionManager.stackedActionThreadsAtom);
+  const stackedAction = stackedActionThreads.get(`${thread.environmentId}:${thread.id}`);
+  const sourceControlBusy = isThreadStackedActionRunning(thread, stackedActionThreads);
+  const status = resolveSidebarThreadStatus(thread, { sourceControlBusy });
+  const workingStartedAt =
+    resolveWorkingStartedAt(thread) ??
+    (stackedAction === undefined ? null : new Date(stackedAction.startedAtMs).toISOString());
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -1509,7 +1516,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           {topStatus.label}
                           {status === "preparing" || status === "working" ? (
                             <span aria-hidden>
-                              <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                              <WorkingDuration startedAt={workingStartedAt} />
                             </span>
                           ) : status === "waiting" ? (
                             <span aria-hidden>

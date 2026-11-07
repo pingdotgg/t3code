@@ -48,6 +48,7 @@ export interface VcsActionState {
   readonly operation: VcsActionOperation | null;
   readonly actionId: string | null;
   readonly action: GitStackedAction | null;
+  readonly threadId: ThreadId | null;
   readonly currentLabel: string | null;
   readonly currentPhaseLabel: string | null;
   readonly hookName: string | null;
@@ -55,6 +56,14 @@ export interface VcsActionState {
   readonly phaseStartedAtMs: number | null;
   readonly hookStartedAtMs: number | null;
   readonly error: string | null;
+}
+
+/** A thread whose commit / push / PR stacked action is still running on this client. */
+export interface VcsStackedActionThreadPresence {
+  readonly environmentId: EnvironmentIdType;
+  readonly threadId: ThreadId;
+  readonly actionId: string;
+  readonly startedAtMs: number;
 }
 
 export interface VcsActionTarget {
@@ -71,6 +80,7 @@ export interface BeginVcsActionInput {
   readonly operation: VcsActionOperation;
   readonly label: string;
   readonly actionId?: string;
+  readonly threadId?: ThreadId;
 }
 
 export interface RunVcsStackedActionInput {
@@ -153,6 +163,7 @@ export const EMPTY_VCS_ACTION_STATE = Object.freeze<VcsActionState>({
   operation: null,
   actionId: null,
   action: null,
+  threadId: null,
   currentLabel: null,
   currentPhaseLabel: null,
   hookName: null,
@@ -179,6 +190,52 @@ const EMPTY_VCS_ACTION_ATOM = Atom.make(EMPTY_VCS_ACTION_STATE).pipe(
   Atom.keepAlive,
   Atom.withLabel("vcs-action:null"),
 );
+
+const EMPTY_STACKED_ACTION_THREADS = Object.freeze(
+  new Map<string, VcsStackedActionThreadPresence>(),
+);
+
+const vcsStackedActionThreadsAtom = Atom.make<ReadonlyMap<string, VcsStackedActionThreadPresence>>(
+  EMPTY_STACKED_ACTION_THREADS,
+).pipe(Atom.keepAlive, Atom.withLabel("vcs-stacked-action-threads"));
+
+export function vcsStackedActionThreadKey(
+  environmentId: EnvironmentIdType,
+  threadId: ThreadId,
+): string {
+  return `${environmentId}:${threadId}`;
+}
+
+export function isThreadStackedActionRunning(
+  thread: { readonly environmentId: EnvironmentIdType; readonly id: ThreadId },
+  running: ReadonlyMap<string, unknown> | ReadonlySet<string>,
+): boolean {
+  return running.has(vcsStackedActionThreadKey(thread.environmentId, thread.id));
+}
+
+function markStackedActionThread(
+  registry: AtomRegistry.AtomRegistry,
+  presence: VcsStackedActionThreadPresence,
+): void {
+  const key = vcsStackedActionThreadKey(presence.environmentId, presence.threadId);
+  const current = registry.get(vcsStackedActionThreadsAtom);
+  if (current.get(key)?.actionId === presence.actionId) return;
+  const next = new Map(current);
+  next.set(key, presence);
+  registry.set(vcsStackedActionThreadsAtom, next);
+}
+
+function clearStackedActionThread(
+  registry: AtomRegistry.AtomRegistry,
+  presence: Pick<VcsStackedActionThreadPresence, "environmentId" | "threadId" | "actionId">,
+): void {
+  const key = vcsStackedActionThreadKey(presence.environmentId, presence.threadId);
+  const current = registry.get(vcsStackedActionThreadsAtom);
+  if (current.get(key)?.actionId !== presence.actionId) return;
+  const next = new Map(current);
+  next.delete(key);
+  registry.set(vcsStackedActionThreadsAtom, next.size === 0 ? EMPTY_STACKED_ACTION_THREADS : next);
+}
 
 function getVcsActionTargetKey(target: VcsActionTarget): string | null {
   if (target.environmentId === null || target.cwd === null) {
@@ -216,6 +273,7 @@ export function beginVcsActionState(
     isRunning: true,
     operation: input.operation,
     actionId,
+    threadId: input.threadId ?? null,
     currentLabel: input.label,
     currentPhaseLabel: input.label,
     phaseStartedAtMs: startedAt,
@@ -462,8 +520,17 @@ export function createVcsActionManager<R, E>(
             operation: "run_change_request",
             label: "Running source control action",
             actionId: input.actionId,
+            ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
           }),
         );
+        if (input.threadId !== undefined) {
+          markStackedActionThread(registry, {
+            environmentId: target.environmentId,
+            threadId: input.threadId,
+            actionId: input.actionId,
+            startedAtMs: nowMs(),
+          });
+        }
 
         const rpcInput: GitRunStackedActionInput = {
           actionId: transportActionId,
@@ -511,6 +578,16 @@ export function createVcsActionManager<R, E>(
               createCommandPermissions(runtime, method).authorize(registry, id, payload),
           }),
           Effect.ensuring(invalidateCachedVcsRefs(registry, target)),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (input.threadId === undefined) return;
+              clearStackedActionThread(registry, {
+                environmentId: target.environmentId,
+                threadId: input.threadId,
+                actionId: input.actionId,
+              });
+            }),
+          ),
           Effect.tap(() => clearOwnedState),
           Effect.tapError((error) =>
             Effect.sync(() => {
@@ -546,6 +623,7 @@ export function createVcsActionManager<R, E>(
 
   return {
     stateAtom: getVcsActionStateAtom,
+    stackedActionThreadsAtom: vcsStackedActionThreadsAtom,
     runStackedAction: (target: VcsActionTarget) => getRunStackedActionCommand(target),
     track: async <A, E>(
       registry: AtomRegistry.AtomRegistry,

@@ -858,7 +858,10 @@ type SidebarThreadStatusInput = Pick<
   | "blockedOnThreadWait"
 >;
 
-export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+export function resolveSidebarThreadStatus(
+  thread: SidebarThreadStatusInput,
+  options?: { readonly sourceControlBusy?: boolean },
+): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
   }
@@ -868,6 +871,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   // A guest is waiting on the owner; the agent's own requests come first.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return "request";
+  }
+  if (options?.sourceControlBusy === true) {
+    return "working";
   }
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
@@ -897,7 +903,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 export function resolveSidebarFolderDot(
   threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
 ): "attention" | "failed" | "unread" | "working" | null {
-  const statuses = new Set(threads.map(resolveSidebarThreadStatus));
+  const statuses = new Set(threads.map((thread) => resolveSidebarThreadStatus(thread)));
   if (
     statuses.has("input") ||
     statuses.has("approval") ||

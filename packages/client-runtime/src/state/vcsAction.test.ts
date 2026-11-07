@@ -38,13 +38,16 @@ import {
   createVcsActionManager,
   createVcsActionTransportId,
   EMPTY_VCS_ACTION_STATE,
+  isThreadStackedActionRunning,
   normalizeVcsActionProgressEvent,
   parseVcsActionTargetKey,
+  vcsStackedActionThreadKey,
   VcsActionMissingTerminalEventError,
   VcsActionRemoteFailureError,
   VcsActionTargetKeyParseError,
 } from "./vcsAction.ts";
 import { vcsRefsCacheStateAtom } from "./vcsRefInvalidation.ts";
+import * as Deferred from "effect/Deferred";
 
 const actionId = "action-123";
 const action = "commit_push" as const;
@@ -535,6 +538,7 @@ describe("vcsActionState", () => {
 
         expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
         expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
+        expect(registry.get(manager.stackedActionThreadsAtom).size).toBe(0);
         expect(registry.get(state).revision).toBe(1);
         expect(removed).toEqual([`${environmentId}:*`]);
         expect(rpcInputs).toEqual([
@@ -545,6 +549,7 @@ describe("vcsActionState", () => {
           manager.runStackedAction(targetKey).run(registry, {
             actionId: failedActionId,
             action,
+            threadId,
           }),
         );
 
@@ -555,6 +560,7 @@ describe("vcsActionState", () => {
           actionId: failedActionId,
           error: "Source control action 'commit_push' failed during push.",
         });
+        expect(registry.get(manager.stackedActionThreadsAtom).size).toBe(0);
         expect(registry.get(state).revision).toBe(2);
         expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
 
@@ -572,6 +578,101 @@ describe("vcsActionState", () => {
         expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
         expect(registry.get(state).revision).toBe(3);
         expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`, `${environmentId}:*`]);
+      }),
+    ),
+  );
+
+  it.effect("keeps the thread marked for the Working section while a stacked action runs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connectionState: SupervisorConnectionState = {
+          ...AVAILABLE_CONNECTION_STATE,
+          desired: true,
+          network: "online",
+          phase: "connected",
+          attempt: 1,
+          generation: 1,
+        };
+        const targetKey = { environmentId, cwd };
+        const runningActionId = "working-shelf-running";
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const client = {
+          [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(release);
+                return Stream.make(
+                  progress({
+                    kind: "action_finished",
+                    actionId: input.actionId,
+                    cwd,
+                    action,
+                    result,
+                  }),
+                );
+              }),
+            ),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target,
+          state: yield* SubscriptionRef.make(connectionState),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+          _environmentId,
+          effect,
+        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const runStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["runStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          run,
+          runStream,
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Layer.succeed(
+              Persistence.EnvironmentCacheStore,
+              cacheStore(() => undefined),
+            ),
+          ),
+        );
+        const manager = createVcsActionManager(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+        const threadId = ThreadId.make("thread-working-shelf");
+        const running = manager.runStackedAction(targetKey).run(registry, {
+          actionId: runningActionId,
+          action,
+          threadId,
+        });
+
+        yield* Deferred.await(entered);
+        expect(registry.get(manager.stateAtom(targetKey))).toMatchObject({
+          isRunning: true,
+          threadId,
+          actionId: runningActionId,
+        });
+        const busy = registry.get(manager.stackedActionThreadsAtom);
+        expect(busy.get(vcsStackedActionThreadKey(environmentId, threadId))).toMatchObject({
+          actionId: runningActionId,
+          threadId,
+        });
+        expect(isThreadStackedActionRunning({ environmentId, id: threadId }, busy)).toBe(true);
+
+        yield* Deferred.succeed(release, undefined);
+        const finished = yield* Effect.promise(() => running);
+        expect(AsyncResult.isSuccess(finished)).toBe(true);
+        expect(registry.get(manager.stackedActionThreadsAtom).size).toBe(0);
       }),
     ),
   );
