@@ -230,30 +230,30 @@ any catalog model.
 Creates a T3-owned child thread and immediately dispatches the supplied task
 prompt.
 
+The [shared contract](../../packages/contracts/src/orchestratorMcp.ts) is authoritative for
+inputs and results, including target options and linked-environment fields.
+
 ```ts
-type DelegateTaskInput = {
-  task: string;
-  target?: {
-    providerInstanceId?: string;
-    driverKind?: string;
-    model?: string;
-  };
-  title?: string;
-  role?: "implementation" | "research" | "review" | "design" | "test" | "general";
-  mode?: "async" | "wait";
-  timeoutMs?: number;
-  clientRequestId?: string;
-  runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
-  interactionMode?: "inherit" | "plan" | "default";
-};
+import type {
+  OrchestratorMcpDelegateTaskInput as DelegateTaskInput,
+  OrchestratorMcpDelegateTaskResult as DelegateTaskResult,
+} from "@t3tools/contracts";
 ```
 
-Provider, model, runtime mode, and interaction mode inherit from the parent
-when omitted. A driver-only target inherits the parent's provider instance
+For local delegation, provider, model, runtime mode, and interaction mode inherit
+from the parent when omitted. A driver-only target inherits the parent's provider instance
 when it can run child tasks, and otherwise selects an available instance of
 that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
+
+Set `target.options` using the options returned by `orchestrator_capabilities`, such as
+`{effort: "max"}`. Supplied values override inherited selections; `{}` or `[]` clears them.
+For local delegation, use `isolation: "worktree"` for a separate prepared checkout from
+the parent's commit; the default `"shared"` uses the parent's checkout. Uncommitted parent
+edits are not copied. A linked-environment target (`target.environmentId`) runs in the remote
+project's checkout and rejects worktree isolation. To launch an isolated thread there, use
+`t3_thread_launch` with `environmentId` and a worktree `workspaceStrategy`.
 
 A provider runs a runtime mode it does not offer as `approval-required`, so a
 child would ask for approval on every command. `orchestrator_capabilities`
@@ -278,41 +278,15 @@ provider session. The request becomes the V2 command
 `mode: "async"` returns the current durable state immediately.
 `mode: "wait"` waits for the task result, including nested work and completion follow-ups, or until
 the timeout expires. A wait timeout does not cancel the child; the result sets
-`waitTimedOut: true`, and the caller can continue with `task_status`. A pending blocking
-question also ends the wait with `hasPendingQuestion: true` and `waitTimedOut: false`.
+`waitTimedOut: true`. When the result includes `next`, completion wakes the parent;
+follow that instruction and end the turn instead of waiting or polling. A pending blocking question also ends the wait
+with `hasPendingQuestion: true` and `waitTimedOut: false`.
 If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request` with
 action `list`, `read` (with `requestId`), or `respond`, or ask the user; the task's completion still wakes this thread. A pending live approval for the
 task's own unfinished work also ends the wait. Its identity appears in `pendingApproval`;
 it grants no approval authority. Read the fresh full request in the child thread before
 responding, since the durable record can outlive its provider callback. Async questions
 do not end the wait.
-
-```ts
-type DelegateTaskResult = {
-  taskId: string;
-  childThreadId: string;
-  childRunId: string | null;
-  childNodeId: string;
-  status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
-  workState: "working" | "waiting_for_children" | "result_available";
-  hasPendingChildRuns: boolean;
-  providerInstanceId: string;
-  model: string | null;
-  summary: string | null;
-  resultContextTransferId: string | null;
-  latestTerminalRunId: string | null;
-  latestTerminalStatus: "completed" | "failed" | "cancelled" | "interrupted" | null;
-  latestTerminalSummary: string | null;
-  latestTerminalResultContextTransferId: string | null;
-  hasPendingQuestion: boolean;
-  pendingApproval: {
-    requestId: string;
-    kind: "command" | "file-read" | "file-change" | "mcp-elicitation" | "permission";
-    runId: string;
-  } | null;
-  waitTimedOut: boolean;
-};
-```
 
 ### `task_status`
 
@@ -340,26 +314,15 @@ optional cancellation reason.
 Creates between one and twenty ordinary top-level T3 threads:
 
 ```ts
-type CreateThreadsInput = {
-  threads: Array<{
-    prompt?: string;
-    title?: string;
-    target?: {
-      providerInstanceId?: string;
-      driverKind?: string;
-      model?: string;
-    };
-    runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
-    interactionMode?: "inherit" | "plan" | "default";
-  }>;
-  clientRequestId?: string;
-};
+import type { OrchestratorMcpCreateThreadsInput as CreateThreadsInput } from "@t3tools/contracts";
 ```
 
 Each entry independently resolves provider, model, and modes. The new threads
 inherit the parent's project, branch, and worktree path, but they have no
 sub-agent lineage. Entries with a prompt immediately dispatch a run; entries
-without a prompt remain idle.
+without a prompt remain idle. `create_threads` is local-only: `target.environmentId` and
+`target.projectId` are ignored even though the shared target contract accepts them. Use
+`t3_thread_launch` with `environmentId` and `projectId` to select another environment or project.
 
 ### `t3_thread_launch`
 
