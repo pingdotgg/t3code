@@ -21,7 +21,8 @@ import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEvery
 import { startSlowRpcRequestToasts } from "./components/SlowRpcRequestToastCoordinator";
 import { startThreadNotifications } from "./components/ThreadNotificationCoordinator";
 import { resolveSidebarThreadStatus } from "./components/Sidebar.logic";
-import { environmentSummaries } from "./state/presentation";
+import { environmentCatalog } from "./connection/catalog";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { Atom } from "effect/reactivity";
@@ -125,7 +126,7 @@ function startClientAppearance(): void {
 const waitingThreadCountAtom = Atom.make((get) => {
   const delegated = get(environmentThreadShells.delegatedUnderParentAtom);
   let waiting = 0;
-  for (const environmentId of get(environmentSummaries.environmentIdsAtom)) {
+  for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
     const subagentRequests = get(
       environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
     );
