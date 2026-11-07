@@ -1122,7 +1122,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         kind: PiStreamItemState["kind"],
         contentIndex: number,
       ) {
-        const nativeItemId = `${turn.providerTurn.id}:m${turn.messageOrdinal}:c${contentIndex}`;
+        const blockId = `${turn.providerTurn.id}:m${turn.messageOrdinal}:c${contentIndex}`;
+        const previous = turn.streamItems.get(blockId);
+        const nativeItemId =
+          previous === undefined || previous.kind === kind ? blockId : `${blockId}:${kind}`;
         const existing = turn.streamItems.get(nativeItemId);
         if (existing !== undefined) return existing;
         const startedAt = yield* DateTime.now;
@@ -1141,10 +1144,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const completeStreamItem = (turn: ActivePiTurn, item: PiStreamItemState, text?: string) =>
         Effect.suspend(() => {
-          if (item.completed) return Effect.void;
+          const changed = text !== undefined && text !== item.text;
+          if (item.completed && !changed) return Effect.void;
+          const hadText = item.text.length > 0;
           item.completed = true;
-          if (text !== undefined && text.length > 0) item.text = text;
-          return item.text.length === 0 ? Effect.void : emitStreamItem(turn, item, false);
+          if (text !== undefined) item.text = text;
+          return hadText || item.text.length > 0 ? emitStreamItem(turn, item, false) : Effect.void;
         });
 
       const completeOpenStreamItems = (turn: ActivePiTurn) =>
@@ -1968,6 +1973,27 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (turn === null) return;
             const message = event["message"];
             if (recordString(message, "role") !== "assistant") return;
+            const content = recordField(message, "content");
+            if (Array.isArray(content)) {
+              const finalized = new Set<string>();
+              for (const [index, block] of content.entries()) {
+                const type = recordString(block, "type");
+                if (type !== "text" && type !== "thinking") continue;
+                const item = yield* streamItemFor(
+                  turn,
+                  type === "text" ? "assistant_message" : "reasoning",
+                  index,
+                );
+                finalized.add(item.nativeItemId);
+                yield* completeStreamItem(turn, item, recordString(block, type) ?? "");
+              }
+              const prefix = `${turn.providerTurn.id}:m${turn.messageOrdinal}:`;
+              for (const item of turn.streamItems.values()) {
+                if (item.nativeItemId.startsWith(prefix) && !finalized.has(item.nativeItemId)) {
+                  yield* completeStreamItem(turn, item, "");
+                }
+              }
+            }
             yield* completeOpenStreamItems(turn);
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
               turn.failure = makeProviderFailure({

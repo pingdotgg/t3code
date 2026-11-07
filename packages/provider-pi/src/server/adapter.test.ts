@@ -579,6 +579,88 @@ const startTurn = Effect.fnUntraced(function* (
 });
 
 describe("PiAdapterV2", () => {
+  it.effect.each([
+    { streamed: "draft", final: "final answer", ended: true, removedThinking: false },
+    { streamed: "draft", final: "final answer", ended: true, removedThinking: true },
+    { streamed: "draft", final: "final answer", ended: false },
+    { streamed: undefined, final: "final answer", ended: false },
+    { streamed: "draft", final: "draft", ended: true },
+    { streamed: "draft", final: "", ended: true },
+    { streamed: "draft", final: undefined, ended: true },
+  ])("uses authoritative assistant blocks: %j", ({ streamed, final, ended, removedThinking }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      for (const [contentIndex, type] of ["thinking", "text"].entries()) {
+        if (streamed === undefined) continue;
+        yield* fake.emit({
+          type: "message_update",
+          assistantMessageEvent: { type: `${type}_delta`, contentIndex, delta: streamed },
+        });
+        if (ended) {
+          yield* fake.emit({
+            type: "message_update",
+            assistantMessageEvent: { type: `${type}_end`, contentIndex, content: streamed },
+          });
+        }
+      }
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content:
+            final === undefined
+              ? []
+              : [
+                  ...(removedThinking ? [] : [{ type: "thinking", thinking: final }]),
+                  { type: "text", text: final },
+                ],
+        },
+      });
+      yield* fake.emit({ type: "agent_settled" });
+      const messages = new Map<string, { text: string; streaming: boolean }>();
+      const items = new Map<string, { type: string; text: string; streaming: boolean }>();
+      yield* takeEvent((event) => {
+        if (event.type === "message.updated") {
+          messages.set(event.message.id, event.message);
+        }
+        if (
+          event.type === "turn_item.updated" &&
+          (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning")
+        ) {
+          items.set(event.turnItem.id, event.turnItem);
+        }
+        return event.type === "provider_turn.updated" && event.providerTurn.status === "completed";
+      });
+      assert.deepEqual(
+        [...messages.values()].map(({ text, streaming }) => ({ text, streaming })),
+        (removedThinking ? ["", final] : [final ?? ""]).map((text) => ({ text, streaming: false })),
+      );
+      assert.deepEqual(
+        [...items.values()].map(({ type, text, streaming }) => ({ type, text, streaming })),
+        [
+          { type: "reasoning", text: removedThinking ? "" : (final ?? ""), streaming: false },
+          {
+            type: "assistant_message",
+            text: removedThinking ? "" : (final ?? ""),
+            streaming: false,
+          },
+          ...(removedThinking
+            ? [{ type: "assistant_message", text: final, streaming: false }]
+            : []),
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect(
     "replaces keyed extension statuses while idle without producing conversation items",
     () =>
