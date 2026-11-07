@@ -3,6 +3,15 @@ import * as Result from "effect/Result";
 import { useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
+import {
+  Autocomplete,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+  AutocompletePopup,
+} from "../ui/autocomplete";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -48,6 +57,11 @@ export function SecretProviderDialog({
   const issues = Result.isFailure(result) ? result.failure : {};
   const nameError = submitted ? issues.name : undefined;
   const accountError = submitted ? issues.account : undefined;
+
+  const accounts = useEnvironmentQuery(
+    serverEnvironment.onePasswordAccounts({ environmentId, input: {} }),
+  );
+  const listedAccounts = accounts.data ?? [];
 
   const update = (patch: Partial<SecretProviderDraft>) => setDraft({ ...draft, ...patch });
   const save = () => {
@@ -109,18 +123,42 @@ export function SecretProviderDialog({
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="secret-provider-account">Account</Label>
-              <Input
-                id="secret-provider-account"
-                placeholder="my.1password.com"
+              <Autocomplete
+                items={listedAccounts}
+                itemToStringValue={(item) => item.account}
+                mode="none"
+                openOnInputClick
                 value={draft.account}
-                onChange={(event) => update({ account: event.target.value })}
-                maxLength={253}
-                spellCheck={false}
-                aria-invalid={accountError !== undefined}
-                aria-describedby={
-                  accountError !== undefined ? "secret-provider-account-error" : undefined
-                }
-              />
+                onValueChange={(account) => update({ account })}
+              >
+                <AutocompleteInput
+                  id="secret-provider-account"
+                  placeholder="my.1password.com"
+                  maxLength={253}
+                  spellCheck={false}
+                  showTrigger={listedAccounts.length > 0}
+                  aria-invalid={accountError !== undefined}
+                  aria-describedby={
+                    accountError !== undefined ? "secret-provider-account-error" : undefined
+                  }
+                />
+                {listedAccounts.length > 0 ? (
+                  <AutocompletePopup className="w-(--anchor-width)">
+                    <AutocompleteList>
+                      {listedAccounts.map((item) => (
+                        <AutocompleteItem key={item.account} value={item}>
+                          <span className="min-w-0 max-w-2/3 truncate text-sm font-medium">
+                            {item.address}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                            {item.email}
+                          </span>
+                        </AutocompleteItem>
+                      ))}
+                    </AutocompleteList>
+                  </AutocompletePopup>
+                ) : null}
+              </Autocomplete>
               {accountError !== undefined ? (
                 <p
                   id="secret-provider-account-error"
@@ -131,8 +169,8 @@ export function SecretProviderDialog({
                 </p>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                The account shorthand, sign-in address without https://, or ID that op account list
-                shows.
+                Accounts the op CLI on that server knows are suggested. Type any other shorthand,
+                sign-in address without https://, or ID.
               </p>
             </div>
           </form>
