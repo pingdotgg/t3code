@@ -202,6 +202,8 @@ export type PullRequestReviewerCandidate = typeof PullRequestReviewerCandidate.T
 export const PullRequestReviewerCandidateList = Schema.Struct({
   candidates: Schema.Array(PullRequestReviewerCandidate),
   truncated: Schema.Boolean,
+  /** False where the host keeps a single reviewer, as GitLab Free does. Absent means any number. */
+  multiple: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReviewerCandidateList = typeof PullRequestReviewerCandidateList.Type;
 
@@ -890,9 +892,14 @@ export const PullRequestReviewerRequestInput = Schema.Struct({
 });
 export type PullRequestReviewerRequestInput = typeof PullRequestReviewerRequestInput.Type;
 
+export const PULL_REQUEST_LABEL_CHANGE_LIMIT = 25;
+
 export const PullRequestLabelChangeInput = Schema.Struct({
   ...PullRequestRef.fields,
-  labels: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  labels: Schema.Array(TrimmedNonEmptyString).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PULL_REQUEST_LABEL_CHANGE_LIMIT),
+  ),
   applied: Schema.Boolean,
 });
 export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;

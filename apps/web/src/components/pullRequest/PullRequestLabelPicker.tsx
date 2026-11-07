@@ -1,5 +1,10 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
+import {
+  PULL_REQUEST_LABEL_CHANGE_LIMIT,
+  type EnvironmentId,
+  type PullRequestLabelCandidate,
+  type PullRequestRef,
+} from "@t3tools/contracts";
 import { CheckIcon, TagIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -32,7 +37,6 @@ export function PullRequestLabelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
 
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.labelCandidates({ environmentId, input: reference }) : null,
@@ -41,31 +45,35 @@ export function PullRequestLabelPicker({
     reportFailure: false,
   });
 
-  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
-    matches(entry, query),
-  );
-
-  const toggle = async (candidate: PullRequestLabelCandidate) => {
-    if (pending !== null) return;
-    setPending(candidate.name);
-    const result = await setLabels({
-      environmentId,
-      input: { ...reference, labels: [candidate.name], applied: !candidate.isApplied },
-    });
-    setPending(null);
-    if (result._tag === "Failure") {
+  const send = async (
+    labels: ReadonlyArray<PullRequestLabelCandidate>,
+    applied: boolean,
+    // Removals that wait on this add and are dropped when it fails.
+    skipped: ReadonlyArray<PullRequestLabelCandidate> = [],
+  ) => {
+    if (labels.length === 0) return true;
+    const names = labels.map((label) => label.name);
+    for (let start = 0; start < names.length; start += PULL_REQUEST_LABEL_CHANGE_LIMIT) {
+      const result = await setLabels({
+        environmentId,
+        input: {
+          ...reference,
+          labels: names.slice(start, start + PULL_REQUEST_LABEL_CHANGE_LIMIT),
+          applied,
+        },
+      });
+      if (result._tag !== "Failure") continue;
       toastManager.add({
         type: "error",
-        title: candidate.isApplied
-          ? `Could not take ${candidate.name} off`
-          : `Could not put ${candidate.name} on`,
+        title: `Could not ${applied ? "add" : "remove"} ${names.slice(start).join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,
         description: readableFailure(
           squashAtomCommandFailure(result),
           "The host refused it. Check that you have triage access on this repository.",
         ),
       });
-      return;
+      return false;
     }
+    return true;
   };
 
   return (
@@ -81,17 +89,22 @@ export function PullRequestLabelPicker({
       searchLabel="Search labels"
       isPending={candidatesQuery.isPending && candidatesQuery.data === null}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
-      candidates={candidates}
+      candidates={candidatesQuery.data?.candidates ?? []}
+      matches={matches}
+      isSelected={(candidate) => candidate.isApplied}
+      single={false}
       emptyLabel="This repository has no labels."
       noMatchLabel="No label matches that."
       errorLabel="The labels could not be read."
       truncated={candidatesQuery.data?.truncated === true}
       truncatedLabel="This repository has more labels than are listed here. Apply the rest on the host."
       candidateKey={(candidate) => candidate.name}
-      disabled={pending !== null}
-      onSelect={(candidate) => void toggle(candidate)}
+      onCommit={async ({ add, remove }) => {
+        // Adds first, so the row never shows empty between the two writes, or after a failed add.
+        if (await send(add, true, remove)) await send(remove, false);
+      }}
     >
-      {(candidate) => {
+      {(candidate, selected) => {
         const dot = pullRequestLabelColor(candidate.color);
         return (
           <>
@@ -106,9 +119,7 @@ export function PullRequestLabelPicker({
                 <span className="text-muted-foreground"> · {candidate.description}</span>
               ) : null}
             </span>
-            {candidate.isApplied ? (
-              <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
-            ) : null}
+            {selected ? <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" /> : null}
           </>
         );
       }}
