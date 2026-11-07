@@ -10,11 +10,13 @@ import {
   ProviderSessionId,
   RunAttemptId,
   RunId,
+  type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -40,6 +42,7 @@ import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
+import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
@@ -1047,69 +1050,188 @@ describe("AntigravityAdapterV2 subagent reads", () => {
   );
 });
 
-describe("AntigravityAdapterV2 runtime mode ceiling", () => {
-  const modesSetFor = (pickedMode: string) =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const crypto = yield* SecureRandom.SecureRandom;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
-      const modesSet: Array<string> = [];
-      const instanceId = ProviderInstanceId.make("antigravity-ceiling-test");
-      const adapter = yield* makeAntigravityAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
-            ...input,
-            childProcessSpawner,
-            spawn: {
-              command: process.execPath,
-              args: [mockAgentPath],
-              cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
-            },
-          }).pipe(
-            Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.map((runtime): RuntimeService => ({
+describe("AntigravityAdapterV2 runtime permissions", () => {
+  const openModeSession = Effect.fnUntraced(function* (
+    options: {
+      readonly runtimeMode?: RuntimeMode;
+      readonly pickedMode?: string;
+      readonly maxRuntimeMode?: RuntimeMode;
+      readonly ignoreModeChanges?: boolean;
+    } = {},
+  ) {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    const promptModes: Array<string | undefined> = [];
+    let readMode: RuntimeService["getModeState"] = Effect.undefined;
+    let setNativeMode: RuntimeService["setMode"] = () => Effect.die("Runtime not initialized");
+    const instanceId = ProviderInstanceId.make("antigravity-permissions-test");
+    const adapter = yield* makeAntigravityAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      makeRuntime: (input) =>
+        makeAntigravityAcpRuntime({
+          ...input,
+          childProcessSpawner,
+          spawn: {
+            command: process.execPath,
+            args: [mockAgentPath],
+            cwd: input.cwd,
+            env: { T3_ACP_ANTIGRAVITY: "1" },
+          },
+        }).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+          Effect.map((runtime): RuntimeService => {
+            readMode = runtime.getModeState;
+            setNativeMode = runtime.setMode;
+            return {
               ...runtime,
               setMode: (modeId) =>
-                Effect.sync(() => {
-                  modesSet.push(modeId);
-                }).pipe(Effect.andThen(runtime.setMode(modeId))),
-            })),
-          ),
-        withProcess: (_stop, task) => task,
-        defaultModel: Effect.undefined,
-      });
-      const threadId = ThreadId.make("thread-antigravity-ceiling");
-      yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-antigravity-ceiling"),
-        modelSelection: {
-          instanceId,
-          model: "gemini-test-low",
-          options: [{ id: "_t3/session-mode", value: pickedMode }],
-        },
-        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "approval-required",
-          interactionMode: "default",
-          cwd: process.cwd(),
-          maxRuntimeMode: "auto-accept-edits",
-        }),
-      });
-      return modesSet;
-    }).pipe(Effect.provide(layerSession), Effect.scoped);
+                options.ignoreModeChanges === true ? Effect.succeed({}) : runtime.setMode(modeId),
+              prompt: (payload, promptOptions) =>
+                runtime.getModeState.pipe(
+                  Effect.tap((mode) => Effect.sync(() => promptModes.push(mode?.currentModeId))),
+                  Effect.andThen(runtime.prompt(payload, promptOptions)),
+                ),
+            };
+          }),
+        ),
+      withProcess: (_stop, task) => task,
+      defaultModel: Effect.undefined,
+    });
+    const threadId = ThreadId.make("thread-antigravity-permissions");
+    const modelSelection = {
+      instanceId,
+      model: "gemini-test-low",
+      ...(options.pickedMode === undefined
+        ? {}
+        : { options: [{ id: "_t3/session-mode", value: options.pickedMode }] }),
+    };
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: options.runtimeMode ?? "approval-required",
+      interactionMode: "default",
+      cwd: process.cwd(),
+      ...(options.maxRuntimeMode === undefined ? {} : { maxRuntimeMode: options.maxRuntimeMode }),
+    });
+    const session = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-antigravity-permissions"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* session.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    return {
+      session,
+      providerThread,
+      threadId,
+      instanceId,
+      modelSelection,
+      runtimePolicy,
+      readMode,
+      setNativeMode,
+      promptModes,
+    };
+  });
 
-  it.effect("does not apply a picked session mode above the policy ceiling", () =>
+  it.effect.each([
+    { runtimeMode: "full-access", pickedMode: "default", expected: "yolo" },
+    { runtimeMode: "full-access", pickedMode: "auto_edit", expected: "yolo" },
+    {
+      runtimeMode: "approval-required",
+      pickedMode: "yolo",
+      maxRuntimeMode: "auto-accept-edits",
+      expected: "default",
+    },
+    {
+      runtimeMode: "approval-required",
+      pickedMode: "auto_edit",
+      maxRuntimeMode: "auto-accept-edits",
+      expected: "default",
+    },
+  ] as const)("keeps $runtimeMode authoritative over native $pickedMode", (options) =>
     Effect.gen(function* () {
-      assert.deepEqual(yield* modesSetFor("yolo"), ["default"]);
-      // A mode under the ceiling is still the user's to pick.
-      assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
-    }),
+      const fixture = yield* openModeSession(options);
+      assert.equal((yield* fixture.readMode)?.currentModeId, options.expected);
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect("applies both permission transitions in the same live session", () =>
+    Effect.gen(function* () {
+      const fixture = yield* openModeSession();
+      const now = yield* DateTime.now;
+      const policies = [
+        { runtimeMode: "approval-required", interactionMode: "default" },
+        { runtimeMode: "full-access", interactionMode: "default" },
+        { runtimeMode: "approval-required", interactionMode: "default" },
+        { runtimeMode: "approval-required", interactionMode: "plan" },
+        { runtimeMode: "approval-required", interactionMode: "plan", nativeMode: "yolo" },
+        { runtimeMode: "full-access", interactionMode: "default" },
+        { runtimeMode: "full-access", interactionMode: "default", nativeMode: "default" },
+      ] as const;
+      for (const [index, policy] of policies.entries()) {
+        if ("nativeMode" in policy) yield* fixture.setNativeMode(policy.nativeMode);
+        const { runtimeMode, interactionMode } = policy;
+        yield* fixture.session.startTurn(
+          makeTurnInput({
+            ...fixture,
+            now,
+            ordinal: index + 1,
+            runtimePolicy: { ...fixture.runtimePolicy, runtimeMode, interactionMode },
+          }),
+        );
+        yield* fixture.session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+      }
+      assert.deepEqual(fixture.promptModes, [
+        "default",
+        "yolo",
+        "default",
+        "default",
+        "default",
+        "yolo",
+        "yolo",
+      ]);
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect.each([
+    { interactionMode: "default", runtimeMode: "full-access", nativeMode: "default" },
+    { interactionMode: "plan", runtimeMode: "full-access", nativeMode: "default" },
+    { interactionMode: "default", runtimeMode: "approval-required", nativeMode: "yolo" },
+    { interactionMode: "plan", runtimeMode: "approval-required", nativeMode: "yolo" },
+  ] as const)(
+    "refuses to prompt in $interactionMode when the agent does not apply $runtimeMode",
+    ({ interactionMode, runtimeMode, nativeMode }) =>
+      Effect.gen(function* () {
+        const fixture = yield* openModeSession({ ignoreModeChanges: true });
+        yield* fixture.setNativeMode(nativeMode);
+        const result = yield* fixture.session
+          .startTurn(
+            makeTurnInput({
+              ...fixture,
+              now: yield* DateTime.now,
+              runtimePolicy: { ...fixture.runtimePolicy, runtimeMode, interactionMode },
+            }),
+          )
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(result));
+        if (Exit.isFailure(result)) {
+          const failure = Cause.pretty(result.cause);
+          assert.include(failure, "yolo");
+          assert.include(failure, "default");
+        }
+        assert.deepEqual(fixture.promptModes, []);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 
