@@ -20,6 +20,7 @@ vi.mock("electron", () => ({
   BrowserWindow: { fromWebContents: ownerWindow },
 }));
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
@@ -33,6 +34,7 @@ import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
   pickProjectFavicon,
+  getHomeEnvironmentId,
   probeRemoteEditors,
   readMedia,
 } from "./window.ts";
@@ -385,4 +387,21 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "vscode");
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reads the home's environment id and treats an unwritten home as none", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-home-environment-" });
+    const read = getHomeEnvironmentId.handler(undefined).pipe(
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
+        path,
+        stateDir,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]),
+    );
+    assert.isNull(yield* read);
+    yield* fs.writeFileString(path.join(stateDir, "environment-id"), "environment-1\n");
+    assert.equal(yield* read, "environment-1");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

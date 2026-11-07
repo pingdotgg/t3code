@@ -1118,6 +1118,8 @@ export interface DesktopBridge {
   openSystemSettings: (pane: SystemSettingsPane) => Promise<boolean>;
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
+  /** The environment id stored in this desktop's T3 home; null before any server has written it. */
+  getHomeEnvironmentId: () => Promise<string | null>;
   pasteAsText: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;

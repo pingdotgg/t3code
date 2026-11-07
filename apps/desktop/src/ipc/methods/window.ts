@@ -390,6 +390,22 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const getHomeEnvironmentId = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.GET_HOME_ENVIRONMENT_ID_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.getHomeEnvironmentId")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem
+      .readFileString(environment.path.join(environment.stateDir, "environment-id"))
+      .pipe(
+        Effect.map((contents) => contents.trim() || null),
+        Effect.orElseSucceed(() => null),
+      );
+  }),
+});
+
 export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL,
   payload: Schema.Undefined,

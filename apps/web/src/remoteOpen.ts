@@ -13,6 +13,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "~/state/presentation";
 
 export interface RemoteOpenHost {
@@ -53,6 +54,7 @@ export function resolveRemoteOpenState(input: {
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
+  readonly desktopHomeEnvironmentId: string | null;
 }): RemoteOpenState {
   const { target } = input;
   if (target === null) {
@@ -67,7 +69,13 @@ export function resolveRemoteOpenState(input: {
     if (hostname !== null && isLoopbackHostname(hostname)) {
       return LOCAL_EXEC;
     }
-  } else if (isDesktopLocalConnectionTarget(target)) {
+  } else if (
+    // A background service paired from the desktop shares its T3 home and environment id.
+    (target._tag === "BearerConnectionTarget" &&
+      input.sshTarget === null &&
+      target.environmentId === input.desktopHomeEnvironmentId) ||
+    isDesktopLocalConnectionTarget(target)
+  ) {
     return LOCAL_EXEC;
   }
 
@@ -92,6 +100,22 @@ export function resolveRemoteOpenState(input: {
     return { mode: "remote-links", host: advertised };
   }
   return REMOTE_UNAVAILABLE;
+}
+
+// Read once per page: the id is permanent once a server has written it to the home.
+const desktopHomeEnvironmentIdAtom = Atom.make((get): string | null => {
+  const read = window.desktopBridge?.getHomeEnvironmentId;
+  read?.().then(
+    (id) => {
+      if (id !== null) get.setSelf(id);
+    },
+    () => undefined,
+  );
+  return null;
+}).pipe(Atom.keepAlive, Atom.withLabel("desktop-home-environment-id"));
+
+export function readDesktopHomeEnvironmentId(): string | null {
+  return appAtomRegistry.get(desktopHomeEnvironmentIdAtom);
 }
 
 function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState): boolean {
@@ -120,6 +144,8 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
           profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
+        desktopHomeEnvironmentId:
+          entry.target._tag === "BearerConnectionTarget" ? get(desktopHomeEnvironmentIdAtom) : null,
       }),
       isResolved: true,
     };
