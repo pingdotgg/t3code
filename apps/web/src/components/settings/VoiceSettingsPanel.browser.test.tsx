@@ -1,4 +1,5 @@
-import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import { PrimaryConnectionTarget, RelayConnectionTarget } from "@t3tools/client-runtime/connection";
+import type * as Effect from "effect/Effect";
 import {
   EnvironmentId,
   type EnvironmentSpeechModel,
@@ -19,6 +20,53 @@ import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 vi.mock(import("../../speech/useEnvironmentSpeechInput"), { spy: true });
+// The real connection runtime authorizes relay requests with a signed-in cloud session.
+vi.mock("../../connection/runtime", async () => {
+  const [{ ManagedRelay }, rpc, { Atom }, Context, Effect, Layer] = await Promise.all([
+    import("@t3tools/client-runtime/relay"),
+    import("@t3tools/client-runtime/rpc"),
+    import("effect/reactivity"),
+    import("effect/Context"),
+    import("effect/Effect"),
+    import("effect/Layer"),
+  ]);
+  type AuthorizedHttp =
+    import("@t3tools/client-runtime/authorization").AuthorizedRemoteHttpEnvironment;
+  // Services resolve by key, and client-runtime does not export this one.
+  class RemoteEnvironmentAuthorization extends Context.Service<
+    RemoteEnvironmentAuthorization,
+    {
+      readonly authorizeDpopHttp: (input: {
+        readonly expectedEnvironmentId: AuthorizedHttp["environmentId"];
+      }) => Effect.Effect<AuthorizedHttp>;
+    }
+    // @effect-diagnostics-next-line deterministicKeys:off
+  >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
+  return {
+    connectionAtomRuntime: Atom.runtime(
+      Layer.mergeAll(
+        rpc.layerRemoteHttpClient((input, init) => globalThis.fetch(input, init)),
+        Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, {
+          thumbprint: Effect.succeed("thumbprint"),
+          createProof: () => Effect.succeed("proof"),
+        }),
+        Layer.succeed(RemoteEnvironmentAuthorization, {
+          authorizeDpopHttp: ({ expectedEnvironmentId }) =>
+            Effect.succeed({
+              environmentId: expectedEnvironmentId,
+              label: "MacBook Pro",
+              httpBaseUrl: window.location.origin,
+              httpAuthorization: {
+                _tag: "Dpop",
+                accessToken: "relay-access-token",
+                expiresAtEpochMs: 4_102_444_800_000,
+              },
+            }),
+        }),
+      ),
+    ),
+  };
+});
 
 it("preserves the model test transcript when its model is filtered out", async () => {
   const target = new PrimaryConnectionTarget({
@@ -155,6 +203,81 @@ it("preserves the model test transcript when its model is filtered out", async (
       );
     },
   );
+});
+
+it("loads the models of a relay-connected destination", async () => {
+  const target = new RelayConnectionTarget({
+    environmentId: EnvironmentId.make("voice-relay"),
+    label: "MacBook Pro",
+  });
+  const prepared = {
+    environmentId: target.environmentId,
+    label: target.label,
+    httpBaseUrl: window.location.origin,
+    socketUrl: "ws://localhost",
+    httpAuthorization: {
+      _tag: "Dpop" as const,
+      accessToken: "stale-access-token",
+      expiresAtEpochMs: 4_102_444_800_000,
+    },
+    target,
+  };
+  const model: EnvironmentSpeechModel = {
+    id: "tiny",
+    name: "Tiny",
+    description: "",
+    size: 100,
+    languages: ["en"],
+    accuracy: 1,
+    speed: 1,
+    recommended: false,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    supportsLanguageDetection: false,
+    active: false,
+    state: "downloadable",
+  };
+  const status = {
+    supported: true,
+    state: "missing-model",
+    modelId: model.id,
+    model: model.name,
+    size: model.size,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    acceleration: "cpu",
+    modelUnloadTimeout: "never",
+    gpuDevices: [],
+  } satisfies EnvironmentSpeechStatus;
+  const authorizations: Array<string | null> = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+    if (url.pathname === "/api/voice/status") {
+      authorizations.push(new Headers(init?.headers).get("authorization"));
+      return Promise.resolve(Response.json(status));
+    }
+    if (url.pathname === "/api/voice/models")
+      return Promise.resolve(Response.json({ models: [model] }));
+    return fetch(input, init);
+  });
+  using notify = vi.spyOn(toastManager, "add").mockReturnValue("test");
+  // Restored even when an assertion fails, unlike `withImplementation`.
+  using _destination = vi.mocked(useVoiceTranscriptionDestination).mockImplementation(() => ({
+    environmentId: target.environmentId,
+    label: target.label,
+    grantId: "test",
+    prepared,
+  }));
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  await vi.waitFor(() => expect(authorizations.length + notify.mock.calls.length).not.toBe(0));
+  expect(notify).not.toHaveBeenCalled();
+  expect(authorizations).toEqual(["DPoP relay-access-token"]);
+  await expect.element(screen.getByText("Tiny", { exact: true })).toBeVisible();
 });
 
 it("recovers from a failed download progress poll without notifying, but reports a failed initial load", async () => {
