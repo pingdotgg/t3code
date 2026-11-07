@@ -5,6 +5,7 @@ import {
   decodeFilePreviewText,
   FILE_TEXT_PREVIEW_MAX_BYTES,
   hostPreviewMimeTypeFromExtension,
+  modelPreviewFormat,
   isWorkspaceFontPreviewPath,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
@@ -190,6 +191,22 @@ describe("attachment preview classification", () => {
     ["archive.zip", "application/zip", "archive"],
     ["misleading.json", "application/pdf", "pdf"],
     ["misleading.pdf", "application/zip", "archive"],
+    ["part.stl", "image/png", "image"],
+    ["part.STL", "", "model"],
+    ["part.stl", "model/stl", "model"],
+    ["download", "application/vnd.ms-pki.stl", "model"],
+    ["mesh.OBJ", "", "model"],
+    ["mesh.obj", "application/x-tgif", "model"],
+    ["download", "model/obj", "model"],
+    ["scan.ply", "application/octet-stream", "model"],
+    ["download", "model/x-ply", "model"],
+    ["plate.3mf", "", "model"],
+    ["plate.3mf", "application/zip", "model"],
+    ["download", "model/3mf", "model"],
+    ["scene.glb", "", "model"],
+    ["scene.GLTF", "application/json", "model"],
+    ["download", "model/gltf-binary", "model"],
+    ["data.json", "application/json", "text"],
   ])("classifies %s (%s) as %s", (name, mimeType, expected) => {
     expect(filePreviewKind({ name, mimeType })).toBe(expected);
   });
@@ -203,6 +220,15 @@ describe("attachment preview classification", () => {
       expect(filePreviewKind({ name: `sample.${extension}` })).toBe("unsupported");
     },
   );
+  it("keeps 3D files unsupported for clients without rich documents", () => {
+    expect(filePreviewKind({ name: "part.stl" }, { richDocuments: false })).toBe("unsupported");
+  });
+  it.each([
+    ["nested/part.STL", "stl"],
+    ["part.stl.bak", null],
+  ])("detects the 3D format of %s", (path, expected) => {
+    expect(modelPreviewFormat(path)).toBe(expected);
+  });
   it("does not corrupt a multi-byte character at the preview boundary", () => {
     const bytes = new Uint8Array(FILE_TEXT_PREVIEW_MAX_BYTES + 1).fill(97);
     bytes[FILE_TEXT_PREVIEW_MAX_BYTES - 1] = 0xe2;
