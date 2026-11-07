@@ -10563,6 +10563,71 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("a settled Stop reports a timeout when the query never confirms closure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closeRequested = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: () => Deferred.succeed(closeRequested, undefined).pipe(Effect.asVoid),
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-settled-stop-unconfirmed"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+        const settledThread = providerThreadRosterEvents(harness.events).at(-1)?.providerThread;
+        assert.equal(settledThread?.pendingBackgroundTasks?.[0]?.taskId, WAKE_TASK_ID);
+
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: settledThread ?? harness.providerThread,
+            providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(closeRequested);
+        yield* TestClock.adjust("11 seconds");
+        const result = yield* Fiber.join(stop);
+
+        assert.equal(
+          result._tag,
+          "Failure",
+          "background-only Stop reported success without confirmed query close",
+        );
+        if (result._tag === "Failure") {
+          assert.equal(result.failure._tag, "ProviderAdapterInterruptTimeoutError");
+        }
+        assert.isTrue(
+          yield* harness.hasPendingBackgroundWork,
+          "background work must not be represented as stopped before the query closes",
+        );
+        assert.equal(
+          providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+            .pendingBackgroundTasks?.[0]?.taskId,
+          WAKE_TASK_ID,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("a settled Stop leaves a turn that replaced the closing process alone", () =>
     Effect.scoped(
       Effect.gen(function* () {

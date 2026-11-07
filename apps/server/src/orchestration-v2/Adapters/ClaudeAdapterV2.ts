@@ -11464,7 +11464,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 });
                 return;
               }
-              yield* closeLiveQueryForNativeThread(nativeThreadId);
+              existing.stopping = true;
+              yield* existing.query.close.pipe(Effect.ignore);
+              const closed = yield* Deferred.await(existing.closed).pipe(
+                Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+              );
+              if (Option.isNone(closed)) {
+                // Background work may still be running; Force stop tears the process down.
+                yield* Effect.logWarning("orchestration-v2.claude-query-stop-timeout", {
+                  providerSessionId: input.providerSessionId,
+                  providerThreadId: turnInput.providerThread.id,
+                  nativeThreadId,
+                });
+                return yield* new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+                  driver: CLAUDE_PROVIDER,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId: turnInput.providerTurnId,
+                  timeoutMs: CLAUDE_STOP_CONFIRM_TIMEOUT_MS,
+                });
+              }
               const current = yield* Ref.get(queryContext);
               if (current === null || current.query === existing.query) {
                 yield* clearWakeStateForNativeThread(nativeThreadId);
