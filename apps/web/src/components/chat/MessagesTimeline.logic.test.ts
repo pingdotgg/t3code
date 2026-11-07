@@ -4707,4 +4707,11 @@ it("turns a completed quiz card into an answered row after a later user message"
       (row) => row.kind === "quiz-card",
     ),
   ).toMatchObject({ answered: true });
+
+  expect(
+    deriveMessagesTimelineRows({
+      ...input,
+      latestQueuedUserMessageAt: "2026-01-01T00:00:01Z",
+    }).find((row) => row.kind === "quiz-card"),
+  ).toMatchObject({ answered: true });
 });

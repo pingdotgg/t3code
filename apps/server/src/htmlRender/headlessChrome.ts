@@ -196,6 +196,9 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           "--headless=new",
           "--remote-debugging-pipe",
           "--no-first-run",
+          // A stuck OS keyring would otherwise hang every http(s) page load.
+          "--password-store=basic",
+          "--use-mock-keychain",
           "--no-default-browser-check",
           "--disable-gpu",
           "--hide-scrollbars",

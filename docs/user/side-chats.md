@@ -32,7 +32,7 @@ Lessons write the explanation first, then add a picture, an interactive demo, or
 
 ## Quizzes
 
-Lessons can ask graded quiz cards. Pick an option, set how sure you are, and optionally explain your thinking; your answer goes back to the lesson so it can respond. On mobile, quizzes appear as a tool row only.
+Lessons and side chats can ask graded quiz cards. Pick an option, set how sure you are, and optionally explain your thinking; your answer goes back to the current chat so it can respond. Mobile shows the same answer and reveal controls as the web app.
 
 ## Follow a course
 

@@ -40,7 +40,10 @@ import {
   resolveUserMessageFileCards,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
-import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  canForkProjectedAssistantItem,
+  latestQueuedUserMessageCreatedAt,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -230,6 +233,7 @@ import {
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
+import { QuizCard } from "./QuizCard";
 import {
   appendGuestPendingMessages,
   appendPendingThreadMessages,
@@ -264,7 +268,11 @@ import { serverEnvironment } from "../../state/server";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadShells,
+  threadEnvironment,
+  useEnvironmentThread,
+} from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
@@ -1660,6 +1668,8 @@ function renderFeedEntry(
     | "threadId"
     | "workspaceRoot"
   > & {
+    readonly latestUserMessageAt: string | null;
+    readonly latestQueuedUserMessageAt: string | null;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1773,6 +1783,22 @@ function renderFeedEntry(
         revision={entry.revision}
         app={entry.app}
         width={props.contentWidth}
+      />
+    );
+  }
+
+  if (entry.type === "quiz-card") {
+    return (
+      <QuizCard
+        quizCard={entry.quizCard}
+        seed={entry.id}
+        answered={
+          (props.latestUserMessageAt !== null && props.latestUserMessageAt > entry.createdAt) ||
+          (props.latestQueuedUserMessageAt !== null &&
+            props.latestQueuedUserMessageAt > entry.createdAt)
+        }
+        environmentId={props.environmentId}
+        threadId={props.threadId}
       />
     );
   }
@@ -2660,6 +2686,11 @@ export const ThreadFeed = memo(function ThreadFeed({
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
   const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
+  const threadProjection = Option.getOrNull(
+    useEnvironmentThread(props.environmentId, props.threadId).data,
+  );
+  const latestQueuedUserMessageAt =
+    threadProjection === null ? null : latestQueuedUserMessageCreatedAt(threadProjection);
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
@@ -3321,6 +3352,15 @@ export const ThreadFeed = memo(function ThreadFeed({
     useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
     guestShare,
   );
+  const latestUserMessageAt = presentedFeed.reduce<string | null>(
+    (latest, entry) =>
+      entry.type === "message" &&
+      entry.message.role === "user" &&
+      (latest === null || entry.createdAt > latest)
+        ? entry.createdAt
+        : latest,
+    null,
+  );
   const jumpRunId =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
@@ -3758,6 +3798,8 @@ export const ThreadFeed = memo(function ThreadFeed({
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
+            latestUserMessageAt,
+            latestQueuedUserMessageAt,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
             threadId: props.threadId,
             copiedRowId,

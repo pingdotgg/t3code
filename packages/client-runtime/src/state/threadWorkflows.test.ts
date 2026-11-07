@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import {
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  latestQueuedUserMessageCreatedAt,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
@@ -135,6 +137,16 @@ describe("thread workflows", () => {
     expect(state.activeRun?.id).toBe("active");
     expect(state.canPromoteToSteer).toBe(true);
     expect(state.canSendNow).toBe(false);
+  });
+
+  it("formats the latest queued user message timestamp as ISO", () => {
+    const projection = {
+      thread: { id: "thread", sideChat: undefined },
+      runs: [{ id: "queued", status: "queued", userMessageId: "message" }],
+      messages: [{ id: "message", createdAt: DateTime.makeUnsafe("2026-01-01T00:00:01.000Z") }],
+    } as never;
+
+    expect(latestQueuedUserMessageCreatedAt(projection)).toBe("2026-01-01T00:00:01.000Z");
   });
 
   it.each(["completed", "interrupted", "cancelled", "failed"])(

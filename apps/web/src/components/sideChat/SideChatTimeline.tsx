@@ -21,6 +21,7 @@ import { Atom } from "effect/reactivity";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { environmentThreadDetails } from "~/state/threads";
+import { latestQueuedUserMessageCreatedAt } from "@t3tools/client-runtime/state/thread-workflows";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { deriveActiveWorkStartedAt, derivePhase, type PendingApproval } from "../../session-logic";
 import type { ChatMessage } from "../../types";
@@ -42,7 +43,7 @@ const NO_WORKSPACE_MUTATION_ID_ATOM = Atom.make<string | null | undefined>(undef
 /**
  * A side chat's timeline in the lesson's panel. It stays out of the held-timeline
  * cache and offers none of the lesson's thread actions (fork, rollback, revert,
- * turn diffs, worktree setup, artifact templates, app messages).
+ * turn diffs, worktree setup, artifact templates).
  */
 export function SideChatTimeline(props: {
   readonly lessonRef: ScopedThreadRef;
@@ -83,6 +84,7 @@ export function SideChatTimeline(props: {
     decision: ProviderApprovalDecision,
   ) => Promise<unknown>;
   readonly footer?: ReactNode;
+  readonly onSendAppMessage?: (text: string) => Promise<void>;
 }) {
   const { projection, workspaceRoot } = props;
   const sideChatKey = scopedThreadKey(props.sideChatRef);
@@ -128,6 +130,8 @@ export function SideChatTimeline(props: {
     return follow.attachTimelineViewport(filteredViewport);
   });
   const optimisticMessageId = props.optimisticMessages.at(-1)?.id ?? null;
+  const latestQueuedUserMessageAt =
+    projection === null ? null : latestQueuedUserMessageCreatedAt(projection);
   const previousOptimisticMessageId = useRef(optimisticMessageId);
   const scrollToEnd = useStableCallback(() => follow.scrollToEnd(true));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls to this panel's own send after the commit that adds its optimistic row
@@ -153,6 +157,7 @@ export function SideChatTimeline(props: {
           canOperateThread={props.canOperate}
           onRespondToApproval={props.onRespondToApproval}
           threadDetailRef={props.detailRef}
+          latestQueuedUserMessageAt={latestQueuedUserMessageAt}
           entriesInput={{
             optimisticMessages: props.optimisticMessages,
             ...(props.attachmentUrlById === undefined
@@ -220,6 +225,9 @@ export function SideChatTimeline(props: {
           }
           emptyPlaceholderInset={0}
           footer={props.footer}
+          {...(props.onSendAppMessage === undefined
+            ? {}
+            : { onSendAppMessage: props.onSendAppMessage })}
         />
       </WorkspaceMutationIdContext>
       {follow.showScrollToBottom ? (
