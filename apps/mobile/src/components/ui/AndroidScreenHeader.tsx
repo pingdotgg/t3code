@@ -179,6 +179,7 @@ export function AndroidScreenHeader(props: {
                   actions={overflowActions.map((action, index) => ({
                     id: String(index),
                     title: action.accessibilityLabel,
+                    image: typeof action.icon === "string" ? action.icon : action.icon.ios,
                     subtitle: action.subtitle,
                     state: action.selected ? "on" : undefined,
                     attributes: {

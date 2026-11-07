@@ -39,10 +39,16 @@ export function ListRowLayout({
       )}
     >
       {icon ? (
-        <View className="size-6 items-center justify-center">
+        <View
+          className={
+            Platform.OS === "android"
+              ? "size-9 items-center justify-center rounded-xl bg-subtle"
+              : "size-6 items-center justify-center"
+          }
+        >
           <SymbolView
             name={icon}
-            size={Platform.OS === "android" ? 24 : 22}
+            size={Platform.OS === "android" ? 20 : 22}
             tintColorClassName={tone === "danger" ? "accent-danger-foreground" : "accent-icon"}
             type="monochrome"
             weight="regular"
@@ -54,7 +60,10 @@ export function ListRowLayout({
       <View className="min-w-0 flex-1 gap-1">
         <AppText
           textRole="body"
-          className={tone === "danger" ? "text-danger-foreground" : "text-foreground"}
+          className={cn(
+            tone === "danger" ? "text-danger-foreground" : "text-foreground",
+            Platform.OS === "android" && "font-t3-medium",
+          )}
         >
           {label}
         </AppText>

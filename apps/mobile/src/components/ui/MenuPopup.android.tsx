@@ -4,13 +4,22 @@ import {
   Column,
   DropdownMenu,
   DropdownMenuItem,
+  HorizontalDivider,
   RNHostView,
   Text,
 } from "@expo/ui/jetpack-compose";
-import { defaultMinSize, padding, size, width } from "@expo/ui/jetpack-compose/modifiers";
+import {
+  background,
+  clip,
+  defaultMinSize,
+  padding,
+  size,
+  width,
+} from "@expo/ui/jetpack-compose/modifiers";
 import type { MenuAction } from "@react-native-menu/menu";
 import { Pressable } from "react-native";
 import { resolveScaledTextRole } from "../../lib/appearancePreferences";
+import { MOBILE_SHAPE } from "../../lib/designTokens";
 
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
@@ -25,7 +34,8 @@ function MenuIcon(props: {
   readonly destructive?: boolean;
   readonly disabled?: boolean;
 }) {
-  const { iconSize } = useAndroidControlSizing();
+  const { scale } = useAndroidControlSizing();
+  const iconSize = 20 * scale;
   return (
     <RNHostView matchContents modifiers={[size(iconSize, iconSize)]}>
       <Pressable
@@ -47,7 +57,7 @@ function MenuIcon(props: {
                   ? "accent-icon-subtle"
                   : props.destructive
                     ? "accent-danger-foreground"
-                    : "accent-foreground",
+                    : "accent-foreground-muted",
               })}
         />
       </Pressable>
@@ -65,9 +75,13 @@ export function MenuPopupItems(
   const foreground = colors["--color-foreground"];
   const muted = colors["--color-foreground-muted"];
   // A fixed native item height clips wrapped labels; a minimum lets each row grow.
-  const itemModifiers = [width(props.menuWidth), defaultMinSize({ minHeight: menuItemHeight })];
+  const itemModifiers = [
+    width(props.menuWidth - 16 * scale),
+    clip({ type: "roundedCorner", radius: MOBILE_SHAPE.menuItem * scale }),
+    defaultMinSize({ minHeight: menuItemHeight }),
+  ];
   return (
-    <>
+    <Column modifiers={[padding(8 * scale, 0, 8 * scale, 0)]}>
       {props.parent ? (
         <DropdownMenuItem onClick={props.onBack} modifiers={itemModifiers}>
           <DropdownMenuItem.LeadingIcon>
@@ -83,75 +97,89 @@ export function MenuPopupItems(
         <Text
           color={muted}
           style={{ typography: "bodySmall", ...caption }}
-          modifiers={[padding(16 * scale, 8 * scale, 16 * scale, 8 * scale)]}
+          modifiers={[padding(12 * scale, 8 * scale, 12 * scale, 12 * scale)]}
         >
           {props.title}
         </Text>
       ) : null}
       {props.actions.map((action, index) => (
-        <DropdownMenuItem
-          key={action.id ?? `${index}-${action.title}`}
-          enabled={!action.attributes?.disabled}
-          modifiers={itemModifiers}
-          onClick={() => props.onPress(action)}
-        >
-          {action.image && isAppSymbolName(action.image) ? (
-            <DropdownMenuItem.LeadingIcon>
-              <MenuIcon
-                name={action.image}
-                color={action.imageColor}
-                onPress={() => props.onPress(action)}
-                destructive={action.attributes?.destructive}
-                disabled={action.attributes?.disabled}
-              />
-            </DropdownMenuItem.LeadingIcon>
+        <Column key={action.id ?? `${index}-${action.title}`}>
+          {action.attributes?.destructive &&
+          index > 0 &&
+          !props.actions[index - 1]?.attributes?.destructive ? (
+            <HorizontalDivider
+              color={colors["--color-border-subtle"]}
+              modifiers={[padding(8 * scale, 6 * scale, 8 * scale, 6 * scale)]}
+            />
           ) : null}
-          <DropdownMenuItem.Text>
-            <Column>
-              <Text
-                style={{ typography: "bodyLarge", ...body }}
-                color={
-                  action.attributes?.disabled
-                    ? muted
-                    : action.attributes?.destructive
-                      ? colors["--color-danger-foreground"]
-                      : foreground
-                }
-              >
-                {action.title}
-              </Text>
-              {action.subtitle ? (
-                <Text color={muted} style={{ typography: "bodySmall", ...caption }}>
-                  {action.subtitle}
+          <DropdownMenuItem
+            enabled={!action.attributes?.disabled}
+            modifiers={
+              action.state === "on"
+                ? [...itemModifiers, background(colors["--color-subtle"])]
+                : itemModifiers
+            }
+            onClick={() => props.onPress(action)}
+          >
+            {action.image && isAppSymbolName(action.image) ? (
+              <DropdownMenuItem.LeadingIcon>
+                <MenuIcon
+                  name={action.image}
+                  color={action.imageColor}
+                  onPress={() => props.onPress(action)}
+                  destructive={action.attributes?.destructive}
+                  disabled={action.attributes?.disabled}
+                />
+              </DropdownMenuItem.LeadingIcon>
+            ) : null}
+            <DropdownMenuItem.Text>
+              <Column verticalArrangement={{ spacedBy: 2 * scale }}>
+                <Text
+                  style={{ typography: "bodyLarge", ...body, fontWeight: "500" }}
+                  color={
+                    action.attributes?.disabled
+                      ? muted
+                      : action.attributes?.destructive
+                        ? colors["--color-danger-foreground"]
+                        : foreground
+                  }
+                >
+                  {action.title}
                 </Text>
-              ) : null}
-            </Column>
-          </DropdownMenuItem.Text>
-          {(action.subactions?.length ?? 0) > 0 ? (
-            <DropdownMenuItem.TrailingIcon>
-              <MenuIcon
-                name="chevron.right"
-                onPress={() => props.onPress(action)}
-                disabled={action.attributes?.disabled}
-              />
-            </DropdownMenuItem.TrailingIcon>
-          ) : action.state === "on" ? (
-            <DropdownMenuItem.TrailingIcon>
-              <MenuIcon
-                name="checkmark"
-                onPress={() => props.onPress(action)}
-                disabled={action.attributes?.disabled}
-              />
-            </DropdownMenuItem.TrailingIcon>
-          ) : null}
-        </DropdownMenuItem>
+                {action.subtitle ? (
+                  <Text color={muted} style={{ typography: "bodySmall", ...caption }}>
+                    {action.subtitle}
+                  </Text>
+                ) : null}
+              </Column>
+            </DropdownMenuItem.Text>
+            {(action.subactions?.length ?? 0) > 0 ? (
+              <DropdownMenuItem.TrailingIcon>
+                <MenuIcon
+                  name="chevron.right"
+                  onPress={() => props.onPress(action)}
+                  disabled={action.attributes?.disabled}
+                />
+              </DropdownMenuItem.TrailingIcon>
+            ) : action.state === "on" ? (
+              <DropdownMenuItem.TrailingIcon>
+                <MenuIcon
+                  name="checkmark"
+                  onPress={() => props.onPress(action)}
+                  disabled={action.attributes?.disabled}
+                />
+              </DropdownMenuItem.TrailingIcon>
+            ) : null}
+          </DropdownMenuItem>
+        </Column>
       ))}
-    </>
+    </Column>
   );
 }
 
 export function MenuPopup(props: MenuPopupProps) {
   const { themeVariables: colors } = useAppearancePreferences();
+  const { scale } = useAndroidControlSizing();
   const items = <MenuPopupItems {...props} />;
   if (props.inline) {
     return (
@@ -175,7 +203,13 @@ export function MenuPopup(props: MenuPopupProps) {
         height: props.anchor.height,
       }}
     >
-      <DropdownMenu expanded onDismissRequest={props.onClose} color={colors["--color-card-alt"]}>
+      <DropdownMenu
+        expanded
+        onDismissRequest={props.onClose}
+        color={colors["--color-card-alt"]}
+        cornerRadius={MOBILE_SHAPE.menu * scale}
+        shadowElevation={8}
+      >
         <DropdownMenu.Trigger>
           <Box modifiers={[size(props.anchor.width, props.anchor.height)]} />
         </DropdownMenu.Trigger>

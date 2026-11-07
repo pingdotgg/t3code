@@ -5,6 +5,7 @@ import { cn } from "../../lib/cn";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 import { NavigationRow } from "./NavigationRow";
+import { MOBILE_SHAPE } from "../../lib/designTokens";
 
 /** A picker row in a grouped list; the first and last rows round the group's corners. */
 export function SelectionRow(props: {
@@ -22,10 +23,11 @@ export function SelectionRow(props: {
   readonly title: string;
 }) {
   const role = props.role ?? "radio";
+  const cornerRadius = Platform.OS === "android" ? MOBILE_SHAPE.group.android : 16;
   const row =
     Platform.OS === "android" ? (
       <NavigationRow
-        className="bg-grouped-card"
+        className={props.selected ? "bg-thread-selected" : "bg-grouped-card"}
         title={props.title}
         subtitle={props.subtitle}
         leading={
@@ -92,11 +94,13 @@ export function SelectionRow(props: {
   if (!props.isFirst && !props.isLast) return row;
   return (
     <View
-      className={cn(
-        "overflow-hidden",
-        props.isFirst && (Platform.OS === "android" ? "rounded-t-[28px]" : "rounded-t-2xl"),
-        props.isLast && (Platform.OS === "android" ? "rounded-b-[28px]" : "rounded-b-2xl"),
-      )}
+      className="overflow-hidden"
+      style={{
+        borderTopLeftRadius: props.isFirst ? cornerRadius : 0,
+        borderTopRightRadius: props.isFirst ? cornerRadius : 0,
+        borderBottomLeftRadius: props.isLast ? cornerRadius : 0,
+        borderBottomRightRadius: props.isLast ? cornerRadius : 0,
+      }}
     >
       {row}
     </View>
