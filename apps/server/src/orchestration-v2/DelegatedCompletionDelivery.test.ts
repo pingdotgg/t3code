@@ -2403,6 +2403,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
     const finishFollowup = (input: {
       readonly name: string;
       readonly startedBy: "background-command" | "parent";
+      /** The parent steers a message into the follow-up's run before it answers. */
+      readonly steeredByParent?: boolean;
       readonly result: "repeat" | "new";
       /** Rewrites the original before the follow-up: disposed, or out-finished (or tied) by a task that started earlier. */
       readonly prior?: "disposed" | "reordered" | "tied";
@@ -2540,6 +2542,32 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         yield* eventSink.write({
           commandId: reconcileCommandId(`${name}-followup-finished`),
           events: [
+            ...(input.steeredByParent !== true
+              ? []
+              : [
+                  {
+                    id: EventId.make(`event:${name}-steer`),
+                    type: "message.updated" as const,
+                    threadId: child.childThreadId,
+                    runId: run.id,
+                    occurredAt: now,
+                    payload: {
+                      id: MessageId.make(`message:${name}-steer`),
+                      threadId: child.childThreadId,
+                      runId: run.id,
+                      nodeId: null,
+                      role: "user" as const,
+                      text: "Also rerun the tests.",
+                      attachments: [],
+                      streaming: false,
+                      createdBy: "agent" as const,
+                      creationSource: "mcp" as const,
+                      senderThreadId: parentThreadId,
+                      createdAt: now,
+                      updatedAt: now,
+                    },
+                  },
+                ]),
             {
               id: EventId.make(`event:${name}-followup-result`),
               type: "message.updated",
@@ -2585,6 +2613,19 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             .delivery,
         };
       });
+
+    it.effect("a repeat answering a parent steer still wakes", () =>
+      Effect.gen(function* () {
+        const { followup, delivery } = yield* finishFollowup({
+          name: "followup-repeat-steered",
+          startedBy: "background-command",
+          steeredByParent: true,
+          result: "repeat",
+        });
+        assert.equal(followup.completionDelivery?.state, "claimed");
+        assert.deepEqual(delivery?.taskIds, [followup.id]);
+      }),
+    );
 
     it.effect("a follow-up wake names the task it follows", () =>
       Effect.gen(function* () {

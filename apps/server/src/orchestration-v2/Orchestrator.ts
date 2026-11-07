@@ -12889,8 +12889,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
-      const startMessageId = taskRuns.toSorted((a, b) => a.ordinal - b.ordinal)[0]?.userMessageId;
-      const startMessage = childControls.messages.find((message) => message.id === startMessageId);
+      // Steers join the task's run, so every message on its runs says who asked.
+      const taskRunIds = new Set(taskRuns.map((run) => run.id));
+      const taskMessages = childControls.messages.filter(
+        (message) => message.runId !== null && taskRunIds.has(message.runId),
+      );
       // Queued follow-ups can run out of start order, so the last results are the last to complete.
       const completedMillis = (candidate: OrchestrationV2Subagent) =>
         candidate.completedAt === null
@@ -12909,9 +12912,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A follow-up the child started on its own that only repeats what the parent already got stays readable but silent.
       const repeatsUnprompted =
         task.id !== forkedFrom.nodeId &&
-        startMessage !== undefined &&
-        startMessage.createdBy !== "user" &&
-        startMessage.senderThreadId !== parentThreadId &&
+        taskMessages.length > 0 &&
+        taskMessages.every(
+          (message) => message.createdBy !== "user" && message.senderThreadId !== parentThreadId,
+        ) &&
         lastResults.length > 0 &&
         lastResults.every(
           (candidate) =>
