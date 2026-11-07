@@ -28,7 +28,6 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
-import * as EnvironmentKeys from "../cloud/environmentKeys.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -42,6 +41,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
+import * as AgentAlerts from "../notifications/AgentAlerts.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -143,9 +143,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
+    readonly alerts?: AgentAlerts.AgentAlerts["Service"];
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
-    readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -180,23 +180,17 @@ const makeTestRelay = Effect.fnUntraced(function* (
   });
   const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell());
   const shellReads: ThreadId[] = [];
-  const catchUp = { activitySnapshotReads: 0 };
+  const catchUp = { shellSnapshotReads: 0 };
   const threads = ThreadManagementService.ThreadManagementService.of({
-    getThreadShell: unused,
-    getShellSnapshot: unused,
-    getAgentAwarenessSnapshot: (threadId) =>
-      threadId === undefined
-        ? Effect.sync(() => {
-            catchUp.activitySnapshotReads += 1;
-            return { snapshotSequence: 1, threads: options.catchUpThreads ?? [] };
-          })
-        : Effect.sync(() => shellReads.push(threadId)).pipe(
-            Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
-            Effect.map((thread) => ({
-              snapshotSequence: 1,
-              threads: thread === null ? [] : [thread],
-            })),
-          ),
+    getThreadShell: (threadId) =>
+      Effect.sync(() => shellReads.push(threadId)).pipe(
+        Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
+      ),
+    getShellSnapshot: () =>
+      Effect.sync(() => {
+        catchUp.shellSnapshotReads += 1;
+        return { schemaVersion: 2, snapshotSequence: 1, threads: [], archivedThreads: [] };
+      }),
     listActiveSubagentThreadIds: unused,
     listAppOwnedChildThreadIds: unused,
     countThreads: unused,
@@ -214,6 +208,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getTurnItem: () => Effect.die("unused turn item read"),
     getThreadRecords: () => Effect.die("unused record read"),
     getThreadProjection: unused,
+    getAgentAwarenessSnapshot: unused,
     getCheckpointContext: unused,
     getThreadSnapshot: unused,
     getThreadTranscript: unused,
@@ -253,9 +248,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
       if (typeof body !== "string" && !(body instanceof Uint8Array)) {
         return Promise.reject(new Error("Expected a serialized activity publish payload"));
       }
-      const payload = decodePublishPayload(
-        typeof body === "string" ? body : new TextDecoder().decode(body),
-      );
+      const payload = String(input).endsWith("/agent-alert")
+        ? { state: null }
+        : decodePublishPayload(typeof body === "string" ? body : new TextDecoder().decode(body));
       publications.push({
         url: String(input),
         authorization: new Headers(init?.headers).get("authorization"),
@@ -267,18 +262,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
     },
     { preconnect: () => {} },
   );
-  const project = {
-    id: PROJECT_ID,
-    title: "Project",
-    workspaceRoot: "/workspace",
-    defaultModelSelection: null,
-    scripts: [],
-    createdAt: NOW,
-    updatedAt: NOW,
-    deletedAt: null,
-  };
   const relay = yield* AgentAwarenessRelay.make.pipe(
-    Effect.provide(EnvironmentKeys.layer),
+    (program) =>
+      options.alerts
+        ? Effect.provideService(program, AgentAlerts.AgentAlerts, options.alerts)
+        : program,
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
@@ -291,19 +279,79 @@ const makeTestRelay = Effect.fnUntraced(function* (
       update: unused,
       delete: unused,
       getByWorkspaceRoot: unused,
-      snapshot: Effect.succeed({ projects: [project], updatedAt: NOW }),
+      snapshot: Effect.succeed({ projects: [] } as never),
       listPage: unused,
       getShell: unused,
       listShells: unused,
-      getById: () => Effect.succeedSome(project),
+      getById: () =>
+        Effect.succeedSome({
+          id: PROJECT_ID,
+          title: "Project",
+          workspaceRoot: "/workspace",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+          deletedAt: null,
+        }),
     }),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
-  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
+  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp, fetch };
 });
 
 describe("AgentAwarenessRelay", () => {
+  it.effect("reports phone acceptance only for a successful eligible delivery", () =>
+    Effect.gen(function* () {
+      const alerts = yield* AgentAlerts.AgentAlerts;
+      const responses = [
+        { ok: true, deliveries: [] },
+        { ok: false, deliveries: [] },
+        {
+          ok: true,
+          deliveries: [
+            {
+              deviceId: "phone",
+              kind: "push_notification",
+              ok: false,
+              apnsStatus: 400,
+              apnsReason: "BadDeviceToken",
+              apnsId: null,
+            },
+          ],
+        },
+        {
+          ok: true,
+          deliveries: [
+            {
+              deviceId: "phone",
+              kind: "push_notification",
+              ok: true,
+              queued: true,
+              apnsStatus: null,
+              apnsReason: null,
+              apnsId: null,
+            },
+          ],
+        },
+      ];
+      const { fetch } = yield* makeTestRelay({
+        alerts,
+        respond: (count) => Response.json(responses[count - 1]),
+      });
+      for (const expected of [false, false, false, true]) {
+        const result = yield* alerts
+          .offer({ threadId: THREAD_ID, body: "Build finished" })
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
+        assert.deepEqual(result, {
+          local: false,
+          phone: expected,
+        });
+      }
+    }).pipe(Effect.provide(AgentAlerts.layer)),
+  );
+
   it.effect("coalesces queued updates and reruns a thread dirtied during publishing", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
@@ -841,34 +889,24 @@ describe("AgentAwarenessRelay", () => {
 
 it.effect("catches up after startup without polling after success", () =>
   Effect.gen(function* () {
-    const { relay, secrets, secretReads, catchUp, publications } = yield* makeTestRelay({
-      catchUpThreads: [shell()],
-    });
+    const { relay, secrets, secretReads, catchUp } = yield* makeTestRelay();
     yield* relay.start();
     yield* TestClock.adjust("1 second");
-    yield* relay.drain;
-    assert.equal(catchUp.activitySnapshotReads, 1);
-    assert.equal(publications.length, 1);
-    assert.include(publications[0]?.state, {
-      threadId: THREAD_ID,
-      projectTitle: "Project",
-      threadTitle: "Thread",
-      phase: "running",
-    });
+    assert.equal(catchUp.shellSnapshotReads, 1);
 
     yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
     yield* relay.requestCatchUp();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.activitySnapshotReads, 1);
+    assert.equal(catchUp.shellSnapshotReads, 1);
 
     yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
     yield* relay.requestCatchUp();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.activitySnapshotReads, 2);
+    assert.equal(catchUp.shellSnapshotReads, 2);
 
     const readsBeforeIdle = secretReads.length;
     yield* TestClock.adjust("10 minutes");
-    assert.equal(catchUp.activitySnapshotReads, 2);
+    assert.equal(catchUp.shellSnapshotReads, 2);
     assert.equal(secretReads.length, readsBeforeIdle);
 
     yield* secrets.set(
@@ -877,9 +915,6 @@ it.effect("catches up after startup without polling after success", () =>
     );
     yield* relay.requestCatchUp();
     yield* TestClock.adjust("1 second");
-    yield* relay.drain;
-    assert.equal(catchUp.activitySnapshotReads, 3);
-    assert.equal(publications.length, 2);
-    assert.equal(publications[1]?.state?.threadId, THREAD_ID);
+    assert.equal(catchUp.shellSnapshotReads, 3);
   }).pipe(Effect.scoped),
 );

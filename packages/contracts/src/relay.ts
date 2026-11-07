@@ -277,6 +277,31 @@ export const RelayAgentActivityPublishRequest = Schema.Struct({
 }).annotate({ description: "Publishes a signed agent-awareness update from an environment." });
 export type RelayAgentActivityPublishRequest = typeof RelayAgentActivityPublishRequest.Type;
 
+export const RelayAgentAlert = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  body: TrimmedNonEmptyString,
+  deepLink: TrimmedNonEmptyString,
+});
+export type RelayAgentAlert = typeof RelayAgentAlert.Type;
+
+export const RelayAgentAlertPublishProofPayload = Schema.Struct({
+  ...RelaySignedJwtRegisteredClaims,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  alert: RelayAgentAlert,
+});
+export type RelayAgentAlertPublishProofPayload = typeof RelayAgentAlertPublishProofPayload.Type;
+
+export const RelayAgentAlertPublishRequest = Schema.Struct({
+  alert: RelayAgentAlert,
+  proof: TrimmedNonEmptyString.annotate({
+    description: "Environment-signed JWT covering this alert.",
+  }),
+}).annotate({
+  description: "Publishes a one-shot agent alert without changing the thread's activity phase.",
+});
+export type RelayAgentAlertPublishRequest = typeof RelayAgentAlertPublishRequest.Type;
+
 export const RelayEnvironmentLinkScope = Schema.Literals([
   "agent_activity_notifications",
   "managed_tunnels",
@@ -1252,6 +1277,19 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAgentActivityPublishErrors,
       },
     ).annotate(OpenApi.Summary, "Publish agent activity"),
+    HttpApiEndpoint.post(
+      "publishAgentAlert",
+      "/v1/environments/:environmentId/threads/:threadId/agent-alert",
+      {
+        params: Schema.Struct({
+          environmentId: EnvironmentId,
+          threadId: ThreadId,
+        }),
+        payload: RelayAgentAlertPublishRequest,
+        success: RelayPublishResponse,
+        error: RelayAgentActivityPublishErrors,
+      },
+    ).annotate(OpenApi.Summary, "Publish a one-shot agent alert"),
     HttpApiEndpoint.post(
       "updateLinkPreferences",
       "/v1/environments/:environmentId/link-preferences",

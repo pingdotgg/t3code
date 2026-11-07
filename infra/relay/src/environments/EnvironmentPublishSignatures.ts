@@ -2,11 +2,14 @@ import {
   RelayAgentActivityPublishProofPayload,
   RelayAgentActivityPublishProofInvalidReason,
   type RelayAgentActivityPublishRequest,
+  RelayAgentAlertPublishProofPayload,
+  type RelayAgentAlertPublishRequest,
 } from "@t3tools/contracts/relay";
 import {
   decodeRelayJwt,
   normalizeRelayIssuer,
   RELAY_ACTIVITY_PUBLISH_TYP,
+  RELAY_AGENT_ALERT_TYP,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { stableStringify } from "@t3tools/shared/relaySigning";
@@ -71,6 +74,12 @@ export class EnvironmentPublishSignatures extends Context.Service<
       readonly threadId: string;
       readonly request: RelayAgentActivityPublishRequest;
     }) => Effect.Effect<void, EnvironmentPublishSignatureError>;
+    readonly verifyAlert: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly threadId: string;
+      readonly request: RelayAgentAlertPublishRequest;
+    }) => Effect.Effect<void, EnvironmentPublishSignatureError>;
   }
 >()("t3code-relay/environments/EnvironmentPublishSignatures") {}
 
@@ -94,8 +103,73 @@ const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const crypto = yield* Digest.Digest;
   const signature = yield* Signature.Signature;
+  const verifyAlert = Effect.fn("relay.environment_publish_signatures.verify_alert")(
+    function* (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly threadId: string;
+      readonly request: RelayAgentAlertPublishRequest;
+    }) {
+      const now = yield* DateTime.now;
+      const decoded = yield* decodeRelayJwt(input.request.proof).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentPublishSignatureInvalid({
+              environmentId: input.environmentId,
+              threadId: input.threadId,
+              reason: "invalid_signature_or_payload",
+              stage: "decode_token",
+              cause,
+            }),
+        ),
+      );
+      if (
+        typeof decoded.exp === "number" &&
+        decoded.exp <= Math.floor(now.epochMilliseconds / 1_000)
+      ) {
+        return yield* new EnvironmentPublishSignatureExpired({
+          environmentId: input.environmentId,
+          threadId: input.threadId,
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(decoded.exp * 1_000)),
+        });
+      }
+      const proof = yield* verifyRelayJwt(RelayAgentAlertPublishProofPayload, {
+        publicKey: input.environmentPublicKey,
+        token: input.request.proof,
+        typ: RELAY_AGENT_ALERT_TYP,
+        issuer: `t3-env:${input.environmentId}`,
+        audience: normalizeRelayIssuer(config.relayIssuer),
+      }).pipe(
+        Effect.provideService(Signature.Signature, signature),
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentPublishSignatureInvalid({
+              environmentId: input.environmentId,
+              threadId: input.threadId,
+              reason: "invalid_signature_or_payload",
+              stage: "verify_proof",
+              cause,
+            }),
+        ),
+      );
+      if (
+        proof.environmentId !== input.environmentId ||
+        proof.threadId !== input.threadId ||
+        proof.sub !== input.environmentId ||
+        stableStringify(proof.alert) !== stableStringify(input.request.alert)
+      ) {
+        return yield* new EnvironmentPublishSignatureInvalid({
+          environmentId: input.environmentId,
+          threadId: input.threadId,
+          reason: "invalid_signature_or_payload",
+          stage: "validate_claims",
+        });
+      }
+    },
+  );
 
   return EnvironmentPublishSignatures.of({
+    verifyAlert,
     verify: Effect.fn("relay.environment_publish_signatures.verify")(function* (input) {
       yield* Effect.annotateCurrentSpan({
         "relay.environment_id": input.environmentId,

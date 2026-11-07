@@ -6,6 +6,8 @@ import {
 } from "@t3tools/shared/toolOutput";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import { claudePushNotificationHooks } from "./claudePushNotification.ts";
+import * as AgentAlerts from "../../notifications/AgentAlerts.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -1775,6 +1777,10 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  readonly pushNotificationOffer?: (message: string) => Promise<{
+    readonly local: boolean;
+    readonly phone: boolean;
+  }>;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
   const {
@@ -1879,6 +1885,12 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+    hooks: {
+      ...claudePushNotificationHooks({
+        offer: input.pushNotificationOffer ?? (async () => ({ local: false, phone: false })),
+      }),
+      ...(deviceInstructions ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } : {}),
+    },
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
@@ -1894,9 +1906,6 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
-      : {}),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -4863,6 +4872,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const agentAlerts = yield* Effect.serviceOption(AgentAlerts.AgentAlerts);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const { attachmentsDir, fileSystem, path, random, idAllocator, queryRunner } = adapterOptions;
@@ -10954,6 +10964,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            pushNotificationOffer: (message) =>
+              runPromise(
+                Option.match(agentAlerts, {
+                  onNone: () => Effect.succeed({ local: false, phone: false }),
+                  onSome: (alerts) =>
+                    alerts.offer({
+                      threadId: turnInput.threadId,
+                      body: message,
+                    }),
+                }),
+              ),
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")

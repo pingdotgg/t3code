@@ -6,6 +6,7 @@ import {
   type RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as PlatformError from "effect/PlatformError";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -39,6 +40,18 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
+  directAlert: Schema.optional(
+    Schema.Struct({
+      title: Schema.String,
+      body: Schema.String,
+      deepLink: Schema.String,
+      environmentId: Schema.String,
+      threadId: Schema.String,
+      // Set once at enqueue so a queue retry stays one alert and a later
+      // message with the same body does not.
+      eventId: Schema.String,
+    }),
+  ),
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
@@ -120,6 +133,9 @@ export class FcmDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
       readonly replay?: boolean;
+      readonly directAlert?: Omit<NonNullable<FcmDeliveryJob["directAlert"]>, "eventId"> & {
+        readonly eventId?: string;
+      };
     }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
     readonly process: (
       body: unknown,
@@ -140,6 +156,7 @@ export class FcmDeliveries extends Context.Service<
 const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const crypto = yield* Digest.Digest;
+  const random = yield* SecureRandom.SecureRandom;
   const sender = yield* FcmDeliveryQueueSender.FcmDeliveryQueueSender;
   const client = yield* FcmClient.FcmClient;
   const devices = yield* LiveActivities.LiveActivities;
@@ -162,6 +179,21 @@ const make = Effect.gen(function* () {
         };
       }
       const now = yield* DateTime.now;
+      const directAlert =
+        input.directAlert === undefined
+          ? undefined
+          : {
+              ...input.directAlert,
+              eventId:
+                input.directAlert.eventId ??
+                (yield* random
+                  .uuidV4()
+                  .pipe(
+                    Effect.mapError(
+                      (cause) => new FcmDeliveryError({ operation: "enqueue", cause }),
+                    ),
+                  )),
+            };
       yield* sender
         .send({
           userId: input.target.user_id,
@@ -169,6 +201,7 @@ const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
+          ...(directAlert === undefined ? {} : { directAlert }),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -188,6 +221,94 @@ const make = Effect.gen(function* () {
       );
       const now = yield* DateTime.now;
       if (now.epochMilliseconds - job.queuedAt > 5 * 60_000) return;
+      if (job.directAlert) {
+        const targets = yield* devices.listTargets({ userId: job.userId });
+        const target = targets.find(
+          (device) =>
+            device.device_id === job.deviceId &&
+            device.platform === "android" &&
+            device.push_token === job.token,
+        );
+        if (!target) return;
+        const preferences = decodePreferences(target.preferences_json);
+        if (
+          Option.isNone(preferences) ||
+          !preferences.value.notificationsEnabled ||
+          !preferences.value.notifyOnInput
+        ) {
+          return;
+        }
+        // A queued alert can outlive the link or the environment's permission.
+        const link = yield* links.getForUser({
+          userId: job.userId,
+          environmentId: job.directAlert.environmentId,
+        });
+        if (!link) return;
+        const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
+          environmentId: job.directAlert.environmentId,
+          environmentPublicKey: link.environmentPublicKey,
+        });
+        const deliveryUser = deliveryUsers.find((user) => user.userId === job.userId);
+        if (!deliveryUser?.notificationsEnabled) return;
+        const states = preferences.value.liveActivitiesEnabled
+          ? yield* rows.listForUser({ userId: job.userId })
+          : [];
+        const aggregate = makeAggregateState({
+          activeStates: states,
+          terminalState: null,
+          nowMs: now.epochMilliseconds,
+        });
+        const alert = {
+          alert_id: [
+            job.directAlert.environmentId,
+            job.directAlert.threadId,
+            job.directAlert.eventId,
+          ].join("\n"),
+          alert_title: job.directAlert.title,
+          alert_body: job.directAlert.body,
+          alert_path: job.directAlert.deepLink,
+        };
+        const data: Record<string, string> = {
+          t3_kind: "agent_activity",
+          // Current clients skip the activity update. Older ones still need the
+          // live card fields, or a missing `active` clears the card.
+          alert_only: "true",
+          device_id: job.deviceId,
+          user_id: job.userId,
+          updated_at: String(now.epochMilliseconds),
+          ...androidActivityData(preferences.value.liveActivitiesEnabled ? aggregate : null),
+          ...alert,
+        };
+        const digest = yield* crypto.digest(
+          Digest.sha256,
+          new TextEncoder().encode(alert.alert_id),
+        );
+        data.alert_id = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const result = yield* client.send({
+          token: job.token,
+          packageName: target.bundle_id,
+          alert: true,
+          data: fitFcmData(data),
+        });
+        if (result.unregistered) {
+          yield* db
+            .update(relayMobileDevices)
+            .set({ pushToken: null })
+            .where(
+              and(
+                eq(relayMobileDevices.userId, job.userId),
+                eq(relayMobileDevices.deviceId, job.deviceId),
+                eq(relayMobileDevices.pushToken, job.token),
+              ),
+            )
+            .pipe(
+              Effect.mapError(
+                (cause) => new FcmDeliveryError({ operation: "invalidate-token", cause }),
+              ),
+            );
+        }
+        return;
+      }
       const targets = yield* devices.listTargets({ userId: job.userId });
       const target = targets.find(
         (device) =>
