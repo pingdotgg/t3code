@@ -848,6 +848,121 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("fills the watching panel without changing viewport on control handoff", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      const page = contexts[0]!.page;
+      const size = { width: 720, height: 1000 };
+      yield* viewer.input({ type: "resize", ...size });
+      expect(page.viewportSize()).toEqual(size);
+      yield* viewer.input({ type: "text", text: "blocked" });
+      expect(contexts[0]!.sessions.at(-1)!.send).not.toHaveBeenCalledWith("Input.insertText", {
+        text: "blocked",
+      });
+      page.setViewportSize.mockClear();
+      yield* viewer.input({ type: "takeControl" });
+      yield* viewer.input({ type: "resize", ...size });
+      yield* viewer.input({ type: "releaseControl" });
+      expect(page.setViewportSize).not.toHaveBeenCalled();
+      yield* broker.invoke({ scope, tabId, operation: "resize", input: { mode: "fill" } });
+      expect(page.viewportSize()).toEqual(size);
+      expect(
+        page.setViewportSize.mock.calls.every(
+          ([next]) => next?.width === size.width && next?.height === size.height,
+        ),
+      ).toBe(true);
+      expect(yield* Queue.takeAll(viewer.output)).toContainEqual({ _tag: "viewport", ...size });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("keeps one fill-size viewer until control or connection changes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const firstScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const first = yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.provideService(Scope.Scope, firstScope));
+      const secondScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const second = yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.provideService(Scope.Scope, secondScope));
+      const page = contexts[0]!.page;
+      const firstSize = { width: 720, height: 1000 };
+      const secondSize = { width: 1000, height: 600 };
+      yield* second.input({ type: "takeControl" });
+      yield* first.input({ type: "resize", ...firstSize });
+      expect(page.viewportSize()).not.toEqual(firstSize);
+      yield* second.input({ type: "releaseControl" });
+      expect(page.viewportSize()).toEqual(firstSize);
+      yield* first.input({ type: "resize", ...firstSize });
+      yield* second.input({ type: "resize", ...secondSize });
+      expect(page.viewportSize()).toEqual(firstSize);
+      yield* second.input({ type: "takeControl" });
+      yield* second.input({ type: "resize", ...secondSize });
+      yield* first.input({ type: "resize", width: 750, height: 1100 });
+      expect(page.viewportSize()).toEqual(secondSize);
+      yield* second.input({ type: "releaseControl" });
+      yield* first.input({ type: "resize", ...firstSize });
+      expect(page.viewportSize()).toEqual(secondSize);
+      yield* Scope.close(secondScope, Exit.void);
+      expect(page.viewportSize()).toEqual(firstSize);
+      const replacement = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* replacement.input({ type: "resize", ...secondSize });
+      const controller = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* controller.input({ type: "takeControl" });
+      yield* Scope.close(firstScope, Exit.void);
+      expect(page.viewportSize()).toEqual(firstSize);
+      yield* controller.input({ type: "releaseControl" });
+      expect(page.viewportSize()).toEqual(secondSize);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("releases an attached viewer after its page closes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const viewerScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const viewer = yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.provideService(Scope.Scope, viewerScope));
+      yield* viewer.input({ type: "resize", width: 720, height: 1000 });
+      yield* Effect.promise(() => contexts[0]!.page.close());
+      expect(yield* Queue.takeAll(viewer.output)).toContainEqual({ _tag: "gone" });
+      expect((yield* Effect.exit(Scope.close(viewerScope, Exit.void)))._tag).toBe("Success");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("does not let a watching panel resize an explicitly sized viewport", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "resize",
+        input: { mode: "freeform", width: 390, height: 844 },
+      });
+      yield* viewer.input({ type: "resize", width: 720, height: 1000 });
+      expect(contexts[0]!.page.viewportSize()).toEqual({ width: 390, height: 844 });
+      yield* broker.invoke({ scope, tabId, operation: "resize", input: { mode: "fill" } });
+      expect(contexts[0]!.page.viewportSize()).toEqual({ width: 720, height: 1000 });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live(
   "takeover waits for the running agent and revokes snapshot refs before returning control",
   () =>
