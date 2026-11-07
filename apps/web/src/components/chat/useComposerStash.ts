@@ -28,6 +28,7 @@ import {
 import { type PendingUserInput } from "../../session-logic";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { collapseExpandedComposerCursor } from "../../composer-logic";
+import { collectComposerPromptInlineTokens } from "../../composer-editor-mentions";
 import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
@@ -455,7 +456,14 @@ export function useComposerStash(input: {
       });
       return;
     }
-    const prompt = promptRef.current.trim();
+    const rawPrompt = promptRef.current;
+    const lastToken = collectComposerPromptInlineTokens(rawPrompt).at(-1);
+    // A trailing chip only parses with whitespace after it, so keep one space to restore it.
+    const prompt =
+      (lastToken?.type === "mention" || lastToken?.type === "skill") &&
+      rawPrompt.slice(lastToken.end).trim().length === 0
+        ? `${rawPrompt.trim()} `
+        : rawPrompt.trim();
     const attachmentDraft = readAttachmentDraft();
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
