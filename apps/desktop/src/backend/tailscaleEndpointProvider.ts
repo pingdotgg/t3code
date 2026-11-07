@@ -22,6 +22,22 @@ const TAILSCALE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   isAddon: true,
 };
 
+/** Tailscale IP endpoint for an address already known to belong to a tailnet node. */
+export const createTailscaleIpAdvertisedEndpoint = (input: {
+  readonly address: string;
+  readonly port: number;
+}): AdvertisedEndpoint =>
+  createAdvertisedEndpoint({
+    provider: TAILSCALE_ENDPOINT_PROVIDER,
+    source: "desktop-addon",
+    id: `tailscale-ip:http://${input.address}:${input.port}`,
+    label: "Tailscale IP",
+    httpBaseUrl: `http://${input.address}:${input.port}`,
+    reachability: "private-network",
+    status: "available",
+    description: "Reachable from devices on the same Tailnet.",
+  });
+
 function resolveTailscaleIpAdvertisedEndpoints(input: {
   readonly port: number;
   readonly networkInterfaces: NetworkInterfaces;
@@ -54,16 +70,7 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
       seen.add(address.address);
 
       endpoints.push(
-        createAdvertisedEndpoint({
-          provider: TAILSCALE_ENDPOINT_PROVIDER,
-          source: "desktop-addon",
-          id: `tailscale-ip:http://${address.address}:${input.port}`,
-          label: "Tailscale IP",
-          httpBaseUrl: `http://${address.address}:${input.port}`,
-          reachability: "private-network",
-          status: "available",
-          description: "Reachable from devices on the same Tailnet.",
-        }),
+        createTailscaleIpAdvertisedEndpoint({ address: address.address, port: input.port }),
       );
     }
   }
