@@ -985,6 +985,11 @@ it.live("naming a machine that is already linked returns the link at once, with 
       // Not both: the address could name another machine than the id.
       const both = yield* a.call({ environmentId: box.environmentId, url: b.url });
       expect(errorOf(both)).toMatchObject({ code: "invalid_request" });
+
+      // A mention can name the machine the agent runs on, which has nothing to link.
+      const own = yield* a.call({ environmentId: laptop.environmentId });
+      expect(errorOf(own)).toMatchObject({ code: "invalid_request" });
+      expect(yield* cardOf(a)).toBeUndefined();
     }),
   ),
 );

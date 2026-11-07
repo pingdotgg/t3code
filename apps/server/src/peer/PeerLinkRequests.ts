@@ -198,6 +198,12 @@ const make = Effect.gen(function* () {
             "Pass either environmentId or url, not both. Pass neither to let the user pick the machine.",
         });
       }
+      if (input.environmentId === scope.environmentId) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "That is the machine you run on. Work here: it needs no link.",
+        });
+      }
       // A machine already linked needs no card: the agent can use it now.
       if (input.environmentId !== undefined) {
         const linked = yield* usableLink(input.environmentId).pipe(

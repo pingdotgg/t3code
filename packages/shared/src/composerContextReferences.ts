@@ -353,7 +353,7 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
       return [
         `label: ${record.label}`,
         `environmentId: ${record.environmentId}`,
-        "The user means this machine. Not linked here yet: call t3_environment_link with this environmentId. Linked: pass it as environmentId, or target.environmentId for delegate_task.",
+        "The user means this machine. Not linked here yet: call t3_environment_link with this environmentId, which says so if it is the machine you run on. Linked: pass it as environmentId, or target.environmentId for delegate_task.",
       ].join("\n");
   }
 }
