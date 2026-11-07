@@ -170,6 +170,16 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
+it("keeps a fixed run time and rejects a cleared one", () => {
+  const draft = taskToDraft({
+    ...legacyTask,
+    schedule: { type: "fixed_time", timeOfDay: "14:30" },
+  });
+  expect(scheduleFromDraft(draft)).toEqual({ type: "fixed_time", timeOfDay: "14:30" });
+  // A native time input reports "" when it is cleared or only partly filled.
+  expect(scheduleFromDraft({ ...draft, timeOfDay: "" })).toBeNull();
+});
+
 describe("one-time scheduled tasks", () => {
   afterEach(() => vi.unstubAllEnvs());
 
