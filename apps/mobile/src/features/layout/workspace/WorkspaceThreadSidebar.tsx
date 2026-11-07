@@ -11,7 +11,6 @@ import { usePendingTaskListActions } from "../../home/usePendingTaskListActions"
 import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
 import { openSettings } from "../../settings/settings-navigation";
 import { ThreadNavigationSidebar } from "../../threads/ThreadNavigationSidebar";
-import { useOpenThreadPullRequests } from "../../threads/use-open-thread-pull-requests";
 import { useSelectWorkspaceDetail } from "./useSelectWorkspaceDetail";
 
 type Route = { readonly name: string; readonly params?: object };
@@ -51,7 +50,6 @@ export function WorkspaceThreadSidebar() {
     openWorkspaceTab,
   } = useAdaptiveWorkspaceLayout();
   const selectDetail = useSelectWorkspaceDetail();
-  const openThreadPullRequests = useOpenThreadPullRequests();
   const selectedThread = useNavigationState(selectedThreadKey);
   const selectThreadRoute = (params: ReactNavigation.RootParamList["Thread"]) =>
     selectDetail({ name: "Thread", params });
@@ -92,7 +90,6 @@ export function WorkspaceThreadSidebar() {
           threadId: String(thread.id),
         })
       }
-      onOpenThreadPullRequests={openThreadPullRequests}
       onSearchQueryChange={setPrimarySidebarSearchQuery}
       searchQuery={primarySidebarSearchQuery}
     />
