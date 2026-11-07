@@ -2575,28 +2575,31 @@ function OpenCommandPaletteDialog(props: {
 
     if (event.key === "Tab" && isBrowsing && !relativePathNeedsActiveProject) {
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+      const claimTab = () => {
+        (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        event.preventDefault();
+      };
+      if (highlightedItemValue === "browse:up") {
+        claimTab();
+        void browseUp();
+        return;
+      }
       const highlightedEntry = visibleBrowseEntries.find(
         (entry) => `browse:${entry.fullPath}` === highlightedItemValue,
       );
       const completion = highlightedEntry
         ? { name: highlightedEntry.name, isComplete: true }
         : getFilesystemBrowseTabCompletion(visibleBrowseEntries, browsePath.filterQuery);
-      const canComplete =
-        highlightedItemValue === "browse:up" ||
-        completion?.isComplete ||
-        (completion !== null && !pinnedCloneDirectoryName);
-      // Nothing to complete: let Tab move focus like it does in any other input.
-      // While entries load, keep Tab so a fast typist is not thrown out of the field.
-      if (!canComplete && !isBrowsePending) return;
-      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
-      event.preventDefault();
-      if (highlightedItemValue === "browse:up") {
-        void browseUp();
-      } else if (completion?.isComplete) {
+      if (completion?.isComplete) {
+        claimTab();
         void browseTo(completion.name);
       } else if (completion && !pinnedCloneDirectoryName) {
+        claimTab();
         setHighlightedItemValue(null);
         setQuery(`${getBrowseDirectoryPath(query)}${completion.name}`);
+      } else if (isBrowsePending) {
+        // Nothing to complete yet; keep Tab so a fast typist is not thrown out while entries load.
+        claimTab();
       }
       return;
     }
