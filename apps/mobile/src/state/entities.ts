@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useEffect } from "react";
 import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
 
 import { appAtomRegistry } from "./atom-registry";
@@ -34,7 +35,7 @@ import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIco
 import { projectFaviconUrlAtom } from "./assets";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
-import { environmentThreadDetails, environmentThreadShells } from "./threads";
+import { environmentThreadDetails, environmentThreadShells, threadFamilies } from "./threads";
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("mobile-project:empty"),
@@ -208,11 +209,27 @@ export function useSideChats(ref: ScopedThreadRef) {
 }
 
 export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
+  const refs = hasThreadLinks(markdown) ? threadLinkRefs(markdown, environmentId) : [];
   const titles = useAtomValue(
-    hasThreadLinks(markdown)
-      ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
-      : EMPTY_THREAD_LINK_TITLES_ATOM,
+    refs.length === 0
+      ? EMPTY_THREAD_LINK_TITLES_ATOM
+      : threadLinkTitlesAtom(JSON.stringify(refs.map(threadKey))),
   );
+  // Shells leave out idle subagent children and older settled threads, so a cited thread the
+  // shell lacks is read with its family until it lands; only a settled empty read proves it gone.
+  const missingKey = JSON.stringify(
+    refs.filter((ref) => !titles.has(threadKey(ref))).map(threadKey),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts family reads for cited threads the shell omits while this message shows them
+  useEffect(() => {
+    const releases = (JSON.parse(missingKey) as ReadonlyArray<string>).map((key) => {
+      const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
+      return threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId);
+    });
+    return () => {
+      for (const release of releases) release();
+    };
+  }, [missingKey]);
   return relabelThreadLinks(markdown, environmentId, (ref) => titles.get(threadKey(ref)));
 }
 
