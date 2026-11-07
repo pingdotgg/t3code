@@ -238,8 +238,8 @@ export const makeDeviceHubOperations = (options: {
       }
     }
     const simulatorsUnlisted =
-      iosDiscoveryIncomplete ||
-      (hubList.simulators.length === 0 &&
+      !devices.some((device) => device.platform === "ios") &&
+      (iosDiscoveryIncomplete ||
         (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message)));
     return {
       devices,

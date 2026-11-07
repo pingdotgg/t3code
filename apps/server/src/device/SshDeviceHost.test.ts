@@ -231,11 +231,14 @@ it.effect("lists Android devices without probing the host again once it reports 
     const home = yield* fs.makeTempDirectoryScoped();
     const modes: string[] = [];
     let androidInstalled = false;
+    let iosInstalled = true;
+    let failProbe = false;
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
         const forwarding = command.args.includes("-L");
         let output = "";
+        let exitCode = 0;
         if (!forwarding) {
           const stdin = command.options.stdin;
           const script =
@@ -260,19 +263,25 @@ it.effect("lists Android devices without probing the host again once it reports 
               : JSON.stringify({
                   nodePath: "/node",
                   platforms: [
-                    { platform: "ios", available: true },
+                    { platform: "ios", available: iosInstalled },
                     { platform: "android", available: androidInstalled },
                   ],
                   hubPort: 1234,
                   helpers: { serveSimAxSettings: null, serveSimCli: null },
                 });
+          if (mode === "probe" && failProbe) {
+            output = "probe unavailable";
+            exitCode = 1;
+          }
         }
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(123),
           stdout: Stream.make(new TextEncoder().encode(output)),
           stderr: Stream.empty,
           all: Stream.empty,
-          exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: forwarding
+            ? Effect.never
+            : Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
           isRunning: Effect.succeed(forwarding),
           kill: () => Effect.void,
           stdin: Sink.drain,
@@ -340,6 +349,19 @@ it.effect("lists Android devices without probing the host again once it reports 
     expect(modes.splice(0)).toEqual(["probe"]);
     expect(yield* androidNames).toEqual(["Pixel_8"]);
     expect(modes.splice(0)).toEqual(["simctl", ""]);
+    // An Android-only host still needs probes for iOS; a failed probe must keep its known SDK.
+    iosInstalled = false;
+    yield* host.inspect;
+    expect(modes.splice(0)).toEqual(["probe"]);
+    failProbe = true;
+    const incomplete = yield* ready.devices.list;
+    expect(incomplete.devices.map((device) => device.name)).toEqual(["Pixel_8"]);
+    expect(incomplete.detail).toContain("Could not determine host platform availability.");
+    // Two Windows-host diagnostics precede AVD enumeration after the nonzero probe exit.
+    expect(modes.splice(0)).toEqual(["probe", "", "", ""]);
+    failProbe = false;
+    expect((yield* ready.devices.list).detail).toBeUndefined();
+    expect(modes.splice(0)).toEqual(["probe", ""]);
     yield* host.stop;
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
