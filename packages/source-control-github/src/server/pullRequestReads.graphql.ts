@@ -297,18 +297,18 @@ export const RequestedReviewerBot = Schema.Struct({
 export interface RequestedReviewerBot extends Schema.Struct.Type<typeof RequestedReviewerBot.fields> {}
 
 /** A team of users in an organization. */
-export const Team = Schema.Struct({
+export const PullRequestCoreRepositoryPullRequestReviewRequestsNodesRequestedReviewerTeam = Schema.Struct({
   __typename: Schema.Literal("Team"),
   /** The slug corresponding to the team. */
-  slug: Schema.String,
+  slug: Schema.optionalKey(Schema.String),
   /** The slug corresponding to the organization and team. */
-  combinedSlug: Schema.String,
+  combinedSlug: Schema.optionalKey(Schema.String),
   /** The name of the team. */
-  teamName: Schema.String,
+  teamName: Schema.optionalKey(Schema.String),
   /** A URL pointing to the team's avatar. */
-  teamAvatarUrl: Schema.NullOr(Shared.URI)
+  teamAvatarUrl: Schema.optionalKey(Schema.NullOr(Shared.URI))
 })
-export interface Team extends Schema.Struct.Type<typeof Team.fields> {}
+export interface PullRequestCoreRepositoryPullRequestReviewRequestsNodesRequestedReviewerTeam extends Schema.Struct.Type<typeof PullRequestCoreRepositoryPullRequestReviewRequestsNodesRequestedReviewerTeam.fields> {}
 
 /** Types that can be requested reviewers. */
 export const RequestedReviewerOther = Schema.Struct({
@@ -322,7 +322,7 @@ export const PullRequestCoreRepositoryPullRequestReviewRequestsNodesReviewReques
   requestedReviewer: Schema.NullOr(Schema.Union([
     RequestedReviewerUser,
     RequestedReviewerBot,
-    Team,
+    PullRequestCoreRepositoryPullRequestReviewRequestsNodesRequestedReviewerTeam,
     RequestedReviewerOther
   ]))
 })
@@ -500,10 +500,11 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
       { name: "number", body: "Int!" },
       { name: "headRef", body: "String!" },
       { name: "required", body: "Boolean!" },
-      { name: "requestedReviewers", body: "Int!" }
+      { name: "requestedReviewers", body: "Int!" },
+      { name: "teamDetails", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team@include(if:$", "teamDetails", "){slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}}}}"] }
     ],
     fragments: [
       { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{workflow{name}}}}}"] }
@@ -515,7 +516,8 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
     number: Shared.Int,
     headRef: Schema.String,
     required: Schema.Boolean,
-    requestedReviewers: Shared.Int
+    requestedReviewers: Shared.Int,
+    teamDetails: Schema.Boolean
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
@@ -1156,12 +1158,26 @@ export const Actor = Schema.Struct({
 })
 export interface Actor extends Schema.Struct.Type<typeof Actor.fields> {}
 
+/** A team of users in an organization. */
+export const ReviewerCandidatesRepositoryPullRequestReviewRequestsNodesRequestedReviewerTeam = Schema.Struct({
+  __typename: Schema.Literal("Team"),
+  /** The slug corresponding to the team. */
+  slug: Schema.String,
+  /** The slug corresponding to the organization and team. */
+  combinedSlug: Schema.String,
+  /** The name of the team. */
+  teamName: Schema.String,
+  /** A URL pointing to the team's avatar. */
+  teamAvatarUrl: Schema.NullOr(Shared.URI)
+})
+export interface ReviewerCandidatesRepositoryPullRequestReviewRequestsNodesRequestedReviewerTeam extends Schema.Struct.Type<typeof ReviewerCandidatesRepositoryPullRequestReviewRequestsNodesRequestedReviewerTeam.fields> {}
+
 /** A request for a user to review a pull request. */
 export const ReviewerCandidatesRepositoryPullRequestReviewRequestsNodesReviewRequest = Schema.Struct({
   /** The reviewer that is requested. */
   requestedReviewer: Schema.NullOr(Schema.Union([
     PullRequestPreviewRepositoryPullRequestAuthorUser,
-    Team,
+    ReviewerCandidatesRepositoryPullRequestReviewRequestsNodesRequestedReviewerTeam,
     NodesBot,
     RequestedReviewerOther
   ]))

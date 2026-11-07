@@ -83,7 +83,13 @@ fragment ReviewThreadPage on PullRequestReviewThreadConnection {
 #
 # `viewerCanUpdate` and `viewerDidAuthor` belong to the pull request this query is already
 # standing on, so what the reader may do with it arrives with the conversation.
-query ReviewThreads($owner: String!, $name: String!, $number: Int!, $requestedReviewers: Int!) {
+query ReviewThreads(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $requestedReviewers: Int!
+  $teamDetails: Boolean!
+) {
   viewer {
     login
   }
@@ -140,7 +146,7 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $requestedRe
               login
               avatarUrl
             }
-            ... on Team {
+            ... on Team @include(if: $teamDetails) {
               combinedSlug
               teamName: name
               teamAvatarUrl: avatarUrl
