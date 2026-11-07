@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -15,6 +16,7 @@ import {
   isModelCostUnknown,
   type DailyTotals,
   type MergedUsage,
+  type ProviderTotals,
 } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -27,10 +29,10 @@ import {
   formatUsageContractMismatch,
   formatUsd,
   makeWindow,
-  usageSourceMessages,
+  usageSourceMessagesByProvider,
 } from "@t3tools/shared/usageFormat";
 import { useRef, useState, type ReactNode } from "react";
-import { RefreshControl, View } from "react-native";
+import { Alert, Pressable, RefreshControl, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -119,7 +121,7 @@ function UsageScreen(props: {
     void refresh();
     void limits.refreshAfterEnable();
   };
-  const sourceMessages = usageSourceMessages(
+  const sourceMessages = usageSourceMessagesByProvider(
     selectedEnvironments.flatMap((environment) => environment.summary?.sources ?? []),
   );
   const canReadDiagnostics = selectedEnvironments.some(
@@ -187,6 +189,7 @@ function UsageScreen(props: {
     <ProviderSection
       merged={merged}
       metric={metric}
+      sourceMessages={sourceMessages}
       cursorAccessEnvironments={cursorAccessEnvironments}
       showCursorEnvironment={selectedEnvironments.length > 1}
       onCursorEnabled={refreshAfterCursorEnable}
@@ -341,11 +344,6 @@ function UsageScreen(props: {
                   </View>
                 ) : (
                   <>
-                    {sourceMessages.map((message) => (
-                      <Text key={message} className="text-sm text-foreground-muted">
-                        {message}
-                      </Text>
-                    ))}
                     <UsageUpdating dimmed={progress.dimmed} label={progress.label}>
                       {wide ? (
                         <View className="flex-row gap-6">
@@ -632,6 +630,7 @@ function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: Us
 function ProviderSection(props: {
   readonly merged: MergedUsage;
   readonly metric: UsageChartMetric;
+  readonly sourceMessages: ReadonlyMap<UsageProviderKind, readonly string[]>;
   readonly cursorAccessEnvironments: readonly EnvironmentUsageStatus[];
   readonly showCursorEnvironment: boolean;
   readonly onCursorEnabled: () => void;
@@ -640,10 +639,27 @@ function ProviderSection(props: {
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
-  if (merged.providers.length === 0 && props.cursorAccessEnvironments.length === 0) return null;
+  const warnedWithoutUsage = [...props.sourceMessages.keys()]
+    .filter((provider) => !merged.providers.some((entry) => entry.provider === provider))
+    .map((provider): ProviderTotals => ({
+      provider,
+      costUsd: 0,
+      totalTokens: 0,
+      records: 0,
+      sessions: 0,
+      costShare: 0,
+      tokenShare: 0,
+    }));
+  if (
+    merged.providers.length === 0 &&
+    warnedWithoutUsage.length === 0 &&
+    props.cursorAccessEnvironments.length === 0
+  ) {
+    return null;
+  }
 
   // Hermes lacks toSorted.
-  const ordered = [...merged.providers].sort((a, b) =>
+  const ordered = [...merged.providers, ...warnedWithoutUsage].sort((a, b) =>
     metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
   );
   const rows: Array<
@@ -681,6 +697,8 @@ function ProviderSection(props: {
         }
         const provider = row.provider;
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
+        const label = PROVIDER_LABEL[provider.provider];
+        const messages = props.sourceMessages.get(provider.provider);
         return (
           <View
             key={provider.provider}
@@ -700,8 +718,24 @@ function ProviderSection(props: {
                     props.compact ? "text-base text-foreground" : "text-lg text-foreground"
                   }
                 >
-                  {PROVIDER_LABEL[provider.provider]}
+                  {label}
                 </Text>
+                {messages ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${label} usage may be incomplete`}
+                    hitSlop={12}
+                    onPress={() =>
+                      Alert.alert(`${label} usage may be incomplete`, messages.join("\n\n"))
+                    }
+                  >
+                    <SymbolView
+                      name="exclamationmark.circle"
+                      size={14}
+                      tintColorClassName="accent-warning-foreground"
+                    />
+                  </Pressable>
+                ) : null}
               </View>
               <Text
                 className={
