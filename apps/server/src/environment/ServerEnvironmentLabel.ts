@@ -179,9 +179,16 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
   return null;
 });
 
+/** A nonblank display-only override skips host probes; otherwise retain the host/directory fallback. */
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
+  const environment = yield* HostProcess.Environment;
+  const environmentLabel = normalizeLabel(environment.T3CODE_ENVIRONMENT_LABEL);
+  if (environmentLabel) {
+    return environmentLabel;
+  }
+
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;
