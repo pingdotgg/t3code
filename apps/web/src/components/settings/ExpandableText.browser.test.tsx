@@ -1,0 +1,55 @@
+import "~/index.css";
+
+import { expect, it } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+
+import { render } from "../../../test/render";
+import { ExpandableText } from "./ExpandableText";
+
+const LONG_SINGLE_LINE_ERROR =
+  "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
+
+it("shows no disclosure when a long error fits within the clamp", async () => {
+  await using screen = await render(
+    <div style={{ width: 960 }}>
+      <ExpandableText text={LONG_SINGLE_LINE_ERROR} />
+    </div>,
+  );
+
+  await expect.element(screen.getByText(LONG_SINGLE_LINE_ERROR)).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: "Show full error" }))
+    .not.toBeInTheDocument();
+});
+
+it("offers the disclosure when the error is clipped by the clamp", async () => {
+  await using screen = await render(
+    <div style={{ width: 200 }}>
+      <ExpandableText text={LONG_SINGLE_LINE_ERROR} />
+    </div>,
+  );
+
+  await expect.element(screen.getByRole("button", { name: "Show full error" })).toBeVisible();
+});
+
+it("keeps the disclosure while expanded and follows container resizes", async () => {
+  await using screen = await render(
+    <div style={{ width: 200 }}>
+      <ExpandableText text={LONG_SINGLE_LINE_ERROR} />
+    </div>,
+  );
+
+  await screen.getByRole("button", { name: "Show full error" }).click();
+  await expect.element(screen.getByRole("button", { name: "Show less" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(screen.getByRole("button", { name: "Show full error" })).toHaveFocus();
+
+  await screen.rerender(
+    <div style={{ width: 960 }}>
+      <ExpandableText text={LONG_SINGLE_LINE_ERROR} />
+    </div>,
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Show full error" }))
+    .not.toBeInTheDocument();
+});
