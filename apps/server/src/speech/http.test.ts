@@ -82,6 +82,8 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           downloadModel: () => Effect.succeed({ models: [] }),
           selectModel: () => Effect.succeed({ models: [] }),
           cancelDownload: () => Effect.succeed({ models: [] }),
+          updateModelDirectories: () =>
+            Effect.succeed({ supported: false as const, reason: "test" }),
           updateAcceleration: () => Effect.succeed({ supported: false as const, reason: "test" }),
           updateModelUnloadTimeout: () =>
             Effect.succeed({ supported: false as const, reason: "test" }),
@@ -113,6 +115,14 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
         }),
       );
       expect(changeKey.status).toBe(403);
+      const folders = yield* Effect.promise(() =>
+        fetch(new URL("model-directories", url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ directories: [] }),
+        }),
+      );
+      expect(folders.status).toBe(403);
       yield* Effect.promise(() =>
         expect(
           fetch(url, {
@@ -270,6 +280,7 @@ effectIt.effect.each([
         downloadModel: () => Effect.fail(error),
         selectModel: () => Effect.fail(error),
         cancelDownload: () => Effect.fail(error),
+        updateModelDirectories: () => Effect.fail(error),
         updateAcceleration: () => Effect.fail(error),
         updateModelUnloadTimeout: () => Effect.fail(error),
         transcribe,

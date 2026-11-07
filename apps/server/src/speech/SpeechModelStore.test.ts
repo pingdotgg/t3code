@@ -111,6 +111,7 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
     expect(yield* h.store.isReady(h.model)).toBe(true);
     expect(yield* h.store.installedPath(h.model)).toBeUndefined();
     expect(yield* h.store.isReady(h.model)).toBe(false);
+    expect(yield* h.store.hasOwnedFile(h.model)).toBe(true);
 
     const progress: number[] = [];
     const installed = yield* h.store.download(h.model, {
@@ -166,5 +167,34 @@ it.effect("cleans only download partials on cancellation or restart", () =>
       "model.gguf",
       "model.gguf.notes.part",
     ]);
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.effect("reuses verified external models without writing to or removing their folder", () =>
+  Effect.gen(function* () {
+    const h = yield* harness;
+    const path = yield* Path.Path;
+    const external = path.join(h.directory, "external");
+    const file = path.join(external, h.model.filename);
+    yield* h.fs.makeDirectory(external);
+    yield* h.fs.writeFile(file, bytes);
+    yield* h.fs.remove(h.stale);
+    const invalid = path.join(h.directory, "invalid");
+    yield* h.fs.makeDirectory(invalid);
+    yield* h.fs.writeFile(path.join(invalid, h.model.filename), new Uint8Array(bytes.length));
+    expect(yield* h.store.installedPath(h.model, [invalid, external])).toBe(file);
+    yield* h.fs.writeFile(h.stale, bytes);
+    expect(yield* h.store.installedPath(h.model, [external])).toBe(h.stale);
+    yield* h.fs.remove(h.stale);
+    expect(yield* h.store.isReady(h.model, [external])).toBe(true);
+    expect(yield* h.store.installedPath(h.model, [external])).toBe(file);
+    expect(yield* h.store.download(h.model, {}, [external])).toBe(file);
+    expect(h.requests).toHaveLength(0);
+    yield* h.store.remove(h.model);
+    expect(yield* h.fs.readDirectory(external)).toEqual([h.model.filename]);
+    expect(yield* h.store.isReady(h.model)).toBe(false);
+    yield* h.fs.writeFile(file, new Uint8Array(bytes.length));
+    expect(yield* h.store.installedPath(h.model, [external])).toBeUndefined();
+    expect(yield* h.store.isReady(h.model, [external])).toBe(false);
   }).pipe(Effect.provide(dependencies)),
 );

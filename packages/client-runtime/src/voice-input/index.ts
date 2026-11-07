@@ -26,6 +26,7 @@ export {
   selectEnvironmentSpeechModel,
   transcribeEnvironmentPcm,
   updateEnvironmentSpeechAcceleration,
+  updateEnvironmentSpeechModelDirectories,
   updateEnvironmentSpeechModelUnloadTimeout,
 } from "./environment.ts";
 export { openSpeechStream } from "./stream.ts";
