@@ -40,6 +40,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import { setMacosWindowButtonsHidden } from "../../window/DesktopWindow.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -122,6 +123,26 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const window = yield* electronWindow.currentMainOrFirst;
     return Option.isSome(window) && window.value.isFullScreen();
+  }),
+});
+
+// HTML fullscreen fills the window without resizing it, so the macOS buttons would sit on the video.
+export const setWindowButtonsHidden = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_WINDOW_BUTTONS_HIDDEN_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.setWindowButtonsHidden")(function* (hidden, event) {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+    if (
+      environment.platform !== "darwin" ||
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.webContents.id !== event.sender.id
+    ) {
+      return;
+    }
+    setMacosWindowButtonsHidden(window.value, hidden);
   }),
 });
 

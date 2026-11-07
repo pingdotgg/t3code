@@ -55,6 +55,13 @@ if (clientPlatform === "darwin") {
   };
   window.addEventListener("DOMContentLoaded", syncWindowControlInset, { once: true });
   window.addEventListener("resize", syncWindowControlInset);
+  // A fullscreen element (a video, say) covers the page but not the native buttons.
+  document.addEventListener("fullscreenchange", () => {
+    void ipcRenderer.invoke(
+      IpcChannels.SET_WINDOW_BUTTONS_HIDDEN_CHANNEL,
+      document.fullscreenElement !== null,
+    );
+  });
 }
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {

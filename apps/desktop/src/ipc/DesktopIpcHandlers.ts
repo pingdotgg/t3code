@@ -52,6 +52,7 @@ import {
   pickProjectFavicon,
   pickThemeFiles,
   setTheme,
+  setWindowButtonsHidden,
   showContextMenu,
 } from "./methods/window.ts";
 import {
@@ -144,6 +145,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
+  yield* ipc.handle(setWindowButtonsHidden);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
   yield* ipc.handle(readMedia);
