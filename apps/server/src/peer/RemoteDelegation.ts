@@ -535,21 +535,26 @@ const make = Effect.gen(function* () {
           }),
         }),
         Effect.tapError(() => noDefect),
-        Effect.catchDefect((defect) => {
-          defects += 1;
-          const message = defect instanceof Error ? defect.message : String(defect);
-          return Effect.fail(new Cause.UnknownError(defect, message));
-        }),
+        Effect.tapDefect(() =>
+          Effect.sync(() => {
+            defects += 1;
+          }),
+        ),
+        failOnDefect,
         Effect.retry({ schedule: followRetry, while: () => defects < FOLLOW_MAX_DEFECTS }),
         Effect.catch(
-          Effect.fn("RemoteDelegation.followGaveUp")(function* (error) {
-            const { task } = yield* readTask(parentThreadId, taskId);
-            const remote = task?.remoteChild;
-            // A task with its result keeps it; completing it again would owe another stop there.
-            if (remote === undefined || task?.result !== null) return;
-            const result = `Following the thread ${remote.threadId} in ${remote.label} failed, so it may still run there (task_cancel stops it): ${error.message}`;
-            yield* complete(parentThreadId, taskId, "failed", result, undefined);
-          }, Effect.retry(followRetry)),
+          Effect.fn("RemoteDelegation.followGaveUp")(
+            function* (error) {
+              const { task } = yield* readTask(parentThreadId, taskId);
+              const remote = task?.remoteChild;
+              // A task with its result keeps it; completing it again would owe another stop there.
+              if (remote === undefined || task?.result !== null) return;
+              const result = `Following the thread ${remote.threadId} in ${remote.label} failed, so it may still run there (task_cancel stops it): ${error.message}`;
+              yield* complete(parentThreadId, taskId, "failed", result, undefined);
+            },
+            failOnDefect,
+            Effect.retry(followRetry),
+          ),
         ),
         Effect.ignoreCause({ log: true }),
       );
@@ -813,6 +818,14 @@ const make = Effect.gen(function* () {
 
   return RemoteDelegation.of({ delegate, cancel, start });
 });
+
+/** A defect as a failure, so a retry covers it. */
+const failOnDefect = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.catchDefect(effect, (defect) =>
+    Effect.fail(
+      new Cause.UnknownError(defect, defect instanceof Error ? defect.message : String(defect)),
+    ),
+  );
 
 const isTerminal = (status: string) =>
   status === "completed" ||

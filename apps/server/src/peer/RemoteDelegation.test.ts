@@ -1688,7 +1688,7 @@ const defectiveFollows = (times: number) =>
     const beforeRead = Effect.gen(function* () {
       if ((yield* Ref.get(defects)) === 0) return;
       if ((yield* Ref.getAndUpdate(failedRecords, (count) => count - 1)) <= 0) return;
-      return yield* new Orchestrator.OrchestratorProjectionError({ threadId: parentThreadId });
+      return yield* Effect.die(new Error("Recording it hit a bug."));
     });
     return { beforeFollow, beforeRead, retriedOrEnded };
   });
@@ -1736,7 +1736,7 @@ it.effect("a follower that keeps hitting defects fails the task and wakes the pa
       const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
       const retries = yield* steppedRetries;
       const defects = yield* defectiveFollows(Number.POSITIVE_INFINITY);
-      // Recording that it gave up fails once too, and is retried.
+      // Recording that it gave up hits a defect once too, and is retried.
       const a = yield* makeLaptop(
         database,
         offers,
