@@ -77,6 +77,19 @@ export function claudeModelLedger(modelUsage: unknown): ClaudeModelLedger | unde
   return ledger;
 }
 
+/** The window each model in the SDK's `modelUsage` is measured against, as Claude Code resolved it. */
+export function claudeReportedContextWindows(modelUsage: unknown): ReadonlyMap<string, number> {
+  const windows = new Map<string, number>();
+  if (typeof modelUsage !== "object" || modelUsage === null) return windows;
+  for (const [model, entry] of Object.entries(modelUsage as Record<string, unknown>)) {
+    const window = finiteNonNegativeInteger(
+      (entry as Record<string, unknown> | null)?.contextWindow,
+    );
+    if (window !== undefined && window > 0) windows.set(model, window);
+  }
+  return windows;
+}
+
 /** Ledger growth since `previous`. Unknown without a baseline or when a counter goes backwards. */
 export function claudeLedgerDelta(
   previous: ClaudeModelLedger | undefined,

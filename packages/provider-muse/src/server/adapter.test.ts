@@ -767,12 +767,20 @@ describe("MuseAdapterV2", () => {
       yield* fake.emit("turn/completed", {
         turnId: nativeId,
         terminal: "failed",
-        error: { message: "Provider rejected this turn" },
+        error: { message: "Provider rejected this turn: api_key=abc123" },
       });
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "failed");
       assert.strictEqual(terminal.threadDisposition, "reusable");
-      assert.isNotNull(terminal.failure);
+      assert.strictEqual(
+        terminal.failure?.message,
+        "Provider rejected this turn: api_key=[REDACTED]",
+      );
+      assert.strictEqual(
+        harness.allEvents.findLast((event) => event.type === "provider_session.updated")
+          ?.providerSession.lastError,
+        terminal.failure?.message,
+      );
       assert.isTrue(
         harness.allEvents.some(
           (event) =>
@@ -842,16 +850,33 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect(
-    "closes a newly opened host when native session registration returns another identity",
-    () =>
+  it.effect.each([
+    {
+      reason: "another identity",
+      method: "session/start",
+      sessionId: "unexpected-session",
+      initialNativeThreadId: undefined,
+      history: { items: [] },
+    },
+    {
+      reason: "an unavailable projection",
+      method: "session/resume",
+      sessionId: "saved-session",
+      initialNativeThreadId: "saved-session",
+      history: { items: null, mode: "none", noneReason: "projectionUnavailable" },
+    },
+  ])(
+    "closes a newly opened host when native session registration returns $reason",
+    ({ method, sessionId, initialNativeThreadId, history }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakeMuse();
-        fake.queueResponse("session/start", {
-          session: { sessionId: "unexpected-session", modelId: MODEL, activeTurnId: null },
-          history: { items: [] },
+        fake.queueResponse(method, {
+          session: { sessionId, modelId: MODEL, activeTurnId: null },
+          history,
         });
-        const result = yield* makeHarness(fake).pipe(Effect.exit);
+        const result = yield* makeHarness(fake, INSTANCE_ID, initialNativeThreadId).pipe(
+          Effect.exit,
+        );
         assert.strictEqual(result._tag, "Failure");
         yield* Effect.promise(() => fake.host.exited);
         assert.strictEqual(fake.closeCount(), 1);
@@ -1433,6 +1458,11 @@ describe("MuseAdapterV2", () => {
         text: "Previous answer",
       };
       fake.setHistory([nativeItem]);
+      fake.queueResponse("session/resume", {
+        session: { sessionId: "saved-session", modelId: MODEL, activeTurnId: null },
+        viewCursor: "",
+        history: { items: null, mode: "none", noneReason: "excluded" },
+      });
       const harness = yield* makeHarness(fake, INSTANCE_ID, "saved-session");
       const resumed = yield* fake.takeCall("session/resume");
       assert.strictEqual(resumed.params.sessionId, "saved-session");
