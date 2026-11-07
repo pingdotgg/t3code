@@ -2573,3 +2573,28 @@ code {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
+
+/* iPadOS and iOS Safari ignore interactive-widget=resizes-content: the keyboard shrinks only the
+   visual viewport and Safari pans the page to the focused field. While it is open the shell is
+   pinned to the visible area instead (pinShellToKeyboardViewport). Unlayered so these rules
+   outrank the routes' h-dvh/h-svh and the sidebar container's h-svh utilities. */
+html[data-keyboard-viewport],
+html[data-keyboard-viewport] body {
+  overflow: hidden;
+}
+
+html[data-keyboard-viewport] [data-slot="sidebar-wrapper"] {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--keyboard-viewport-top);
+  /* Fixed descendants, the desktop sidebar and its toggle, position against the shell. */
+  contain: layout;
+}
+
+html[data-keyboard-viewport] [data-slot="sidebar-inset"] {
+  height: 100%;
+}
+
+html[data-keyboard-viewport] [data-slot="sidebar-container"] {
+  height: auto;
+}
