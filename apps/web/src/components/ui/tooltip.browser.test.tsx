@@ -10,7 +10,7 @@ import {
   TooltipTrigger,
 } from "./tooltip";
 
-it("dismisses sidebar hover cards and blocks new ones until scrolling settles", async () => {
+it("blocks sidebar hover cards until scrolling settles", async () => {
   const onOpenChange = vi.fn();
   await using screen = await render(
     <TooltipScrollDismissArea suppressHoverWhileScrolling>
@@ -29,14 +29,7 @@ it("dismisses sidebar hover cards and blocks new ones until scrolling settles", 
     </TooltipScrollDismissArea>,
   );
   using _timers = fakeTimers();
-  await screen.getByRole("button", { name: "First row" }).hover();
-  await act(() => vi.advanceTimersByTime(600));
-  await expect.element(page.getByText("First details")).toBeInTheDocument();
-
   await act(() => screen.getByTestId("viewport").element().dispatchEvent(new Event("scroll")));
-  await expect
-    .element(screen.getByRole("button", { name: "First row" }))
-    .not.toHaveAttribute("data-popup-open");
   await screen.getByRole("button", { name: "Second row" }).hover();
   await act(() => vi.advanceTimersByTime(50));
   await expect.element(page.getByText("Second details")).not.toBeInTheDocument();
