@@ -11,6 +11,7 @@ import {
   CodexShadowHomePathConflictError,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
+  withCodexEnvironmentHome,
 } from "./CodexHomeLayout.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 const decodeCodexSettingsValue = Schema.decodeSync(CodexSettings);
@@ -22,6 +23,37 @@ const decodeCodexSettings = (input: {
   readonly customModels?: readonly string[];
   readonly binaryPath?: string;
 }): CodexSettings => decodeCodexSettingsValue(input);
+
+describe("withCodexEnvironmentHome", () => {
+  it("fills blank settings homes from the environment CODEX_HOME", () => {
+    const config = decodeCodexSettings({
+      homePath: "",
+      shadowHomePath: "",
+    });
+
+    expect(withCodexEnvironmentHome(config, "/tmp/env-home").homePath).toBe("/tmp/env-home");
+    expect(withCodexEnvironmentHome(config, "  /tmp/padded  ").homePath).toBe("  /tmp/padded  ");
+  });
+
+  it("keeps instance settings and blank/absent environment homes untouched", () => {
+    const envHome = "/tmp/env-home";
+
+    const withHome = decodeCodexSettings({ homePath: "/tmp/instance-home" });
+    expect(withCodexEnvironmentHome(withHome, envHome)).toStrictEqual(withHome);
+
+    const withShadow = decodeCodexSettings({ shadowHomePath: "/tmp/shadow-home" });
+    expect(withCodexEnvironmentHome(withShadow, envHome)).toStrictEqual(withShadow);
+
+    const blank = decodeCodexSettings({ homePath: "", shadowHomePath: "" });
+    expect(withCodexEnvironmentHome(blank, undefined)).toStrictEqual(blank);
+    expect(withCodexEnvironmentHome(blank, "   ")).toStrictEqual(blank);
+  });
+
+  it("preserves a blank homePath when only the shadow home is blank", () => {
+    const config = decodeCodexSettings({ homePath: "/tmp/instance-home", shadowHomePath: "" });
+    expect(withCodexEnvironmentHome(config, "/tmp/env-home").homePath).toBe("/tmp/instance-home");
+  });
+});
 
 const makeTempDir = Effect.fn("CodexHomeLayout.test.makeTempDir")(function* (prefix: string) {
   const fileSystem = yield* FileSystem.FileSystem;
