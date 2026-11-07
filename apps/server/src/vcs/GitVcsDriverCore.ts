@@ -2835,7 +2835,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const pullCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pullCurrentBranch"] = Effect.fn(
     "pullCurrentBranch",
-  )(function* (cwd) {
+  )(function* (cwd, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     const details = yield* readStatusDetailsLocal(cwd);
     const refName = details.branch;
     if (!refName) {
@@ -2876,7 +2876,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // needed. A large fast-forward's diffstat can exceed the output cap, which must not fail a
     // pull Git applied.
     const options = {
-      timeoutMs: 30_000,
+      timeoutMs,
       appendTruncationMarker: true,
       allowNonZeroExit: true,
     };
@@ -5080,8 +5080,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     pushCurrentBranch: Effect.fnUntraced(function* (cwd, fallbackBranch, options) {
       return yield* withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options));
     }),
-    pullCurrentBranch: Effect.fnUntraced(function* (cwd) {
-      return yield* withListRefsInvalidation(cwd, pullCurrentBranch(cwd));
+    pullCurrentBranch: Effect.fnUntraced(function* (cwd, options) {
+      return yield* withListRefsInvalidation(cwd, pullCurrentBranch(cwd, options));
     }),
     readRangeContext,
     getReviewBranchCommits,
