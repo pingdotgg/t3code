@@ -334,14 +334,17 @@ it("opens a file from a diff in a project inside its repository", async () => {
   await vi.waitFor(() => expect(openedFiles(context.threadRef)).toContain("file:src/a.ts"));
 });
 
-it("opens a file from a tool call's diff by the path its agent recorded", async () => {
+it.each([
+  { name: "relative to the workspace", path: "src/a.ts" },
+  { name: "absolute", path: "/repo/apps/web/src/a.ts" },
+])("opens a file from a tool call's diff that recorded it $name", async ({ path }) => {
   using context = setup("origin/orphan");
   inRepositoryFolder(context, true);
-  // Claude's Edit can record a path relative to the workspace, unlike the repository's diffs.
+  // Claude's Edit records either; the header names both relative to the workspace.
   state.toolCallItem = {
     type: "file_change",
-    fileName: "src/a.ts",
-    diffStr: "--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-before\n+after\n",
+    fileName: path,
+    diffStr: `--- ${path}\n+++ ${path}\n@@ -1 +1 @@\n-before\n+after\n`,
   };
   useDiffPanelStore.getState().selectToolCall(context.threadRef, {
     threadId: context.threadRef.threadId,

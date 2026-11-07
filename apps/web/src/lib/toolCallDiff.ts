@@ -50,6 +50,23 @@ function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "changes"
   return `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${newPath}`)}\n--- ${before}\n+++ ${after}\n${patch.trimStart()}`;
 }
 
+const HEADER_LINE = /^(?:diff --git |--- |\+\+\+ |rename from |rename to )/;
+
+// Absolute paths under the workspace read relative to it, like the relative paths agents record.
+function relativeHeaderPaths(patch: string | undefined, workspaceRoot: string | null | undefined) {
+  const root = workspaceRoot?.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (!patch || !root) return patch;
+  const prefixes = [`${root}/`, `${root.replace(/^\/+/, "")}/`];
+  return patch
+    .split("\n")
+    .map((line) =>
+      HEADER_LINE.test(line)
+        ? prefixes.reduce((header, prefix) => header.replaceAll(prefix, ""), line)
+        : line,
+    )
+    .join("\n");
+}
+
 function recordedText(value: string | undefined) {
   const suffix = "\n… output truncated for transport";
   const truncated = value !== undefined && value.endsWith(suffix);
@@ -58,6 +75,7 @@ function recordedText(value: string | undefined) {
 
 export function toolCallDiff(
   item: Pick<FileChange, "diffStr" | "fileName" | "changes" | "oldStr" | "newStr">,
+  workspaceRoot?: string | null,
 ) {
   const diff = recordedText(item.diffStr);
   const operation = item.changes?.[0]?.operation;
@@ -65,7 +83,10 @@ export function toolCallDiff(
   const before = recordedText(item.oldStr ?? (operation === "delete" ? emptyContent : undefined));
   const after = recordedText(item.newStr ?? (operation === "add" ? emptyContent : undefined));
   return {
-    patch: toolCallPatch({ ...item, ...(diff.text === undefined ? {} : { diffStr: diff.text }) }),
+    patch: relativeHeaderPaths(
+      toolCallPatch({ ...item, ...(diff.text === undefined ? {} : { diffStr: diff.text }) }),
+      workspaceRoot,
+    ),
     content: diff.text?.trim()
       ? []
       : [

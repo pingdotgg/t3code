@@ -104,6 +104,30 @@ describe("toolCallDiff", () => {
     });
   });
 
+  it("names files under the workspace relative to it, as recorded relative paths are", () => {
+    const root = "/Users/me/project";
+    const paths = (patch: string | undefined) => {
+      const rendered = getRenderablePatch(patch);
+      if (rendered?.kind !== "files") throw new Error("Expected a file diff");
+      return rendered.files.map((file) => resolveFileDiffPath(file));
+    };
+    const recorded = `--- ${root}/docs/plan.md\n+++ ${root}/docs/plan.md\n@@ -1 +1 @@\n-a ${root}/x\n+b\n`;
+    const { patch } = toolCallDiff({ fileName: `${root}/docs/plan.md`, diffStr: recorded }, root);
+    expect(paths(patch)).toEqual(["docs/plan.md"]);
+    expect(patch).toContain(`-a ${root}/x`);
+    expect(
+      paths(
+        toolCallDiff({ fileName: `${root}/src/a.ts`, diffStr: "@@ -1 +1 @@\n-x\n+y\n" }, `${root}/`)
+          .patch,
+      ),
+    ).toEqual(["src/a.ts"]);
+    expect(
+      paths(
+        toolCallDiff({ fileName: "/elsewhere/b.ts", diffStr: "@@ -1 +1 @@\n-x\n+y\n" }, root).patch,
+      ),
+    ).toEqual(["/elsewhere/b.ts"]);
+  });
+
   it("preserves complete patches and unsupported provider output", () => {
     for (const operation of ["add", "delete"]) {
       const diffStr = [
