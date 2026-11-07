@@ -39,12 +39,15 @@ import {
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as OpenShellFleetDrain from "../environment/OpenShellFleetDrain.ts";
 import * as OpenShellFleetDrainAdapters from "../environment/OpenShellFleetDrainAdapters.ts";
+import * as OpenShellFleetBundleImport from "../environment/OpenShellFleetBundleImport.ts";
 import * as ServerConfig from "../config.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as OpenShellFleetStore from "../environment/OpenShellFleetStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerEnvironmentRegistry from "../peer/PeerEnvironmentRegistry.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** ServerSecretStore slot holding the gateway credential (spec section 4.2). */
 const GATEWAY_CREDENTIAL_SLOT = "openshell-gateway-credential";
@@ -136,6 +139,12 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const http = yield* HttpClient.HttpClient;
   const links = yield* PeerLinks.PeerLinks;
+  // The post-drain bundle import writes through the same event sink and import
+  // table the orchestration projections use, so imported threads are ordinary
+  // archived threads (spec section 7.4). Optional: hosts that do not build the
+  // orchestration runtime keep draining, and the import warns on the row.
+  const maybeEventSink = yield* Effect.serviceOption(EventSink.EventSinkV2);
+  const maybeSql = yield* Effect.serviceOption(SqlClient.SqlClient);
 
   // One client per process: a gateway-url change applies after a restart.
   // `cached` also serializes concurrent first calls, so two callers cannot build
@@ -228,20 +237,30 @@ const make = Effect.gen(function* () {
     client: OpenShellGatewayClient,
   ) {
     const context = yield* Effect.context<never>();
+    const linkResolve = (environmentId: EnvironmentId) =>
+      links.resolve(environmentId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OpenShellFleetDrain.FleetDrainStepError({
+              step: "shell",
+              message: cause instanceof Error ? cause.message : "The worker link is unusable.",
+            }),
+        ),
+      );
+    const bundleImporter =
+      Option.isSome(maybeEventSink) && Option.isSome(maybeSql)
+        ? OpenShellFleetBundleImport.makeFleetBundleImporter({
+            stateDir: config.stateDir,
+            attachmentsDir: config.attachmentsDir,
+            fs,
+            path,
+            now: Clock.currentTimeMillis,
+            eventSink: maybeEventSink.value,
+            store: OpenShellFleetBundleImport.sqliteFleetDrainImportStore(maybeSql.value),
+          })
+        : null;
     const executor = OpenShellFleetDrain.makeDrainExecutor({
-      source: OpenShellFleetDrainAdapters.linkDrainSource({
-        resolve: (environmentId) =>
-          links.resolve(environmentId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OpenShellFleetDrain.FleetDrainStepError({
-                  step: "shell",
-                  message: cause instanceof Error ? cause.message : "The worker link is unusable.",
-                }),
-            ),
-          ),
-        http,
-      }),
+      source: OpenShellFleetDrainAdapters.linkDrainSource({ resolve: linkResolve, http }),
       sink: OpenShellFleetDrainAdapters.fileDrainSink({ stateDir: config.stateDir, fs, path }),
       git: OpenShellFleetDrainAdapters.execDrainGitPush({
         exec: (sandboxName, command) =>
@@ -256,9 +275,27 @@ const make = Effect.gen(function* () {
       }),
       now: Clock.currentTimeMillis,
     });
-    return OpenShellFleetDrain.asDriverPort(executor, (effect) =>
-      Effect.runPromiseWith(context)(effect),
-    );
+    const runBundleImport = (args: { environmentId: EnvironmentId; drainId: string }) =>
+      bundleImporter === null
+        ? Promise.resolve({
+            imported: 0,
+            skipped: 0,
+            warnings: [
+              "The orchestration runtime is not built here, so drained bundles were not imported.",
+            ],
+          })
+        : Effect.runPromiseWith(context)(
+            bundleImporter.importBundle({
+              environmentId: args.environmentId,
+              drainId: args.drainId,
+            }),
+          );
+    return {
+      port: OpenShellFleetDrain.asDriverPort(executor, (effect) =>
+        Effect.runPromiseWith(context)(effect),
+      ),
+      bundleImporter: { import: runBundleImport },
+    };
   });
 
   const buildDriver = Effect.fn("OpenShellFleetService.buildDriver")(function* (
@@ -311,13 +348,15 @@ const make = Effect.gen(function* () {
         : { workerDefaults: openshell.workerDefaults }),
       ...(openshell.sharedCache === undefined ? {} : { sharedCache: openshell.sharedCache }),
     };
+    const drain = yield* drainFor(client);
     return new OpenShellGatewayDriver({
       client,
       settings: driverSettings,
       ...(Option.isSome(selfId) ? { managingEnvironmentId: selfId.value } : {}),
       registrar,
       index,
-      drainExecutor: yield* drainFor(client),
+      drainExecutor: drain.port,
+      bundleImporter: drain.bundleImporter,
       fallbackIdempotencyKey: () => run(durableFallbackKey),
     });
   });

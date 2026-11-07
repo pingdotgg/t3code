@@ -117,6 +117,23 @@ export interface FleetDrainOutcome {
   readonly finishedAt: number | null;
 }
 
+/**
+ * Imports drained thread bundles as archived threads after a verified drain.
+ * The server injects a storage-backed implementation; absence only skips the
+ * import — the drained copies stay safe on disk. Failures never fail the
+ * drain: the driver records them as warnings on the fleet row.
+ */
+export interface FleetBundleImporter {
+  readonly import: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly drainId: string;
+  }) => Promise<{
+    readonly imported: number;
+    readonly skipped: number;
+    readonly warnings: ReadonlyArray<string>;
+  }>;
+}
+
 /** One worker as the fleet index keeps it; mirrors the phase-2 `OpenShellFleetStore` rows. */
 export interface FleetWorkerRow {
   readonly environmentId: EnvironmentId;
@@ -280,6 +297,8 @@ export interface OpenShellGatewayDriverOptions {
   readonly registrar?: WorkerPairingRegistrar;
   /** Drain protocol adapter; absent, drain fails and removal refuses. */
   readonly drainExecutor?: FleetDrainExecutor;
+  /** Post-drain bundle import; absent, drained bundles stay on disk unimported. */
+  readonly bundleImporter?: FleetBundleImporter;
   readonly index?: FleetWorkerIndex;
   /** Epoch-ms clock, injectable for TTL tests. */
   readonly now?: () => number;
@@ -327,6 +346,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
   private readonly managingEnvironmentId: string | undefined;
   private readonly registrar: WorkerPairingRegistrar | undefined;
   private readonly drainExecutor: FleetDrainExecutor | undefined;
+  private readonly bundleImporter: FleetBundleImporter | undefined;
   private readonly index: FleetWorkerIndex;
   private readonly now: () => number;
   private readonly fallbackKey: () => Promise<string>;
@@ -338,6 +358,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     this.managingEnvironmentId = options.managingEnvironmentId;
     this.registrar = options.registrar;
     this.drainExecutor = options.drainExecutor;
+    this.bundleImporter = options.bundleImporter;
     this.index = options.index ?? memoryFleetWorkerIndex();
     this.now = options.now ?? Date.now;
     this.fallbackKey = options.fallbackIdempotencyKey ?? (async () => fallbackIdempotencyKey());
@@ -614,7 +635,20 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     };
     await this.index.setDrain(environmentId, progress);
     if (outcome.state === "acked") {
-      await this.index.setState(environmentId, "deleting");
+      // The bundle is verified on disk, so an import problem is a warning on
+      // the row, never a drain failure: the copies are already nothing-lost.
+      let warning: string | undefined;
+      if (this.bundleImporter !== undefined) {
+        try {
+          const imported = await this.bundleImporter.import({ environmentId, drainId });
+          if (imported.warnings.length > 0) warning = imported.warnings.join("; ");
+        } catch (cause) {
+          warning = `Importing drained threads failed: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }`;
+        }
+      }
+      await this.index.setState(environmentId, "deleting", warning);
       return { drainId, progress, state: "deleting" };
     }
     await this.index.setState(
