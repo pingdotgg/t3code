@@ -5,7 +5,7 @@ import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 type Scroller = "shadow" | "none" | "shadow-dialog";
 type Step = readonly [
-  event: number | "begin" | "end" | "show-scroller",
+  event: number | "begin" | "end" | "show-scroller" | "gain-overflow",
   after?: "remove" | "close-dialog",
 ];
 
@@ -52,10 +52,17 @@ describe("HistorySwipeNavigation", () => {
       null,
     ],
     [
-      "a history swipe over content replaced without overflow",
+      "a history swipe over content replaced without overflow, released over a scroller",
       "none",
       0,
-      [[-60, "remove"], [-70]],
+      [[-60, "remove"], [-70], ["show-scroller"]],
+      "back",
+    ],
+    [
+      "a history swipe whose target gains overflow",
+      "none",
+      0,
+      [[-60], ["gain-overflow"], [-70]],
       "back",
     ],
   ])("%s", async (_name, scroller, scrollLeft, steps, navigates) => {
@@ -84,6 +91,9 @@ describe("HistorySwipeNavigation", () => {
         for (const listener of listeners.end) listener();
       } else if (event === "show-scroller") {
         ({ viewport, content } = mountPanel(screen.container, "shadow", 400));
+      } else if (event === "gain-overflow") {
+        viewport.style.overflowX = "auto";
+        content.style.width = "1000px";
       } else {
         content.dispatchEvent(
           new WheelEvent("wheel", { deltaX: event, bubbles: true, composed: true }),
