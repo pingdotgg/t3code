@@ -4360,6 +4360,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("lets a slow checkout finish instead of killing it partway", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "slow-target"]);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const checkoutStarted = yield* Deferred.make<void>();
+        const releaseCheckout = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (ChildProcess.isStandardCommand(command) && command.args.includes("checkout")) {
+              yield* Deferred.succeed(checkoutStarted, undefined);
+              yield* Deferred.await(releaseCheckout);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+
+        const switching = yield* driver
+          .switchRef({ cwd, refName: "slow-target" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(checkoutStarted);
+        yield* TestClock.adjust("2 minutes");
+        yield* Deferred.succeed(releaseCheckout, undefined);
+
+        assert.deepEqual(yield* Fiber.join(switching), { refName: "slow-target" });
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "slow-target");
+      }),
+    );
+
     it.effect("rejects a missing branch without restoring a matching dirty file", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

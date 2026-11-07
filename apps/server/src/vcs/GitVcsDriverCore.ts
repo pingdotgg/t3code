@@ -4947,7 +4947,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.cwd,
         [...checkoutArgs, "--"],
         {
-          timeoutMs: 10_000,
+          // Killing a checkout partway leaves the work tree half written while HEAD stays put, and a
+          // partial clone can spend a long time downloading the target's blobs.
+          timeoutMs: null,
           fallbackErrorDetail: "git checkout failed",
           // Checking out a remote branch creates a local one that tracks it.
           writesSharedConfig: !localInputExists,
