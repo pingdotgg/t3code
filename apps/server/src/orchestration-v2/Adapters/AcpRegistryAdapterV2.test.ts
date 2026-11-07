@@ -1871,6 +1871,16 @@ describe("AcpRegistryAdapterV2", () => {
             toolCallId: "shared-tool",
             content: [],
           }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            rawOutput: { stdout: "structured", stderr: "" },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [{ type: "content", content: { type: "text", text: "display" } }],
+          }),
           claudeMarker("tools complete"),
           claudeFrames.idle("end_turn"),
           claudeFrames.closeRequest,
@@ -1898,6 +1908,8 @@ describe("AcpRegistryAdapterV2", () => {
           { type: "Text", text: "onetwo" },
           [{ type: "content", content: { type: "text", text: "replacement" } }],
           [],
+          { stdout: "structured", stderr: "" },
+          { stdout: "structured", stderr: "" },
         ],
       );
       assert.equal(new Set(childTools.map((item) => item.id)).size, 1);

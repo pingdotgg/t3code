@@ -3031,7 +3031,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               },
               `${previous?.data.rawOutput == null ? (textFromUnknown(previous?.data.content) ?? "") : toolOutputText(previous)}${text}`,
             );
-          } else if (toolCall.data.content !== undefined && toolCall.data.rawOutput === undefined) {
+          } else if (
+            toolCall.data.content !== undefined &&
+            toolCall.data.rawOutput === undefined &&
+            unknownRecord(previous?.data.rawOutput)?.type === "Text"
+          ) {
             toolCall = { ...toolCall, data: { ...toolCall.data, rawOutput: null } };
           }
           const merged = mergeToolCallState(previous, toolCall);
