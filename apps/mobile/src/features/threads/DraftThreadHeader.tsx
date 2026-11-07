@@ -13,7 +13,25 @@ import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "../../state/vcs";
 import { useVcsActionState } from "../../state/use-vcs-action-state";
+import { draftOpenGitControls } from "./thread-open-chrome";
 import { ThreadHeader } from "./ThreadHeader";
+
+/** Reserved git/files chrome so the new-task push never paints a bare title bar. */
+export function NewTaskDraftShellHeader() {
+  return (
+    <ThreadHeader
+      draft
+      title="New thread"
+      subtitle=""
+      hasThreadCwd={false}
+      fileInspectorSupported={false}
+      inspectorMode={null}
+      onToggleInspector={() => {}}
+      onOpenFilesInspector={() => {}}
+      gitControls={draftOpenGitControls()}
+    />
+  );
+}
 
 export function DraftThreadHeader(props: {
   readonly thread: EnvironmentThreadShell;

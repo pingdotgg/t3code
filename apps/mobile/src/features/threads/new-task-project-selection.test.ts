@@ -201,6 +201,19 @@ describe("newTaskDestination", () => {
     });
   });
 
+  it("trusts project refs without scanning the projects list", () => {
+    expect(
+      newTaskDestination({
+        requestId: "request",
+        useLastProject: true,
+        currentProject: { environmentId: "env", projectId: "proj" },
+        lastProject: { environmentId: "other", projectId: "remembered" },
+      }),
+    ).toEqual({
+      draft: { requestId: "request", environmentId: "env", projectId: "proj" },
+    });
+  });
+
   it("opens the picker for an archived last project, but keeps an archived current one", () => {
     const archived = { ...makeProject("archived"), archivedAt: "2026-01-01T00:00:00.000Z" };
     expect(

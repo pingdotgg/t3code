@@ -1,4 +1,4 @@
-import { memo, useId } from "react";
+import { memo, startTransition, useEffect, useId, useState } from "react";
 import { Pressable, View } from "react-native";
 import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
 import { ScopedTheme, ScopedVariables } from "uniwind";
@@ -251,6 +251,7 @@ function ModeCard(props: {
   readonly onPress: () => void;
   readonly selected: boolean;
   readonly themeIds: MobileThemeIds;
+  readonly previewReady: boolean;
 }) {
   return (
     <Pressable
@@ -266,7 +267,11 @@ function ModeCard(props: {
       disabled={props.disabled}
       onPress={props.onPress}
     >
-      <ModePreview mode={props.mode} themeIds={props.themeIds} />
+      {props.previewReady ? (
+        <ModePreview mode={props.mode} themeIds={props.themeIds} />
+      ) : (
+        <View className="bg-border/30 h-24 w-14 self-center rounded-[16px]" />
+      )}
       <Text
         className={
           props.selected
@@ -294,6 +299,14 @@ export function ThemeAppearanceSection() {
     themeMode,
     systemColorsAvailable,
   } = useAppearancePreferences();
+  // ScopedTheme mode previews + SVG orbs are the slow part — labels first, then previews.
+  const [previewsReady, setPreviewsReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers theme/mode previews until after Appearance chrome commits
+  useEffect(() => {
+    startTransition(() => {
+      setPreviewsReady(true);
+    });
+  }, []);
 
   return (
     <View className="gap-6">
@@ -307,6 +320,7 @@ export function ThemeAppearanceSection() {
               label={mode.label}
               mode={mode.id}
               onPress={() => setThemeMode(mode.id)}
+              previewReady={previewsReady}
               selected={mode.id === themeMode}
               themeIds={themeIds}
             />
@@ -316,22 +330,26 @@ export function ThemeAppearanceSection() {
 
       <View className="gap-3">
         <SectionLabel>Themes</SectionLabel>
-        <View className="flex-row flex-wrap gap-3">
-          {MOBILE_THEME_OPTIONS.filter(
-            (theme) => theme.id !== "material-you" || systemColorsAvailable,
-          ).map((theme) => (
-            <ThemeCard
-              disabled={!isReady}
-              key={theme.id}
-              label={theme.label}
-              darkSelected={theme.id === themeIds.dark}
-              lightSelected={theme.id === themeIds.light}
-              onSelect={(appearance) => setThemeIdForAppearance(appearance, theme.id)}
-              onSelectBoth={() => setThemeIdForBothAppearances(theme.id)}
-              themeId={theme.id}
-            />
-          ))}
-        </View>
+        {previewsReady ? (
+          <View className="flex-row flex-wrap gap-3">
+            {MOBILE_THEME_OPTIONS.filter(
+              (theme) => theme.id !== "material-you" || systemColorsAvailable,
+            ).map((theme) => (
+              <ThemeCard
+                disabled={!isReady}
+                key={theme.id}
+                label={theme.label}
+                darkSelected={theme.id === themeIds.dark}
+                lightSelected={theme.id === themeIds.light}
+                onSelect={(appearance) => setThemeIdForAppearance(appearance, theme.id)}
+                onSelectBoth={() => setThemeIdForBothAppearances(theme.id)}
+                themeId={theme.id}
+              />
+            ))}
+          </View>
+        ) : (
+          <View className="bg-border/30 h-40 rounded-[24px]" />
+        )}
       </View>
     </View>
   );

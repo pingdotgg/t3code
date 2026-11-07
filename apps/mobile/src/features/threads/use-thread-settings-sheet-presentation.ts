@@ -57,22 +57,15 @@ export function useThreadSettingsSheetPresentation(input: {
     const openingId = openingIdRef.current + 1;
     openingIdRef.current = openingId;
 
-    // Dismiss the keyboard before blur, then present next frame so native transitions overlap.
-    void KeyboardController.dismiss({ animated: true });
+    // Dismiss without animation and present in the same turn so the sheet does not wait a frame.
+    void KeyboardController.dismiss({ animated: false });
     editorRef.current?.blur();
-
-    requestAnimationFrame(() => {
-      // A composer unmounted during the frame takes its editor with it; present nothing.
-      if (
-        !isActiveRef.current ||
-        openingIdRef.current !== openingId ||
-        editorRef.current === null
-      ) {
-        return;
-      }
-      setPhase("visible");
-      onPresent();
-    });
+    // A composer that already unmounted takes its editor with it; present nothing.
+    if (!isActiveRef.current || openingIdRef.current !== openingId || editorRef.current === null) {
+      return;
+    }
+    setPhase("visible");
+    onPresent();
   };
 
   const restoreEditorFocus = () => {

@@ -278,7 +278,7 @@ it("owns a status stream only while the draft is active, retaining draft choices
   act(() => screen.current.setPrompt("keep this draft"));
 
   await act(async () => screen.current.setProject(screen.projects[1]!));
-  expect(screen.current.prompt).toBe("keep this draft");
+  expect(screen.snapshot(draftKey).text).toBe("keep this draft");
   expect(screen.current.draftKey).toBe(draftKey);
   expect(screen.events).toEqual(["start:/a", "start:/b"]);
   await act(async () => screen.current.selectEnvironment(EnvironmentId.make("two")));
@@ -316,13 +316,13 @@ it("owns a status stream only while the draft is active, retaining draft choices
   expect.soft(screen.events.filter((event) => event.startsWith("stop:"))).toHaveLength(3);
   expect(mocks.writeSettings).toHaveBeenCalledTimes(settingsWrites);
   expect(screen.snapshot(draftKey).workspaceSelection).toEqual(chosenWorkspace);
-  expect(screen.current.prompt).toBe("keep this draft");
+  expect(screen.snapshot(draftKey).text).toBe("keep this draft");
 
   screen.checkout("updated-checkout");
   await screen.render(true);
   expect.soft(screen.events.filter((event) => event.startsWith("start:"))).toHaveLength(4);
   expect.soft(screen.current.currentCheckoutBranchName).toBe("updated-checkout");
-  expect(screen.current.prompt).toBe("keep this draft");
+  expect(screen.snapshot(draftKey).text).toBe("keep this draft");
   expect(screen.snapshot(draftKey).workspaceSelection).toEqual(chosenWorkspace);
 });
 

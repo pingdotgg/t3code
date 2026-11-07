@@ -2,7 +2,7 @@ import { Toolbar } from "./Toolbar";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { NavigationContext } from "@react-navigation/native";
-import { use, useId, useLayoutEffect } from "react";
+import { use, useEffect, useId, useLayoutEffect, useState } from "react";
 import { View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
@@ -78,15 +78,59 @@ export function AppBar(props: AppBarProps) {
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const { search, menus } = props;
   const menu = menus?.[0];
-  const compactSearch =
+  // Reserve mail-toolbar chrome from the first frame even before search attaches, so menus[0]
+  // never flashes as a trailing bar button during the push.
+  const wantsCompactSearch =
     search !== undefined &&
     (search.compactToolbar ?? !layout.usesSplitView) &&
     usesNativeMailSearchToolbar;
-  const visibleMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
+  // Token identity: search stays detached until transitionEnd marks this key ready.
+  const searchAttachKey = wantsCompactSearch ? `${headerId}:compact` : null;
+  const [attachedSearchKey, setAttachedSearchKey] = useState<string | null>(null);
+  const searchAttached = searchAttachKey === null || attachedSearchKey === searchAttachKey;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches native search after the push so UIKit does not flash its trailing bar-button form
+  useEffect(() => {
+    if (searchAttachKey === null) return;
+    let done = false;
+    let opening = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      setAttachedSearchKey(searchAttachKey);
+    };
+    const stackNavigation = navigation as unknown as {
+      readonly addListener: (
+        type: "transitionStart" | "transitionEnd",
+        listener: (event: { readonly data: { readonly closing: boolean } }) => void,
+      ) => () => void;
+    } | null;
+    const removeStart = stackNavigation?.addListener("transitionStart", ({ data }) => {
+      if (!data.closing) opening = true;
+    });
+    const removeEnd = stackNavigation?.addListener("transitionEnd", ({ data }) => {
+      if (!data.closing) finish();
+    });
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        if (!opening) finish();
+      });
+    });
+    const fallback = setTimeout(finish, 1_000);
+    return () => {
+      done = true;
+      removeStart?.();
+      removeEnd?.();
+      cancelAnimationFrame(frame);
+      clearTimeout(fallback);
+    };
+  }, [navigation, searchAttachKey]);
+  const compactSearch = wantsCompactSearch && searchAttached;
+  const activeSearch = wantsCompactSearch && !searchAttached ? undefined : search;
+  const visibleMenus = wantsCompactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
   // Where the mail toolbar isn't used, the Duo keeps search at the bottom of the pane like its
   // workspace lists; elsewhere inline search is a button in the bar.
   const duoBottomSearch =
-    search !== undefined &&
+    activeSearch !== undefined &&
     !compactSearch &&
     NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED &&
     isDuoDevice(deviceType);
@@ -94,7 +138,11 @@ export function AppBar(props: AppBarProps) {
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={[props.optionsVersion, compactSearch ? menu : undefined]}
+        optionsVersion={[
+          props.optionsVersion,
+          wantsCompactSearch ? menu : undefined,
+          searchAttached,
+        ]}
         options={{
           headerShown: true,
           headerBackVisible:
@@ -108,14 +156,14 @@ export function AppBar(props: AppBarProps) {
           ...(props.matchSearchSurface
             ? { contentStyle: { backgroundColor: themeVariables["--color-sheet-solid"] } }
             : undefined),
-          ...(search
+          ...(activeSearch
             ? {
                 unstable_headerToolbarItems: compactSearch
                   ? () => [
                       createNativeMailSearchToolbarItem({
                         showsSearchDismissButton: true,
-                        placeholder: search.compactPlaceholder ?? search.placeholder,
-                        onSearchTextChange: search.onChangeText,
+                        placeholder: activeSearch.compactPlaceholder ?? activeSearch.placeholder,
+                        onSearchTextChange: activeSearch.onChangeText,
                         searchTextChangeId: `${headerId}-search-text`,
                         ...(menu
                           ? {
@@ -133,20 +181,25 @@ export function AppBar(props: AppBarProps) {
                       allowToolbarIntegration: true,
                       ...(duoBottomSearch
                         ? { placement: "integrated" as const }
-                        : NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED && search.mode === "inline"
+                        : NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED && activeSearch.mode === "inline"
                           ? { placement: "integratedButton" as const }
                           : undefined),
                       autoCapitalize: "none",
                       hideNavigationBar: false,
-                      ...(search.mode === "inline" || duoBottomSearch
+                      ...(activeSearch.mode === "inline" || duoBottomSearch
                         ? { obscureBackground: false }
                         : undefined),
-                      placeholder: search.placeholder,
-                      onChangeText: (event) => search.onChangeText(event.nativeEvent.text),
-                      onCancelButtonPress: () => search.onChangeText(""),
+                      placeholder: activeSearch.placeholder,
+                      onChangeText: (event) => activeSearch.onChangeText(event.nativeEvent.text),
+                      onCancelButtonPress: () => activeSearch.onChangeText(""),
                     },
               }
-            : undefined),
+            : wantsCompactSearch
+              ? {
+                  // Keep the mail-toolbar filter slot reserved before search attaches.
+                  unstable_headerToolbarItems: () => [],
+                }
+              : undefined),
         }}
       />
       {props.onClose ? (

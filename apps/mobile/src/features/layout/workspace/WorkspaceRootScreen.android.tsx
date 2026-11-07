@@ -3,9 +3,11 @@ import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { useStableEdgeInsetsOverride } from "../../../lib/stable-edge-insets";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppBar } from "../../../components/ui/AppBar";
 import { WorkspaceEmptyDetail } from "../WorkspaceEmptyDetail";
@@ -38,17 +40,23 @@ function WorkspaceRoot() {
   const enabled = useEnabledNavigationTabs();
   const insets = useSafeAreaInsets();
   const { fabClearance, fabSize } = useAndroidControlSizing();
-  const context = {
-    ...workspace,
-    bottomClearance: layout.usesSplitView
-      ? workspace.bottomClearance
-      : floatingTabsEnabled
-        ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
-        : workspace.state.selectedTab === "threads"
-          ? fabClearance + 16
-          : 16,
-  };
+  const bottomClearance = layout.usesSplitView
+    ? workspace.bottomClearance
+    : floatingTabsEnabled
+      ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
+      : workspace.state.selectedTab === "threads"
+        ? fabClearance + 16
+        : 16;
+  const context = useMemo(() => ({ ...workspace, bottomClearance }), [bottomClearance, workspace]);
   const tab = workspace.state.selectedTab;
+  const safeAreaOverride = layout.usesSplitView
+    ? null
+    : floatingTabsEnabled
+      ? tab === "usage"
+        ? { bottom: bottomClearance }
+        : null
+      : { bottom: 0 };
+  const safeAreaInsets = useStableEdgeInsetsOverride(insets, safeAreaOverride);
 
   return (
     <WorkspaceTabsContext value={context}>
@@ -56,17 +64,7 @@ function WorkspaceRoot() {
         {!layout.usesSplitView ? (
           <NativeStackScreenOptions options={{ headerShown: false }} />
         ) : null}
-        <SafeAreaInsetsContext
-          value={
-            layout.usesSplitView
-              ? insets
-              : floatingTabsEnabled
-                ? tab === "usage"
-                  ? { ...insets, bottom: context.bottomClearance }
-                  : insets
-                : { ...insets, bottom: 0 }
-          }
-        >
+        <SafeAreaInsetsContext value={safeAreaInsets}>
           {enabled.length === 0 ? (
             layout.usesSplitView ? (
               <View className="flex-1 bg-screen" />

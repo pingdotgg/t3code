@@ -1,5 +1,5 @@
 import { useRoute } from "@react-navigation/native";
-import type { ReactNode } from "react";
+import { startTransition, useEffect, useState, type ReactNode } from "react";
 import { View } from "react-native";
 
 import type { AppBarProps } from "../../../components/ui/AppBar.types";
@@ -16,6 +16,17 @@ import {
 
 export { SettingsScreenContent };
 
+/** Placeholder height so promoting the deferred body does not jump the scroll edge. */
+function SettingsOpenShellBody() {
+  return (
+    <View className="gap-4 px-5 pt-4">
+      <View className="bg-border/40 h-12 rounded-2xl" />
+      <View className="bg-border/30 h-12 rounded-2xl" />
+      <View className="bg-border/20 h-12 rounded-2xl" />
+    </View>
+  );
+}
+
 export function SettingsScreen(
   props: Pick<
     AppBarProps,
@@ -23,6 +34,8 @@ export function SettingsScreen(
   > & {
     readonly children: ReactNode;
     readonly workspaceRoot?: boolean;
+    /** When true, mount children on the first frame (page stages its own deferred work). */
+    readonly eagerBody?: boolean;
   },
 ) {
   const route = useRoute();
@@ -33,6 +46,14 @@ export function SettingsScreen(
   const cover = deviceType === "duo-folded";
   // Opened as a workspace tab, the Settings list has nothing to go back to.
   const workspaceRoot = props.workspaceRoot || (workspace !== null && route.name === "Settings");
+  const [bodyReady, setBodyReady] = useState(props.eagerBody === true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers settings page body until after the push frame
+  useEffect(() => {
+    if (props.eagerBody) return;
+    startTransition(() => {
+      setBodyReady(true);
+    });
+  }, [props.eagerBody]);
 
   const surfaceClassName = workspaceRoot || cover ? "bg-screen" : "bg-sheet";
 
@@ -51,7 +72,9 @@ export function SettingsScreen(
       />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
         <ScreenScrollViewSurface value={surfaceClassName}>
-          <SettingsScreenContent>{props.children}</SettingsScreenContent>
+          <SettingsScreenContent>
+            {bodyReady ? props.children : <SettingsOpenShellBody />}
+          </SettingsScreenContent>
         </ScreenScrollViewSurface>
       </ScreenScrollViewBottomInset>
     </View>

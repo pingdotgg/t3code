@@ -12,11 +12,13 @@ import {
   type AdaptiveWorkspaceActions,
 } from "./adaptive-workspace-context";
 import { threadSelectionDeferral } from "./deferred-navigation";
+import { useStableEdgeInsetsOverride } from "../../lib/stable-edge-insets";
 import { uuidv4 } from "../../lib/uuid";
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
 import {
+  startTransition,
   use,
   useEffect,
   useEffectEvent,
@@ -53,9 +55,7 @@ import {
   isWorkspaceListPath,
   nativeInspectorColumnWidth,
 } from "../../lib/layout";
-import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { useProjects } from "../../state/entities";
 import { environmentThreadShells } from "../../state/threads";
 import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
 import { mobilePreferencesAtom } from "../../state/preferences";
@@ -103,7 +103,11 @@ import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { AndroidHingeObserver } from "../../native/AndroidHingeObserver";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { useAndroidWorkspaceRoot } from "./workspace/AndroidWorkspaceTabsProvider";
-import { dispatchRootStackReset, rootStackState } from "../../lib/root-stack-reset";
+import {
+  dispatchRootStackReset,
+  rootStackRoutesUnchanged,
+  rootStackState,
+} from "../../lib/root-stack-reset";
 import {
   currentWorkspaceSelections,
   workspaceSelectionCheck,
@@ -224,21 +228,25 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly workspaceRouteKey: string | undefined;
   readonly workspaceRouteName: string | undefined;
 }) {
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  if (!AsyncResult.isSuccess(preferencesResult)) {
-    return AsyncResult.isFailure(preferencesResult) ? (
-      <AdaptiveWorkspaceLayoutContent
-        {...props}
-        projectGroupingMode={DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS.sidebarProjectGroupingMode}
-      />
-    ) : null;
-  }
-  const groupingSettings = resolveMobileProjectGroupingSettings(preferencesResult.value);
+  // Field selectors: filter persistence must not rebuild the workspace tree.
+  const preferencesStatus = useAtomValue(mobilePreferencesAtom, (result) =>
+    AsyncResult.isSuccess(result) ? "ready" : AsyncResult.isFailure(result) ? "failed" : "loading",
+  );
+  const projectGroupingMode = useAtomValue(mobilePreferencesAtom, (result) =>
+    AsyncResult.isSuccess(result)
+      ? resolveMobileProjectGroupingSettings(result.value).sidebarProjectGroupingMode
+      : DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS.sidebarProjectGroupingMode,
+  );
+  if (preferencesStatus === "loading") return null;
   return (
     <AdaptiveWorkspaceLayoutContent
       {...props}
-      projectGroupingMode={groupingSettings.sidebarProjectGroupingMode}
-      savedThreadListFilters={preferencesResult.value.threadListFilters}
+      projectGroupingMode={
+        preferencesStatus === "failed"
+          ? DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS.sidebarProjectGroupingMode
+          : projectGroupingMode
+      }
+      hydrateThreadListFilters={preferencesStatus === "ready"}
     />
   );
 }
@@ -251,9 +259,15 @@ function AdaptiveWorkspaceLayoutContent(
     readonly workspaceRouteName: string | undefined;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
-    readonly savedThreadListFilters?: ThreadListFilters | undefined;
+    /** When true, read saved thread-list filters once on mount (not on later preference writes). */
+    readonly hydrateThreadListFilters?: boolean;
   },
 ) {
+  const [savedThreadListFilters] = useState(() => {
+    if (!props.hydrateThreadListFilters) return undefined;
+    const result = appAtomRegistry.get(mobilePreferencesAtom);
+    return AsyncResult.isSuccess(result) ? result.value.threadListFilters : undefined;
+  });
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const projectGroupingMode = props.projectGroupingMode;
   const nativeWorkspace = use(NativeWorkspaceModeContext);
@@ -433,48 +447,50 @@ function AdaptiveWorkspaceLayoutContent(
   // Routes still on the stack remember their reveal, so going back to one keeps the user's choice.
   const revealedInspectors = useRef<ReadonlyMap<string, string>>(new Map());
   const workspaceInspectorOwner = useRef<symbol | null>(null);
-  const registerWorkspaceInspector = (
-    content: InspectorContent,
-    routeKey: string | undefined,
-    revealKey?: string,
-  ) => {
-    const owner = Symbol("workspace-inspector");
-    workspaceInspectorOwner.current = owner;
-    setWorkspaceInspector({ content, active: true, routeKey });
-    if (
-      routeKey !== undefined &&
-      revealKey !== undefined &&
-      revealedInspectors.current.get(routeKey) !== revealKey
-    ) {
-      const state = rootStackState(navigation);
-      const live = new Set(state?.routes.slice(0, state.index + 1).map((route) => route.key));
-      revealedInspectors.current = new Map(
-        [...revealedInspectors.current, [routeKey, revealKey] as const].filter(
-          ([key]) => live.has(key) || key === routeKey,
-        ),
-      );
-      setFileInspectorPreferredVisible(true);
-    }
-
-    return () => {
-      // Outgoing screens deactivate after incoming registration; only the current owner may deactivate.
-      if (workspaceInspectorOwner.current !== owner) {
-        return;
+  // Effect events keep action identities stable so the workspace context does not fan out
+  // to every screen on navigation ticks that only recreate handlers.
+  const registerWorkspaceInspector = useEffectEvent(
+    (content: InspectorContent, routeKey: string | undefined, revealKey?: string) => {
+      const owner = Symbol("workspace-inspector");
+      workspaceInspectorOwner.current = owner;
+      setWorkspaceInspector({ content, active: true, routeKey });
+      if (
+        routeKey !== undefined &&
+        revealKey !== undefined &&
+        revealedInspectors.current.get(routeKey) !== revealKey
+      ) {
+        const state = rootStackState(navigation);
+        const live = new Set(state?.routes.slice(0, state.index + 1).map((route) => route.key));
+        revealedInspectors.current = new Map(
+          [...revealedInspectors.current, [routeKey, revealKey] as const].filter(
+            ([key]) => live.has(key) || key === routeKey,
+          ),
+        );
+        setFileInspectorPreferredVisible(true);
       }
-      setWorkspaceInspector((current) => (current === null ? null : { ...current, active: false }));
-    };
-  };
+
+      return () => {
+        // Outgoing screens deactivate after incoming registration; only the current owner may deactivate.
+        if (workspaceInspectorOwner.current !== owner) {
+          return;
+        }
+        setWorkspaceInspector((current) =>
+          current === null ? null : { ...current, active: false },
+        );
+      };
+    },
+  );
   const handleWorkspaceInspectorClosed = () => {
     setWorkspaceInspector((current) => (current !== null && !current.active ? null : current));
   };
-  const setPrimarySidebarVisible = (visible: boolean) => {
+  const setPrimarySidebarVisible = useEffectEvent((visible: boolean) => {
     if (layout.variant === "medium") {
       setOverlaySidebar((current) => ({ ...current, visible }));
     } else {
       setPrimarySidebarPreferredVisible(visible);
     }
-  };
-  const togglePrimarySidebar = () => {
+  });
+  const togglePrimarySidebar = useEffectEvent(() => {
     if (primarySidebarPinned) {
       return;
     }
@@ -484,7 +500,7 @@ function AdaptiveWorkspaceLayoutContent(
       return;
     }
     setPrimarySidebarVisible(!preferredSidebarVisible);
-  };
+  });
   const revealPrimarySidebar = () => {
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
@@ -502,7 +518,7 @@ function AdaptiveWorkspaceLayoutContent(
     setFileInspectorPreferredVisible(false);
     setInspectorSheetRoute(null);
   };
-  const showInspector = () => {
+  const showInspector = useEffectEvent(() => {
     setFileInspectorPreferredVisible(true);
     if (fileInspector.supported) {
       setInspectorSheetRoute(null);
@@ -511,7 +527,7 @@ function AdaptiveWorkspaceLayoutContent(
     const state = rootStackState(navigation);
     const top = workspaceRoutesOf(state?.routes.slice(0, state.index + 1) ?? []).workspace.at(-1);
     setInspectorSheetRoute(top?.key ?? null);
-  };
+  });
   const handleOpenFilesCommand = () => {
     const activeThread = parseActiveThreadPath(pathname);
     if (!layout.usesSplitView || !fileInspector.supported || activeThread === null) {
@@ -525,67 +541,91 @@ function AdaptiveWorkspaceLayoutContent(
     return true;
   };
   useHardwareKeyboardCommand("files", handleOpenFilesCommand);
-  const toggleAuxiliaryPane = () => {
+  const toggleAuxiliaryPane = useEffectEvent(() => {
     if (fileInspector.supported) {
       setFileInspectorPreferredVisible((current) => !current);
       setInspectorSheetRoute(null);
     } else if (inspectorSheetOpen) dismissInspectorSheet();
     else showInspector();
-  };
+  });
   /**
    * The one way to open a workspace tab: replaces the workspace with the tab's list and, when the
    * window has columns, the page it last showed, keeping any sheet on top. An overlay sidebar
    * stays open over that page.
    */
-  const openWorkspaceTab = (
-    tab: WorkspaceTab | "settings",
-    options?: { readonly columns?: boolean },
-  ) => {
-    const state = rootStackState(navigation);
-    if (!state) return;
-    const { workspace, overlays } = workspaceRoutesOf(state.routes.slice(0, state.index + 1));
-    const next = workspaceTabNavigationState(
-      { ...state, routes: workspace },
-      tab,
-      currentWorkspaceSelections(),
-      {
-        columns: workspaceTabColumns(Platform.OS, tab, options?.columns ?? layout.usesSplitView),
-        check: workspaceSelectionCheck,
-        overlays,
-        seedPullRequest: withKnownPullRequestSummary,
-      },
-    );
-    if (layout.variant === "medium") {
-      const opened = next.routes.at(-1 - overlays.length)?.key ?? null;
-      setOverlaySidebar((current) => ({ ...current, visible: true, keepOpenFor: opened }));
-    }
-    dispatchRootStackReset(navigation, state, next);
-  };
+  const openWorkspaceTab = useEffectEvent(
+    (tab: WorkspaceTab | "settings", options?: { readonly columns?: boolean }) => {
+      const state = rootStackState(navigation);
+      if (!state) return;
+      const { workspace: workspaceRoutes, overlays } = workspaceRoutesOf(
+        state.routes.slice(0, state.index + 1),
+      );
+      const next = workspaceTabNavigationState(
+        { ...state, routes: workspaceRoutes },
+        tab,
+        currentWorkspaceSelections(),
+        {
+          columns: workspaceTabColumns(Platform.OS, tab, options?.columns ?? layout.usesSplitView),
+          check: workspaceSelectionCheck,
+          overlays,
+          seedPullRequest: withKnownPullRequestSummary,
+        },
+      );
+      if (layout.variant === "medium") {
+        const opened = next.routes.at(-1 - overlays.length)?.key ?? null;
+        setOverlaySidebar((current) => ({ ...current, visible: true, keepOpenFor: opened }));
+      }
+      // List-only tab flips keep the same Home route; RESET would re-reconcile the whole stack.
+      if (rootStackRoutesUnchanged(state, next)) return;
+      dispatchRootStackReset(navigation, state, next);
+    },
+  );
   const handleOpenSettings = () => openWorkspaceTab("settings");
 
   /** The one way to show a page in the detail column; see `selectWorkspaceDetail`. */
-  function handleSelectDetail(detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) {
-    threadSelectionDeferral.run(() => {
-      if (Platform.OS === "android") Keyboard.dismiss();
-      setFileInspectorPreferredVisible(false);
-      setInspectorSheetRoute(null);
-      if (layout.variant === "medium") setPrimarySidebarVisible(false);
-      workspace?.dispatch({
-        type: "select",
-        tab: detail.name === "Thread" ? "threads" : "pullRequests",
+  const handleSelectDetail = useEffectEvent(
+    (detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) => {
+      threadSelectionDeferral.run(() => {
+        // Dispatch first so the native push can start on this frame. Warming, keyboard, and
+        // chrome updates run after — they used to steal the press frame before the transition.
+        navigation.dispatch(selectWorkspaceDetail(detail, sheet));
+        startOpeningDetail(detail);
+        queueMicrotask(() => {
+          Keyboard.dismiss();
+          setFileInspectorPreferredVisible(false);
+          setInspectorSheetRoute(null);
+          if (layout.variant === "medium") setPrimarySidebarVisible(false);
+          startTransition(() => {
+            workspace?.dispatch({
+              type: "select",
+              tab: detail.name === "Thread" ? "threads" : "pullRequests",
+            });
+          });
+        });
       });
-      startOpeningDetail(detail);
-      navigation.dispatch(selectWorkspaceDetail(detail, sheet));
-    });
-  }
+    },
+  );
   const handleSelectThreadRoute = (params: ReactNavigation.RootParamList["Thread"]) =>
     handleSelectDetail({ name: "Thread", params });
 
-  const projects = useProjects();
   const compactAndroidSettings =
     Platform.OS === "android" && androidSettingsOpen && !layout.usesSplitView;
-  // Reads the open page when pressed, so the layout context doesn't change on every navigation.
-  const handleStartNewTask = () => {
+  const contentSafeAreaOverride =
+    floatingTabsEnabled && (compactAndroidSettings || (layout.usesSplitView && workspacePage))
+      ? {
+          bottom:
+            safeAreaInsets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + floatingTabs.height,
+        }
+      : compactAndroidSettings
+        ? { bottom: 0 }
+        : null;
+  const contentSafeAreaInsets = useStableEdgeInsetsOverride(
+    safeAreaInsets,
+    contentSafeAreaOverride,
+  );
+  // Prefer the open thread's project, else the remembered one; the draft screen opens the
+  // picker if a remembered id is gone. Skip the full projects scan so New chat can push now.
+  const handleStartNewTask = useEffectEvent(() => {
     const state = rootStackState(navigation);
     const currentRoute = workspaceRoutesOf(
       state?.routes.slice(0, state.index + 1) ?? [],
@@ -611,14 +651,13 @@ function AdaptiveWorkspaceLayoutContent(
     const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
     handleSelectThreadRoute(
       newTaskDestination({
-        projects,
         requestId: uuidv4(),
         useLastProject: saved?.useLastProjectForNewThreads,
         currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
         lastProject: saved?.lastThreadProject,
       }),
     );
-  };
+  });
 
   useHardwareKeyboardCommand("newTask", () => {
     handleStartNewTask();
@@ -818,7 +857,7 @@ function AdaptiveWorkspaceLayoutContent(
       return true;
     });
     return () => subscription.remove();
-  }, [floatingSidebarOpen, nativeWorkspace, navigation, setPrimarySidebarVisible]);
+  }, [floatingSidebarOpen, nativeWorkspace, navigation]);
   // Showing or hiding the sidebar clips a fixed-width list. A hinge resize instead tracks the
   // animated edge, so the header actions slide with it rather than jumping or being covered.
   const listPaneGap = layout.listPaneGap ?? 0;
@@ -912,13 +951,13 @@ function AdaptiveWorkspaceLayoutContent(
     startNewTask: handleStartNewTask,
     selectDetail: handleSelectDetail,
     registerWorkspaceInspector,
-    setPrimarySidebarSearchQuery,
     showInspector,
     toggleAuxiliaryPane,
     togglePrimarySidebar,
     revealPrimarySidebar,
     setPrimarySidebarVisible,
     openWorkspaceTab,
+    setPrimarySidebarSearchQuery,
     setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
     setNativeInspectorWidth: (width: number) =>
       setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
@@ -950,7 +989,7 @@ function AdaptiveWorkspaceLayoutContent(
     return (
       <HomeListOptionsProvider
         projectGroupingMode={projectGroupingMode}
-        savedFilters={props.savedThreadListFilters}
+        savedFilters={savedThreadListFilters}
       >
         <AdaptiveWorkspaceContext value={contextValue}>
           <WorkspacePaneStateContext value={paneState}>
@@ -1059,23 +1098,7 @@ function AdaptiveWorkspaceLayoutContent(
               value={Platform.OS === "android" && layout.usesSplitView ? contentTargetWidth : null}
             >
               {/* Compact Settings keeps the bottom navigation under all of its pages. */}
-              <SafeAreaInsetsContext
-                value={
-                  floatingTabsEnabled &&
-                  (compactAndroidSettings || (layout.usesSplitView && workspacePage))
-                    ? {
-                        ...safeAreaInsets,
-                        bottom:
-                          safeAreaInsets.bottom +
-                          FLOATING_TABS.bottom +
-                          FLOATING_TABS.edge +
-                          floatingTabs.height,
-                      }
-                    : compactAndroidSettings
-                      ? { ...safeAreaInsets, bottom: 0 }
-                      : safeAreaInsets
-                }
-              >
+              <SafeAreaInsetsContext value={contentSafeAreaInsets}>
                 <View className="flex-1">
                   <PaneContext value="content">
                     <SettingsWorkspaceLayout>{children}</SettingsWorkspaceLayout>
@@ -1146,7 +1169,7 @@ function AdaptiveWorkspaceLayoutContent(
   return (
     <HomeListOptionsProvider
       projectGroupingMode={projectGroupingMode}
-      savedFilters={props.savedThreadListFilters}
+      savedFilters={savedThreadListFilters}
     >
       <AdaptiveWorkspaceContext value={contextValue}>
         <WorkspacePaneStateContext value={paneState}>

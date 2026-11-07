@@ -2,7 +2,7 @@ import { ActiveNewTaskContext } from "../../state/active-new-task";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
 import * as Dialog from "../../components/ui/Dialog";
-import React, { useEffect, useRef, useState } from "react";
+import React, { startTransition, useEffect, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -143,7 +143,6 @@ type NewTaskFlowContextValue = {
   readonly startFromOrigin: boolean;
   readonly pullRequestReference: string | undefined;
   readonly draftKey: string | null;
-  readonly prompt: string;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly submitting: boolean;
   readonly branchesLoading: boolean;
@@ -209,6 +208,8 @@ type NewTaskFlowContextValue = {
 
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
 
+const EMPTY_PROJECT_SCOPES: ReturnType<typeof sortHomeProjectScopes> = [];
+
 export function NewTaskFlowProvider(
   props: React.PropsWithChildren<{
     active?: boolean;
@@ -217,21 +218,35 @@ export function NewTaskFlowProvider(
     routeDraftId?: string;
   }>,
 ) {
+  // Heavy scope/VCS work waits until after the draft route's first paint.
+  const flowActive = props.active !== false;
+  const [heavyReadyForActive, setHeavyReadyForActive] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- arms project scopes and git queries after the new-thread shell paints
+  useEffect(() => {
+    if (!flowActive) return;
+    startTransition(() => {
+      setHeavyReadyForActive(true);
+    });
+  }, [flowActive]);
+  const heavyReady = flowActive && heavyReadyForActive;
   const projects = useProjects();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
 
-  const projectScopes = sortHomeProjectScopes({
-    scopes: buildHomeProjectScopes({
-      projects,
-      environmentId: null,
-      projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
-    }),
-    threads,
-    pendingTasks: [],
-    projectSortOrder: "updated_at",
-  });
+  const projectScopes =
+    props.active === false || !heavyReady
+      ? EMPTY_PROJECT_SCOPES
+      : sortHomeProjectScopes({
+          scopes: buildHomeProjectScopes({
+            projects,
+            environmentId: null,
+            projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
+          }),
+          threads,
+          pendingTasks: [],
+          projectSortOrder: "updated_at",
+        });
 
   const flowKey = props.flowKey ?? INACTIVE_FLOW_KEY;
   const storedFlowState = useAtomValue(newTaskFlowStateAtom(flowKey));
@@ -355,21 +370,23 @@ export function NewTaskFlowProvider(
           : null;
   const activeNewTask = props.active === false ? null : { pendingKey: activePendingKey };
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
-  const prompt = selectedProjectDraft.text;
+  // Prompt stays off the context value so keystrokes do not re-render every flow consumer.
   const attachments = selectedProjectDraft.attachments;
+  const vcsProject =
+    props.active !== false && heavyReady && selectedProject !== null ? selectedProject : null;
   const projectGitStatus = useEnvironmentQuery(
-    props.active !== false && selectedProject !== null && selectedProject.workspaceRoot !== ""
+    vcsProject !== null && vcsProject.workspaceRoot !== ""
       ? vcsEnvironment.status({
-          environmentId: selectedProject.environmentId,
-          input: { cwd: selectedProject.workspaceRoot },
+          environmentId: vcsProject.environmentId,
+          input: { cwd: vcsProject.workspaceRoot },
         })
       : null,
   );
   const currentCheckoutBranchName = projectGitStatus.data?.refName ?? null;
   // The unfiltered ref list also provides repository capability while offline.
   const projectBranches = useBranches({
-    environmentId: selectedProject?.environmentId ?? null,
-    cwd: selectedProject?.workspaceRoot || null,
+    environmentId: vcsProject?.environmentId ?? null,
+    cwd: vcsProject?.workspaceRoot || null,
   });
   const knownIsGitRepo = projectGitStatus.data?.isRepo ?? projectBranches.data?.isRepo ?? null;
   const isGitRepo = knownIsGitRepo ?? true;
@@ -377,8 +394,8 @@ export function NewTaskFlowProvider(
   const canChooseWorkspace = !isScratchDraft;
   const defaultWorkspaceMode: WorkspaceMode = projectDefaults.defaultWorkspaceMode;
   const branchState = usePaginatedBranches({
-    environmentId: selectedProject?.environmentId ?? null,
-    cwd: selectedProject?.workspaceRoot || null,
+    environmentId: vcsProject?.environmentId ?? null,
+    cwd: vcsProject?.workspaceRoot || null,
   });
   const branchesLoading = branchState.isPending && branchState.data === null;
   const allBranchRefs = branchState.refs;
@@ -832,7 +849,6 @@ export function NewTaskFlowProvider(
     startFromOrigin,
     draftKey: selectedProjectDraftKey,
     pullRequestReference: selectedProjectDraft.workspaceSelection?.pullRequestReference,
-    prompt,
     attachments,
     submitting,
     branchesLoading,

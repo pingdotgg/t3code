@@ -1,4 +1,4 @@
-import { useAtomMount } from "@effect/atom-react";
+import { useAtomMount, useAtomRefresh } from "@effect/atom-react";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -19,9 +19,8 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
-import { useBranches } from "./queries";
 import { threadEnvironment } from "./threads";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
 import { uuidv4 } from "../lib/uuid";
@@ -35,6 +34,11 @@ import { useAtomCommand } from "./use-atom-command";
 import { showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+
+const EMPTY_BRANCH_REFRESH_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
+  Atom.withLabel("mobile:selected-thread-git-actions:empty-branch-refresh"),
+);
+const VCS_REF_LIST_LIMIT = 100;
 
 function refreshFailureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
@@ -52,7 +56,8 @@ const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
     ),
 });
 
-export function useSelectedThreadGitActions() {
+export function useSelectedThreadGitActions(options?: { readonly enabled?: boolean }) {
+  const enabled = options?.enabled !== false;
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -63,31 +68,42 @@ export function useSelectedThreadGitActions() {
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const activeThread = enabled ? selectedThread : null;
   const canWriteSourceControl = useEnvironmentScope(
-    selectedThread?.environmentId ?? null,
+    activeThread?.environmentId ?? null,
     AuthSourceControlWriteScope,
   );
   const canOperateThread = useEnvironmentScope(
-    selectedThread?.environmentId ?? null,
+    activeThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
   const canChangeThreadBranch = canWriteSourceControl && canOperateThread;
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const cwd = enabled ? selectedThreadCwd : null;
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
-      environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      environmentId: activeThread?.environmentId ?? null,
+      cwd,
     }),
     { reportFailure: false },
   );
 
-  const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
+  const selectedThreadGitRootCwd = enabled ? (selectedThreadProject?.workspaceRoot ?? null) : null;
   const branchTarget = {
-    environmentId: selectedThread?.environmentId ?? null,
+    environmentId: activeThread?.environmentId ?? null,
     cwd: selectedThreadGitRootCwd,
-    query: null,
   };
-  const branchState = useBranches(branchTarget);
+  // Invalidate without subscribing — sheets own the listRefs read; open path must not pay for it.
+  const selectedThreadBranchesAtom =
+    branchTarget.environmentId !== null && branchTarget.cwd !== null
+      ? vcsEnvironment.listRefs({
+          environmentId: branchTarget.environmentId,
+          input: { cwd: branchTarget.cwd, limit: VCS_REF_LIST_LIMIT },
+        })
+      : null;
+  const invalidateSelectedThreadBranchList = useAtomRefresh(
+    selectedThreadBranchesAtom ?? EMPTY_BRANCH_REFRESH_ATOM,
+  );
   const updateThreadGitContext = async (
     thread: NonNullable<typeof selectedThread>,
     nextState: {
@@ -155,8 +171,8 @@ export function useSelectedThreadGitActions() {
 
   useAtomMount(
     selectedThreadStatusRevalidation(
-      selectedThread && selectedThreadProject && selectedThreadCwd
-        ? { environmentId: selectedThread.environmentId, cwd: selectedThreadCwd }
+      activeThread && selectedThreadProject && cwd
+        ? { environmentId: activeThread.environmentId, cwd }
         : null,
     ),
   );
@@ -238,7 +254,7 @@ export function useSelectedThreadGitActions() {
     const updateResult = input.nextThreadState
       ? await updateThreadGitContext(input.thread, input.nextThreadState)
       : AsyncResult.success(undefined);
-    branchState.refresh();
+    invalidateSelectedThreadBranchList();
     await refreshSelectedThreadGitStatus({ quiet: true, cwd: input.cwd });
     return AsyncResult.isFailure(updateResult)
       ? AsyncResult.failure(updateResult.cause)

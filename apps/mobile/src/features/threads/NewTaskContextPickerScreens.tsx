@@ -6,19 +6,16 @@ import { SelectionRow } from "../../components/ui/SelectionRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
-import {
-  AuthSourceControlWriteScope,
-  resolveEnvironmentMachineKind,
-  type EnvironmentId,
-} from "@t3tools/contracts";
+import { AuthSourceControlWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
-import { useRef, useState, type ReactNode } from "react";
+import { memo, startTransition, useEffect, useRef, useState, type ReactNode } from "react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -52,22 +49,53 @@ import { environmentStatusText } from "../connection/environmentStatusText";
 
 const BRANCH_SEARCH_DEBOUNCE_MS = 150;
 
-function EnvironmentPickerRow(props: {
+function EnvironmentPickerRowDetails(props: {
+  readonly environmentId: EnvironmentId;
+  readonly title: string;
+  readonly onReconnect: (environmentId: EnvironmentId) => void;
+}) {
+  const { presentation } = useEnvironmentPresentation(props.environmentId);
+  const { diagnosis, state } = useConnectionDiagnosis(props.environmentId, presentation);
+  const connection = presentation?.connection;
+  const status =
+    diagnosis?.headline ??
+    (connection ? environmentStatusText({ ...connection, error: null }) : "Offline");
+  return (
+    <View className="gap-3 px-4 pb-4">
+      {diagnosis ? (
+        <ConnectionDiagnosisDetails hostLabel={props.title} diagnosis={diagnosis} />
+      ) : (
+        <Text className="text-sm text-foreground-muted">{status}</Text>
+      )}
+      {state.retryAt ? (
+        <Text className="text-sm text-foreground-muted">
+          Next reconnect at {new Date(state.retryAt).toLocaleTimeString()}
+        </Text>
+      ) : null}
+      {connection?.phase !== "connected" ? (
+        <Button label="Reconnect now" onPress={() => props.onReconnect(props.environmentId)} />
+      ) : null}
+    </View>
+  );
+}
+
+const EnvironmentPickerRow = memo(function EnvironmentPickerRow(props: {
   environmentId: EnvironmentId;
   title: string;
   selected: boolean;
   disabled: boolean;
   isLast: boolean;
+  connectionPhase: EnvironmentConnectionPhase;
   onPress: () => void;
+  onReconnect: (environmentId: EnvironmentId) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { presentation } = useEnvironmentPresentation(props.environmentId);
-  const { diagnosis, state } = useConnectionDiagnosis(props.environmentId, presentation);
-  const { onReconnectEnvironment } = useRemoteConnections();
-  const connection = presentation?.connection;
-  const status =
-    diagnosis?.headline ??
-    (connection ? environmentStatusText({ ...connection, error: null }) : "Offline");
+  // Phase-only copy stays stable across reconnect attempts; diagnosis mounts on expand.
+  const status = environmentStatusText({
+    phase: props.connectionPhase,
+    error: null,
+    traceId: null,
+  });
   return (
     <View className={cn("bg-grouped-card", !props.isLast && "border-b border-border-subtle")}>
       <View className="flex-row items-center">
@@ -80,7 +108,7 @@ function EnvironmentPickerRow(props: {
           className="min-h-16 flex-1 flex-row items-center gap-3 px-4 py-3 active:bg-subtle"
         >
           <EnvironmentMachineSymbol
-            kind={resolveEnvironmentMachineKind(presentation?.serverConfig ?? null)}
+            kind="laptop"
             size={20}
             tintColorClassName="accent-icon-muted"
           />
@@ -89,8 +117,8 @@ function EnvironmentPickerRow(props: {
               {props.title}
             </Text>
             <View className="flex-row items-center gap-1.5">
-              <ConnectionStatusDot state={connection?.phase ?? "offline"} pulse={false} size={6} />
-              <Text className="shrink text-xs text-foreground-muted" numberOfLines={2}>
+              <ConnectionStatusDot state={props.connectionPhase} pulse={false} size={6} />
+              <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
                 {status}
               </Text>
             </View>
@@ -114,28 +142,15 @@ function EnvironmentPickerRow(props: {
         </Pressable>
       </View>
       {expanded ? (
-        <View className="gap-3 px-4 pb-4">
-          {diagnosis ? (
-            <ConnectionDiagnosisDetails hostLabel={props.title} diagnosis={diagnosis} />
-          ) : (
-            <Text className="text-sm text-foreground-muted">{status}</Text>
-          )}
-          {state.retryAt ? (
-            <Text className="text-sm text-foreground-muted">
-              Next reconnect at {new Date(state.retryAt).toLocaleTimeString()}
-            </Text>
-          ) : null}
-          {connection?.phase !== "connected" ? (
-            <Button
-              label="Reconnect now"
-              onPress={() => onReconnectEnvironment(props.environmentId)}
-            />
-          ) : null}
-        </View>
+        <EnvironmentPickerRowDetails
+          environmentId={props.environmentId}
+          title={props.title}
+          onReconnect={props.onReconnect}
+        />
       ) : null}
     </View>
   );
-}
+});
 
 function ToggleRow(props: {
   readonly title: string;
@@ -176,10 +191,26 @@ function PickerSurface(props: { readonly children: ReactNode }) {
   );
 }
 
+function PickerOpenShellBody() {
+  return (
+    <View className="gap-3 px-4 pt-4">
+      <View className="bg-border/40 h-14 rounded-2xl" />
+      <View className="bg-border/30 h-14 rounded-2xl" />
+      <View className="bg-border/20 h-14 rounded-2xl" />
+    </View>
+  );
+}
+
 export function NewTaskEnvironmentPickerRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { connectedEnvironments, onReconnectEnvironment } = useRemoteConnections();
+  const connectionPhaseById = new Map(
+    connectedEnvironments.map(
+      (environment) => [environment.environmentId, environment.connectionState] as const,
+    ),
+  );
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
       <AppBar title="Environment" hideBottomBorder onBack={() => navigation.goBack()} />
@@ -200,12 +231,14 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                 environmentId={environment.environmentId}
                 isLast={index === flow.environments.length - 1}
                 disabled={flow.switchingToEnvironmentId !== null}
+                connectionPhase={connectionPhaseById.get(environment.environmentId) ?? "available"}
                 onPress={() => {
                   void Haptics.selectionAsync();
                   void flow.switchEnvironment(environment.environmentId).then((switched) => {
                     if (switched) navigation.goBack();
                   });
                 }}
+                onReconnect={onReconnectEnvironment}
                 selected={flow.selectedEnvironmentId === environment.environmentId}
                 title={environment.environmentLabel}
               />
@@ -367,6 +400,13 @@ export function BranchPickerScreen(props: {
     props.branches.find((branch) => branch.current)?.name ??
     props.branches.find((branch) => branch.isDefault)?.name ??
     null;
+  const [bodyReady, setBodyReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers the branch list until after the push frame
+  useEffect(() => {
+    startTransition(() => {
+      setBodyReady(true);
+    });
+  }, []);
   const branchListContentStyle = {
     paddingBottom: searchToolbarInset
       ? searchToolbarInset + 16
@@ -448,6 +488,8 @@ export function BranchPickerScreen(props: {
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={branchListContentStyle}
         data={props.branches}
+        drawDistance={500}
+        estimatedItemSize={48}
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         keyboardShouldPersistTaps="handled"
         keyExtractor={(branch) =>
@@ -463,6 +505,7 @@ export function BranchPickerScreen(props: {
         }
         onEndReached={props.hasMore ? props.onLoadMore : undefined}
         onEndReachedThreshold={0.35}
+        recycleItems
         renderItem={renderBranch}
         showsVerticalScrollIndicator={false}
       />
@@ -476,7 +519,7 @@ export function BranchPickerScreen(props: {
         onBack={() => navigation.goBack()}
         search={search}
       />
-      <ScreenContent>{branchContent}</ScreenContent>
+      <ScreenContent>{bodyReady ? branchContent : <PickerOpenShellBody />}</ScreenContent>
     </View>
   );
 }

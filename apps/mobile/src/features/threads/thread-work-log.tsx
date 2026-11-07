@@ -697,8 +697,14 @@ function ThreadWorkGroupList(props: {
         estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
         getFixedItemSize={getFixedItemSize}
         initialScrollIndex={initialScrollIndex}
+        // 50px bootstrap overscan may leave expanded details unmeasured until after scroll restoration.
+        alwaysRender={
+          restoringPosition && initialPosition ? { keys: [initialPosition.rowId] } : undefined
+        }
+        // Nested expand/measure needs stable cells; recycle remounts break append height.
         recycleItems={false}
-        extraData={props.renderRow}
+        // Expand map only — renderRow identity would invalidate every row on each feed tick.
+        extraData={props.expandedRows}
         renderItem={renderItem}
         sharedValues={sharedValues}
         onReady={handleReady}

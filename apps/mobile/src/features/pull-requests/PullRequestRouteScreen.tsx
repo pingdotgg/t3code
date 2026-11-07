@@ -19,12 +19,15 @@ import {
   PR_ROW_EXIT,
   PR_POSITION_LAYOUT,
 } from "./pullRequestAnimations";
+import { canPerformPullRequestAction, pullRequestActionLabel } from "./pullRequestActions";
 import {
-  canPerformPullRequestAction,
-  openOnProviderLabel,
-  PR_ACTION_ICONS,
-  pullRequestActionLabel,
-} from "./pullRequestActions";
+  buildPullRequestActionsMenu,
+  pullRequestActionsContentKey,
+  pullRequestActionsShellModel,
+  pullRequestActionsStructureKey,
+  type PullRequestActionsMenuHandlers,
+  type PullRequestActionsMenuModel,
+} from "./pull-request-actions-menu";
 import * as Clipboard from "expo-clipboard";
 import { Button } from "../../components/ui/Button";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
@@ -52,7 +55,17 @@ import {
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
-import { use, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  startTransition,
+  use,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Linking, Platform, Pressable, RefreshControl, StyleSheet, View } from "react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -118,12 +131,81 @@ import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
 import { pullRequestFileJumpScope, subscribePullRequestFileJump } from "./pullRequestFileJump";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 const EMPTY_IDS: readonly string[] = [];
+const noopPullRequestActionsHandlers: PullRequestActionsMenuHandlers = {
+  onSubmitReview: () => {},
+  onAddComment: () => {},
+  onEditTitle: () => {},
+  onEditDescription: () => {},
+  onToggleMaintainerEdits: () => {},
+  onOpenOnProvider: () => {},
+  onCopyLink: () => {},
+  onShare: () => {},
+  onStateAction: () => {},
+  onDeleteBranch: () => {},
+};
+
+/** Keeps the native ellipsis UIMenu off the PR body's scroll/query churn. */
+const PullRequestActionsAppBar = memo(
+  function PullRequestActionsAppBar(props: {
+    readonly title: string;
+    readonly subtitle: string;
+    readonly showBack: boolean;
+    readonly onBack: () => void;
+    readonly model: PullRequestActionsMenuModel;
+    readonly onSubmitReview: () => void;
+    readonly onAddComment: () => void;
+    readonly onEditTitle: () => void;
+    readonly onEditDescription: () => void;
+    readonly onToggleMaintainerEdits: () => void;
+    readonly onOpenOnProvider: () => void;
+    readonly onCopyLink: () => void;
+    readonly onShare: () => void;
+    readonly onStateAction: () => void;
+    readonly onDeleteBranch: () => void;
+  }) {
+    // useEffectEvent keeps handler identity stable so body churn cannot rebuild UIMenu.
+    const onBack = useEffectEvent(props.onBack);
+    const onSubmitReview = useEffectEvent(props.onSubmitReview);
+    const onAddComment = useEffectEvent(props.onAddComment);
+    const onEditTitle = useEffectEvent(props.onEditTitle);
+    const onEditDescription = useEffectEvent(props.onEditDescription);
+    const onToggleMaintainerEdits = useEffectEvent(props.onToggleMaintainerEdits);
+    const onOpenOnProvider = useEffectEvent(props.onOpenOnProvider);
+    const onCopyLink = useEffectEvent(props.onCopyLink);
+    const onShare = useEffectEvent(props.onShare);
+    const onStateAction = useEffectEvent(props.onStateAction);
+    const onDeleteBranch = useEffectEvent(props.onDeleteBranch);
+    return (
+      <AppBar
+        title={props.title}
+        subtitle={props.subtitle}
+        onBack={props.showBack ? onBack : undefined}
+        menus={[
+          buildPullRequestActionsMenu(props.model, {
+            onSubmitReview,
+            onAddComment,
+            onEditTitle,
+            onEditDescription,
+            onToggleMaintainerEdits,
+            onOpenOnProvider,
+            onCopyLink,
+            onShare,
+            onStateAction,
+            onDeleteBranch,
+          }),
+        ]}
+      />
+    );
+  },
+  (previous, next) =>
+    previous.model === next.model &&
+    previous.title === next.title &&
+    previous.subtitle === next.subtitle &&
+    previous.showBack === next.showBack,
+);
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
@@ -322,9 +404,130 @@ function usePullRequestToolbarHeight(bottomInset: number) {
   return useState(() => (Platform.OS === "android" ? bottomInset + buttonSize + 40 : 0));
 }
 
+/** Tab-strip reserve only — AppBar stays mounted on the route so UIMenu is not remounted. */
+function PullRequestOpenShellBody() {
+  return (
+    <ScreenContent>
+      <View className="gap-5 px-4 pb-5 pt-2">
+        <View className="gap-3">
+          <View className="bg-border/60 h-7 w-full max-w-[280px] rounded-md" />
+          <View className="bg-border/40 h-4 w-32 rounded-md" />
+        </View>
+        {/* Matches SegmentedControl compact height so the list header does not jump. */}
+        <View style={{ height: 32 }} className="bg-border/40 rounded-lg" />
+      </View>
+    </ScreenContent>
+  );
+}
+
 export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestParams>) {
+  const params = route.params;
   const returnToList = useAndroidWorkspaceBack("pullRequests");
   const { layout } = useAdaptiveWorkspaceLayout();
+  const navigation = useNavigation();
+  const summary = params.initialSummary;
+  const shellIdentity = summary
+    ? { provider: summary.provider, url: summary.url, headBranch: summary.headBranch }
+    : null;
+  const shellActionsModel = pullRequestActionsShellModel(shellIdentity, summary?.state);
+  const [bodyReady, setBodyReady] = useState(false);
+  const [publishedActions, setPublishedActions] = useState(() => ({
+    structureKey: pullRequestActionsStructureKey(shellActionsModel),
+    contentKey: pullRequestActionsContentKey(shellActionsModel),
+    model: shellActionsModel,
+    subtitle: params.repository,
+  }));
+  // Shell-phase handlers so an early ellipsis tap still reaches navigation / link actions.
+  const actionHandlersRef = useRef<PullRequestActionsMenuHandlers>({
+    ...noopPullRequestActionsHandlers,
+    onSubmitReview: () => navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
+    onAddComment: () => navigation.navigate("PullRequestReview", { ...params, mode: "comment" }),
+    onEditTitle: () => navigation.navigate("PullRequestEdit", { ...params, field: "title" }),
+    onEditDescription: () => navigation.navigate("PullRequestEdit", { ...params, field: "body" }),
+    onOpenOnProvider: () => {
+      if (shellIdentity) void Linking.openURL(shellIdentity.url);
+    },
+    onCopyLink: () => {
+      if (!shellIdentity) return;
+      copyPullRequestLink({
+        ...shellIdentity,
+        title: summary?.title ?? `#${params.number}`,
+      });
+    },
+    onShare: () => {
+      if (!shellIdentity) return;
+      sharePullRequestLink({
+        ...shellIdentity,
+        title: summary?.title ?? `#${params.number}`,
+      });
+    },
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers files/activity/diff until after the push frame
+  useEffect(() => {
+    startTransition(() => {
+      setBodyReady(true);
+    });
+  }, []);
+  const publishActions = useEffectEvent(
+    (next: {
+      readonly structureKey: string;
+      readonly contentKey: string;
+      readonly model: PullRequestActionsMenuModel;
+      readonly subtitle: string;
+    }) => {
+      setPublishedActions(next);
+    },
+  );
+  return (
+    <View className="flex-1 android:bg-header ios:bg-screen">
+      <PullRequestActionsAppBar
+        title={`#${params.number}`}
+        subtitle={publishedActions.subtitle}
+        showBack={!layout.usesSplitView}
+        onBack={returnToList}
+        model={publishedActions.model}
+        onSubmitReview={() => actionHandlersRef.current.onSubmitReview()}
+        onAddComment={() => actionHandlersRef.current.onAddComment()}
+        onEditTitle={() => actionHandlersRef.current.onEditTitle()}
+        onEditDescription={() => actionHandlersRef.current.onEditDescription()}
+        onToggleMaintainerEdits={() => actionHandlersRef.current.onToggleMaintainerEdits()}
+        onOpenOnProvider={() => actionHandlersRef.current.onOpenOnProvider()}
+        onCopyLink={() => actionHandlersRef.current.onCopyLink()}
+        onShare={() => actionHandlersRef.current.onShare()}
+        onStateAction={() => actionHandlersRef.current.onStateAction()}
+        onDeleteBranch={() => actionHandlersRef.current.onDeleteBranch()}
+      />
+      {bodyReady ? (
+        <PullRequestRouteBody
+          route={route}
+          actionHandlersRef={actionHandlersRef}
+          publishedActions={publishedActions}
+          onPublishActions={publishActions}
+        />
+      ) : (
+        <PullRequestOpenShellBody />
+      )}
+    </View>
+  );
+}
+
+function PullRequestRouteBody(props: {
+  readonly route: StaticScreenProps<PullRequestParams>["route"];
+  readonly actionHandlersRef: { current: PullRequestActionsMenuHandlers };
+  readonly publishedActions: {
+    readonly structureKey: string;
+    readonly contentKey: string;
+    readonly model: PullRequestActionsMenuModel;
+    readonly subtitle: string;
+  };
+  readonly onPublishActions: (next: {
+    readonly structureKey: string;
+    readonly contentKey: string;
+    readonly model: PullRequestActionsMenuModel;
+    readonly subtitle: string;
+  }) => void;
+}) {
+  const { route, actionHandlersRef, publishedActions, onPublishActions } = props;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
@@ -459,127 +662,129 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       if (filesY.current > 0) requestAnimationFrame(jumpToFiles);
     }
   };
+  const actionsIdentity = identity
+    ? { provider: identity.provider, url: identity.url, headBranch: pr?.headBranch }
+    : summary
+      ? { provider: summary.provider, url: summary.url, headBranch: summary.headBranch }
+      : null;
+  const actionsModel: PullRequestActionsMenuModel = {
+    terminology,
+    identity: actionsIdentity,
+    open: (pr?.state ?? summary?.state) !== "closed" && (pr?.state ?? summary?.state) !== "merged",
+    connected,
+    canSubmitReview: permissions.verdicts.length > 0,
+    canComment: permissions.canComment,
+    canEditChangeRequest: permissions.canEditChangeRequest,
+    descriptionPending: description.pending,
+    maintainerEdits: maintainerEdits.visible
+      ? {
+          visible: true,
+          value: maintainerEdits.value,
+          saving: maintainerEdits.saving,
+          subtitle: maintainerEdits.subtitle,
+        }
+      : null,
+    // Keep the close/reopen slot from the shell; disable until the action is actually available.
+    stateAction:
+      stateAction ??
+      (actionsIdentity
+        ? summary?.state === "closed" ||
+          summary?.state === "merged" ||
+          pr?.state === "closed" ||
+          pr?.state === "merged"
+          ? "reopen"
+          : "close"
+        : null),
+    stateActionDisabled: stateAction === null || action.busy,
+    showsDeleteBranch,
+    deleteBranchDisabled: !action.available("delete-branch"),
+    deleteBranchSubtitle: action.busy
+      ? "Deleting…"
+      : connected
+        ? (pr?.headBranch ?? actionsIdentity?.headBranch)
+        : "Reconnect to delete this branch.",
+    deleteBranchBusy: action.busy,
+  };
+  const actionsStructureKey = pullRequestActionsStructureKey(actionsModel);
+  const actionsContentKey = pullRequestActionsContentKey(actionsModel);
+  const actionsSubtitle = connected ? params.repository : `${params.repository} · Offline`;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes latest menu handlers to the stable AppBar ref without reading refs during render
+  useLayoutEffect(() => {
+    actionHandlersRef.current = {
+      onSubmitReview: () => navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
+      onAddComment: () => navigation.navigate("PullRequestReview", { ...params, mode: "comment" }),
+      onEditTitle: () => navigation.navigate("PullRequestEdit", { ...params, field: "title" }),
+      onEditDescription: () => navigation.navigate("PullRequestEdit", { ...params, field: "body" }),
+      onToggleMaintainerEdits: maintainerEdits.toggle,
+      onOpenOnProvider: () => {
+        if (actionsIdentity) void Linking.openURL(actionsIdentity.url);
+      },
+      onCopyLink: () => {
+        if (!actionsIdentity) return;
+        copyPullRequestLink({
+          ...actionsIdentity,
+          title: identity?.title ?? summary?.title ?? `#${params.number}`,
+        });
+      },
+      onShare: () => {
+        if (!actionsIdentity) return;
+        sharePullRequestLink({
+          ...actionsIdentity,
+          title: identity?.title ?? summary?.title ?? `#${params.number}`,
+        });
+      },
+      onStateAction: runStateAction,
+      onDeleteBranch: confirmDeleteBranch,
+    };
+  }, [
+    actionHandlersRef,
+    actionsIdentity,
+    confirmDeleteBranch,
+    identity?.title,
+    maintainerEdits.toggle,
+    navigation,
+    params,
+    runStateAction,
+    summary?.title,
+  ]);
+  // Seed from the list summary so shell→live keeps the same UIMenu; defer later structure/content.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers PR actions UIMenu rebuilds until after the open frames settle
+  useEffect(() => {
+    if (
+      publishedActions.structureKey === actionsStructureKey &&
+      publishedActions.contentKey === actionsContentKey &&
+      publishedActions.subtitle === actionsSubtitle
+    ) {
+      return;
+    }
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        onPublishActions({
+          structureKey: actionsStructureKey,
+          contentKey: actionsContentKey,
+          model: actionsModel,
+          subtitle: actionsSubtitle,
+        });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [
+    actionsContentKey,
+    actionsModel,
+    actionsStructureKey,
+    actionsSubtitle,
+    onPublishActions,
+    publishedActions.contentKey,
+    publishedActions.structureKey,
+    publishedActions.subtitle,
+  ]);
   return (
     <PullRequestMarkdownRepository params={params} changeRequest={pr}>
-      <View className="flex-1 android:bg-header ios:bg-screen">
-        <AppBar
-          title={`#${params.number}`}
-          subtitle={connected ? params.repository : `${params.repository} · Offline`}
-          onBack={layout.usesSplitView ? undefined : returnToList}
-          menus={[
-            {
-              title: `${capitalizeTerm(terminology.singular)} actions`,
-              icon: "ellipsis",
-              items: [
-                ...(permissions.verdicts.length
-                  ? [
-                      {
-                        id: "submit-review",
-                        title: "Submit review",
-                        icon: "text.bubble",
-                        onPress: () =>
-                          navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
-                      },
-                    ]
-                  : []),
-                ...(permissions.canComment
-                  ? [
-                      {
-                        id: "add-comment",
-                        title: "Add comment",
-                        icon: "plus.bubble",
-                        onPress: () =>
-                          navigation.navigate("PullRequestReview", { ...params, mode: "comment" }),
-                      },
-                    ]
-                  : []),
-                ...(permissions.canEditChangeRequest
-                  ? [
-                      {
-                        id: "edit-title",
-                        title: "Edit title",
-                        icon: "pencil",
-                        onPress: () =>
-                          navigation.navigate("PullRequestEdit", { ...params, field: "title" }),
-                      },
-                      {
-                        id: "edit-description",
-                        title: "Edit description",
-                        icon: "doc.text",
-                        disabled: description.pending,
-                        subtitle: description.pending ? "Saving…" : undefined,
-                        onPress: () =>
-                          navigation.navigate("PullRequestEdit", { ...params, field: "body" }),
-                      },
-                    ]
-                  : []),
-                ...(maintainerEdits.visible
-                  ? [
-                      {
-                        id: "maintainer-edits",
-                        title: "Allow edits from maintainers",
-                        icon: "pencil",
-                        selected: maintainerEdits.value,
-                        disabled: maintainerEdits.saving,
-                        subtitle: maintainerEdits.subtitle,
-                        onPress: maintainerEdits.toggle,
-                      },
-                    ]
-                  : []),
-                ...(identity
-                  ? [
-                      {
-                        id: "open-on-provider",
-                        title: openOnProviderLabel(identity.provider),
-                        icon: "arrow.up.right",
-                        onPress: () => void Linking.openURL(identity.url),
-                      },
-                      {
-                        id: "copy-link",
-                        title: "Copy link",
-                        icon: "link",
-                        onPress: () => copyPullRequestLink(identity),
-                      },
-                      {
-                        id: "share",
-                        title: "Share…",
-                        icon: "square.and.arrow.up",
-                        onPress: () => sharePullRequestLink(identity),
-                      },
-                    ]
-                  : []),
-                ...(stateAction
-                  ? [
-                      {
-                        id: "state",
-                        title: pullRequestActionLabel(stateAction, terminology),
-                        icon: PR_ACTION_ICONS[stateAction],
-                        destructive: stateAction === "close",
-                        onPress: runStateAction,
-                      },
-                    ]
-                  : []),
-                ...(showsDeleteBranch
-                  ? [
-                      {
-                        id: "delete-branch",
-                        title: pullRequestActionLabel("delete-branch", terminology),
-                        icon: PR_ACTION_ICONS["delete-branch"],
-                        destructive: true,
-                        disabled: !action.available("delete-branch"),
-                        subtitle: action.busy
-                          ? "Deleting…"
-                          : connected
-                            ? pr.headBranch
-                            : "Reconnect to delete this branch.",
-                        onPress: confirmDeleteBranch,
-                      },
-                    ]
-                  : []),
-              ],
-            },
-          ]}
-        />
+      <View className="flex-1">
         <ScreenContent onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}>
           {(["overview", "guide", "activity"] as const)
             .filter((tab) => tab !== "guide" || guidesEnabled)
@@ -825,23 +1030,52 @@ export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
   const navigation =
     useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList, "PullRequestFile">>();
   const ready = usePullRequestDiffEntry(navigation);
-  if (ready) return <PullRequestFileRouteContent {...props} />;
-  const title = props.route.params.commit ? "Commit changes" : "Changes";
+  const insets = useSafeAreaInsets();
+  const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
+  const params = props.route.params;
+  const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(params)));
+  const [filePath, setFilePath] = useState(params.path);
+  const title = params.commit ? "Commit changes" : "Changes";
+  const onVisibleFilePathChange = useEffectEvent((path: string) => {
+    setFilePath((current) => (current === path ? current : path));
+  });
+  // One toolbar across the transition shell→diff so the bottom bar does not remount disabled.
   return (
-    <View className="flex-1 bg-screen">
-      <AppBar title={title} onBack={() => navigation.goBack()} />
-      <View className="flex-1 items-center justify-center">
-        <AppActivityIndicator accessibilityLabel="Loading changes" />
-      </View>
+    <View className="flex-1 android:bg-header ios:bg-screen">
+      {ready ? (
+        <PullRequestFileRouteContent
+          route={props.route}
+          toolbarHeight={toolbarHeight}
+          onVisibleFilePathChange={onVisibleFilePathChange}
+        />
+      ) : (
+        <>
+          <AppBar title={title} onBack={() => navigation.goBack()} />
+          <View className="flex-1 items-center justify-center">
+            <AppActivityIndicator accessibilityLabel="Loading changes" />
+          </View>
+        </>
+      )}
+      <PullRequestActionToolbar
+        pr={detail.data}
+        params={params}
+        filePath={filePath}
+        onOpenFiles={() => navigation.navigate("PullRequestFiles", params)}
+        onHeightChange={setToolbarHeight}
+      />
     </View>
   );
 }
 
-function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
+function PullRequestFileRouteContent(props: {
+  readonly route: PullRequestFileRouteProps["route"];
+  readonly toolbarHeight: number;
+  readonly onVisibleFilePathChange: (path: string) => void;
+}) {
+  const { route, toolbarHeight, onVisibleFilePathChange } = props;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const contentTopInset = useContentTopInset();
-  const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const commit = route.params.commit;
   const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(route.params)));
   const terminology = sourceControlClients.get(
@@ -1007,8 +1241,13 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     );
   };
   const visibleFile = data.files.find((file) => file.id === visibleFileId) ?? targetFile;
+  const visiblePath = visibleFile?.path ?? route.params.path;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the visible diff file to the stable route toolbar
+  useEffect(() => {
+    onVisibleFilePathChange(visiblePath);
+  }, [onVisibleFilePathChange, visiblePath]);
   const toggleTestFiles = () => {
-    setJumpPath(visibleFile?.path ?? route.params.path);
+    setJumpPath(visiblePath);
     setSelectedRowId(null);
     filter.toggle();
   };
@@ -1242,13 +1481,6 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
           ) : null}
         </View>
       </ScreenContent>
-      <PullRequestActionToolbar
-        pr={detail.data}
-        params={route.params}
-        filePath={visibleFile?.path}
-        onOpenFiles={() => navigation.navigate("PullRequestFiles", route.params)}
-        onHeightChange={setToolbarHeight}
-      />
     </View>
   );
 }

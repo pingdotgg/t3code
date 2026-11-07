@@ -1,6 +1,6 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { createContext, use, useState, type Dispatch, type ReactNode } from "react";
+import { createContext, use, useMemo, useState, type Dispatch, type ReactNode } from "react";
 
 import { mobilePreferencesAtom } from "../../../state/preferences";
 import {
@@ -18,7 +18,7 @@ import {
   type WorkspaceTabsState,
 } from "./workspace-tabs-state";
 
-export const WorkspaceTabsContext = createContext<{
+export type WorkspaceTabsContextValue = {
   readonly state: WorkspaceTabsState;
   readonly dispatch: Dispatch<WorkspaceTabsAction>;
   readonly isTabActive: (tab: WorkspaceTab) => boolean;
@@ -26,10 +26,24 @@ export const WorkspaceTabsContext = createContext<{
   readonly settingsOpen: boolean;
   readonly getScrollOffset: (tab: WorkspaceSearchTab) => number;
   readonly recordScrollOffset: (tab: WorkspaceSearchTab, offset: number) => void;
+};
+
+export const WorkspaceTabsContext = createContext<WorkspaceTabsContextValue | null>(null);
+
+/** Stable helpers that do not change when the selected tab does. */
+export const WorkspaceTabsApiContext = createContext<{
+  readonly dispatch: Dispatch<WorkspaceTabsAction>;
+  readonly isTabActive: (tab: WorkspaceTab) => boolean;
+  readonly getScrollOffset: (tab: WorkspaceSearchTab) => number;
+  readonly recordScrollOffset: (tab: WorkspaceSearchTab, offset: number) => void;
 } | null>(null);
 
 export function useWorkspaceTabs() {
   return use(WorkspaceTabsContext);
+}
+
+export function useWorkspaceTabsApi() {
+  return use(WorkspaceTabsApiContext);
 }
 
 type MobilePreferencesResult = Atom.Type<typeof mobilePreferencesAtom>;
@@ -79,15 +93,29 @@ export function WorkspaceTabsProvider(props: {
   const registry = use(RegistryContext);
   const [model] = useState(createWorkspaceTabsModel);
   const state = useAtomValue(model.resolved);
-  const context = {
-    state,
-    dispatch: (action: WorkspaceTabsAction) =>
-      registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action)),
-    isTabActive: (tab: WorkspaceTab) => registry.get(model.resolved).selectedTab === tab,
-    bottomClearance: 0,
-    settingsOpen: props.settingsOpen ?? false,
-    getScrollOffset: model.getScrollOffset,
-    recordScrollOffset: model.recordScrollOffset,
-  };
-  return <WorkspaceTabsContext value={context}>{props.children}</WorkspaceTabsContext>;
+  const settingsOpen = props.settingsOpen ?? false;
+  const api = useMemo(
+    () => ({
+      dispatch: (action: WorkspaceTabsAction) =>
+        registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action)),
+      isTabActive: (tab: WorkspaceTab) => registry.get(model.resolved).selectedTab === tab,
+      getScrollOffset: model.getScrollOffset,
+      recordScrollOffset: model.recordScrollOffset,
+    }),
+    [model, registry],
+  );
+  const context = useMemo(
+    () => ({
+      state,
+      ...api,
+      bottomClearance: 0,
+      settingsOpen,
+    }),
+    [api, settingsOpen, state],
+  );
+  return (
+    <WorkspaceTabsApiContext value={api}>
+      <WorkspaceTabsContext value={context}>{props.children}</WorkspaceTabsContext>
+    </WorkspaceTabsApiContext>
+  );
 }

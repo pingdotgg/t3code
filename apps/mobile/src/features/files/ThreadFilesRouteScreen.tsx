@@ -8,7 +8,14 @@ import {
   usePreventRemove,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { type ComponentProps, type ReactNode, useId, useState } from "react";
+import {
+  type ComponentProps,
+  type ReactNode,
+  startTransition,
+  useEffect,
+  useId,
+  useState,
+} from "react";
 import { Platform, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
@@ -20,6 +27,7 @@ import {
 } from "@t3tools/shared/filePreview";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import { DelimitedFilePreview } from "./DelimitedFilePreview";
@@ -460,6 +468,14 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const navigation = useNavigation();
   const { fileInspector } = useWorkspacePaneState();
   const [searchQuery, setSearchQuery] = useState("");
+  // Push presents with the Files bar first; LegendList mounts after the open frame.
+  const [treeReady, setTreeReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers the file tree until after the Files route open frame
+  useEffect(() => {
+    startTransition(() => {
+      setTreeReady(true);
+    });
+  }, []);
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
@@ -584,28 +600,34 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         onBack={handleReturnToThread}
       />
       <ScreenContent>
-        <FileTreeBrowser
-          key={JSON.stringify([environmentId, cwd])}
-          revealSelection={entriesQuery.revealSelection}
-          expandedPaths={entriesQuery.expandedPaths}
-          setExpandedPaths={entriesQuery.setExpandedPaths}
-          entries={entriesQuery.entries}
-          loadingDirectories={entriesQuery.loadingDirectories}
-          onLoadDirectory={entriesQuery.loadDirectory}
-          error={entriesQuery.error}
-          isPending={entriesQuery.isPending}
-          isRefreshing={entriesQuery.isRefreshing}
-          searchQuery={searchQuery}
-          searchResultPaths={entriesQuery.searchResultPaths}
-          searchTruncated={entriesQuery.searchTruncated}
-          selectedPath={entriesQuery.selectedPath}
-          onPreviewFile={handlePreviewFile}
-          onRefresh={entriesQuery.refresh}
-          onSelectFile={(path) => {
-            entriesQuery.selectPath(path);
-            handleSelectFile(path);
-          }}
-        />
+        {treeReady ? (
+          <FileTreeBrowser
+            key={JSON.stringify([environmentId, cwd])}
+            revealSelection={entriesQuery.revealSelection}
+            expandedPaths={entriesQuery.expandedPaths}
+            setExpandedPaths={entriesQuery.setExpandedPaths}
+            entries={entriesQuery.entries}
+            loadingDirectories={entriesQuery.loadingDirectories}
+            onLoadDirectory={entriesQuery.loadDirectory}
+            error={entriesQuery.error}
+            isPending={entriesQuery.isPending}
+            isRefreshing={entriesQuery.isRefreshing}
+            searchQuery={searchQuery}
+            searchResultPaths={entriesQuery.searchResultPaths}
+            searchTruncated={entriesQuery.searchTruncated}
+            selectedPath={entriesQuery.selectedPath}
+            onPreviewFile={handlePreviewFile}
+            onRefresh={entriesQuery.refresh}
+            onSelectFile={(path) => {
+              entriesQuery.selectPath(path);
+              handleSelectFile(path);
+            }}
+          />
+        ) : (
+          <View className="px-4 py-5">
+            <AppActivityIndicator size="small" accessibilityLabel="Loading files" />
+          </View>
+        )}
         <FilesToolbarBottomFade />
       </ScreenContent>
     </View>

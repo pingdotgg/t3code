@@ -78,6 +78,7 @@ import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import * as Haptics from "expo-haptics";
 import {
+  startTransition,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -415,8 +416,18 @@ function ThreadDetailBody(
   const openInspector = useOpenThreadInspector();
   const { session: voiceInputSession } = useGlobalVoiceInput();
   const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
+  const detailThreadIdentity = `${props.environmentId}:${props.selectedThread.id}`;
+  // Device/browser queries compete with first feed paint; reset per thread so switches defer again.
+  const [chromeReadyIdentity, setChromeReadyIdentity] = useState<string | null>(null);
+  const chromeReady = chromeReadyIdentity === detailThreadIdentity;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers device/browser chrome until this thread's first paint has committed
+  useEffect(() => {
+    startTransition(() => {
+      setChromeReadyIdentity(detailThreadIdentity);
+    });
+  }, [detailThreadIdentity]);
   const deviceState = useEnvironmentQuery(
-    deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
+    chromeReady ? deviceEnvironment.state({ environmentId: props.environmentId, input: {} }) : null,
   );
   const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id);
   const openDevicePreview = () => {
@@ -437,7 +448,9 @@ function ThreadDetailBody(
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
     enabled:
-      !props.draftMode && props.serverConfig?.environment.capabilities.serverBrowser === true,
+      chromeReady &&
+      !props.draftMode &&
+      props.serverConfig?.environment.capabilities.serverBrowser === true,
   });
   const openBrowserPreview = (tabId?: string) => {
     Keyboard.dismiss();

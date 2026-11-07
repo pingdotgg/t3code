@@ -16,6 +16,7 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { useEffectEvent } from "react";
 
 import { useEnvironmentScope } from "../../state/session";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -102,6 +103,71 @@ export type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
 };
 
+type ThreadGitControlsMenuKeyInput = Omit<
+  ThreadGitControlsProps,
+  | "onOpenFilesInspector"
+  | "onOpenGitInspector"
+  | "onMergeBack"
+  | "onPull"
+  | "onRunAction"
+  | "onOpenTerminal"
+  | "onOpenNewTerminal"
+  | "onRunProjectScript"
+> & {
+  readonly hasFilesInspector?: boolean;
+  readonly hasMergeBack?: boolean;
+};
+
+/**
+ * Structural menu fingerprint — deciding whether to remount the native AppBar menus.
+ * Excludes volatile status copy so ahead/behind ticks do not rebuild UIMenu on first tap.
+ */
+export function threadGitControlsStructureKey(props: ThreadGitControlsMenuKeyInput): string {
+  return [
+    String(props.environmentId),
+    String(props.threadId),
+    props.currentBranch ?? "",
+    props.hasThread === false ? "0" : "1",
+    props.canOpenTerminal ? "1" : "0",
+    props.canOperateTerminal ? "1" : "0",
+    props.canOpenFiles ? "1" : "0",
+    props.hasFilesInspector ? "1" : "0",
+    props.hasMergeBack ? "1" : "0",
+    props.projectScripts.map((script) => script.id).join("\0"),
+    props.terminalSessions.map((session) => session.terminalId).join("\0"),
+  ].join("|");
+}
+
+/** Volatile menu copy (status subtitle, quick-action label, session subtitles). */
+export function threadGitControlsContentKey(props: ThreadGitControlsMenuKeyInput): string {
+  const status = props.gitStatus;
+  return [
+    props.gitOperationLabel ?? "",
+    status?.refName ?? "",
+    status?.isRepo === false ? "0" : "1",
+    status?.hasPrimaryRemote ? "1" : "0",
+    status?.isDefaultRef ? "1" : "0",
+    String(status?.aheadCount ?? ""),
+    String(status?.behindCount ?? ""),
+    status?.hasWorkingTreeChanges ? "1" : "0",
+    String(status?.workingTree.files.length ?? ""),
+    status?.pr?.state ?? "",
+    String(status?.pr?.number ?? ""),
+    status?.sourceControlProvider?.kind ?? "",
+    props.terminalSessions
+      .map(
+        (session) =>
+          `${session.terminalId}\t${session.status}\t${session.hasRunningSubprocess ? "1" : "0"}\t${session.displayLabel}\t${session.cwd ?? ""}`,
+      )
+      .join("\0"),
+  ].join("|");
+}
+
+/** Full menu fingerprint (structure + content). Prefer structure/content keys separately for chrome. */
+export function threadGitControlsMenuKey(props: ThreadGitControlsMenuKeyInput): string {
+  return `${threadGitControlsStructureKey(props)}|${threadGitControlsContentKey(props)}`;
+}
+
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
@@ -153,7 +219,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     return "arrow.up.right.circle";
   })();
 
-  const openExistingPr = async () => {
+  const openExistingPr = useEffectEvent(async () => {
     const { shortLabel, singular } = sourceControlClients.get(
       gitStatus?.sourceControlProvider?.kind,
     ).changeRequest;
@@ -165,9 +231,9 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     if (!(await openPullRequest(prUrl))) {
       Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
     }
-  };
+  });
 
-  const runActionWithPrompt = async (input: GitActionRequestInput) => {
+  const runActionWithPrompt = useEffectEvent(async (input: GitActionRequestInput) => {
     if (!canWriteSourceControl) return;
     const confirmableAction =
       input.action === "push" ||
@@ -201,9 +267,9 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     }
 
     await onRunAction(input);
-  };
+  });
 
-  const runQuickAction = async () => {
+  const runQuickAction = useEffectEvent(async () => {
     if (quickAction.disabled) return;
     if (quickAction.kind === "open_pr") {
       await openExistingPr();
@@ -216,16 +282,16 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     if (quickAction.kind === "run_action" && quickAction.action) {
       await runActionWithPrompt({ action: quickAction.action });
     }
-  };
+  });
 
-  const openReview = () => {
+  const openReview = useEffectEvent(() => {
     navigation.navigate("ThreadReview", {
       environmentId: EnvironmentId.make(String(environmentId)),
       threadId: ThreadId.make(String(threadId)),
     });
-  };
+  });
 
-  const openGitInspector = () => {
+  const openGitInspector = useEffectEvent(() => {
     if (props.onOpenGitInspector) {
       props.onOpenGitInspector();
       return;
@@ -234,7 +300,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       environmentId: String(environmentId),
       threadId: String(threadId),
     });
-  };
+  });
 
   return {
     currentBranchLabel,
@@ -248,7 +314,16 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 }
 
-export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | null {
+export function useThreadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | null {
+  const onRunProjectScript = useEffectEvent((script: ProjectScript) => {
+    void props.onRunProjectScript(script);
+  });
+  const onOpenTerminal = useEffectEvent((terminalId: string) => {
+    props.onOpenTerminal(terminalId);
+  });
+  const onOpenNewTerminal = useEffectEvent(() => {
+    props.onOpenNewTerminal();
+  });
   if (!props.canOpenTerminal) return null;
   return {
     title: "Terminal",
@@ -262,7 +337,7 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
             icon: projectScriptMenuIcon(script.icon),
             subtitle: script.command,
             disabled: !props.canOperateTerminal,
-            onPress: () => void props.onRunProjectScript(script),
+            onPress: () => onRunProjectScript(script),
           }))
         : [
             {
@@ -287,7 +362,7 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
         ]
           .filter(Boolean)
           .join(" · "),
-        onPress: () => props.onOpenTerminal(session.terminalId),
+        onPress: () => onOpenTerminal(session.terminalId),
       })),
       {
         id: "terminal-new",
@@ -295,7 +370,7 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
         icon: "plus",
         subtitle: "Start another shell for this thread",
         disabled: !props.canOperateTerminal,
-        onPress: props.onOpenNewTerminal,
+        onPress: onOpenNewTerminal,
       },
     ],
   };
