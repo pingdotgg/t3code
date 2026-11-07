@@ -11813,6 +11813,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const result = yield* query.messages.pipe(
               Stream.filter((message) => message.type === "result"),
               Stream.runHead,
+              Effect.timeout("15 seconds"),
             );
             if (Option.isNone(result) || result.value.is_error) {
               return yield* Effect.fail(result);
