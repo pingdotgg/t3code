@@ -20,7 +20,6 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   CommandId,
-  DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   orchestrationV2WorktreePending,
@@ -29,7 +28,6 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   type ScopedThreadRef,
-  type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -179,21 +177,6 @@ export function useThreadDraftForThread(input: {
     draftContext: draft.context,
     draftAttachments: draft.attachments,
   };
-}
-
-/** A provider without the interaction-mode toggle runs in the default mode. */
-export function updateThreadDraftModelSelection(
-  threadKey: string,
-  value: ModelSelection,
-  providers: ReadonlyArray<ServerProvider>,
-): void {
-  const provider = providers.find((candidate) => candidate.instanceId === value.instanceId);
-  updateComposerDraftSettings(threadKey, {
-    modelSelection: value,
-    ...(provider?.showInteractionModeToggle === false
-      ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
-      : {}),
-  });
 }
 
 export function useThreadComposerState(input: {
