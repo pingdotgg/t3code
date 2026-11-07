@@ -11,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type { OpenCodeSettings } from "../settings.ts";
@@ -75,6 +76,20 @@ function parseOpenCodeMessage(
   };
 }
 
+interface CachedOpenCodeRow {
+  readonly fingerprint: string | null;
+  readonly created: number | null;
+  readonly record: UsageRecord | null;
+}
+
+/** Parsed rows by `${databasePath}\0${table}`, then rowid. */
+type OpenCodeUsageCache = Map<string, ReadonlyMap<number, CachedOpenCodeRow>>;
+
+interface ListedRow {
+  readonly row_id: number;
+  readonly fingerprint: string | null;
+}
+
 export interface OpenCodeUsageReadResult {
   readonly files: readonly { readonly path: string; readonly records: readonly UsageRecord[] }[];
   readonly missing: boolean;
@@ -104,6 +119,7 @@ const LEGACY_STAT_BATCH = 256;
 export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   root: string,
   sinceMs: number,
+  cache?: { readonly rows: OpenCodeUsageCache; readonly retentionCutoffMs: number },
 ): Effect.fn.Return<OpenCodeUsageReadResult, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -150,8 +166,19 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     found = true;
     const file = { path: path.join(root, name), records: [] as UsageRecord[] };
     files.push(file);
-    yield* Effect.gen(function* () {
+    const readIdentity = fileSystem.stat(file.path).pipe(
+      Effect.map((stat) =>
+        Option.isNone(stat.ino) && Option.isNone(stat.birthtime)
+          ? null
+          : `${stat.dev}:${Option.getOrNull(stat.ino)}:${Option.getOrNull(stat.birthtime)?.getTime()}`,
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    const beforeOpen = yield* readIdentity;
+    const readDatabase = Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      const identity = yield* readIdentity;
+      const cacheable = identity !== null && identity === beforeOpen;
       // Fail promptly on live-writer locks instead of stalling the server.
       yield* sql.unsafe("PRAGMA busy_timeout = 100");
       const tables = new Set(
@@ -170,49 +197,79 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        predicates.push("rowid > ?", "rowid <= ?");
-        const [range] = yield* sql.unsafe<{
-          readonly first_row_id: number | null;
-          readonly last_row_id: number | null;
-        }>(
-          `SELECT (SELECT MIN(rowid) FROM ${table}) AS first_row_id, (SELECT MAX(rowid) FROM ${table}) AS last_row_id`,
-        );
-        const firstRowId = range?.first_row_id;
-        const lastRowId = range?.last_row_id;
-        if (typeof firstRowId !== "number" || typeof lastRowId !== "number") continue;
-        // StatementSync.all materializes results; page by rowid and exclude mid-scan appends.
+        const key = `${file.path}\0${table}`;
+        const previous = cache?.rows.get(key);
+        const hit = (row: ListedRow) =>
+          row.fingerprint !== null && previous?.get(row.row_id)?.fingerprint === row.fingerprint;
+        // Use time indexes for the window; octet_length avoids loading overflow pages.
+        // OpenCode updates time_updated when a message changes.
+        const fingerprint =
+          columns.has("time_updated") && cacheable
+            ? `CASE WHEN time_updated IS NOT NULL THEN json_array(?, id, session_id, ${timestamp}, time_updated, octet_length(data)) END`
+            : "NULL";
+        const listed = (yield* sql.unsafe<ListedRow>(
+          `SELECT rowid AS row_id, ${fingerprint} AS fingerprint
+           FROM ${table} ${predicates.length === 0 ? "" : `WHERE ${predicates.join(" AND ")}`}`,
+          [
+            ...(columns.has("time_updated") && cacheable ? [identity] : []),
+            ...(timestamp === "NULL" ? [] : [sinceMs]),
+          ],
+        )).toSorted((a, b) => a.row_id - b.row_id);
+        const misses = listed.filter((row) => !hit(row));
+        const fetched = new Map<number, Omit<CachedOpenCodeRow, "fingerprint">>();
+        // StatementSync.all materializes results; fetch the large data column in pages.
         // Omit tracing because large histories require thousands of statements.
-        for (let after = firstRowId - 1; after < lastRowId; after += MESSAGE_PAGE_SIZE) {
+        for (let start = 0; start < misses.length; start += MESSAGE_PAGE_SIZE) {
+          const page = misses.slice(start, start + MESSAGE_PAGE_SIZE);
           const rows = yield* sql
             .unsafe<{
+              readonly row_id: number;
               readonly id: unknown;
               readonly session_id: unknown;
               readonly data: unknown;
               readonly created: unknown;
             }>(
-              `SELECT id, session_id, data, ${timestamp} AS created
-               FROM ${table} WHERE ${predicates.join(" AND ")} ORDER BY rowid`,
-              [
-                ...(timestamp === "NULL" ? [] : [sinceMs]),
-                after,
-                Math.min(after + MESSAGE_PAGE_SIZE, lastRowId),
-              ],
+              `SELECT rowid AS row_id, id, session_id, data, ${timestamp} AS created
+               FROM ${table} WHERE rowid IN (${page.map(() => "?").join(", ")})`,
+              page.map((row) => row.row_id),
             )
             .pipe(Effect.withTracerEnabled(false));
           for (const row of rows) {
-            append(
-              file.records,
-              parseOpenCodeMessage(text(row.data), {
+            fetched.set(row.row_id, {
+              created: typeof row.created === "number" ? row.created : null,
+              record: parseOpenCodeMessage(text(row.data), {
                 id: text(row.id),
                 sessionId: text(row.session_id),
                 ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
               }),
-            );
+            });
           }
           yield* Effect.yieldNow;
         }
+        const next = new Map<number, CachedOpenCodeRow>();
+        for (const row of listed) {
+          const parsed = fetched.get(row.row_id);
+          const entry = parsed
+            ? { fingerprint: row.fingerprint, ...parsed }
+            : hit(row)
+              ? previous?.get(row.row_id)
+              : undefined;
+          if (entry === undefined) continue;
+          append(file.records, entry.record);
+          if (entry.fingerprint !== null) next.set(row.row_id, entry);
+        }
+        if (cache === undefined) continue;
+        // Rows before this window went unchecked; keep them for wider windows until retention.
+        for (const [rowId, entry] of previous ?? []) {
+          const created = entry.created ?? -Infinity;
+          if (!next.has(rowId) && created < sinceMs && created >= cache.retentionCutoffMs) {
+            next.set(rowId, entry);
+          }
+        }
+        cache.rows.set(key, next);
       }
-    }).pipe(
+    });
+    yield* Effect.flatMap(SqlClient.SqlClient, (sql) => sql.withTransaction(readDatabase)).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: file.path, readonly: true })),
       Effect.catchTags({
         SqlError: () => {
@@ -320,18 +377,25 @@ const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
 
 export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path;
 
+const rowCache: OpenCodeUsageCache = new Map();
+const scanLock = Semaphore.makeUnsafe(1);
+
 export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
   kind: "scan",
   provider: "opencode",
-  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ instances, windowStartMs }) {
+  scan: Effect.fn("openCodeUsageReader.scan")(function* ({
+    instances,
+    windowStartMs,
+    retentionCutoffMs,
+  }) {
     const roots = new Set<string>();
     for (const instance of instances) {
       for (const root of yield* resolveOpenCodeDataDirs(instance.environment)) roots.add(root);
     }
-    return yield* Effect.forEach(
+    const scans = yield* Effect.forEach(
       roots,
       (dir) =>
-        readOpenCodeUsage(dir, windowStartMs).pipe(
+        readOpenCodeUsage(dir, windowStartMs, { rows: rowCache, retentionCutoffMs }).pipe(
           Effect.map((result) => ({
             dir,
             files: result.missing && !result.error ? null : result.files,
@@ -341,5 +405,10 @@ export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCode
         ),
       { concurrency: "unbounded" },
     );
-  }),
+    const paths = new Set(scans.flatMap((scan) => scan.files?.map((file) => file.path) ?? []));
+    for (const key of rowCache.keys()) {
+      if (!paths.has(key.slice(0, key.indexOf("\0")))) rowCache.delete(key);
+    }
+    return scans;
+  }, scanLock.withPermit),
 };
