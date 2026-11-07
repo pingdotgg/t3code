@@ -185,7 +185,11 @@ import {
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
 } from "./floating-working-control";
-import { connectionFloatingStatus, type FloatingWorkingStatus } from "./floating-working-status";
+import {
+  connectionFloatingStatus,
+  type FloatingStatusAction,
+  type FloatingWorkingStatus,
+} from "./floating-working-status";
 import {
   derivePendingUserInputMaxHeight,
   ESTIMATED_KEYBOARD_HEIGHT,
@@ -299,6 +303,8 @@ export interface ThreadDetailScreenProps {
     ) => Promise<boolean | "responded">,
     onWillEnqueue?: () => void,
   ) => Promise<MessageId | null>;
+  /** Queues a standalone text command, such as `/goal clear`, without touching the draft. */
+  readonly onSendCommand: (text: string) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly canSwitchThreadProvider: boolean;
   readonly onUpdateThreadInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
@@ -734,6 +740,18 @@ function ThreadDetailBody(
       );
     }
   };
+  const [goalCommandPending, setGoalCommandPending] = useState(false);
+  const runGoalCommand = async (command: string) => {
+    if (goalCommandPending || !props.canOperateThread) return;
+    setGoalCommandPending(true);
+    // No `finally`: React Compiler cannot lower it.
+    try {
+      await props.onSendCommand(command);
+    } catch (error) {
+      Dialog.alert("Could not update goal", error instanceof Error ? error.message : "Try again.");
+    }
+    setGoalCommandPending(false);
+  };
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
@@ -865,12 +883,37 @@ function ThreadDetailBody(
         },
       };
     }
-    if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
+    if (
+      props.selectedThread.goal !== null &&
+      !props.activeThreadBusy &&
+      contentPresentationKind === "ready"
+    ) {
+      // The pill only shows while idle (a queued run is busy but has no work start time), so
+      // Resume never interrupts running work.
       const goal = presentProviderGoal(props.selectedThread.goal, false);
+      // Claude goals can only be cleared; the server rejects `/goal resume` there.
+      const goalProvider = props.serverConfig?.providers.find(
+        (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
+      );
+      const canResumeGoal = goal.canResume && goalProvider?.driver !== "claudeAgent";
+      const goalAction = (
+        label: string,
+        accessibilityLabel: string,
+        command: string,
+      ): FloatingStatusAction => ({
+        label,
+        accessibilityLabel,
+        disabled: !props.canOperateThread || goalCommandPending,
+        onPress: () => void runGoalCommand(command),
+      });
       return {
         kind: "goal",
         label: goal.title,
         accessibilityLabel: `${goal.title}: ${goal.objective}`,
+        actions: [
+          ...(canResumeGoal ? [goalAction("Resume", "Resume goal", "/goal resume")] : []),
+          goalAction("Clear", "Clear goal", "/goal clear"),
+        ],
       };
     }
     if (extensionStatus !== null && contentPresentationKind === "ready") {
