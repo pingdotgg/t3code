@@ -367,6 +367,10 @@ function cursorToolFailed(toolCall: ToolCall): boolean {
   if (toolCall.result?.status === "error") {
     return true;
   }
+  // The SDK reports a shell command that exits non-zero as a success.
+  if (toolCall.type === "shell" && toolCall.result?.status === "success") {
+    return toolCall.result.value.exitCode !== 0;
+  }
   return toolCall.type === "mcp" && toolCall.result?.status === "success"
     ? toolCall.result.value.isError
     : false;
