@@ -35,6 +35,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   onFocusSearch: () => void;
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   showFavorites?: boolean;
+  docked?: boolean;
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
   selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
   getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
@@ -82,7 +83,12 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
         }
       }}
     >
-      <div className="h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div
+        className={cn(
+          "h-full overflow-y-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+          !props.docked && "overscroll-contain",
+        )}
+      >
         <div ref={sidebarContentRef} className="relative flex min-h-full flex-col gap-1 p-1">
           {selectedIndicatorTop !== null ? (
             <div

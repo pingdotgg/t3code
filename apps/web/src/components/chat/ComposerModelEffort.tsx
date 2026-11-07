@@ -522,7 +522,7 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
       </div>
       {/* pt-2.5 puts the first level on the same line as the first model. */}
       <div
-        className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-2 pt-2.5 pb-1.5"
+        className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pt-2.5 pb-1.5"
         // Capture, so Up and Down on an option row move rows instead of opening its menu.
         onKeyDownCapture={moveBetweenRows}
       >
