@@ -339,10 +339,22 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const readLocalStatus = Effect.fn("VcsStatusBroadcaster.readLocalStatus")(function* (
+    cwd: string,
+  ) {
+    const includeCheckoutDetails = yield* Ref.get(checkoutDetailDemandRef).pipe(
+      Effect.map((demand) => demand.has(cwd)),
+    );
+    return yield* workflow.localStatus({
+      cwd,
+      ...(includeCheckoutDetails ? { includeCheckoutDetails: true } : {}),
+    });
+  });
+
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
     cwd: string,
   ) {
-    const local = yield* workflow.localStatus({ cwd });
+    const local = yield* readLocalStatus(cwd);
     return yield* updateCachedLocalStatus(cwd, local);
   });
 
@@ -409,13 +421,7 @@ export const make = Effect.gen(function* () {
           if (shared !== undefined && shared.startedAt >= requestedAt) return shared.local;
           const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
           yield* workflow.invalidateLocalStatus(cwd);
-          const includeCheckoutDetails = yield* Ref.get(checkoutDetailDemandRef).pipe(
-            Effect.map((demand) => demand.has(cwd)),
-          );
-          const local = yield* workflow.localStatus({
-            cwd,
-            ...(includeCheckoutDetails ? { includeCheckoutDetails: true } : {}),
-          });
+          const local = yield* readLocalStatus(cwd);
           localRefreshResults.set(cwd, { startedAt, local });
           return yield* updateCachedLocalStatus(cwd, local, { publish: true });
         }),
@@ -765,7 +771,7 @@ export const make = Effect.gen(function* () {
         return yield* Effect.gen(function* () {
           const subscription = yield* PubSub.subscribe(changesPubSub);
           const initialLocal = input.includeCheckoutDetails
-            ? yield* workflow.localStatus({ cwd, includeCheckoutDetails: true })
+            ? yield* loadLocalStatus(cwd)
             : yield* getOrLoadLocalStatus(cwd);
           const cachedStatus = yield* getCachedStatus(cwd);
           const initialRemote = cachedStatus?.remote?.value ?? null;
