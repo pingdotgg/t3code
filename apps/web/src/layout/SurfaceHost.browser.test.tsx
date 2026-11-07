@@ -3,6 +3,8 @@ import { page } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { render } from "../../test/render";
+import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
+import { useLayoutBehaviorStore } from "./layoutBehavior";
 import {
   createLayoutLauncherContent,
   createLayoutState,
@@ -15,6 +17,9 @@ import { LayoutSurfaceHost } from "./SurfaceHost";
 const TOUR_KEY = "t3code:layout-tour:v1";
 
 function setup() {
+  const settings = getClientSettings();
+  const behavior = useLayoutBehaviorStore.getState().behavior;
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
   const original = useLayoutStore.getState().layout;
   const tour = localStorage.getItem(TOUR_KEY);
   localStorage.setItem(TOUR_KEY, "true");
@@ -39,6 +44,8 @@ function setup() {
     second: second!,
     third: third!,
     [Symbol.dispose]: () => {
+      __setClientSettingsForTests(settings);
+      useLayoutBehaviorStore.setState({ behavior });
       useLayoutStore.setState({ layout: original });
       if (tour === null) localStorage.removeItem(TOUR_KEY);
       else localStorage.setItem(TOUR_KEY, tour);
