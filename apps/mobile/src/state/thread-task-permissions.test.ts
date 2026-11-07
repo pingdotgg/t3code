@@ -10,6 +10,7 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
+  type RuntimeMode,
   type ServerConfig,
 } from "@t3tools/contracts";
 import {
@@ -30,6 +31,7 @@ const state = vi.hoisted(() => ({
     text: "Keep my draft",
     attachments: [] as DraftComposerImageAttachment[],
     modelSelection: undefined as ModelSelection | undefined,
+    runtimeMode: undefined as RuntimeMode | undefined,
   },
   serverConfig: null as ServerConfig | null,
   projection: null as OrchestrationV2ThreadProjection | null,
@@ -193,7 +195,12 @@ const NO_SIDE_CHATS = { startSideChat: async () => false };
 beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
   state.connectionState = "connected";
-  state.draft = { text: "Keep my draft", attachments: [], modelSelection: undefined };
+  state.draft = {
+    text: "Keep my draft",
+    attachments: [],
+    modelSelection: undefined,
+    runtimeMode: undefined,
+  };
   state.freshPending = false;
   state.compactDue = false;
   state.thread.latestRun = null;
@@ -345,7 +352,18 @@ describe("mobile task permissions", () => {
       ...state.serverConfig,
       environment: { capabilities: { sideChats: true } },
     } as ServerConfig;
-    state.draft = { ...state.draft, text: "/side why does this fail?" };
+    // The thread gets the composer's mode and model only on its next send.
+    const selection: ModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    };
+    state.draft = {
+      ...state.draft,
+      text: "/side why does this fail?",
+      modelSelection: selection,
+      runtimeMode: "approval-required",
+    };
     const startSideChat = vi.fn(async () => true);
     const composer = useThreadComposerState({ startSideChat });
     expect(composer.sideChatUnavailableReason).toBeNull();
@@ -353,6 +371,7 @@ describe("mobile task permissions", () => {
     expect(startSideChat).toHaveBeenCalledExactlyOnceWith(
       { environmentId: "secondary", threadId: "thread" },
       "why does this fail?",
+      { runtimeMode: "approval-required", modelSelection: selection },
     );
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).toHaveBeenCalled();

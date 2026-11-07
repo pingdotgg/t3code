@@ -27,6 +27,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProviderInteractionMode,
+  type RuntimeMode,
   type ScopedThreadRef,
   type ServerProvider,
   type ThreadId,
@@ -197,7 +198,11 @@ export function updateThreadDraftModelSelection(
 
 export function useThreadComposerState(input: {
   /** Forks the thread into a side chat that gets `prompt`; resolves false when it did not start. */
-  readonly startSideChat: (source: ScopedThreadRef, prompt: string) => Promise<boolean>;
+  readonly startSideChat: (
+    source: ScopedThreadRef,
+    prompt: string,
+    settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
+  ) => Promise<boolean>;
 }) {
   const {
     selectedThread: selectedThreadShell,
@@ -582,6 +587,10 @@ export function useThreadComposerState(input: {
           .startSideChat(
             { environmentId: thread.environmentId, threadId: thread.id },
             sideChatCommand.prompt,
+            {
+              runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+              modelSelection: draft.modelSelection ?? thread.modelSelection,
+            },
           )
           .finally(() => {
             startingSideChatRef.current = false;

@@ -304,9 +304,10 @@ You can also choose **Side chat** from the **+** menu in the right panel. The si
 chat opens as a tab there, with its own composer. Side chats do not show in the
 sidebar. Find one again under **Side chats** in thread details.
 
-A side chat works in the same folder as the thread and inherits its permissions
-when created, including for its first reply. Change permissions for an individual
-side chat in its composer. Later changes to the parent do not change existing side chats.
+A side chat works in the same folder as the thread and starts with the permissions,
+model, and reasoning level shown in the thread's composer, including for its first
+reply. Change them for an individual side chat in its composer. Later changes to the
+parent do not change existing side chats.
 
 To use what you learned, choose **Bring back**. The thread gets the side chat with
 your next message there. Bring back is available while the thread is idle.
