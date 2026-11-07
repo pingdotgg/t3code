@@ -93,7 +93,8 @@ export const definition = defineSourceControl({
     repositoryUrl
       ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' ${changeRequestHeadRef(number)} && git checkout -B pulls/${number} FETCH_HEAD`
       : null,
-  changeRequestCloseCommand: /\b(?:tea\s+(?:pr|pulls)|fj\s+pr)\s+(?:merge|close)\b/u,
+  // tea also takes `pull` for `pulls` and `m` for `merge`.
+  changeRequestCloseCommand: /\b(?:tea\s+(?:pr|pulls?)|fj\s+pr)\s+(?:merge|m|close)\b/u,
   authorProfileUrl: () => null,
   hardLineBreaks: true,
   // Forgejo refuses a change request review without a summary, even with inline comments.
