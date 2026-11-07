@@ -2644,6 +2644,108 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("bounds untracked review input without hiding ordinary edits", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "README.md", "# test\ntracked edit\n");
+        yield* writeTextFile(cwd, "ordinary.txt", "ordinary edit\n");
+        yield* writeTextFile(cwd, "large.data", "");
+        // Sparse fixture exercises logical size without allocating the input budget.
+        yield* fileSystem.truncate(pathService.join(cwd, "large.data"), 11 * 1024 * 1024);
+        if (symlinksSupported) {
+          yield* fileSystem.symlink("large.data", pathService.join(cwd, "ordinary-link"));
+        }
+        const indexBefore = yield* git(cwd, ["ls-files", "--stage"]);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              (command.args.includes("--numstat") || command.args.includes("--patch"))
+            ) {
+              const result = yield* delegate.spawn(
+                ChildProcess.make("git", ["ls-files", "--error-unmatch", "large.data"], {
+                  cwd,
+                  env: command.options.env,
+                }),
+              );
+              assert.notEqual(Number(yield* result.exitCode), 0);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
+        const source = preview.sources.find((item) => item.kind === "working-tree")!;
+        assert.isTrue(source.truncated);
+        assert.isUndefined(source.files);
+        assert.include(source.diff, "+tracked edit");
+        assert.include(source.diff, "+ordinary edit");
+        assert.notInclude(source.diff, "b/large.data");
+        if (symlinksSupported) assert.include(source.diff, "b/ordinary-link");
+        assert.isUndefined(
+          (yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true })).branchChanges,
+        );
+        const selected = yield* driver.getReviewDiffPreview({
+          cwd,
+          file: { path: "ordinary.txt", previousPath: null, sourceKind: "working-tree" },
+        });
+        assert.isFalse(selected.sources[0]!.truncated);
+        assert.include(selected.sources[0]!.diff, "+ordinary edit");
+        const oversized = yield* driver.getReviewDiffPreview({
+          cwd,
+          file: { path: "large.data", previousPath: null, sourceKind: "working-tree" },
+        });
+        assert.isTrue(oversized.sources[0]!.truncated);
+        assert.isEmpty(oversized.sources[0]!.diff);
+        assert.strictEqual(yield* git(cwd, ["ls-files", "--stage"]), indexBefore);
+      }),
+    );
+
+    it.effect("bounds aggregate untracked input while keeping later small files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        for (let index = 0; index < 8; index++) {
+          const name = `large-${index}.data`;
+          yield* writeTextFile(cwd, name, "");
+          yield* fileSystem.truncate(pathService.join(cwd, name), 9 * 1024 * 1024);
+        }
+        yield* writeTextFile(cwd, "z-small.txt", "still reviewable\n");
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (ChildProcess.isStandardCommand(command) && command.args.includes("--numstat")) {
+              const result = yield* delegate.spawn(
+                ChildProcess.make("git", ["ls-files", "--error-unmatch", "large-7.data"], {
+                  cwd,
+                  env: command.options.env,
+                }),
+              );
+              assert.notEqual(Number(yield* result.exitCode), 0);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
+        const source = preview.sources.find((item) => item.kind === "working-tree")!;
+        assert.isTrue(source.truncated);
+        assert.isUndefined(source.files);
+        assert.notInclude(source.diff, "b/large-7.data");
+        assert.include(source.diff, "+still reviewable");
+      }),
+    );
+
     it.effect("reviews untracked files outside the sparse-checkout cone", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
