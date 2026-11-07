@@ -100,15 +100,21 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
 export function mixedSettingSummary(
   targets: readonly Pick<ScopedSettingsTarget, "label" | "settings">[],
   key: keyof ServerSettings,
-): string {
-  const labelsByValue = new Map<string, Set<string>>();
+): string | null {
+  const groups: { value: unknown; text: string; labels: string[] }[] = [];
   for (const target of targets) {
-    const value = formatValue(key, target.settings[key]);
-    labelsByValue.set(value, (labelsByValue.get(value) ?? new Set()).add(target.label));
+    const value = target.settings[key];
+    const group = groups.find((candidate) => Equal.equals(candidate.value, value));
+    if (group) group.labels.push(target.label);
+    else groups.push({ value, text: formatValue(key, value), labels: [target.label] });
   }
-  return [...labelsByValue]
-    .map(([value, labels]) => `${value} for ${[...labels].join(", ")}`)
-    .join(" · ");
+  // Repeated names, or distinct values that print alike, would make the summary misleading.
+  const ambiguous =
+    new Set(targets.map((target) => target.label)).size !== targets.length ||
+    new Set(groups.map((group) => group.text)).size !== groups.length;
+  return ambiguous
+    ? null
+    : groups.map((group) => `${group.text} for ${group.labels.join(", ")}`).join(" · ");
 }
 
 /** Matches resolveProjectSettings order. */

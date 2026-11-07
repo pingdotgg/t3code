@@ -1,4 +1,9 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -115,5 +120,36 @@ describe("mixedSettingSummary", () => {
         "autoResumeLimitedThreads",
       ),
     ).toBe("On for laptop, desktop · Off for vps");
+  });
+
+  it("stays silent when names repeat or distinct values print alike", () => {
+    const on = { ...DEFAULT_SERVER_SETTINGS, autoResumeLimitedThreads: true };
+    const off = { ...DEFAULT_SERVER_SETTINGS, autoResumeLimitedThreads: false };
+    expect(
+      mixedSettingSummary(
+        [
+          { label: "laptop", settings: on },
+          { label: "laptop", settings: off },
+        ],
+        "autoResumeLimitedThreads",
+      ),
+    ).toBeNull();
+    const model = (instanceId: string) => ({
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerationModelSelection: {
+        ...DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+        instanceId: ProviderInstanceId.make(instanceId),
+        model: "gpt-5",
+      },
+    });
+    expect(
+      mixedSettingSummary(
+        [
+          { label: "laptop", settings: model("codex") },
+          { label: "vps", settings: model("codex-work") },
+        ],
+        "textGenerationModelSelection",
+      ),
+    ).toBeNull();
   });
 });

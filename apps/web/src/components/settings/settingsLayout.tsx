@@ -489,7 +489,7 @@ export function SettingsRow({
     ) : null;
   const renderedStatus =
     status ??
-    (mixed && context && settingKeys.length === 1
+    (mixedOverride === undefined && mixed && context && settingKeys.length === 1
       ? mixedSettingSummary(context.targets, settingKeys[0]!)
       : null);
 
