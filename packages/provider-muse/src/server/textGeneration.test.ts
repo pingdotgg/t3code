@@ -226,6 +226,49 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
     }),
   );
 
+  it.effect("explains a failed turn by Muse's error category", () =>
+    Effect.gen(function* () {
+      const message = "API error 429: raw provider text";
+      const cases = [
+        {
+          error: { kind: "modelError", quota: { limitKind: "tierLimit", resetsAtMs: 1 } },
+          detail: "Muse Code usage limit reached. Try again after it resets.",
+        },
+        {
+          // Credential proxies can refuse with a 429 quota message and no quota object.
+          error: { kind: "modelError", message: "upstream 429: quota exceeded for this key" },
+          detail: "Muse Code usage limit reached. Try again after it resets.",
+        },
+        {
+          error: { kind: "authRequired" },
+          detail: "Muse Code is not signed in. Run `muse login` on this T3 server host.",
+        },
+        {
+          error: { kind: "modelError" },
+          detail: "Muse Code's model request failed. Try again or choose another Muse model.",
+        },
+        {
+          error: { kind: "stepLimit" },
+          detail:
+            "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
+        },
+      ];
+      for (const { error, detail } of cases) {
+        const test = fixture((emit) =>
+          emit("turn/completed", {
+            terminal: "failed",
+            error: { message, ...error, retryable: false },
+          }),
+        );
+        const service = yield* test.make;
+        const failure = yield* service.generateThreadTitle(titleInput).pipe(Effect.flip);
+        expect(failure).toMatchObject({ _tag: "TextGenerationError", detail });
+        expect(failure.detail).not.toContain("message" in error ? error.message : message);
+        expect(test.host.close).toHaveBeenCalledOnce();
+      }
+    }),
+  );
+
   it.effect("settles a completed turn even when its start acknowledgement never arrives", () =>
     Effect.gen(function* () {
       const test = fixture(finish('{"title":"Fix login form"}'), false);
