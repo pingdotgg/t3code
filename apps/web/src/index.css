@@ -230,6 +230,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --animate-stash-pulse-row: stash-pulse-row 1400ms;
   --animate-stash-pulse-row-alt: stash-pulse-row-alt 1400ms;
   --animate-stash-pulse-count: stash-pulse-count 1400ms step-start;
+  --animate-right-panel-attention-pulse: right-panel-attention-pulse 650ms ease-in-out 2;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
@@ -327,6 +328,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     from,
     85.7% {
       color: var(--color-primary);
+    }
+  }
+  @keyframes right-panel-attention-pulse {
+    0%,
+    100% {
+      box-shadow: inset 0 0 0 0 transparent;
+    }
+    50% {
+      box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--color-primary) 70%, transparent);
     }
   }
   @keyframes status-pulse {

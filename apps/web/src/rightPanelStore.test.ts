@@ -359,9 +359,10 @@ describe("rightPanelStore", () => {
     const revision = store.getUserActionRevision(refA);
 
     expect(store.openProactive(refA, relinkedPullRequest, revision, true)).toBe(true);
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
-      relinkedPullRequest,
-    );
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      ...relinkedPullRequest,
+      attentionRequestId: 1,
+    });
 
     store.close(refA);
     expect(store.openProactive(refA, linkedPullRequest, revision, true)).toBe(false);
@@ -609,6 +610,7 @@ describe("rightPanelStore", () => {
               projectId: "project-a",
               repository: "pingdotgg/t3code",
               number: 4909,
+              attentionRequestId: 0,
             },
           ],
         },
@@ -633,6 +635,7 @@ describe("rightPanelStore", () => {
           projectId: "project-a",
           repository: "pingdotgg/t3code",
           number: 4909,
+          attentionRequestId: 0,
         },
       ],
     };
@@ -1007,8 +1010,22 @@ describe("rightPanelStore", () => {
     expect(state.activeSurfaceId).toBe(pullRequestSurfaceId(first));
     expect(
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
-    ).toMatchObject({ url });
+    ).toMatchObject({ url, attentionRequestId: 3 });
+    expect(state.surfaces[1]).toMatchObject({ attentionRequestId: 1 });
     expect(state.surfaces[1]).not.toHaveProperty("url");
+  });
+
+  it("bumps attention when reopening the pull request already in the panel", () => {
+    const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
+    useRightPanelStore.getState().openPullRequest(refA, pr);
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({ attentionRequestId: 1 });
+
+    useRightPanelStore.getState().openPullRequest(refA, pr);
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({ attentionRequestId: 2 });
   });
 
   it("restores each environment, thread and PR surface's detail tab after reload and URL reopen", async () => {
@@ -1073,7 +1090,10 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().openPullRequest(refA, first);
     useRightPanelStore.getState().openPullRequest(refA, second);
     const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
-    expect(state.surfaces).toEqual([pullRequestSurface(first), pullRequestSurface(second)]);
+    expect(state.surfaces).toEqual([
+      pullRequestSurface({ ...first, attentionRequestId: 1 }),
+      pullRequestSurface({ ...second, attentionRequestId: 1 }),
+    ]);
     expect(pullRequestSurfaceId({ ...first, host: "GITHUB.COM" })).toBe(
       pullRequestSurfaceId(first),
     );
