@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { AuthSessionId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import { AuthSessionId, EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -9,6 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
@@ -20,6 +21,7 @@ import {
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
+  listThreads,
   readLatestMessages,
   threadCommand,
   type ThreadTools,
@@ -292,3 +294,131 @@ it("titles from a long first line without splitting an emoji", () => {
   const title = titleFromMessage(`${"a".repeat(78)}😀 and the rest of a long first line`);
   assert.strictEqual(title, `${"a".repeat(78)}…`);
 });
+
+const repo = { canonicalKey: "github.com/acme/app" };
+const projectList = (...projects: Array<{ id: string; repositoryIdentity?: typeof repo }>) => ({
+  projects: projects.map((project) => ({
+    title: project.id,
+    workspaceRoot: `/work/${project.id}`,
+    ...project,
+  })),
+  nextCursor: null,
+});
+const threadPage = (nextCursor: number | null) => ({
+  projectId: null,
+  currentThreadId: null,
+  threads: [],
+  nextCursor,
+  total: 0,
+});
+const listAt = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.provideService(HostProcess.WorkingDirectory, "/work/app"),
+    Effect.provide(NodeServices.layer),
+  );
+
+it.effect(
+  "list elsewhere takes that environment's project id or the one with this repository",
+  () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("env-remote");
+      for (const project of ["remote-app", "."]) {
+        const { tools, calls } = scriptedTools({
+          t3_project_list: [
+            projectList({ id: "remote-app", repositoryIdentity: repo }, { id: "remote-other" }),
+            projectList({ id: "app", repositoryIdentity: repo }),
+          ],
+          t3_thread_list: [threadPage(1), threadPage(null)],
+        });
+
+        yield* listThreads(tools, {
+          environment: Option.some(environmentId),
+          allEnvironments: false,
+          project: Option.some(project),
+          allProjects: false,
+        });
+
+        assert.deepStrictEqual(
+          calls.filter((entry) => entry.tool === "t3_thread_list").map((entry) => entry.args),
+          [0, 1].map((cursor) => ({
+            environmentId,
+            projectId: "remote-app",
+            includeSubagents: false,
+            limit: 100,
+            cursor,
+          })),
+        );
+      }
+    }).pipe(listAt),
+);
+
+it.effect("--all-environments skips a linked environment it cannot list", () =>
+  Effect.gen(function* () {
+    const link = (id: string, status: "reachable" | "unreachable") => ({
+      environmentId: id,
+      label: id,
+      status,
+      access: "read-only",
+      expiresAt: "2026-12-01T00:00:00.000Z",
+      lastError: null,
+    });
+    const { tools, calls } = scriptedTools({
+      t3_environment_read: [{ environmentId: "env-here", label: "here" }],
+      t3_environment_links: [
+        {
+          environmentId: "env-here",
+          links: [
+            link("env-a", "reachable"),
+            link("env-b", "unreachable"),
+            link("env-c", "reachable"),
+          ],
+          notListed: "",
+        },
+      ],
+      t3_project_list: [
+        projectList({ id: "app", repositoryIdentity: repo }),
+        projectList({ id: "a-app", repositoryIdentity: repo }),
+        projectList({ id: "app", repositoryIdentity: repo }),
+        projectList({ id: "c-other" }),
+        projectList({ id: "app", repositoryIdentity: repo }),
+      ],
+      t3_thread_list: [threadPage(null), threadPage(null)],
+    });
+
+    const listed = yield* listThreads(tools, {
+      environment: Option.none(),
+      allEnvironments: true,
+      project: Option.none(),
+      allProjects: false,
+    });
+
+    assert.deepStrictEqual(
+      listed.map((entry) => entry.label),
+      ["here", "env-a"],
+    );
+    assert.deepStrictEqual(
+      calls
+        .filter((entry) => entry.tool === "t3_thread_list")
+        .map((entry) => (entry.args as { projectId: string }).projectId),
+      ["app", "a-app"],
+    );
+  }).pipe(listAt),
+);
+
+it.effect("list fails instead of looping when a page repeats its cursor", () =>
+  Effect.gen(function* () {
+    const { tools, calls } = scriptedTools({
+      t3_thread_list: [threadPage(1), threadPage(1)],
+    });
+
+    const error = yield* listThreads(tools, {
+      environment: Option.none(),
+      allEnvironments: false,
+      project: Option.none(),
+      allProjects: true,
+    }).pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "ThreadToolFailedError");
+    assert.strictEqual(calls.length, 2);
+  }).pipe(listAt),
+);
