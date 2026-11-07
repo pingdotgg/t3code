@@ -31,7 +31,7 @@ export function isTimelineScrollTarget(
 // Sandboxed iframe gestures are invisible to the parent; only their chained scroll arrives.
 export function createUpwardScrollDetector(initialOffset: number) {
   let baseline = initialOffset;
-  return (next: { offset: number; maxOffset: number; programmatic?: boolean }) => {
+  return (next: { offset: number; maxOffset: number; programmatic: boolean }) => {
     if (next.programmatic || next.offset > baseline) baseline = next.offset;
     // Content shrinking below the view pulls the scroll up to the new end, and no further.
     else baseline = Math.min(baseline, next.maxOffset);

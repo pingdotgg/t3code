@@ -64,7 +64,7 @@ describe("timeline scroll targets", () => {
 });
 
 describe("timeline scroll follow opt-out", () => {
-  const at = (offset: number, maxOffset: number, programmatic?: boolean) => ({
+  const at = (offset: number, maxOffset: number, programmatic = false) => ({
     offset,
     maxOffset,
     programmatic,
