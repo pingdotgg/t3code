@@ -1,5 +1,6 @@
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -119,6 +120,18 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
 } satisfies NodeJS.ProcessEnv);
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
+const REVIEW_BASE_HEAD_REFLOG_LIMIT = 50;
+const REVIEW_BASE_RECENT_REF_LIMIT = 20;
+
+/**
+ * Optional open-PR base for Automatic Changes. Defaults to none so status/diff stay offline;
+ * provide a cached or already-known base from a higher layer when available.
+ */
+export class ReviewPullRequestBaseHint extends Context.Reference<
+  (input: { readonly cwd: string; readonly branch: string }) => Effect.Effect<string | null>
+>("t3/vcs/ReviewPullRequestBaseHint", {
+  defaultValue: () => () => Effect.succeed(null),
+}) {}
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
   isRepo: false,
   hasOriginRemote: false,
@@ -1868,12 +1881,294 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { baseRef: comparisonRef.slice("refs/remotes/".length), comparisonRef };
   });
 
+  const resolveRemoteOfCurrentBase = Effect.fn("resolveRemoteOfCurrentBase")(function* (
+    cwd: string,
+    refName: string,
+    primaryRemoteName: string | null,
+  ) {
+    const trackedRemoteBase = yield* resolveTrackedRemoteBaseRef(cwd, refName);
+    if (trackedRemoteBase !== null) return trackedRemoteBase;
+    if (
+      primaryRemoteName &&
+      (yield* remoteBranchExists({
+        cwd,
+        remoteName: primaryRemoteName,
+        refName,
+      }))
+    ) {
+      return {
+        baseRef: `${primaryRemoteName}/${refName}`,
+        comparisonRef: `refs/remotes/${primaryRemoteName}/${refName}`,
+      };
+    }
+    return null;
+  });
+
+  type ResolvedReviewBase = {
+    readonly baseRef: string;
+    readonly comparisonRef: string;
+  };
+
+  // Inferred bases get their own key so ahead-of-default and PR targets keep reading only
+  // explicit t3-merge-base settings.
+  const reviewBaseConfigKey = (refName: string) => `branch.${refName}.t3-review-base-ref`;
+
+  const readInferredReviewBase = Effect.fn("readInferredReviewBase")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const stored = yield* readConfigValue(cwd, reviewBaseConfigKey(refName));
+    if (!stored?.startsWith("refs/heads/") && !stored?.startsWith("refs/remotes/")) return null;
+    const resolved = yield* resolveComparisonBaseRef(cwd, stored);
+    if (resolved === null) return null;
+    return {
+      baseRef: stored.replace(/^refs\/(heads|remotes)\//, ""),
+      comparisonRef: resolved.comparisonRef,
+    };
+  });
+
+  const persistInferredBranchBase = Effect.fn("persistInferredBranchBase")(function* (
+    cwd: string,
+    refName: string,
+    base: ResolvedReviewBase,
+  ) {
+    if (base.comparisonRef === `refs/heads/${refName}`) return;
+    if ((yield* readConfigValue(cwd, reviewBaseConfigKey(refName))) === base.comparisonRef) return;
+    yield* writeConfigValue({
+      cwd,
+      key: reviewBaseConfigKey(refName),
+      value: base.comparisonRef,
+    }).pipe(
+      Effect.catchTags({
+        GitCommandError: () =>
+          Effect.logWarning("inferred review base could not be persisted; continuing without it"),
+      }),
+    );
+  });
+
+  const resolveReflogCreatedFromBase = Effect.fn("resolveReflogCreatedFromBase")(function* (
+    cwd: string,
+    refName: string,
+    resolveNamed: (candidate: string) => Effect.Effect<ResolvedReviewBase | null, GitCommandError>,
+  ) {
+    const reflog = yield* executeGit(
+      "GitVcsDriver.resolveReflogCreatedFromBase",
+      cwd,
+      ["reflog", "show", "--format=%H%x09%gs", `refs/heads/${refName}`],
+      { allowNonZeroExit: true },
+    );
+    if (reflog.exitCode !== 0 || reflog.stdout.length === 0) return null;
+
+    let createdOid: string | null = null;
+    let createdFrom: string | null = null;
+    for (const line of reflog.stdout.split("\n")) {
+      if (line.length === 0) continue;
+      const separator = line.indexOf("\t");
+      if (separator <= 0) continue;
+      const subject = line.slice(separator + 1);
+      const match = /^branch: Created from (.+)$/.exec(subject);
+      if (match?.[1]) {
+        createdOid = line.slice(0, separator);
+        createdFrom = match[1].trim();
+      }
+    }
+    if (createdFrom === null || createdOid === null) return null;
+    // A branch checked out from its own remote (e.g. DWIM checkout) did not fork from it.
+    const isOwnRemote = (base: ResolvedReviewBase) =>
+      base.comparisonRef.startsWith("refs/remotes/") && base.comparisonRef.endsWith(`/${refName}`);
+    if (createdFrom !== "HEAD" && createdFrom !== refName) {
+      const named = yield* resolveNamed(createdFrom);
+      if (named !== null && !isOwnRemote(named)) return named;
+      const asRef = yield* resolveComparisonBaseRef(cwd, createdFrom);
+      if (asRef !== null && !isOwnRemote(asRef)) return asRef;
+      if (yield* branchExists(cwd, createdFrom)) {
+        return { baseRef: createdFrom, comparisonRef: `refs/heads/${createdFrom}` };
+      }
+    }
+
+    // "Created from HEAD" (or an unresolved name): prefer a live tip that still matches the
+    // creation OID so the label stays a branch rather than a bare commit.
+    const listed = yield* executeGit(
+      "GitVcsDriver.resolveReflogCreatedFromBase.tips",
+      cwd,
+      ["for-each-ref", "--format=%(objectname)%09%(refname)", "refs/heads", "refs/remotes"],
+      { allowNonZeroExit: true },
+    );
+    if (listed.exitCode !== 0) return null;
+    for (const line of listed.stdout.split("\n")) {
+      if (!line.startsWith(`${createdOid}\t`)) continue;
+      const comparisonRef = line.slice(createdOid.length + 1);
+      if (comparisonRef === `refs/heads/${refName}`) continue;
+      if (comparisonRef.endsWith("/HEAD")) continue;
+      if (comparisonRef.startsWith("refs/remotes/") && comparisonRef.endsWith(`/${refName}`)) {
+        continue;
+      }
+      if (comparisonRef.startsWith("refs/remotes/")) {
+        return {
+          baseRef: comparisonRef.slice("refs/remotes/".length),
+          comparisonRef,
+        };
+      }
+      if (comparisonRef.startsWith("refs/heads/")) {
+        return {
+          baseRef: comparisonRef.slice("refs/heads/".length),
+          comparisonRef,
+        };
+      }
+    }
+    return null;
+  });
+
+  const readRecentHeadRefNames = Effect.fn("readRecentHeadRefNames")(function* (cwd: string) {
+    const reflog = yield* executeGit(
+      "GitVcsDriver.readRecentHeadRefNames",
+      cwd,
+      ["reflog", "show", `--max-count=${REVIEW_BASE_HEAD_REFLOG_LIMIT}`, "--format=%gs", "HEAD"],
+      { allowNonZeroExit: true },
+    );
+    if (reflog.exitCode !== 0) return [] as string[];
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const line of reflog.stdout.split("\n")) {
+      const match = /^checkout: moving from (.+) to (.+)$/.exec(line);
+      if (!match) continue;
+      for (const name of [match[1], match[2]]) {
+        const trimmed = name?.trim();
+        if (!trimmed || trimmed === "HEAD" || seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        names.push(trimmed);
+        if (names.length >= REVIEW_BASE_RECENT_REF_LIMIT) return names;
+      }
+    }
+    return names;
+  });
+
+  // Score only a small candidate set: default branch, primary-remote default, and recent HEAD
+  // checkouts. Ties prefer a tip that is the merge-base, then remotes, then local defaults.
+  const resolveNearestParentBase = Effect.fn("resolveNearestParentBase")(function* (
+    cwd: string,
+    refName: string,
+    options: {
+      readonly resolveNamed: (
+        candidate: string,
+      ) => Effect.Effect<ResolvedReviewBase | null, GitCommandError>;
+      readonly knownOriginDefaultBranch?: string | null;
+      readonly primaryRemoteName?: string | null;
+    },
+  ) {
+    const primaryRemoteName =
+      options.primaryRemoteName !== undefined
+        ? options.primaryRemoteName
+        : yield* resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
+    const defaultBranch =
+      options.knownOriginDefaultBranch !== undefined
+        ? options.knownOriginDefaultBranch
+        : primaryRemoteName
+          ? yield* resolveDefaultBranchName(cwd, primaryRemoteName).pipe(
+              Effect.orElseSucceed(() => null),
+            )
+          : null;
+
+    const seedNames = [
+      ...(defaultBranch ? [defaultBranch] : []),
+      ...DEFAULT_BASE_BRANCH_CANDIDATES,
+      ...(yield* readRecentHeadRefNames(cwd)),
+    ];
+    type ParentCandidate = ResolvedReviewBase & { readonly rank: number };
+    const byComparison = new Map<string, ParentCandidate>();
+    const preferenceRank = (comparisonRef: string, branchName: string) => {
+      const isDefault =
+        branchName === defaultBranch ||
+        (defaultBranch === null && (branchName === "main" || branchName === "master"));
+      if (comparisonRef.startsWith("refs/remotes/")) {
+        const remoteAndBranch = comparisonRef.slice("refs/remotes/".length);
+        const isPrimary =
+          primaryRemoteName !== null && remoteAndBranch.startsWith(`${primaryRemoteName}/`);
+        if (isPrimary) return isDefault ? 0 : 1;
+        return isDefault ? 2 : 3;
+      }
+      return isDefault ? 4 : 5;
+    };
+
+    for (const name of seedNames) {
+      if (name === refName) continue;
+      const resolved = yield* options.resolveNamed(name);
+      if (resolved === null) continue;
+      if (resolved.comparisonRef === `refs/heads/${refName}`) continue;
+      if (
+        resolved.comparisonRef.startsWith("refs/remotes/") &&
+        resolved.comparisonRef.endsWith(`/${refName}`)
+      ) {
+        continue;
+      }
+      const branchName = resolved.comparisonRef.startsWith("refs/heads/")
+        ? resolved.comparisonRef.slice("refs/heads/".length)
+        : resolved.baseRef.includes("/")
+          ? resolved.baseRef.slice(resolved.baseRef.indexOf("/") + 1)
+          : resolved.baseRef;
+      const rank = preferenceRank(resolved.comparisonRef, branchName);
+      const existing = byComparison.get(resolved.comparisonRef);
+      if (existing === undefined || rank < existing.rank) {
+        byComparison.set(resolved.comparisonRef, { ...resolved, rank });
+      }
+    }
+
+    if (byComparison.size === 0) return null;
+
+    type ScoredParent = {
+      readonly candidate: ParentCandidate;
+      readonly ahead: number;
+      readonly tipDistance: number;
+    };
+    const scored = yield* Effect.forEach(
+      byComparison.values(),
+      (candidate) =>
+        Effect.gen(function* () {
+          const result = yield* executeGit(
+            "GitVcsDriver.resolveNearestParentBase.score",
+            cwd,
+            ["rev-list", "--count", "--left-right", `${candidate.comparisonRef}...HEAD`],
+            { allowNonZeroExit: true },
+          );
+          if (result.exitCode !== 0) return null;
+          const [tipDistanceText, aheadText] = result.stdout.trim().split(/\s+/);
+          const tipDistance = Number.parseInt(tipDistanceText ?? "", 10);
+          const ahead = Number.parseInt(aheadText ?? "", 10);
+          if (!Number.isFinite(tipDistance) || !Number.isFinite(ahead)) return null;
+          // A candidate that contains HEAD plus more commits is a descendant, not a parent.
+          if (ahead === 0 && tipDistance > 0) return null;
+          return { candidate, ahead, tipDistance } satisfies ScoredParent;
+        }),
+      { concurrency: 8 },
+    );
+
+    let best: ScoredParent | null = null;
+    for (const entry of scored) {
+      if (entry === null) continue;
+      if (
+        best === null ||
+        entry.ahead < best.ahead ||
+        (entry.ahead === best.ahead && entry.tipDistance < best.tipDistance) ||
+        (entry.ahead === best.ahead &&
+          entry.tipDistance === best.tipDistance &&
+          entry.candidate.rank < best.candidate.rank)
+      ) {
+        best = entry;
+      }
+    }
+    return best === null
+      ? null
+      : { baseRef: best.candidate.baseRef, comparisonRef: best.candidate.comparisonRef };
+  });
+
   const resolveBaseBranchForNoUpstream = Effect.fn("resolveBaseBranchForNoUpstream")(function* (
     cwd: string,
     refName: string,
     options?: {
       readonly allowRemoteOfCurrent?: boolean;
       readonly knownOriginDefaultBranch?: string | null;
+      /** Changes uses the review ladder; ahead-of-default keeps guessing the default branch. */
+      readonly baseStrategy?: "default-branch" | "nearest-parent";
     },
   ) {
     const configuredBaseRef = yield* readConfigValue(cwd, `branch.${refName}.t3-merge-base-ref`);
@@ -1907,8 +2202,110 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const primaryRemoteName = yield* resolvePrimaryRemoteName(cwd).pipe(
       Effect.orElseSucceed(() => null),
     );
+
+    const resolveNamedBaseCandidate = Effect.fn("GitVcsDriver.resolveNamedBaseCandidate")(
+      function* (candidate: string) {
+        const remotePrefix =
+          primaryRemoteName && primaryRemoteName !== "origin" ? `${primaryRemoteName}/` : null;
+        const normalizedCandidate = candidate.startsWith("origin/")
+          ? candidate.slice("origin/".length)
+          : remotePrefix && candidate.startsWith(remotePrefix)
+            ? candidate.slice(remotePrefix.length)
+            : candidate;
+        if (normalizedCandidate.length === 0) return null;
+        if (normalizedCandidate === refName) {
+          if (options?.allowRemoteOfCurrent) {
+            return yield* resolveRemoteOfCurrentBase(cwd, refName, primaryRemoteName);
+          }
+          return null;
+        }
+        if (
+          primaryRemoteName &&
+          (yield* remoteBranchExists({
+            cwd,
+            remoteName: primaryRemoteName,
+            refName: normalizedCandidate,
+          }))
+        ) {
+          return {
+            baseRef: `${primaryRemoteName}/${normalizedCandidate}`,
+            comparisonRef: `refs/remotes/${primaryRemoteName}/${normalizedCandidate}`,
+          };
+        }
+        if (yield* branchExists(cwd, normalizedCandidate)) {
+          return {
+            baseRef: normalizedCandidate,
+            comparisonRef: `refs/heads/${normalizedCandidate}`,
+          };
+        }
+        return yield* resolveComparisonBaseRef(cwd, candidate);
+      },
+    );
+
+    // A configured short name such as "main" still prefers the primary remote's copy.
+    if (configuredBaseBranch.length > 0) {
+      const configured = yield* resolveNamedBaseCandidate(configuredBaseBranch);
+      if (configured !== null) return configured;
+    }
+
+    if (options && options.allowRemoteOfCurrent) {
+      const remoteOfCurrent = yield* resolveRemoteOfCurrentBase(cwd, refName, primaryRemoteName);
+      if (remoteOfCurrent !== null) {
+        // On the default branch, Changes compares with the remote copy. On a feature branch the
+        // remote of current is the publish target, not the fork point — only treat it as the base
+        // when this branch itself is the repository default (or a main/master fallback).
+        const defaultBranch =
+          options.knownOriginDefaultBranch !== undefined
+            ? options.knownOriginDefaultBranch
+            : primaryRemoteName
+              ? yield* resolveDefaultBranchName(cwd, primaryRemoteName).pipe(
+                  Effect.orElseSucceed(() => null),
+                )
+              : null;
+        const isDefaultBranch =
+          refName === defaultBranch ||
+          (defaultBranch === null && (refName === "main" || refName === "master"));
+        if (isDefaultBranch) return remoteOfCurrent;
+      }
+    }
+
+    if (options && options.baseStrategy === "nearest-parent") {
+      // Only persist when nothing was configured; a bad explicit base must not lock in a guess.
+      const remember =
+        configuredBaseBranch.length === 0 && configuredBaseRef === null
+          ? (base: ResolvedReviewBase) =>
+              persistInferredBranchBase(cwd, refName, base).pipe(Effect.as(base))
+          : (base: ResolvedReviewBase) => Effect.succeed(base);
+
+      const pullRequestHint = yield* ReviewPullRequestBaseHint;
+      const pullRequestBaseName = yield* pullRequestHint({ cwd, branch: refName });
+      if (pullRequestBaseName && pullRequestBaseName !== refName) {
+        const fromPullRequest = yield* resolveNamedBaseCandidate(pullRequestBaseName);
+        if (fromPullRequest !== null) return yield* remember(fromPullRequest);
+      }
+
+      const stored = yield* readInferredReviewBase(cwd, refName);
+      if (stored !== null) return stored;
+
+      const fromReflog = yield* resolveReflogCreatedFromBase(
+        cwd,
+        refName,
+        resolveNamedBaseCandidate,
+      );
+      if (fromReflog !== null) return yield* remember(fromReflog);
+
+      const nearest = yield* resolveNearestParentBase(cwd, refName, {
+        ...(options.knownOriginDefaultBranch === undefined
+          ? {}
+          : { knownOriginDefaultBranch: options.knownOriginDefaultBranch }),
+        primaryRemoteName,
+        resolveNamed: resolveNamedBaseCandidate,
+      });
+      if (nearest !== null) return yield* remember(nearest);
+      return null;
+    }
+
     const candidates = [
-      Effect.succeed(configuredBaseBranch),
       primaryRemoteName === null
         ? Effect.succeed(null)
         : primaryRemoteName === "origin" && options?.knownOriginDefaultBranch != null
@@ -1919,58 +2316,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     for (const readCandidate of candidates) {
       const candidate = yield* readCandidate;
-      if (!candidate) {
-        continue;
-      }
-
-      const remotePrefix =
-        primaryRemoteName && primaryRemoteName !== "origin" ? `${primaryRemoteName}/` : null;
-      const normalizedCandidate = candidate.startsWith("origin/")
-        ? candidate.slice("origin/".length)
-        : remotePrefix && candidate.startsWith(remotePrefix)
-          ? candidate.slice(remotePrefix.length)
-          : candidate;
-      if (normalizedCandidate.length === 0) {
-        continue;
-      }
-      if (normalizedCandidate === refName) {
-        if (options?.allowRemoteOfCurrent) {
-          const trackedRemoteBase = yield* resolveTrackedRemoteBaseRef(cwd, refName);
-          if (trackedRemoteBase !== null) return trackedRemoteBase;
-          if (
-            primaryRemoteName &&
-            (yield* remoteBranchExists({
-              cwd,
-              remoteName: primaryRemoteName,
-              refName: normalizedCandidate,
-            }))
-          ) {
-            return {
-              baseRef: `${primaryRemoteName}/${normalizedCandidate}`,
-              comparisonRef: `refs/remotes/${primaryRemoteName}/${normalizedCandidate}`,
-            };
-          }
-        }
-        continue;
-      }
-
-      if (
-        primaryRemoteName &&
-        (yield* remoteBranchExists({
-          cwd,
-          remoteName: primaryRemoteName,
-          refName: normalizedCandidate,
-        }))
-      ) {
-        return {
-          baseRef: `${primaryRemoteName}/${normalizedCandidate}`,
-          comparisonRef: `refs/remotes/${primaryRemoteName}/${normalizedCandidate}`,
-        };
-      }
-
-      if (yield* branchExists(cwd, normalizedCandidate)) {
-        return { baseRef: normalizedCandidate, comparisonRef: `refs/heads/${normalizedCandidate}` };
-      }
+      if (!candidate) continue;
+      const resolved = yield* resolveNamedBaseCandidate(candidate);
+      if (resolved !== null) return resolved;
     }
 
     return null;
@@ -3175,6 +3523,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? yield* resolveBaseBranchForNoUpstream(cwd, branch, {
               allowRemoteOfCurrent: true,
               knownOriginDefaultBranch,
+              baseStrategy: "nearest-parent",
             }).pipe(Effect.orElseSucceed(() => null))
           : null;
     if (base === null) return { baseRef: null, mergeBase: "HEAD" };

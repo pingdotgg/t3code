@@ -39,6 +39,7 @@ import * as ServerConfig from "../config.ts";
 import {
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
+  ReviewPullRequestBaseHint,
   splitNullSeparatedGitStdoutPaths,
   windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
@@ -3307,7 +3308,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           ]);
         }
 
-        for (const baseRef of ["origin/main", "upstream/missing", "main"]) {
+        for (const baseRef of ["origin/main", "main"]) {
           yield* git(cwd, ["config", "branch.feature/configured-base.gh-merge-base", baseRef]);
           const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
           assert.deepStrictEqual(status.branchChanges, {
@@ -3317,6 +3318,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           });
           assert.strictEqual(status.aheadCount, 2);
         }
+
+        // An unresolvable configured base falls through the review ladder without persisting.
+        yield* git(cwd, [
+          "config",
+          "branch.feature/configured-base.gh-merge-base",
+          "upstream/missing",
+        ]);
+        const inferred = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        // Reflog records "Created from HEAD" at local main's tip.
+        assert.deepStrictEqual(inferred.branchChanges, {
+          baseRef: "main",
+          insertions: 1,
+          deletions: 0,
+        });
+        assert.strictEqual(inferred.aheadCount, 2);
+        assert.isNull(
+          yield* driver.readConfigValue(cwd, "branch.feature/configured-base.t3-review-base-ref"),
+        );
 
         yield* git(cwd, [
           "config",
@@ -3355,6 +3374,99 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           });
           yield* git(cwd, ["update-ref", "-d", shadowRef]);
         }
+      }),
+    );
+
+    it.effect("Changes finds the fork point from reflog and persists it", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(cwd, ["checkout", "-b", "develop"]);
+        yield* writeTextFile(cwd, "develop.txt", "develop work\n");
+        yield* git(cwd, ["add", "develop.txt"]);
+        yield* git(cwd, ["commit", "-m", "develop work"]);
+        // Name the start point so reflog records "Created from develop", not HEAD.
+        yield* git(cwd, ["branch", "feature/from-develop", "develop"]);
+        yield* git(cwd, ["checkout", "feature/from-develop"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature work\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature work"]);
+
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.deepStrictEqual(status.branchChanges, {
+          baseRef: "develop",
+          insertions: 1,
+          deletions: 0,
+        });
+        // aheadOfDefault still counts from main, even though Changes uses develop.
+        assert.strictEqual(status.aheadOfDefaultCount, 2);
+        assert.strictEqual(status.aheadCount, 2);
+        assert.strictEqual(
+          yield* git(cwd, ["config", "branch.feature/from-develop.t3-review-base-ref"]),
+          "refs/heads/develop",
+        );
+        const reread = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.strictEqual(reread.branchChanges?.baseRef, "develop");
+        assert.strictEqual(reread.aheadOfDefaultCount, 2);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const changes = preview.sources.find((source) => source.kind === "branch-range")!;
+        assert.strictEqual(changes.baseRef, "develop");
+        assert.deepStrictEqual(changes.files, [
+          { path: "feature.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.notInclude(changes.diff, "develop.txt");
+
+        // A branch that has not committed yet still finds its parent tip.
+        yield* git(cwd, ["checkout", "-b", "feature/uncommitted", "develop"]);
+        yield* writeTextFile(cwd, "scratch.txt", "scratch\n");
+        const uncommitted = yield* driver.getReviewDiffPreview({ cwd });
+        const uncommittedChanges = uncommitted.sources.find(
+          (source) => source.kind === "branch-range",
+        )!;
+        assert.strictEqual(uncommittedChanges.baseRef, "develop");
+        assert.deepStrictEqual(uncommittedChanges.files, [
+          { path: "scratch.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+      }),
+    );
+
+    it.effect("Changes prefers an open-PR base hint over nearest-parent guessing", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(cwd, ["checkout", "-b", "develop"]);
+        yield* writeTextFile(cwd, "develop.txt", "develop work\n");
+        yield* git(cwd, ["add", "develop.txt"]);
+        yield* git(cwd, ["commit", "-m", "develop work"]);
+        yield* git(cwd, ["checkout", "-b", "release/v2"]);
+        yield* writeTextFile(cwd, "release.txt", "release work\n");
+        yield* git(cwd, ["add", "release.txt"]);
+        yield* git(cwd, ["commit", "-m", "release work"]);
+        yield* git(cwd, ["checkout", "-b", "feature/pr-base", "develop"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature work\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature work"]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const preview = yield* driver
+          .getReviewDiffPreview({ cwd })
+          .pipe(
+            Effect.provideService(ReviewPullRequestBaseHint, () => Effect.succeed("release/v2")),
+          );
+        const changes = preview.sources.find((source) => source.kind === "branch-range")!;
+        // Three-dot merge-base with release/v2 is still develop; only the label changes.
+        assert.strictEqual(changes.baseRef, "release/v2");
+        assert.deepStrictEqual(changes.files, [
+          { path: "feature.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.strictEqual(
+          yield* git(cwd, ["config", "branch.feature/pr-base.t3-review-base-ref"]),
+          "refs/heads/release/v2",
+        );
       }),
     );
 
@@ -3439,8 +3551,20 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "-am", "feature work"]);
 
         for (const configuredBase of [undefined, "main", "release/v2"]) {
+          // Drop a previously persisted inference so each gh-merge-base value is tested alone.
+          yield* git(cwd, [
+            "config",
+            "--unset-all",
+            "branch.feature/local-base.t3-review-base-ref",
+          ]).pipe(Effect.ignore);
           if (configuredBase !== undefined) {
             yield* git(cwd, ["config", "branch.feature/local-base.gh-merge-base", configuredBase]);
+          } else {
+            yield* git(cwd, [
+              "config",
+              "--unset-all",
+              "branch.feature/local-base.gh-merge-base",
+            ]).pipe(Effect.ignore);
           }
           const baseRef = configuredBase ?? "main";
           const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
@@ -5008,9 +5132,22 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.isAtMost(folder.length, 40);
           if (branch.length <= 40) assert.equal(folder, branch);
           assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), branch);
-          assert.include(
-            yield* git(cwd, ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"]),
-            `worktree ${created.worktree.path}`,
+          const listed = yield* git(cwd, [
+            "-c",
+            "core.quotePath=false",
+            "worktree",
+            "list",
+            "--porcelain",
+          ]);
+          const realWorktree = NodeFS.realpathSync.native(created.worktree.path);
+          assert.isTrue(
+            listed
+              .split("\n")
+              .filter((line) => line.startsWith("worktree "))
+              .some(
+                (line) =>
+                  NodeFS.realpathSync.native(line.slice("worktree ".length)) === realWorktree,
+              ),
           );
           folders.add(folder);
         }
