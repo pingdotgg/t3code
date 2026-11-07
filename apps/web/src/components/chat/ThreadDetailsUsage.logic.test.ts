@@ -74,6 +74,7 @@ interface HubAccountInput {
   readonly email?: string;
   readonly driver?: ProviderDriverKind;
   readonly models?: readonly string[];
+  readonly workspaceId?: string;
   readonly limits: ServerProviderUsageLimits;
 }
 
@@ -92,6 +93,7 @@ function hub(
       driver: account.driver ?? claude,
       ...(account.email ? { email: account.email } : {}),
       ...(account.models ? { models: account.models } : {}),
+      ...(account.workspaceId ? { workspaceId: account.workspaceId } : {}),
       usageLimits: account.limits,
     })),
     ...(error ? { error } : {}),
@@ -205,6 +207,35 @@ describe("resolveThreadDetailsLimits", () => {
       ],
       model: "gpt-5.6-sol[1m]",
       rows: [{ label: "Session", left: 70, accounts: 1, from: ["Hub"] }],
+    },
+    {
+      name: "every account the hub routes the model to, across drivers",
+      sources: [
+        hub("Hub", [
+          { id: "a.json", models: ["shared"], limits: limitsAt(10) },
+          { id: "c.json", driver: codex, models: ["shared"], limits: limitsAt(30) },
+        ]),
+      ],
+      model: "shared",
+      rows: [
+        { label: "Session", left: 90, accounts: 1, from: ["Hub"] },
+        { label: "Session", left: 70, accounts: 1, from: ["Hub"] },
+      ],
+    },
+    {
+      name: "a hub workspace without the same login's other workspace",
+      sources: [
+        hub("Hub", [
+          { id: "c.json", email: "c@example.com", workspaceId: "w1", limits: limitsAt(100) },
+        ]),
+      ],
+      natives: [
+        {
+          ...signedIn("claude-c", "c@example.com", limitsAt(0)),
+          auth: { status: "authenticated", email: "c@example.com", workspaceId: "w2" },
+        } satisfies ServerProvider,
+      ],
+      rows: [{ label: "Session", left: 0, accounts: 1, from: ["Hub"] }],
     },
   ])("pools $name when the instance reads no limits", ({ sources, natives, model, rows }) => {
     expect(shown(unsupported, sources, natives, model)).toEqual({ kind: "pool", rows });

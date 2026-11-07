@@ -71,6 +71,7 @@ function hubPool(
     readable.some(
       (account) =>
         account.driver === provider.driver &&
+        account.workspaceId === provider.auth.workspaceId &&
         account.email !== undefined &&
         account.email.toLowerCase() === provider.auth.email?.toLowerCase(),
     ),
@@ -84,8 +85,8 @@ function hubPool(
       },
     ],
   ]);
-  const [pool] = collectLimitPools(collectLimitAccounts(presentations), now);
-  return pool ? { kind: "pool", windows: displayLimitWindows(pool) } : null;
+  const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  return pools.length > 0 ? { kind: "pool", windows: pools.flatMap(displayLimitWindows) } : null;
 }
 
 export function poolSources(window: LimitPoolWindow): string[] {
