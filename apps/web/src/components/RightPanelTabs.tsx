@@ -99,6 +99,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
+import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -865,6 +866,21 @@ function preventTabMiddleButtonDefault(event: ReactMouseEvent) {
   event.preventDefault();
 }
 
+const isThumbButton = (event: ReactMouseEvent) => event.button === 3 || event.button === 4;
+
+// A thumb press would otherwise focus the URL bar, which then stops tracking the page.
+function preventThumbButtonFocus(event: ReactMouseEvent) {
+  if (isThumbButton(event)) event.preventDefault();
+}
+
+// Chromium runs app-router history on a thumb-button mouseup unless it is cancelled.
+// Page content that already stepped its own history cancels it first.
+function routeThumbButtonToSurface(event: ReactMouseEvent, surface: RightPanelSurface | undefined) {
+  if (!isThumbButton(event) || event.defaultPrevented) return;
+  event.preventDefault();
+  if (surface?.kind === "preview") dispatchPreviewAction(event.button === 3 ? "back" : "forward");
+}
+
 // Stable handlers and per-tab values let the compiler reuse tabs across parent renders.
 function RightPanelTab(
   props: RightPanelTabHandlers & {
@@ -1330,6 +1346,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}
       {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
       {...(props.inlineSize ? { inlineSize: props.inlineSize } : {})}
+      onMouseDown={preventThumbButtonFocus}
+      onMouseUp={(event) => routeThumbButtonToSurface(event, focusedSurface)}
     >
       <div
         className={cn(
