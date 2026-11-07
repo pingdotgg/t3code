@@ -49,6 +49,7 @@ import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { FileRevisionBoundary } from "./FileRevisionBoundary";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -1177,6 +1178,18 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
+  // What a document or binary file preview loads.
+  const documentResource =
+    absolutePath === null
+      ? null
+      : draft && isDocument
+        ? { _tag: "draft-workspace-file" as const, cwd, path: absolutePath }
+        : {
+            _tag: "media-file" as const,
+            threadId: threadRef.threadId,
+            path: absolutePath,
+            ...(isDocument ? {} : { disposition: "attachment" as const }),
+          };
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
@@ -1434,27 +1447,24 @@ export default function FilePreviewPanel({
               wordWrap={wordWrap}
             />
           ) : relativePath &&
-            absolutePath &&
+            documentResource &&
             (isDocument || file.readError?.failure === "binary_file") ? (
-            <AttachmentFilePreview
-              key={`${environmentId}:${absolutePath}:${workspaceMutationId}:${fileRefreshRevision}`}
-              name={relativePath.split(/[\\/]/).at(-1) || relativePath}
-              mimeType="application/octet-stream"
-              sizeBytes={0}
-              asset={{
-                environmentId,
-                resource:
-                  draft && isDocument
-                    ? { _tag: "draft-workspace-file", cwd, path: absolutePath }
-                    : {
-                        _tag: "media-file",
-                        threadId: threadRef.threadId,
-                        path: absolutePath,
-                        ...(isDocument ? {} : { disposition: "attachment" as const }),
-                      },
-              }}
-              origin="File"
-            />
+            // A command or edit elsewhere in the thread must not reload, or scroll away from, an
+            // unchanged document: the boundary remounts the preview only when the file changed.
+            <FileRevisionBoundary
+              key={`${environmentId}:${absolutePath}`}
+              environmentId={environmentId}
+              resource={documentResource}
+              refreshToken={`${workspaceMutationId}:${fileRefreshRevision}`}
+            >
+              <AttachmentFilePreview
+                name={relativePath.split(/[\\/]/).at(-1) || relativePath}
+                mimeType="application/octet-stream"
+                sizeBytes={0}
+                asset={{ environmentId, resource: documentResource }}
+                origin="File"
+              />
+            </FileRevisionBoundary>
           ) : relativePath && file.error && file.data === null ? (
             <div
               role="alert"
