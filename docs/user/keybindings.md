@@ -168,6 +168,8 @@ field gets its own undo back. Terminals always keep their native shortcut.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
+In the desktop app, a two-finger sideways swipe on the trackpad does the same. Turn it off in
+Settings > General > Display > Swipe to navigate.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
