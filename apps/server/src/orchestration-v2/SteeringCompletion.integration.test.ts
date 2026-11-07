@@ -1617,6 +1617,42 @@ it.effect("queues a slash command sent into a running turn instead of steering i
   ),
 );
 
+it.effect("keeps a queued slash command queued when promoted to steer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn, send, read } =
+        yield* goalHarness("slash-promote");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* send("context", "/context", "queue");
+        const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === MessageId.make("message:context"),
+        )!;
+        const promoteError = yield* orchestrator
+          .dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: CommandId.make("promote"),
+            threadId,
+            queuedRunId: queuedRun.id,
+            targetRunId: started[0]!.runId,
+          })
+          .pipe(Effect.flip);
+        yield* worker.drain();
+
+        assert.include(String(promoteError.cause), "Commands must run as a separate turn");
+        assert.deepEqual(steered, []);
+        assert.deepEqual(yield* read(threadId), {
+          queue: ["/context"],
+          started: ["first"],
+          stopRequested: false,
+        });
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("promotes a queued goal by stopping the running turn", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -69,6 +69,14 @@ export function isNativeMaintenanceCommand(message: {
   );
 }
 
+/** A message that only invokes a slash command, such as `/context all`, not a path like `/src/a.ts`. */
+export function isSlashCommand(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return message.attachments.length === 0 && /^\/[\w:-]+(?:\s|$)/u.test(message.text.trim());
+}
+
 /**
  * A goal command sent into active work stops that work when it starts or
  * replaces goal work, or ends a goal that is driving the run.
@@ -91,11 +99,15 @@ export function goalCommandStopsActiveRun(
 
 export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
-  requestedMode: MessageDispatchMode,
-  deliveryIntent?: "auto" | "steer" | "restart",
+  message: Pick<
+    Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    "dispatchMode" | "deliveryIntent" | "text" | "attachments"
+  >,
 ): MessageDispatchMode {
-  const mode = resolveDeliveryIntent(projection, requestedMode, deliveryIntent);
+  const mode = resolveDeliveryIntent(projection, message.dispatchMode, message.deliveryIntent);
   if (mode.type !== "steer_active") return mode;
+  // A provider runs a steered command in place of the turn's task, so commands wait.
+  if (isSlashCommand(message)) return { type: "queue_after_active" };
   // Compaction and sign-out cannot accept steers; queue follow-ups.
   const target = projection.runs.find((run) => run.id === mode.targetRunId);
   const targetMessage = projection.messages.find((message) => message.id === target?.userMessageId);

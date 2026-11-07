@@ -108,6 +108,7 @@ import {
   goalCommandStopsActiveRun,
   isActiveRun,
   isNativeMaintenanceCommand,
+  isSlashCommand,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
@@ -4921,12 +4922,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : "Signing out must run as a separate turn. Queue it or wait for the active turn to finish.",
       });
     }
-    if (parseGoalCommand(input) !== null) {
+    if (isSlashCommand(input)) {
       return yield* new OrchestratorDispatchError({
         commandId: input.command.commandId,
         commandType: input.command.type,
         cause:
-          "Goal commands must run as a separate turn. Queue it or wait for the active turn to finish.",
+          "Commands must run as a separate turn. Queue it or wait for the active turn to finish.",
       });
     }
     const targetMessage = input.projection.messages.find(
@@ -5826,11 +5827,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
     const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-    let dispatchMode = resolveMessageDispatchIntent(
-      projection,
-      command.dispatchMode,
-      command.deliveryIntent,
-    );
+    let dispatchMode = resolveMessageDispatchIntent(projection, command);
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -5880,13 +5877,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
       // A goal command never joins a running turn. One that starts or ends goal
       // work stops the run and goes first in the queue; the rest wait. A send
-      // that asked to be queued (no delivery intent) only queues, and a run
-      // that is only finishing or running background work is never stopped.
+      // that asked to be queued only queues, and a run that is only finishing
+      // or running background work is never stopped.
       const resolvedMode = dispatchMode;
       const target =
-        resolvedMode.type === "steer_active" || resolvedMode.type === "restart_active"
+        resolvedMode.type === "restart_active"
           ? projection.runs.find((run) => run.id === resolvedMode.targetRunId)
-          : resolvedMode.type === "queue_after_active" && command.deliveryIntent !== undefined
+          : resolvedMode.type === "queue_after_active" &&
+              (command.deliveryIntent !== undefined ||
+                command.dispatchMode.type !== "queue_after_active")
             ? projection.runs.findLast(isLiveRun)
             : undefined;
       if (target !== undefined) {
