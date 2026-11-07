@@ -420,6 +420,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
     setIsPullRefreshing(false);
   };
   const isRefreshing = isPullRefreshing || isSelectedSectionPending || areFilePatchesPending;
+  // Inline loading already draws the spinner; driving RefreshControl too stacks two circles.
+  const isInlineDiffLoading = Boolean(selectedSection?.isLoading && selectedSection.diff === null);
   // A refresh that starts programmatically adds its height to the native top inset and
   // subtracts it when it ends. If topContentInset changes in between, the inset ends up
   // short and the content sits under the header, so the fallback ScrollView starts over.
@@ -710,7 +712,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
               refreshControl={
                 // Fallback and empty states need refresh controls; only Android has an explicit refresh menu.
                 <RefreshControl
-                  refreshing={isRefreshing}
+                  refreshing={isRefreshing && !isInlineDiffLoading}
                   onRefresh={() => void handlePullToRefresh()}
                 />
               }
