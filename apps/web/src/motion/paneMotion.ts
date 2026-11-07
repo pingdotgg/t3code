@@ -351,6 +351,58 @@ function resized(side: Side, before: Box, now: Box): boolean {
     : Math.abs(before.height - now.height) > 1;
 }
 
+interface PaneCopy {
+  pane: HTMLElement;
+  scrolls: [Element, number, number][];
+}
+
+const closingCopies = new Map<string, PaneCopy>();
+
+function copyPainted(from: Element | ShadowRoot, to: Element | ShadowRoot, copy: PaneCopy): void {
+  const twins = to.querySelectorAll("*");
+  from.querySelectorAll("*").forEach((element, index) => {
+    const twin = twins[index];
+    if (!twin) return;
+    if (element.scrollTop !== 0 || element.scrollLeft !== 0) {
+      copy.scrolls.push([twin, element.scrollTop, element.scrollLeft]);
+    }
+    if (
+      element instanceof HTMLCanvasElement &&
+      twin instanceof HTMLCanvasElement &&
+      element.width > 0 &&
+      element.height > 0
+    ) {
+      twin.getContext("2d")?.drawImage(element, 0, 0);
+    }
+    if (element.shadowRoot) {
+      let shadow;
+      try {
+        shadow = twin.shadowRoot ?? twin.attachShadow({ mode: "open" });
+      } catch {
+        return;
+      }
+      shadow.replaceChildren(
+        ...[...element.shadowRoot.childNodes].map((node) => node.cloneNode(true)),
+      );
+      copyPainted(element.shadowRoot, shadow, copy);
+    }
+  });
+}
+
+export function keepClosingPane(tabId: string, pane: HTMLElement): void {
+  if (MotionAnimation.start("window-movement", 0, 1).durationMs <= 0) return;
+  const copy: PaneCopy = { pane: pane.cloneNode(true) as HTMLElement, scrolls: [] };
+  copyPainted(pane, copy.pane, copy);
+  for (const name of copy.pane.getAttributeNames()) {
+    if (name !== "class") copy.pane.removeAttribute(name);
+  }
+  copy.pane.style.inset = "0";
+  for (const media of copy.pane.querySelectorAll("iframe, video, audio, object, embed")) {
+    media.remove();
+  }
+  closingCopies.set(tabId, copy);
+}
+
 /** The stage must be a stacking context. Workspace or viewport changes move panes 1:1; unframed lone
  * panes never animate independently. */
 export function usePaneMotion(
@@ -392,6 +444,8 @@ export function usePaneMotion(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure committed pane boxes and start DOM animations before paint.
   useLayoutEffect(() => {
     const stage = stageRef.current;
+    const copies = new Map(closingCopies);
+    closingCopies.clear();
     if (!stage || key === null) {
       previous.current = null;
       return;
@@ -479,6 +533,14 @@ export function usePaneMotion(
       } else {
         offset = tuckedUnder(side, neighbour.box, gap);
         ghost.style.zIndex = "-2";
+      }
+      const copy = copies.get(tabId);
+      if (copy) {
+        ghost.append(copy.pane);
+        for (const [element, top, left] of copy.scrolls) {
+          element.scrollTop = top;
+          element.scrollLeft = left;
+        }
       }
       const motion = MotionAnimation.start("window-movement", 0, 1);
       const keyframe = (progress: number) => translate(offset.dx * progress, offset.dy * progress);
