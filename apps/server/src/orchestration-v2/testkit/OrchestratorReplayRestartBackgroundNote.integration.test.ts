@@ -299,4 +299,26 @@ describe("restart-cancelled background work", () => {
         ),
       ),
   );
+
+  it.effect("sends a slash command verbatim and tells the next user turn instead", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const slashCommand = "/review the diff";
+        const projection = yield* runRestart({
+          resumedPrompts: [slashCommand, `${NOTE}\n\nUser message:\n${SECOND_AFTER_RESTART}`],
+          userMessagesAfterRestart: [slashCommand, SECOND_AFTER_RESTART],
+          continueThreadsAfterServerUpdate: false,
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "completed", "completed"],
+        );
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
+  );
 });
