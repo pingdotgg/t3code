@@ -194,11 +194,14 @@ export function delegatedTaskResultRun(
   const taskRuns = runs
     .filter((run) => run.delegatedTaskId === taskId)
     .toSorted((a, b) => b.ordinal - a.ordinal);
-  return (
-    taskRuns.find(
-      (run) => !cancelledBeforeStart(run) && !(run.status === "queued" && run.queueHeld === true),
-    ) ?? taskRuns[0]
+  const awaited = taskRuns.filter(
+    (run) => !cancelledBeforeStart(run) && !(run.status === "queued" && run.queueHeld === true),
   );
+  // A reordered queue can finish a newer run first; older unfinished work still holds the result.
+  const unfinished = awaited.find((run) =>
+    ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+  );
+  return unfinished ?? awaited[0] ?? taskRuns[0];
 }
 
 /** The provider never accepted this continuation's prompt, so starting it again repeats nothing. */

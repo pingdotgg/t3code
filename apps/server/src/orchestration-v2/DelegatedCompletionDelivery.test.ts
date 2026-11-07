@@ -2333,6 +2333,47 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         }),
     );
 
+    it.effect("waits for every run its child queued when a later one is moved ahead", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const followup = yield* startSelfQueuedFollowup("self-queued-reordered-followup");
+        const laterMessageId = MessageId.make("message:self-queued-reordered-followup-later");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("command:self-queued-reordered-followup-later"),
+          threadId: followup.childThreadId,
+          senderThreadId: followup.childThreadId,
+          messageId: laterMessageId,
+          text: "Do this part first.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const later = (yield* orchestrator.getThreadProjection(followup.childThreadId)).runs.find(
+          (run) => run.userMessageId === laterMessageId,
+        )!;
+        yield* orchestrator.dispatch({
+          type: "queued-run.reorder",
+          commandId: CommandId.make("command:self-queued-reordered-followup-reorder"),
+          threadId: followup.childThreadId,
+          runId: later.id,
+          beforeRunId: followup.selfQueuedRun.id,
+        });
+        yield* followup.finishRun("handoff", followup.followupRun, "HANDOFF-C");
+        yield* followup.finishRun("later", later, "PART-ONE");
+        const waiting = yield* followup.readFollowup;
+        assert.isNull(waiting.result, "the follow-up settled while an earlier queued run waited");
+
+        // Promotion moves a queued run after the runs that started ahead of it.
+        const promoted = { ...followup.selfQueuedRun, ordinal: later.ordinal + 1 };
+        yield* followup.finishRun("final", promoted, "FINAL-D");
+        const finished = yield* followup.readFollowup;
+        assert.equal(finished.status, "completed");
+        assert.equal(finished.result, "FINAL-D");
+      }),
+    );
+
     const outcomes = [
       "completed",
       "failed",
