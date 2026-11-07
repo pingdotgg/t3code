@@ -27,6 +27,7 @@ import { Dialog, DialogPopup } from "../components/ui/dialog";
 import { Kbd } from "../components/ui/kbd";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { isElectron } from "../env";
+import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import {
   formatShortcutKeyLabel,
   formatShortcutLabel,
@@ -44,6 +45,7 @@ import {
   runLayoutCommand,
   useLayoutKeyboardCommands,
 } from "./layoutCommands";
+import { isScrollingWorkspaceCommand, isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
 import {
   setLayoutOverlayMode as setMode,
@@ -270,7 +272,11 @@ export function LayoutKeyboard() {
       const entry = [
         ...MENU_GROUPS.flatMap((group) => group.rows.flatMap((row) => row.keys)),
         ...EXTRA_HELD_KEYS,
-      ].find((candidate) => keys.has(candidate.key));
+      ].find(
+        (candidate) =>
+          keys.has(candidate.key) &&
+          (isScrollingWorkspacesEnabled() || !isScrollingWorkspaceCommand(candidate.command)),
+      );
       if (!entry) return;
       const keybindings = appAtomRegistry.get(primaryServerKeybindingsAtom);
       const bound = resolveShortcutCommand(event, keybindings, {
@@ -354,20 +360,23 @@ export function LayoutKeyboard() {
 /** Pen F1nBI: one window-centered, three-column map while the modifier is held. */
 function LayoutHoldMenu() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const mac = isMacPlatform(navigator.platform);
   const holdLabel = mac ? "⌥⌘" : "Ctrl+Alt";
-  const groups = SHEET_LAYOUT_GROUPS.slice(0, 3).map((group, index) => ({
-    label: group.label,
-    rows: [
-      ...group.rows,
-      ...(index === 0 ? [{ label: "New tab", commands: ["tab.new" as const] }] : []),
-    ].flatMap((row) => {
-      const shortcuts = row.commands.flatMap((command) =>
-        shortcutsFor(keybindings, command).slice(0, 1),
-      );
-      return shortcuts.length > 0 ? [{ label: row.label, chords: chordsFor(shortcuts) }] : [];
-    }),
-  }));
+  const groups = SHEET_LAYOUT_GROUPS.slice(0, 3)
+    .map((group, index) => ({
+      label: group.label,
+      rows: [
+        ...group.rows,
+        ...(index === 0 ? [{ label: "New tab", commands: ["tab.new" as const] }] : []),
+      ].flatMap((row) => {
+        const shortcuts = row.commands
+          .filter((command) => scrollingWorkspaces || !isScrollingWorkspaceCommand(command))
+          .flatMap((command) => shortcutsFor(keybindings, command).slice(0, 1));
+        return shortcuts.length > 0 ? [{ label: row.label, chords: chordsFor(shortcuts) }] : [];
+      }),
+    }))
+    .filter((group) => group.rows.length > 0);
 
   return createPortal(
     <div className="pointer-events-none fixed inset-0 z-110 flex items-center justify-center bg-black/50 p-2">
@@ -476,15 +485,18 @@ function chordsFor(shortcuts: ReadonlyArray<KeybindingShortcut>) {
 
 function LayoutShortcutSheet() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const mac = isMacPlatform(navigator.platform);
   const firstOf = (command: KeybindingCommand) => shortcutsFor(keybindings, command).slice(0, 1);
   const layoutGroups = SHEET_LAYOUT_GROUPS.map((group) => ({
     label: group.label,
     rows: group.rows.flatMap((row) => {
-      const shortcuts = row.commands.flatMap(firstOf);
+      const shortcuts = row.commands
+        .filter((command) => scrollingWorkspaces || !isScrollingWorkspaceCommand(command))
+        .flatMap(firstOf);
       return shortcuts.length > 0 ? [{ label: row.label, chords: chordsFor(shortcuts) }] : [];
     }),
-  }));
+  })).filter((group) => group.rows.length > 0);
   const shown = new Set(
     SHEET_LAYOUT_GROUPS.flatMap((group) => group.rows.flatMap((row) => row.commands)),
   );

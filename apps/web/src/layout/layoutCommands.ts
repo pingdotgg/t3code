@@ -25,6 +25,7 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands } from "../shortcuts/dispatcher";
 import { renderWaitingChatNow } from "./chatRenderGate";
+import { isScrollingWorkspaceCommand, isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { isLayoutDragActive } from "./layoutDrag";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { closeLayoutTabByUser } from "./layoutActions";
@@ -113,6 +114,7 @@ const COLUMN_HINT_COMMANDS: ReadonlySet<LayoutKeybindingCommand> = new Set([
 
 /** Run a layout command against the store; DOM focus follows the focused pane. */
 export function runLayoutCommand(command: LayoutKeybindingCommand): void {
+  if (isScrollingWorkspaceCommand(command) && !isScrollingWorkspacesEnabled()) return;
   const store = useLayoutStore.getState();
   const before = store.layout;
   switch (command) {
@@ -365,6 +367,8 @@ export function useLayoutKeyboardCommands(): void {
         return;
       }
       if (!isLayoutCommand(command) || ROUTE_LAYOUT_COMMANDS.has(command)) return;
+      // Scrolling-workspace keys do nothing with the Labs toggle off, so the key stays free.
+      if (isScrollingWorkspaceCommand(command) && !isScrollingWorkspacesEnabled()) return;
       event.preventDefault();
       event.stopPropagation();
       if (event.repeat && command === "layout.shortcutSheet") return;

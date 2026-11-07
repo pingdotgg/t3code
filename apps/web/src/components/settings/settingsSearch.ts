@@ -12,6 +12,7 @@ import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Schema from "effect/Schema";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
+import { isScrollingWorkspaceCommand } from "../../layout/layoutBehavior";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -71,6 +72,8 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  /** Hidden until Labs › Scrolling workspaces is on. */
+  readonly scrollingWorkspacesOnly?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -83,6 +86,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly scrollingWorkspaces?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -174,6 +178,7 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
     to: "/settings/keybindings" as const,
     searchTerms: [command, ...defaultKeys],
     secondary: true,
+    ...(isScrollingWorkspaceCommand(command) ? { scrollingWorkspacesOnly: true } : {}),
     ...(defaultKeys.length === 0 ? { targetId: "keybindings" } : {}),
   };
 });
@@ -336,6 +341,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "When it doesn't fit",
     to: "/settings/layout",
     searchTerms: ["no room shrink then scroll always shrink always scroll strip columns width"],
+    scrollingWorkspacesOnly: true,
   },
   {
     id: "layout-three-finger-swipe",
@@ -344,6 +350,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["trackpad gesture swipe between pages column workspace"],
     desktopOnly: true,
     macOnly: true,
+    scrollingWorkspacesOnly: true,
   },
   {
     id: "color-scheme",
@@ -508,6 +515,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Working section",
     to: "/settings/general",
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
+  },
+  {
+    id: "scrolling-workspaces",
+    title: "Scrolling workspaces",
+    to: "/settings/labs",
+    searchTerms: [
+      "beta labs niri strip scroll sideways workspaces overview layout tour swipe panes shrink",
+    ],
   },
   {
     id: "boring-sidebar",
@@ -1522,7 +1537,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.scrollingWorkspacesOnly || availability.scrollingWorkspaces === true),
   );
 }
 
