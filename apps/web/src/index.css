@@ -2549,6 +2549,11 @@ code {
   [data-has-draft-citations] {
     --draft-citation-gutter: 2rem;
   }
+  [data-citation-marker-key][data-citation-highlight] {
+    box-shadow:
+      0 0 0 2px var(--background),
+      0 0 0 4px var(--ring);
+  }
   .chat-scroll-to-bottom,
   .chat-banner-lane {
     inset-inline-start: var(--chat-lane-inset-start, 0px);

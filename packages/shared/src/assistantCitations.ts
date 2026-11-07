@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 const CITATION_PROTOCOL = "t3-citation:";
 const CITATION_HREF_PREFIX = `${CITATION_PROTOCOL}//v1/`;
+export const ASSISTANT_CITATION_MARKDOWN_PREFIX = `[Assistant quote](${CITATION_HREF_PREFIX}`;
 // Percent encoding needs up to nine characters per UTF-16 code unit; 16k covers selectors.
 const MAX_CITATION_HREF_LENGTH =
   9 * (ASSISTANT_CITATION_MAX_TEXT_LENGTH + ASSISTANT_CITATION_MAX_COMMENT_LENGTH) + 16_000;

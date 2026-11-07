@@ -1,3 +1,4 @@
+import { ASSISTANT_CITATION_MARKDOWN_PREFIX } from "@t3tools/shared/assistantCitations";
 import { Badge } from "~/components/ui/badge";
 import { useComposerDraftStore, type ComposerThreadTarget } from "~/composerDraftStore";
 import { draftCitationMarkers } from "./assistantCitationMarkers.logic";
@@ -34,7 +35,7 @@ export function AssistantCitationMarkers({
   onOpen: (key: string, anchor: AssistantCitationSourceAnchor) => void;
 }) {
   const citationJson = JSON.stringify(
-    showingDraft && prompt.includes("[Assistant quote](t3-citation://v1/")
+    showingDraft && prompt.includes(ASSISTANT_CITATION_MARKDOWN_PREFIX)
       ? draftCitationMarkers(buildDocJson(prompt, () => null, { styling: richTextEnabled }))
       : [],
   );
@@ -198,7 +199,7 @@ function CitationMarkers({
           onBlur={updateCitationHighlight}
           render={<button type="button" />}
           hidden={!viewport}
-          className="pointer-events-auto absolute data-[citation-highlight]:ring-2 data-[citation-highlight]:ring-ring data-[citation-highlight]:ring-offset-2 data-[citation-highlight]:ring-offset-background"
+          className="pointer-events-auto absolute"
           aria-label={`Edit citation ${number} comment`}
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {
