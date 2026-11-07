@@ -211,6 +211,7 @@ function makeHarness(options: HarnessOptions = {}) {
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
+      currentBranch: () => Effect.succeed(null),
       removeWorktree,
       deleteLocalBranch,
       ...options.git,
@@ -1053,6 +1054,48 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
     });
     assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-1");
     assert.equal(harness.createWorktree.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([
+  { case: "its checked-out branch", head: "feat/agent-made", expected: "feat/agent-made" },
+  { case: "its temporary branch, unrenamed", head: "t3/1234abcd", expected: "t3/1234abcd" },
+  { case: "no branch when HEAD is unreadable", head: null, expected: null },
+  { case: "the branch the caller passed", branch: "feat/explicit", expected: "feat/explicit" },
+])("binds an existing worktree with $case", ({ head, branch, expected }) => {
+  const worktreePath = "/repo-worktrees/agent-made";
+  const harness = makeHarness({
+    git: {
+      currentBranch: (cwd) =>
+        cwd !== worktreePath || head === undefined
+          ? Effect.die(`read the branch of ${cwd}`)
+          : head !== null
+            ? Effect.succeed(head)
+            : Effect.fail(
+                new GitCommandError({
+                  operation: "GitWorkflowService.currentBranch",
+                  command: "git symbolic-ref",
+                  cwd,
+                  detail: "Failed to read the checked-out branch.",
+                }),
+              ),
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:existing-worktree",
+        thread: "thread:launch:existing-worktree",
+        message: "Keep going",
+        workspace: { type: "existing_worktree", worktreePath, ...(branch ? { branch } : {}) },
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "starting");
+    assert.equal(projection.thread.worktreePath, worktreePath);
+    assert.equal(projection.thread.branch, expected);
+    assert.equal(harness.generateBranchName.mock.calls.length, 0);
   }).pipe(Effect.provide(harness.layer));
 });
 
