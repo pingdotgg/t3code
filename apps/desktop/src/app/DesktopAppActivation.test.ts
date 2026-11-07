@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
 
 import {
   ProjectId,
@@ -14,9 +15,97 @@ import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppContr
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import { afterEach, describe, expect } from "vite-plus/test";
+import type * as Electron from "electron";
 
-import { startDesktopAppControlServer } from "./DesktopAppActivation.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { make, startDesktopAppControlServer } from "./DesktopAppActivation.ts";
+
+describe("dropped-folder failure warnings", () => {
+  it.effect.each([
+    { localEnabled: false, hasWindow: true },
+    { localEnabled: false, hasWindow: false },
+    { localEnabled: true, hasWindow: true },
+  ])("uses the current owner when available (%j)", ({ localEnabled, hasWindow }) =>
+    Effect.gen(function* () {
+      const sent = Promise.withResolvers<DesktopAppActivationRequest>();
+      const window = {
+        webContents: {
+          isDestroyed: () => false,
+          on: () => undefined,
+          once: () => undefined,
+          removeListener: () => undefined,
+          send: (_channel: string, request: DesktopAppActivationRequest) => sent.resolve(request),
+        },
+      } as unknown as Electron.BrowserWindow;
+      let owner = Option.none<Electron.BrowserWindow>();
+      const warnings: Array<{
+        detail: string | undefined;
+        owner: Electron.BrowserWindow | undefined;
+      }> = [];
+      const activation = yield* make.pipe(
+        Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
+          stateDir: "/tmp/issue-32640/activation-test",
+          platform: "darwin",
+        } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
+        Effect.provideService(DesktopWindow.DesktopWindow, {
+          activate: Effect.void,
+        } as unknown as DesktopWindow.DesktopWindow["Service"]),
+        Effect.provideService(DesktopAppSettings.DesktopAppSettings, {
+          get: Effect.succeed({ localEnvironmentEnabled: localEnabled }),
+        } as unknown as DesktopAppSettings.DesktopAppSettings["Service"]),
+        Effect.provideService(ElectronWindow.ElectronWindow, {
+          main: Effect.succeedSome(window),
+          currentMainOrFirst: Effect.sync(() => owner),
+        } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        Effect.provideService(ElectronDialog.ElectronDialog, {
+          ...ElectronDialog.make,
+          showMessageBox: (options, owner) =>
+            Effect.sync(() => {
+              warnings.push({ detail: options.detail, owner });
+              return { response: 0, checkboxChecked: false };
+            }),
+        }),
+        Effect.provide(NodePathLayer.layerPosix),
+      );
+
+      if (localEnabled) {
+        yield* activation.setRendererReady(true);
+        const opening = yield* activation
+          .openWorkspace("/tmp/issue-32640/project")
+          .pipe(Effect.forkChild);
+        const request = yield* Effect.promise(() => sent.promise);
+        owner = Option.some(window);
+        yield* activation.complete({
+          version: 1,
+          requestId: request.requestId,
+          ok: false,
+          code: "thread-open-failed",
+          message: "Could not create the thread.",
+        });
+        yield* Fiber.join(opening);
+      } else {
+        owner = hasWindow ? Option.some(window) : Option.none();
+        yield* activation.openWorkspace("/tmp/issue-32640/project");
+      }
+
+      expect(warnings).toEqual([
+        {
+          detail: localEnabled
+            ? "Could not create the thread."
+            : "Turn on the local environment in Settings to open folders.",
+          owner: hasWindow ? window : undefined,
+        },
+      ]);
+    }),
+  );
+});
 
 const openServers: Array<{ close: () => Promise<void> }> = [];
 

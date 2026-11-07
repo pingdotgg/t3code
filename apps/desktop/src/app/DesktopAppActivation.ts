@@ -397,10 +397,15 @@ export const make = Effect.gen(function* () {
       return yield* Effect.sync(() => broker.complete(response));
     }),
     openWorkspace: Effect.fn("DesktopAppActivation.openWorkspace")(function* (workspaceRoot) {
-      const showFailure = (detail: string) =>
-        electronDialog
-          .showMessageBox({ type: "warning", message: "Could not open folder", detail })
+      const showFailure = Effect.fn("DesktopAppActivation.showFailure")(function* (detail: string) {
+        const owner = yield* electronWindow.currentMainOrFirst;
+        yield* electronDialog
+          .showMessageBox(
+            { type: "warning", message: "Could not open folder", detail },
+            Option.getOrUndefined(owner),
+          )
           .pipe(Effect.ignore);
+      });
       if (!(yield* appSettings.get).localEnvironmentEnabled) {
         return yield* showFailure("Turn on the local environment in Settings to open folders.");
       }
