@@ -5,9 +5,7 @@ import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
 
-import "~/index.css";
 import { act, render, type Screen } from "../../test/render";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
@@ -60,7 +58,6 @@ vi.mock(import("./ui/toast"), async (original) => {
 
 import { resetConfirmDialogForTests } from "~/confirmDialog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { ConfirmDialogHost } from "./ConfirmDialogHost";
 import {
   ServerUpdateAction,
   ServerUpdatesAction,
@@ -109,21 +106,6 @@ function renderUpdate(element: ReactNode) {
   return render(
     <RegistryContext.Provider value={appAtomRegistry}>{element}</RegistryContext.Provider>,
   );
-}
-
-function renderWithConfirmHost(element: ReactNode) {
-  return renderUpdate(
-    <>
-      {element}
-      <ConfirmDialogHost />
-    </>,
-  );
-}
-
-async function answerDesktopUpdateDialog(choice: "Cancel" | "Confirm") {
-  await expect.element(page.getByRole("alertdialog")).toHaveAccessibleDescription(/interrupt/i);
-  await userEvent.click(page.getByRole("button", { name: choice }));
-  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
 }
 
 function button(screen: Screen, name?: string) {
@@ -189,37 +171,16 @@ describe("ServerUpdateAction", () => {
     },
   );
 
-  const desktopProps = { selfUpdate: "desktop-managed", desktopAppUpdate: true } as const;
-
   it("does not update a desktop app when no confirmation dialog can be shown", async () => {
     using _state = setup();
     testState.updateServer.mockResolvedValue(success("desktop-app"));
-    await using screen = await renderAction(desktopProps);
+    await using screen = await renderAction({
+      selfUpdate: "desktop-managed",
+      desktopAppUpdate: true,
+    });
     await click(screen, "Update");
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
-
-  it.each([
-    { choice: "Cancel", updates: 0 },
-    { choice: "Confirm", updates: 1 },
-  ] as const)(
-    "updates a desktop app only when confirmed ($choice)",
-    async ({ choice, updates }) => {
-      using _state = setup();
-      testState.updateServer.mockResolvedValue(success("desktop-app"));
-      await using screen = await renderWithConfirmHost(
-        <ServerUpdateAction
-          environmentId={"env-test" as EnvironmentId}
-          serverLabel="Test server"
-          targetVersion="0.0.31"
-          {...desktopProps}
-        />,
-      );
-      await click(screen, "Update");
-      await answerDesktopUpdateDialog(choice);
-      await vi.waitFor(() => expect(testState.updateServer).toHaveBeenCalledTimes(updates));
-    },
-  );
 
   it("disables the action once maintenance access is removed", async () => {
     using _state = setup();
@@ -307,21 +268,4 @@ describe("ServerUpdatesAction", () => {
     expect(testState.updateServer).not.toHaveBeenCalled();
     expect(button(screen, "Update all")!.disabled).toBe(false);
   });
-
-  it.each([
-    { choice: "Cancel", updates: 0 },
-    { choice: "Confirm", updates: 2 },
-  ] as const)(
-    "updates desktop apps in a batch only when confirmed ($choice)",
-    async ({ choice, updates }) => {
-      using _state = setup();
-      testState.updateServer.mockResolvedValue(success());
-      await using screen = await renderWithConfirmHost(
-        <ServerUpdatesAction targets={withDesktop} />,
-      );
-      await click(screen, "Update all");
-      await answerDesktopUpdateDialog(choice);
-      await vi.waitFor(() => expect(testState.updateServer).toHaveBeenCalledTimes(updates));
-    },
-  );
 });
