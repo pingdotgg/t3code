@@ -279,6 +279,63 @@ describe("OpenShellGatewayDriver.spawn", () => {
     );
   });
 
+  const RWX_MIRROR_SETTINGS = {
+    ...DEFAULT_SETTINGS,
+    sharedCache: {
+      enabled: true,
+      mode: "rwx-pvc" as const,
+      mountPath: "/opt/t3cache",
+      pvcNames: { mirrors: "mirrors-pvc" },
+    },
+  };
+
+  it("seeds the sandbox environment from the shared mirror when one is configured", async () => {
+    const { client, recording } = fakeClient();
+    const driver = makeDriver({ client, settings: RWX_MIRROR_SETTINGS });
+    const spawned = await driver.spawn(
+      { workerClass: "ephemeral", seedFrom: "refs/heads/t3/task-42" },
+      { idempotencyKey: "req-seed" },
+    );
+    expect(recording.createCalls[0]?.environment).toEqual({
+      T3_SEED_REMOTE: "/opt/t3cache/git-mirrors",
+      T3_SEED_REF: "refs/heads/t3/task-42",
+    });
+    expect(spawned.warnings).toEqual([]);
+  });
+
+  it("parses a mirror-qualified seed ref into the seed remote", async () => {
+    const { client, recording } = fakeClient();
+    const driver = makeDriver({ client, settings: RWX_MIRROR_SETTINGS });
+    await driver.spawn(
+      { workerClass: "ephemeral", seedFrom: "myrepo#refs/heads/t3/task-42" },
+      { idempotencyKey: "req-seed-named" },
+    );
+    expect(recording.createCalls[0]?.environment).toEqual({
+      T3_SEED_REMOTE: "/opt/t3cache/git-mirrors/myrepo",
+      T3_SEED_REF: "refs/heads/t3/task-42",
+    });
+  });
+
+  it("clones from the remote and says so when a seed has no mirror behind it", async () => {
+    const { client, recording } = fakeClient();
+    const driver = makeDriver({ client, settings: DEFAULT_SETTINGS });
+    const spawned = await driver.spawn(
+      { workerClass: "ephemeral", seedFrom: "refs/heads/t3/task-42" },
+      { idempotencyKey: "req-seed-no-mirror" },
+    );
+    expect(recording.createCalls[0]?.environment).toBeUndefined();
+    expect(spawned.warnings).toHaveLength(1);
+    expect(spawned.warnings[0]).toContain("seed unavailable");
+  });
+
+  it("spawns without a seed environment when none is requested", async () => {
+    const { client, recording } = fakeClient();
+    const driver = makeDriver({ client, settings: RWX_MIRROR_SETTINGS });
+    const spawned = await spawnEphemeral(driver);
+    expect(recording.createCalls[0]?.environment).toBeUndefined();
+    expect(spawned.warnings).toEqual([]);
+  });
+
   it("deletes a sandbox it just created when the policy fails", async () => {
     const { client, recording, sandboxes } = fakeClient({
       policyError: new Error("policy rejected"),

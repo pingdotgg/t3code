@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   SHARED_CACHE_LANES,
+  T3_SEED_REF_ENV,
+  T3_SEED_REMOTE_ENV,
   buildWorkerBaggage,
+  mirrorGitPath,
+  seedEnvironment,
   templateSpecFromBaggage,
 } from "./workerBaggage.ts";
 
@@ -58,6 +62,30 @@ describe("worker baggage", () => {
     expect(baggage.env["PNPM_STORE_DIR"]).toBe("/opt/t3cache/pnpm-store");
     const mirror = baggage.mounts.find((mount) => mount.target === "/opt/t3cache/git-mirrors");
     expect(mirror?.readOnly).toBe(true);
+  });
+
+  it("derives the mirror path and seed env from the same place", () => {
+    const cache = {
+      enabled: true,
+      mode: "rwx-pvc" as const,
+      mountPath: "/opt/t3cache",
+      pvcNames: { mirrors: "mirrors-pvc" },
+    };
+    expect(mirrorGitPath(cache)).toBe("/opt/t3cache/git-mirrors");
+    expect(seedEnvironment(cache, "refs/heads/t3/task-42")).toEqual({
+      [T3_SEED_REMOTE_ENV]: "/opt/t3cache/git-mirrors",
+      [T3_SEED_REF_ENV]: "refs/heads/t3/task-42",
+    });
+    expect(seedEnvironment(cache, "myrepo#refs/heads/t3/task-42")).toEqual({
+      [T3_SEED_REMOTE_ENV]: "/opt/t3cache/git-mirrors/myrepo",
+      [T3_SEED_REF_ENV]: "refs/heads/t3/task-42",
+    });
+    expect(mirrorGitPath({ enabled: true, mode: "none", mountPath: "/opt/t3cache" })).toBe(
+      undefined,
+    );
+    expect(
+      seedEnvironment({ enabled: false, mode: "rwx-pvc", mountPath: "/opt/t3cache" }, "x#y"),
+    ).toBeUndefined();
   });
 
   it("falls back to the git remote and says so when the cache is off", () => {

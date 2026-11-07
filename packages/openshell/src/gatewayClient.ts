@@ -91,6 +91,8 @@ export interface OpenShellSandboxCreateSpec {
   readonly labels?: Readonly<Record<string, string>>;
   /** Durable admission request id: retries converge on the same object (lane 1). */
   readonly requestId?: string;
+  /** Per-sandbox environment overrides on top of the template's, e.g. the spawn seed. */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -264,6 +266,7 @@ export const connectOpenShellGateway = async (
           ...(spec.name === undefined ? {} : { name: spec.name }),
           ...(spec.labels === undefined ? {} : { labels: { ...spec.labels } }),
           ...(spec.requestId === undefined ? {} : { request_id: spec.requestId }),
+          ...(spec.environment === undefined ? {} : { environment: { ...spec.environment } }),
         }),
       ),
     get: async (name) => {

@@ -64,6 +64,41 @@ const CREDENTIAL_NAMES = [
   ".pgpass",
 ];
 
+/**
+ * The sandbox-side path of the shared RO git mirrors (spec sections 8.4 and
+ * 10.1). Baggage mounts and the spawn seed env both derive from this one
+ * place, so the mount and the seed can never drift apart.
+ */
+export const mirrorGitPath = (cache: OpenShellSharedCacheSettings): string | undefined =>
+  cache.enabled && cache.mode !== "none" && cache.pvcNames?.mirrors !== undefined
+    ? `${cache.mountPath}/git-mirrors`
+    : undefined;
+
+export const T3_SEED_REMOTE_ENV = "T3_SEED_REMOTE";
+export const T3_SEED_REF_ENV = "T3_SEED_REF";
+
+/**
+ * Spawn-seed environment (spec section 10): `T3_SEED_REMOTE` names the shared
+ * mirror — `<name>#<ref>` picks one mirror repo, a bare ref seeds from the
+ * mirror root — and `T3_SEED_REF` the ref to check out. Undefined when no
+ * RWX mirror is configured: the caller then clones from the remote and says so.
+ */
+export const seedEnvironment = (
+  cache: OpenShellSharedCacheSettings | undefined,
+  seedFrom: string,
+): Record<string, string> | undefined => {
+  if (cache === undefined || !cache.enabled || cache.mode !== "rwx-pvc") return undefined;
+  const mirrorPath = mirrorGitPath(cache);
+  if (mirrorPath === undefined) return undefined;
+  const separator = seedFrom.indexOf("#");
+  const mirror = separator === -1 ? "" : seedFrom.slice(0, separator);
+  const ref = separator === -1 ? seedFrom : seedFrom.slice(separator + 1);
+  return {
+    [T3_SEED_REMOTE_ENV]: mirror === "" ? mirrorPath : `${mirrorPath}/${mirror}`,
+    [T3_SEED_REF_ENV]: ref,
+  };
+};
+
 export const buildWorkerBaggage = (input: WorkerBaggageInput): WorkerBaggage => {
   const items: BaggageItem[] = [];
   const env: Record<string, string> = {};
@@ -116,10 +151,11 @@ export const buildWorkerBaggage = (input: WorkerBaggageInput): WorkerBaggage => 
       mounts.push({ source: `${cachePath}/${lane.path}`, target, readOnly: false });
       env[lane.env] = target;
     }
-    if (mirrorPath !== undefined) {
+    const mirrorTarget = mirrorGitPath(cache);
+    if (mirrorTarget !== undefined) {
       mounts.push({
         source: `${mirrorPath}/git`,
-        target: `${cache.mountPath}/git-mirrors`,
+        target: mirrorTarget,
         readOnly: true,
       });
     } else {
