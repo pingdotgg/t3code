@@ -8,7 +8,11 @@ import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
-export function AssistantCitationTray({
+export function AssistantCitationTray(props: Parameters<typeof CitationTrayContents>[0]) {
+  return props.citations.length ? <CitationTrayContents {...props} /> : null;
+}
+
+function CitationTrayContents({
   citations,
   onChange,
   onInsertInline,
@@ -20,7 +24,6 @@ export function AssistantCitationTray({
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
-  if (!citations.length) return null;
   const remove = (index: number) => {
     onChange(citations.filter((_, i) => i !== index));
     setEditing(null);
@@ -49,61 +52,75 @@ export function AssistantCitationTray({
           width="md"
           aria-label="Citation tray"
         >
-          <div className="max-h-96 space-y-4 overflow-y-auto">
-            {citations.map((citation, index) => (
-              // oxlint-disable-next-line react/no-array-index-key -- identical quotes may appear more than once and the tray preserves their order
-              <div key={index} className="space-y-2">
-                <p>{index + 1}. Selected text:</p>
-                <AssistantCitationQuote citation={{ ...citation, comment: undefined }} />
-                <p>User comment: {citation.comment || "None"}</p>
-                {editing === index ? (
-                  <AssistantCitationCommentEditor
-                    citation={citation}
-                    onVoiceSetupOpenChange={setVoiceSetupOpen}
-                    onSubmit={(comment) => {
-                      onChange(
-                        citations.map((item, i) =>
-                          i === index ? withAssistantCitationComment(item, comment) : item,
-                        ),
-                      );
-                      setEditing(null);
-                      return true;
-                    }}
-                    onCancel={() => setEditing(null)}
-                    moveLabel="Insert inline"
-                    onMove={
-                      onInsertInline
-                        ? (comment) => {
-                            if (onInsertInline(withAssistantCitationComment(citation, comment)))
-                              remove(index);
-                          }
-                        : undefined
-                    }
-                  />
-                ) : (
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="xs" onClick={() => setEditing(index)}>
-                      Edit
-                    </Button>
-                    {onInsertInline ? (
+          {open ? (
+            <div className="max-h-96 space-y-4 overflow-y-auto">
+              {citations.map((citation, index) => (
+                // oxlint-disable-next-line react/no-array-index-key -- identical quotes may appear more than once and the tray preserves their order
+                <div key={index} className="space-y-2">
+                  <p>{index + 1}. Selected text:</p>
+                  <AssistantCitationQuote citation={{ ...citation, comment: undefined }} />
+                  <p>User comment: {citation.comment || "None"}</p>
+                  {editing === index ? (
+                    <AssistantCitationCommentEditor
+                      citation={citation}
+                      onVoiceSetupOpenChange={setVoiceSetupOpen}
+                      onSubmit={(comment) => {
+                        onChange(
+                          citations.map((item, i) =>
+                            i === index ? withAssistantCitationComment(item, comment) : item,
+                          ),
+                        );
+                        setEditing(null);
+                        return true;
+                      }}
+                      onCancel={() => setEditing(null)}
+                      moveLabel="Insert inline"
+                      moveAriaLabel={`Insert annotation ${index + 1} inline`}
+                      onMove={
+                        onInsertInline
+                          ? (comment) => {
+                              if (onInsertInline(withAssistantCitationComment(citation, comment)))
+                                remove(index);
+                            }
+                          : undefined
+                      }
+                    />
+                  ) : (
+                    <div className="flex gap-2">
                       <Button
+                        aria-label={`Edit annotation ${index + 1}`}
                         variant="outline"
                         size="xs"
-                        onClick={() => {
-                          if (onInsertInline(citation)) remove(index);
-                        }}
+                        onClick={() => setEditing(index)}
                       >
-                        Insert inline
+                        Edit
                       </Button>
-                    ) : null}
-                    <Button variant="outline" size="xs" onClick={() => remove(index)}>
-                      Delete
-                    </Button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+                      {onInsertInline ? (
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          aria-label={`Insert annotation ${index + 1} inline`}
+                          onClick={() => {
+                            if (onInsertInline(citation)) remove(index);
+                          }}
+                        >
+                          Insert inline
+                        </Button>
+                      ) : null}
+                      <Button
+                        aria-label={`Delete annotation ${index + 1}`}
+                        variant="outline"
+                        size="xs"
+                        onClick={() => remove(index)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </PopoverPopup>
       </Popover>
       <Button

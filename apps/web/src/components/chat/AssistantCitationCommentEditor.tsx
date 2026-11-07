@@ -14,6 +14,7 @@ export function AssistantCitationCommentEditor({
   onSubmitAndSend,
   onMove,
   moveLabel,
+  moveAriaLabel,
   onCancel,
   onDraftChange,
   onVoiceSetupOpenChange,
@@ -23,6 +24,7 @@ export function AssistantCitationCommentEditor({
   onSubmit: (comment: string) => boolean;
   onMove?: ((comment: string) => void) | undefined;
   moveLabel?: string;
+  moveAriaLabel?: string;
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
@@ -131,6 +133,7 @@ export function AssistantCitationCommentEditor({
             variant="outline"
             size="xs"
             disabled={speech.blocksSubmission || commentTooLong}
+            aria-label={moveAriaLabel}
             onClick={() => onMove(comment)}
           >
             {moveLabel}

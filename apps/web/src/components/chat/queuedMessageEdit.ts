@@ -18,7 +18,10 @@ export function recoverQueuedMessageEdit(input: {
   const recovery = resolveQueuedEditExit({
     editChanged:
       draft !== null &&
-      (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0),
+      (draft.prompt !== input.originalText ||
+        draft.images.length > 0 ||
+        draft.files.length > 0 ||
+        (draft.trayCitations?.length ?? 0) > 0),
     threadDraftEmpty: !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
   });
   if (recovery === "kept") {

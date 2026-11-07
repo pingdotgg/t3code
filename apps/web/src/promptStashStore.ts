@@ -24,7 +24,7 @@ const StashEntrySchema = Schema.Struct({
   id: Schema.String,
   createdAt: Schema.String,
   prompt: Schema.String,
-  trayCitations: Schema.optionalKey(Schema.Array(AssistantCitation)),
+  trayCitations: Schema.optionalKey(ForwardCompatibleArray(AssistantCitation)),
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerFileAttachment)),
   droppedImageNames: Schema.Array(Schema.String),

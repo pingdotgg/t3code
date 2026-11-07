@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
@@ -83,6 +83,28 @@ describe("queued message file edits", () => {
     ).toBe("kept");
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
     expect(store.getComposerDraft(threadTarget)?.files).toEqual([file]);
+    expect(store.getComposerDraft(editTarget)).toBeNull();
+  });
+
+  it("keeps citation-only edits when the queued run leaves", () => {
+    const store = useComposerDraftStore.getState();
+    const citation = {
+      version: 1 as const,
+      environmentId,
+      threadId: threadTarget.threadId,
+      messageId: MessageId.make("message"),
+      text: "Quote",
+      start: 0,
+      end: 5,
+      prefix: "",
+      suffix: "",
+    };
+    store.setPrompt(editTarget, "Original message");
+    store.setTrayCitations(editTarget, [citation]);
+    expect(
+      recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
+    ).toBe("kept");
+    expect(store.getComposerDraft(threadTarget)?.trayCitations).toEqual([citation]);
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
 

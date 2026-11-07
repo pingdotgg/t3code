@@ -1142,7 +1142,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [backgroundThread]);
 
   const composerSendState = deriveComposerSendState({
-    prompt: serializeComposerTray(prompt, composerDraft.trayCitations),
+    prompt,
+    citationCount: composerDraft.trayCitations?.length ?? 0,
     imageCount: composerImages.length + composerFiles.length,
     existingAttachmentCount: editingQueuedAttachments?.length ?? 0,
     terminalContexts: composerTerminalContexts,

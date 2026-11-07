@@ -2135,7 +2135,7 @@ export function partializeComposerDraftStoreState(
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
       prompt: draft.prompt,
-      trayCitations: [...(draft.trayCitations ?? [])],
+      ...(draft.trayCitations?.length ? { trayCitations: [...draft.trayCitations] } : {}),
       attachments: draft.persistedAttachments,
       ...(draft.files.length > 0
         ? {
@@ -2976,15 +2976,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         setTrayCitations: (threadRef, citations) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) return;
-          set((state) => ({
-            draftsByThreadKey: {
-              ...state.draftsByThreadKey,
-              [threadKey]: {
-                ...(state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft()),
-                trayCitations: citations,
-              },
-            },
-          }));
+          set((state) => {
+            const nextDraft = {
+              ...(state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft()),
+              trayCitations: citations,
+            };
+            const draftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete draftsByThreadKey[threadKey];
+            else draftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey };
+          });
         },
         setPrompt: (threadRef, prompt) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

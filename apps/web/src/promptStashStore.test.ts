@@ -103,11 +103,19 @@ describe("promptStashStore", () => {
     writePromptStashStorageForTest(
       JSON.stringify({
         version: 2,
-        state: { entries: [makeEntry({ id: "citation-stash", prompt })] },
+        state: {
+          entries: [
+            {
+              ...makeEntry({ id: "citation-stash", prompt }),
+              trayCitations: [citation, { version: 999 }],
+            },
+          ],
+        },
       }),
     );
     const restored = usePromptStashStore.getState().takeEntry("citation-stash").entry;
     expect(restored?.prompt).toBe(prompt);
+    expect(restored?.trayCitations).toEqual([citation]);
     expect(
       collectAssistantCitations(restored?.prompt ?? "").map((entry) => entry.citation),
     ).toEqual([citation]);

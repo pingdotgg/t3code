@@ -134,6 +134,12 @@ describe("deriveComposerSendState", () => {
       ],
     });
 
+    for (const citationCount of [0, 1]) {
+      expect(
+        deriveComposerSendState({ prompt: "", imageCount: 0, terminalContexts: [], citationCount })
+          .hasSendableContent,
+      ).toBe(citationCount > 0);
+    }
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);

@@ -2601,6 +2601,14 @@ describe("composer citation tray", () => {
     const merge = useComposerDraftStore.persist.getOptions().merge!;
     const restored = merge(persisted, useComposerDraftStore.getInitialState());
     expect(restored.draftsByThreadKey[scopedThreadKey(source)]?.trayCitations).toEqual([citation]);
+    persisted.draftsByThreadKey[scopedThreadKey(source)].prompt = "Legacy draft";
+    delete persisted.draftsByThreadKey[scopedThreadKey(source)].trayCitations;
+    const legacy = merge(persisted, useComposerDraftStore.getInitialState());
+    expect(legacy.draftsByThreadKey[scopedThreadKey(source)]?.prompt).toBe("Legacy draft");
+    expect(legacy.draftsByThreadKey[scopedThreadKey(source)]?.trayCitations ?? []).toEqual([]);
+    store.setTrayCitations(target, [citation]);
+    store.setTrayCitations(target, []);
+    expect(store.getComposerDraft(target)).toBeNull();
     store.moveComposerPromptAndImages(source, target);
     expect(store.getComposerDraft(target)?.trayCitations).toEqual([citation]);
     expect(store.getComposerDraft(source)?.trayCitations ?? []).toEqual([]);
