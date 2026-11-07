@@ -11,11 +11,13 @@ import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
-const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
+const { focusedWebContents, ownerWindow, protocolHandler } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
+  protocolHandler: vi.fn<(url: string) => Promise<{ path: string }>>(),
   ownerWindow: vi.fn(),
 }));
 vi.mock("electron", () => ({
+  app: { getApplicationInfoForProtocol: protocolHandler },
   webContents: { getFocusedWebContents: focusedWebContents },
   BrowserWindow: { fromWebContents: ownerWindow },
 }));
@@ -385,4 +387,37 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "vscode");
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("detects Windows VS Code URL handlers independently of PATH", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-editors-" });
+    const executable = path.join(root, "Code - Insiders.exe");
+    yield* fs.writeFileString(executable, "");
+    protocolHandler.mockReset().mockImplementation(async (url) => ({
+      path: url === "vscode-insiders://" ? executable : path.join(root, "missing.exe"),
+    }));
+    const editors = yield* probeRemoteEditors
+      .handler(undefined)
+      .pipe(
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+      );
+    assert.notInclude(editors, "vscode");
+    assert.include(editors, "vscode-insiders");
+    protocolHandler.mockImplementation(async (url) => {
+      if (url === "vscode-insiders://") throw new Error("No handler");
+      return { path: executable };
+    });
+    const stableOnly = yield* probeRemoteEditors
+      .handler(undefined)
+      .pipe(
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+      );
+    assert.include(stableOnly, "vscode");
+    assert.notInclude(stableOnly, "vscode-insiders");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

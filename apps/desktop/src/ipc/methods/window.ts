@@ -10,6 +10,8 @@ import {
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   REMOTE_CAPABLE_EDITOR_IDS,
+  WSL_REMOTE_EDITOR_IDS,
+  remoteSchemeForEditor,
   SystemSettingsPaneSchema,
   type DesktopEnvironmentBootstrap,
   type PickedThemeFile,
@@ -397,7 +399,27 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
     const available: Array<EditorId> = [];
     const env = yield* HostProcess.Environment;
+    const platform = yield* HostProcess.Platform;
+    const fs = yield* FileSystem.FileSystem;
     for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
+      if (platform === "win32" && WSL_REMOTE_EDITOR_IDS.some((id) => id === editorId)) {
+        const scheme = remoteSchemeForEditor(editorId);
+        const handler =
+          scheme === undefined
+            ? Option.none<string>()
+            : yield* Effect.tryPromise({
+                try: async () =>
+                  (await Electron.app.getApplicationInfoForProtocol(`${scheme}://`)).path,
+                catch: () => undefined,
+              }).pipe(Effect.option);
+        if (
+          Option.isSome(handler) &&
+          (yield* fs.exists(handler.value).pipe(Effect.orElseSucceed(() => false)))
+        ) {
+          available.push(editorId);
+        }
+        continue;
+      }
       const editor = EDITORS.find((editor) => editor.id === editorId);
       if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
         available.push(editorId);
