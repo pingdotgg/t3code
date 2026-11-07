@@ -4,6 +4,7 @@ import {
   ChatAttachmentId,
   ChatFileAttachment,
   CommandId,
+  EventId,
   MessageId,
   NodeId,
   type OrchestrationV2AppThread,
@@ -23,6 +24,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ServerSettingsError,
   ThreadId,
   TurnItemId,
@@ -87,6 +89,7 @@ const layerRunExecutionTest = RunExecutionService.layer.pipe(
       mockEventSink({}),
       IdAllocator.layer,
       Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+        normalize: () => Effect.succeed([]),
         ingestNormalized: () => Effect.succeed([]),
       }),
       ServerSettings.layerTest(),
@@ -914,6 +917,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
             mockEventSink({}),
             IdAllocator.layer,
             Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              normalize: () => Effect.succeed([]),
               ingestNormalized: () => Effect.succeed([]),
             }),
             ServerSettings.layerTest(),
@@ -948,6 +952,7 @@ it.effect("fails the run when its ownership check cannot be read before calling 
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            normalize: () => Effect.succeed([]),
             ingestNormalized: () => Effect.succeed([]),
           }),
           ServerSettings.layerTest(),
@@ -1160,6 +1165,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            normalize: () => Effect.succeed([]),
             ingestNormalized: () => Effect.succeed([]),
           }),
           ServerSettings.layerTest(),
@@ -1282,6 +1288,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
             }),
             IdAllocator.layer,
             Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              normalize: () => Effect.succeed([]),
               ingestNormalized: () => Effect.succeed([]),
             }),
             scenario === "start-guard"
@@ -1462,6 +1469,7 @@ it.effect("ingests new member threads of an owned child after the root turn term
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            normalize: () => Effect.succeed([]),
             ingestNormalized: (input) =>
               Effect.gen(function* () {
                 const eventType = input.event.type;
@@ -1717,6 +1725,7 @@ it.effect("ends a nested native subagent and its thread when the root run is int
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            normalize: () => Effect.succeed([]),
             ingestNormalized: () => Effect.succeed([]),
           }),
           ServerSettings.layerTest(),
@@ -2129,6 +2138,7 @@ it.effect(
             }),
             IdAllocator.layer,
             Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              normalize: () => Effect.succeed([]),
               ingestNormalized: (input) =>
                 Ref.update(ingested, (current) => [...current, input.event]).pipe(Effect.as([])),
             }),
@@ -2674,28 +2684,177 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
-it.effect("refreshes pull requests after a provider stream exits with an error", () =>
-  Effect.gen(function* () {
-    const { written, observed } = yield* captureRootRunTermination({
-      key: "pull-request-refresh:stream-error",
-      shouldFinalizeRun: () => Effect.succeed(true),
-      events: () =>
-        Stream.fail(
-          new ProviderAdapter.ProviderAdapterEventStreamError({
-            driver,
-            providerSessionId: ProviderSessionId.make("session:exited"),
-            cause: "provider process exited",
-          }),
+it.effect.each(["stream", "terminal", "continuing", "completed", "transferred"] as const)(
+  "withdraws failed-turn approvals only when children stop (%s)",
+  (failureMode) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const requestId = RuntimeRequestId.make("request:stream-error");
+      const childRequestId = RuntimeRequestId.make("request:stream-error:child");
+      const childTurnId = ProviderTurnId.make("provider-turn:stream-error:child");
+      const childProviderThreadId = ProviderThreadId.make("provider-thread:stream-error:child");
+      const childThreadId = backgroundScenarioIds(
+        "pull-request-refresh:stream-error",
+      ).childThreadId;
+      const observedTurnId = ProviderTurnId.make("provider-turn:stream-error:observed");
+      const guarded = yield* Ref.make(false);
+      const { written, observed, finalEvents } = yield* captureRootRunTermination({
+        key: "pull-request-refresh:stream-error",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        initialProviderTurnId: null,
+        normalize: (input) =>
+          Effect.succeed(
+            input.withdrawApprovals &&
+              input.event.type === "turn.terminal" &&
+              (input.event.providerTurnId === observedTurnId ||
+                (input.event.providerTurnId === childTurnId && input.threadId === childThreadId))
+              ? [
+                  {
+                    id: EventId.make(`event:stream-error:withdraw-request:${input.threadId}`),
+                    type: "runtime-request.updated",
+                    threadId: input.threadId,
+                    occurredAt: now,
+                    payload: {
+                      id: input.threadId === childThreadId ? childRequestId : requestId,
+                      nodeId: NodeId.make("node:stream-error:approval"),
+                      providerTurnId:
+                        input.event.type === "turn.terminal" ? input.event.providerTurnId : null,
+                      nativeRequestRef: null,
+                      kind: "file-change",
+                      status: "cancelled",
+                      responseCapability: {
+                        type: "not_resumable",
+                        reason: "Provider stream ended",
+                      },
+                      createdAt: now,
+                      resolvedAt: now,
+                    },
+                  },
+                ]
+              : [],
+          ),
+        beforeTerminalWrite: (input) => {
+          return Ref.set(guarded, input.guardPendingRuntimeRequestCancellations === true).pipe(
+            Effect.as(true),
+          );
+        },
+        events: (ids) =>
+          Stream.concat(
+            Stream.make(
+              childThreadCreatedEvent(ids),
+              {
+                type: "provider_turn.updated",
+                threadId: childThreadId,
+                driver,
+                providerTurn: {
+                  id: childTurnId,
+                  providerThreadId: childProviderThreadId,
+                  nodeId: NodeId.make("node:stream-error:child-root"),
+                  runAttemptId: null,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt: now,
+                  completedAt: null,
+                },
+              },
+              {
+                type: "runtime_request.updated",
+                driver,
+                threadId: childThreadId,
+                runtimeRequest: {
+                  id: childRequestId,
+                  nodeId: NodeId.make("node:stream-error:child-approval"),
+                  providerTurnId: childTurnId,
+                  nativeRequestRef: null,
+                  kind: "command",
+                  status: "pending",
+                  responseCapability: {
+                    type: "live",
+                    providerSessionId: ProviderSessionId.make("session:stream-error"),
+                  },
+                  createdAt: now,
+                  resolvedAt: null,
+                },
+              },
+              {
+                type: "provider_turn.updated",
+                driver,
+                providerTurn: {
+                  id: observedTurnId,
+                  providerThreadId: ids.providerThreadId,
+                  nodeId: ids.rootNodeId,
+                  runAttemptId: ids.attemptId,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt: now,
+                  completedAt: null,
+                },
+              },
+              ...(failureMode === "transferred"
+                ? [
+                    {
+                      type: "subagent.updated" as const,
+                      driver,
+                      subagent: {
+                        ...makeRunOwnedSubagentFixture({
+                          ids,
+                          providerInstanceId: ProviderInstanceId.make("codex"),
+                          childThreadId,
+                          driver,
+                          status: "running",
+                        }),
+                        providerThreadId: childProviderThreadId,
+                        runId: RunId.make("run:replacement"),
+                      },
+                    },
+                  ]
+                : []),
+            ),
+            failureMode === "stream"
+              ? Stream.fail(
+                  new ProviderAdapter.ProviderAdapterEventStreamError({
+                    driver,
+                    providerSessionId: ProviderSessionId.make("session:exited"),
+                    cause: "provider process exited",
+                  }),
+                )
+              : Stream.make({
+                  ...rootTerminalEvent(
+                    { ...ids, rootProviderTurnId: observedTurnId },
+                    failureMode === "completed" ? "completed" : "failed",
+                  ),
+                  ...(failureMode === "continuing" ? { childTurnsContinue: true as const } : {}),
+                }),
+          ),
+      });
+      assert.isTrue(yield* Ref.get(guarded));
+      assert.deepEqual(observed, [
+        failureMode === "completed" ? "run:waiting" : "run:failed",
+        "pull-requests-refreshed",
+      ]);
+      assert.deepEqual(
+        written.map((item) => item.type),
+        failureMode === "stream" ? ["error"] : [],
+      );
+      const error = written.find((item) => item.type === "error");
+      if (failureMode === "stream")
+        assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
+      assert.equal(
+        finalEvents.some(
+          (event) =>
+            event.type === "runtime-request.updated" && event.payload.id === childRequestId,
         ),
-    });
-    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
-    assert.deepEqual(
-      written.map((item) => item.type),
-      ["error"],
-    );
-    const error = written.find((item) => item.type === "error");
-    assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
-  }),
+        failureMode === "stream" || failureMode === "terminal",
+      );
+      assert.equal(
+        finalEvents.some(
+          (event) => event.type === "runtime-request.updated" && event.payload.id === requestId,
+        ),
+        failureMode === "stream" || failureMode === "terminal" || failureMode === "transferred",
+      );
+    }),
 );
 
 it.effect("records a provider's input rejection at turn start in the terminal error", () =>
@@ -3159,6 +3318,7 @@ function captureRootRunTermination(input: {
   readonly shouldStartProviderTurn?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["shouldStartProviderTurn"];
   readonly appContext?: ReturnType<McpAppModelContext.McpAppModelContext["Service"]["forThread"]>;
   readonly ingestNormalized?: ProviderEventIngestor.ProviderEventIngestorV2["Service"]["ingestNormalized"];
+  readonly normalize?: ProviderEventIngestor.ProviderEventIngestorV2["Service"]["normalize"];
   readonly beforeTerminalWrite?: (
     request: Parameters<EventSink.EventSinkV2["Service"]["writeIfRunCurrent"]>[0],
   ) => Effect.Effect<boolean, EventSink.EventSinkV2Error>;
@@ -3239,6 +3399,7 @@ function captureRootRunTermination(input: {
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            normalize: input.normalize ?? (() => Effect.succeed([])),
             ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
           }),
           ServerSettings.layerTest(),
@@ -3744,6 +3905,7 @@ function runBackgroundItemScenario(
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            normalize: () => Effect.succeed([]),
             ingestNormalized: (input) =>
               Effect.gen(function* () {
                 const event = input.event;
