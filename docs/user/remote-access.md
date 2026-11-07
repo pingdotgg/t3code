@@ -156,15 +156,15 @@ Code environments on its private network or Tailscale so your phone or browser
 reaches those peers through the Connect host's tunnel. The peers do not need
 T3 Connect themselves.
 
-On the Connect-linked host, turn on **LAN gateway** in Settings → Labs, then
-add each peer by its LAN or Tailscale URL in **Settings → Connections**. On
-another client (including one that only reaches the Connect host), open
-**Settings → Connections**: advertised peers show under **Discovered on LAN
-gateway**. Choose **Add**, paste that peer's pairing code, and the environment
-is saved through the gateway path. You can still pair on the LAN or Tailscale
-instead; while the Connect host is reachable, a gateway route appears
-automatically afterward. Only private, loopback, and Tailscale addresses can be
-added as gateway peers.
+On the Connect-linked host, turn on **LAN gateway** in Settings → Labs. Pair
+other machines on the LAN or Tailscale as usual and leave them enabled: their
+private addresses are registered as gateway peers automatically. On another
+client (including one that only reaches the Connect host), open **Settings →
+Connections**: those peers show under **Discovered on LAN gateway**. Choose
+**Add**, paste that peer's pairing code, and the environment is saved through
+the gateway path. You can still pair on the LAN first instead; while the
+Connect host is reachable, a gateway route appears automatically afterward.
+Only private, loopback, and Tailscale addresses become gateway peers.
 
 ### Balance new threads across machines
 

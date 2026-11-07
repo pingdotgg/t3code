@@ -28,6 +28,7 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
+import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
@@ -154,6 +155,11 @@ export interface EnvironmentSupervisorOptions {
   readonly learnGatewayPeers?: (input: {
     readonly gatewayHttpBaseUrl: string;
     readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
+  }) => Effect.Effect<void>;
+  /** When this host's LAN gateway is on, publish its RPC client for catalog peer reconcile. */
+  readonly publishGatewayReconcile?: (input: {
+    readonly enabled: boolean;
+    readonly client: WsRpcProtocolClient;
   }) => Effect.Effect<void>;
 }
 
@@ -390,6 +396,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       Stream.map((event) => event.config.lanGatewayPeers ?? []),
       Stream.changesWith((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
       Stream.runForEach((advertised) => learn({ gatewayHttpBaseUrl, advertised })),
+      Effect.ignoreCause({ log: true }),
+    );
+  });
+
+  const publishGatewayReconcileFrom = Effect.fnUntraced(function* (
+    publish: NonNullable<EnvironmentSupervisorOptions["publishGatewayReconcile"]>,
+    lease: ConnectedLease,
+  ) {
+    yield* lease.session.subscribeServerConfig().pipe(
+      Stream.filter((event) => event.type === "snapshot"),
+      Stream.map((event) => event.config.settings?.lanGatewayEnabled === true),
+      Stream.changes,
+      Stream.runForEach((enabled) => publish({ enabled, client: lease.session.client })),
+      Effect.ensuring(publish({ enabled: false, client: lease.session.client })),
       Effect.ignoreCause({ log: true }),
     );
   });
@@ -1027,6 +1047,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
     if (options?.learnGatewayPeers !== undefined) {
       yield* learnGatewayPeersFrom(options.learnGatewayPeers, connectedLease).pipe(
+        Effect.forkScoped,
+      );
+    }
+    if (options?.publishGatewayReconcile !== undefined) {
+      yield* publishGatewayReconcileFrom(options.publishGatewayReconcile, connectedLease).pipe(
         Effect.forkScoped,
       );
     }

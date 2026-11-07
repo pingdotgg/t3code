@@ -1,5 +1,6 @@
-import { EnvironmentId, type LanGatewayPeerAdvertisement } from "@t3tools/contracts";
+import { EnvironmentId, WS_METHODS, type LanGatewayPeerAdvertisement } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
@@ -11,6 +12,8 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+
+import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
@@ -48,11 +51,13 @@ import {
   connectionRouteId,
   connectionRoutes,
   credentialConnectionId,
+  desiredGatewayPeers,
   entryWithRoutes,
   findRouteToSameAddress,
   hasSavedBearerRoute,
   mergeGatewayRoutes,
   mergeLearnedRoutes,
+  planGatewayPeerReconcile,
   routeGatewayEnvironmentId,
   routesAfterRemoving,
   upsertRoute,
@@ -287,6 +292,11 @@ export const make = Effect.gen(function* () {
   const gatewayAdvertisements = yield* Ref.make<ReadonlyMap<EnvironmentId, GatewayAdvertisement>>(
     new Map(),
   );
+  /** Connected gateway hosts that may receive catalog peers as proxy upstreams. */
+  const gatewayReconcileClients = yield* Ref.make<ReadonlyMap<EnvironmentId, WsRpcProtocolClient>>(
+    new Map(),
+  );
+  const gatewayReconcileGeneration = yield* Ref.make(0);
   const persistedEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(persistedRoutesByEnvironment.keys()),
   );
@@ -357,6 +367,83 @@ export const make = Effect.gen(function* () {
     return entry;
   });
 
+  const reconcileGatewayHost = Effect.fn("EnvironmentRegistry.reconcileGatewayHost")(function* (
+    gatewayEnvironmentId: EnvironmentId,
+    client: WsRpcProtocolClient,
+  ) {
+    const catalog = yield* SubscriptionRef.get(entries);
+    const desired = desiredGatewayPeers(catalog.values(), gatewayEnvironmentId);
+    const listed = yield* client[WS_METHODS.lanGatewayList]({}).pipe(
+      Effect.catch((error) =>
+        Effect.logDebug("Could not list LAN gateway peers for reconcile.", {
+          gatewayEnvironmentId,
+          error,
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (listed === null) return;
+    const plan = planGatewayPeerReconcile({ desired, listed: listed.peers });
+    for (const peer of plan.add) {
+      yield* client[WS_METHODS.lanGatewayAdd]({ url: peer.url }).pipe(
+        Effect.catch((error) =>
+          Effect.logDebug("Could not register a LAN gateway peer from the catalog.", {
+            gatewayEnvironmentId,
+            peerEnvironmentId: peer.environmentId,
+            error,
+          }),
+        ),
+      );
+    }
+    for (const peerEnvironmentId of plan.remove) {
+      yield* client[WS_METHODS.lanGatewayRemove]({ environmentId: peerEnvironmentId }).pipe(
+        Effect.catch((error) =>
+          Effect.logDebug("Could not remove a stale LAN gateway peer.", {
+            gatewayEnvironmentId,
+            peerEnvironmentId,
+            error,
+          }),
+        ),
+      );
+    }
+  });
+
+  const reconcileAllGatewayPeers = Effect.fn("EnvironmentRegistry.reconcileAllGatewayPeers")(
+    function* () {
+      const hosts = yield* Ref.get(gatewayReconcileClients);
+      for (const [gatewayEnvironmentId, client] of hosts) {
+        yield* reconcileGatewayHost(gatewayEnvironmentId, client);
+      }
+    },
+  );
+
+  // Catalog edits and gateway connect both schedule this; debounce merges bursts.
+  const enqueueGatewayPeerReconcile = Effect.fnUntraced(function* () {
+    const generation = yield* Ref.updateAndGet(gatewayReconcileGeneration, (n) => n + 1);
+    yield* Effect.forkIn(registryScope)(
+      Effect.gen(function* () {
+        yield* Effect.sleep(Duration.millis(500));
+        if ((yield* Ref.get(gatewayReconcileGeneration)) !== generation) return;
+        yield* reconcileAllGatewayPeers();
+      }).pipe(Effect.ignoreCause({ log: true })),
+    );
+  });
+
+  const publishGatewayReconcile = Effect.fn("EnvironmentRegistry.publishGatewayReconcile")(
+    function* (input: {
+      readonly gatewayEnvironmentId: EnvironmentId;
+      readonly enabled: boolean;
+      readonly client: WsRpcProtocolClient;
+    }) {
+      yield* Ref.update(gatewayReconcileClients, (current) => {
+        const next = new Map(current);
+        if (input.enabled) next.set(input.gatewayEnvironmentId, input.client);
+        else next.delete(input.gatewayEnvironmentId);
+        return next;
+      });
+      yield* enqueueGatewayPeerReconcile();
+    },
+  );
+
   const closeServiceScope = Effect.fn("EnvironmentRegistry.closeServiceScope")(function* (
     environmentId: EnvironmentId,
   ) {
@@ -368,6 +455,12 @@ export const make = Effect.gen(function* () {
     const next = new Map(current);
     next.delete(environmentId);
     yield* SubscriptionRef.set(serviceScopes, next);
+    yield* Ref.update(gatewayReconcileClients, (hosts) => {
+      if (!hosts.has(environmentId)) return hosts;
+      const without = new Map(hosts);
+      without.delete(environmentId);
+      return without;
+    });
     yield* Scope.close(lease.scope, Exit.void);
   });
 
@@ -386,6 +479,8 @@ export const make = Effect.gen(function* () {
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
             learnGatewayPeers: (input) =>
               learnGatewayPeers({ gatewayEnvironmentId: environmentId, ...input }),
+            publishGatewayReconcile: (input) =>
+              publishGatewayReconcile({ gatewayEnvironmentId: environmentId, ...input }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
@@ -621,7 +716,10 @@ export const make = Effect.gen(function* () {
         return true;
       }),
     );
-    if (applied) yield* relearnGatewayRoutes(environmentId);
+    if (applied) {
+      yield* relearnGatewayRoutes(environmentId);
+      yield* enqueueGatewayPeerReconcile();
+    }
     return applied;
   });
 
@@ -922,7 +1020,9 @@ export const make = Effect.gen(function* () {
   });
 
   const remove = Effect.fn("EnvironmentRegistry.remove")(function* (environmentId: EnvironmentId) {
-    return yield* withLeaseLock(environmentId, removeLocked(environmentId));
+    const removed = yield* withLeaseLock(environmentId, removeLocked(environmentId));
+    yield* enqueueGatewayPeerReconcile();
+    return removed;
   });
 
   const disconnectSsh = (environmentId: EnvironmentId, profile: SshConnectionProfile) =>
@@ -1043,6 +1143,7 @@ export const make = Effect.gen(function* () {
     yield* SubscriptionRef.update(entries, (current) => new Map(current).set(environmentId, next));
     // A connected supervisor finds the routes on its next better-route check.
     if (lease !== undefined) yield* retryWaitingSupervisor(lease);
+    yield* enqueueGatewayPeerReconcile();
     return next;
   });
 
@@ -1257,6 +1358,7 @@ export const make = Effect.gen(function* () {
         }
       }),
     );
+    yield* enqueueGatewayPeerReconcile();
   });
 
   const state = Effect.fn("EnvironmentRegistry.state")(function* (environmentId: EnvironmentId) {

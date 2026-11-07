@@ -544,6 +544,78 @@ export function isLearned(route: ConnectionRoute): boolean {
   return profile?._tag === "BearerConnectionProfile" && profile.learned === true;
 }
 
+const GATEWAY_PEER_UPSTREAM_KIND_ORDER = ["lan", "tailnet", "loopback"] as const;
+
+/**
+ * Private address a LAN gateway host can probe and proxy. Prefers LAN, then
+ * Tailscale, then loopback. Gateway/relay/public/ssh/vpn routes are never used.
+ */
+export function gatewayPeerUpstreamUrl(entry: ConnectionCatalogEntry): string | null {
+  const byKind = new Map<ConnectionRouteKind, string>();
+  for (const route of connectionRoutes(entry)) {
+    const kind = connectionRouteKind(route);
+    if (kind !== "lan" && kind !== "tailnet" && kind !== "loopback") continue;
+    if (byKind.has(kind)) continue;
+    const httpBaseUrl = routeHttpBaseUrl(route);
+    if (httpBaseUrl === null) continue;
+    try {
+      byKind.set(kind, new URL(httpBaseUrl).origin);
+    } catch {
+      continue;
+    }
+  }
+  for (const kind of GATEWAY_PEER_UPSTREAM_KIND_ORDER) {
+    const url = byKind.get(kind);
+    if (url !== undefined) return url;
+  }
+  return null;
+}
+
+/** Enabled catalog peers (other than the gateway) that have a private upstream URL. */
+export function desiredGatewayPeers(
+  catalog: Iterable<ConnectionCatalogEntry>,
+  gatewayEnvironmentId: EnvironmentId,
+): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly url: string }> {
+  const peers: Array<{ readonly environmentId: EnvironmentId; readonly url: string }> = [];
+  for (const entry of catalog) {
+    if (!entry.enabled || entry.unsupportedReason !== undefined) continue;
+    const environmentId = entry.target.environmentId;
+    if (environmentId === gatewayEnvironmentId) continue;
+    const url = gatewayPeerUpstreamUrl(entry);
+    if (url === null) continue;
+    peers.push({ environmentId, url });
+  }
+  return peers;
+}
+
+export function planGatewayPeerReconcile(input: {
+  readonly desired: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly url: string }>;
+  readonly listed: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly httpBaseUrl: string;
+  }>;
+}): {
+  readonly add: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly url: string }>;
+  readonly remove: ReadonlyArray<EnvironmentId>;
+} {
+  const desiredById = new Map(input.desired.map((peer) => [peer.environmentId, peer.url]));
+  const add: Array<{ readonly environmentId: EnvironmentId; readonly url: string }> = [];
+  for (const [environmentId, url] of desiredById) {
+    const listed = input.listed.find((peer) => peer.environmentId === environmentId);
+    let listedOrigin: string | undefined;
+    try {
+      listedOrigin = listed === undefined ? undefined : new URL(listed.httpBaseUrl).origin;
+    } catch {
+      listedOrigin = undefined;
+    }
+    if (listedOrigin !== url) add.push({ environmentId, url });
+  }
+  const remove = input.listed
+    .filter((peer) => !desiredById.has(peer.environmentId))
+    .map((peer) => peer.environmentId);
+  return { add, remove };
+}
+
 /**
  * A learned route borrows the credential of the route it was learned over, so
  * it cannot outlive that route: removing T3 Connect also removes routes learned
