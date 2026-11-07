@@ -9030,7 +9030,7 @@ it.layer(layerTest)("queued edit holds", (it) => {
           q.active,
         );
         assert.equal(holding.runs.find((run) => run.id === q.queued.id)?.queueEditId, q.editId);
-        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const maintenance = yield* ProjectionReplay.ProjectionReplay;
         assert.isTrue((yield* maintenance.rebuild).valid);
         assert.equal(
           (yield* q.orchestrator.getThreadProjection(q.threadId)).runs.find(
