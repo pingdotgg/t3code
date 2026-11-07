@@ -1146,14 +1146,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       /**
        * A workflow child's approval is runless: the turn that started the workflow
        * may end long before the child asks, and T3 keeps a runless request on the
-       * thread until Muse settles it. So is a held wake's request while compaction
-       * waits for that wake's run to end.
+       * thread until Muse settles it.
        */
       const publishRequest = Effect.fnUntraced(function* (native: PendingRequest["native"]) {
         const child = native.type === "approval" && native.value.subagentOrigin !== undefined;
-        const runless =
-          child ||
-          (active?.compact === true && wake !== undefined && native.value.turnId === wake.nativeId);
+        // Compaction never asks, so requests during it come from runs it waits on.
+        const runless = child || active?.compact === true;
         const turn = runless ? undefined : active;
         if (
           !thread ||
@@ -2191,10 +2189,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           yield* updateSession("running");
           const held = compact ? undefined : wake;
           if (!compact) wake = undefined;
-          // Re-route what the wake buffered so requests it already raised are shown.
+          // Compaction waits for the held run, so requests it already raised are shown now.
           else if (wake)
             for (const [method, data] of wake.events.splice(0))
-              yield* handleNotification(method, data).pipe(Effect.catch(failHost));
+              if (REQUEST_NOTIFICATIONS.has(method))
+                yield* handleNotification(method, data).pipe(Effect.catch(failHost));
+              else wake.events.push([method, data]);
           if (continuation && !held) return yield* finish(turn, "completed");
           if (held && !continuation) turn.joined.add(held.nativeId);
           for (const [method, data] of held?.events ?? [])

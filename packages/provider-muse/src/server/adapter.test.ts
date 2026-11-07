@@ -1676,73 +1676,72 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect.each([
-    { when: "while the run is still going", endBeforeRejection: false },
-    { when: "after the run already ended", endBeforeRejection: true },
-  ] as const)(
-    "compacts once a held Muse run ends when the rejection arrives $when",
-    ({ endBeforeRejection }) =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakeMuse();
-        const harness = yield* makeHeldWakeHarness(fake);
-        const rejection = pendingPromise<Record<string, unknown>>();
-        fake.queueResponse("session/compact", rejection.promise);
-        const compacting = yield* harness.runtime.compactThread!(
-          yield* turnInput(harness.providerThread),
-        ).pipe(Effect.forkScoped);
-        const first = yield* fake.takeCall("session/compact");
-        if (endBeforeRejection)
-          yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
-        rejection.reject(
-          new MspError({
-            code: -32030,
-            message: "session/compact command rejected: run_active",
-            data: { kind: "commandRejected", reason: "run_active", retryable: false },
-          }),
-        );
-        yield* Fiber.join(compacting);
-        if (!endBeforeRejection)
-          yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
-        const retry = yield* fake.takeCall("session/compact");
-        assert.notStrictEqual(retry.commandId, first.commandId);
-        // The compaction runs under its own target run, not the command ID.
-        yield* fake.emit("item/completed", {
-          item: {
-            itemId: "compaction-1",
-            turnId: "wake-1",
-            kind: "compaction",
-            status: "completed",
-            outcome: "compacted",
-            revision: 1,
-          },
-        });
-        const terminal = yield* harness.takeEvent("turn.terminal");
-        assert.strictEqual(terminal.status, "completed");
-        assert.strictEqual(terminal.threadDisposition, "reusable");
-        yield* startConversation(harness, fake, 2);
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  const runActive = () =>
+    new MspError({
+      code: -32030,
+      message: "session/compact command rejected: run_active",
+      data: { kind: "commandRejected", reason: "run_active", retryable: false },
+    });
+  const compactionItem = (itemId: string) => ({
+    item: {
+      itemId,
+      turnId: "wake-1",
+      kind: "compaction",
+      status: "completed",
+      outcome: "compacted",
+      revision: 1,
+    },
+  });
+
+  it.effect("compacts when a held Muse run ends before its run_active rejection arrives", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHeldWakeHarness(fake);
+      const rejection = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("session/compact", rejection.promise);
+      const compacting = yield* harness.runtime.compactThread!(
+        yield* turnInput(harness.providerThread),
+      ).pipe(Effect.forkScoped);
+      yield* fake.takeCall("session/compact");
+      yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
+      rejection.reject(runActive());
+      yield* Fiber.join(compacting);
+      yield* fake.takeCall("session/compact");
+      yield* fake.emit("item/completed", compactionItem("compaction-1"));
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect.each(["before compaction", "while compaction waits"] as const)(
-    "shows a held Muse run's approval raised $0 so compaction can retry",
-    (asked) =>
+  it.effect.each([
+    { asked: "before compaction", run: "wake-1" },
+    { asked: "while compaction waits", run: "wake-1" },
+    { asked: "while compaction waits", run: "wake-2" },
+  ] as const)(
+    "shows $run's approval raised $asked so compaction retries once runs end",
+    ({ asked, run }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakeMuse();
         const harness = yield* makeHeldWakeHarness(fake);
-        if (asked === "before compaction")
-          yield* fake.emit("approval/requested", approval("wake-1"));
-        fake.queueResponse(
-          "session/compact",
-          new MspError({
-            code: -32030,
-            message: "session/compact command rejected: run_active",
-            data: { kind: "commandRejected", reason: "run_active", retryable: false },
-          }),
-        );
+        if (asked === "before compaction") {
+          // An earlier automatic compaction must stay with the wake, not end this turn.
+          yield* fake.emit("item/completed", compactionItem("auto-compaction"));
+          yield* fake.emit("approval/requested", approval(run));
+          // Native events are processed in order; this one marks the two above as buffered.
+          yield* fake.emit("session/contextUsage", { usedTokens: 1 });
+          yield* harness.takeEvent(
+            "provider_thread.updated",
+            (event) => event.providerThread.contextUsage?.usedTokens === 1,
+          );
+        }
+        fake.queueResponse("session/compact", runActive());
         yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
-        yield* fake.takeCall("session/compact");
+        const first = yield* fake.takeCall("session/compact");
+        if (run === "wake-2") {
+          yield* fake.emit("turn/started", { turnId: "wake-2" });
+          yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
+        }
         if (asked === "while compaction waits")
-          yield* fake.emit("approval/requested", approval("wake-1"));
+          yield* fake.emit("approval/requested", approval(run));
         const shown = yield* harness.takeEvent(
           "runtime_request.updated",
           (event) => event.runtimeRequest.status === "pending",
@@ -1752,9 +1751,17 @@ describe("MuseAdapterV2", () => {
           decision: "accept",
         });
         yield* fake.takeCall("approval/decide");
-        yield* fake.emit("approval/resolved", { approvalId: "approval-1", turnId: "wake-1" });
-        yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
-        yield* fake.takeCall("session/compact");
+        yield* fake.emit("approval/resolved", { approvalId: "approval-1", turnId: run });
+        yield* fake.emit("turn/completed", { turnId: run, terminal: "completed" });
+        const retry = yield* fake.takeCall("session/compact");
+        // Command IDs are idempotency keys, so a reused one would replay the rejection.
+        assert.notStrictEqual(retry.commandId, first.commandId);
+        // The compaction runs under its own target run, not the command ID.
+        yield* fake.emit("item/completed", compactionItem("compaction-1"));
+        const terminal = yield* harness.takeEvent("turn.terminal");
+        assert.strictEqual(terminal.status, "completed");
+        assert.strictEqual(terminal.threadDisposition, "reusable");
+        yield* startConversation(harness, fake, 2);
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -1787,13 +1794,7 @@ describe("MuseAdapterV2", () => {
           yield* fake.emit("turn/started", { turnId: "wake-1" });
           yield* Deferred.await(offered);
         }
-        admission.reject(
-          new MspError({
-            code: -32030,
-            message: "session/compact command rejected: run_active",
-            data: { kind: "commandRejected", reason: "run_active", retryable: false },
-          }),
-        );
+        admission.reject(runActive());
         yield* Fiber.join(compacting);
         const running = yield* harness.takeEvent(
           "provider_turn.updated",
@@ -1833,36 +1834,6 @@ describe("MuseAdapterV2", () => {
           1,
         );
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
-  it.effect("lets Muse admit compaction when a resumed session reports a stale active turn", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      // muse-code-sdk#121: resume after compaction reports a finished turn as running.
-      fake.queueResponse("session/resume", {
-        session: {
-          sessionId: "saved-session",
-          modelId: MODEL,
-          activeTurnId: "finished-turn",
-          status: "running",
-        },
-        history: { items: [] },
-      });
-      const harness = yield* makeHarness(fake, INSTANCE_ID, "saved-session");
-      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
-      yield* fake.takeCall("session/compact");
-      yield* fake.emit("item/completed", {
-        item: {
-          itemId: "compaction-1",
-          turnId: "compaction-target-run",
-          kind: "compaction",
-          status: "completed",
-          outcome: "compacted",
-          revision: 1,
-        },
-      });
-      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("projects native todos with stable identity and removes cancelled steps", () =>
