@@ -44,13 +44,21 @@ const QuestionCardInput = Schema.Struct({
           Schema.check(Schema.isBetween({ minimum: 1, maximum: 4 })),
         ),
       }),
-    ).pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 6 }))),
+    )
+      .pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 6 })))
+      .annotate({
+        description:
+          "Set when the answer is a specific word, term, symbol or formula piece: one entry per ___ in the question, with every accepted form. The app gives one input per blank and marks each.",
+      }),
   ),
   number: Schema.optional(
     Schema.Struct({
       answer: Schema.Number.pipe(Schema.check(Schema.isFinite())),
       tolerance: Schema.Number.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
       unit: Schema.optional(Schema.String.pipe(Schema.check(Schema.isMaxLength(40)))),
+    }).annotate({
+      description:
+        "Set whenever the answer is a number (a calculation, count or measured value): the app gives a number input with the unit beside it and marks it within tolerance.",
     }),
   ),
 });
