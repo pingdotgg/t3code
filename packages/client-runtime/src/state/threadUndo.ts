@@ -39,7 +39,11 @@ export type ThreadUndoStep =
   | { readonly action: "unsettle" }
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
-  | { readonly action: "snooze"; readonly snoozedUntil: string };
+  | {
+      readonly action: "snooze";
+      readonly snoozedUntil: string;
+      readonly wakeOnPullRequest?: boolean;
+    };
 
 export type ThreadUndoPlan = readonly [ThreadUndoStep, ...ThreadUndoStep[]];
 
@@ -49,6 +53,7 @@ export function planThreadUndo(
     readonly pinnedAt?: string | null;
     readonly pinOrderKey?: string | null;
     readonly snoozedUntil?: string | null;
+    readonly pullRequests?: ReadonlyArray<{ readonly snoozeWatch?: unknown }>;
   } | null,
 ): ThreadUndoPlan {
   if (action === "snooze") return [{ action: "unsnooze" }];
@@ -59,7 +64,15 @@ export function planThreadUndo(
   // Pinning clears snooze on the server; restore it after restoring pin placement.
   const snooze =
     thread?.snoozedUntil != null
-      ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
+      ? [
+          {
+            action: "snooze" as const,
+            snoozedUntil: thread.snoozedUntil,
+            ...(thread.pullRequests?.some((link) => link.snoozeWatch !== undefined)
+              ? { wakeOnPullRequest: true }
+              : {}),
+          },
+        ]
       : [];
   if (action === "unpin") return [pin, ...snooze];
   return [{ action: "unsettle" }, ...(thread?.pinnedAt != null ? [pin] : []), ...snooze];

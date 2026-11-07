@@ -20,6 +20,7 @@ import {
   effectiveSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
+  snoozeWaitsOnPullRequest,
   snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
@@ -840,11 +841,13 @@ function ThreadDetailBody(
     if (contentPresentationKind === "ready" && (lifecycleSnoozed || settled || woke)) {
       const state = lifecycleSnoozed ? "snoozed" : settled ? "settled" : "woke";
       const label =
-        lifecycleSnoozed && snoozedUntil !== null
-          ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
-          : settled
-            ? "Settled"
-            : "Woke from snooze";
+        lifecycleSnoozed && snoozeWaitsOnPullRequest(props.selectedThread)
+          ? "Snoozed until PR update"
+          : lifecycleSnoozed && snoozedUntil !== null
+            ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
+            : settled
+              ? "Settled"
+              : "Woke from snooze";
       const actionLabel = lifecycleSnoozed ? "Wake now" : settled ? "Un-settle" : "Dismiss";
       return {
         kind: "lifecycle",

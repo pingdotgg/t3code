@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
+import { UNTIMED_SNOOZE_WAKE_AT } from "@t3tools/contracts";
 import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
@@ -213,6 +214,7 @@ export interface SnoozePreset {
   readonly label: string;
   readonly whenLabel: string;
   readonly snoozedUntil: string;
+  readonly wakeOnPullRequest?: boolean;
 }
 
 export interface SnoozePresetOptions {
@@ -326,6 +328,27 @@ export function resolveSnoozePresets(
         return true;
       })
   );
+}
+
+type ThreadPullRequestShell = Pick<EnvironmentThreadShell, "pullRequests">;
+
+/** The menu choice that only pull request news wakes. */
+export function resolvePullRequestSnoozePreset(shell: ThreadPullRequestShell): SnoozePreset | null {
+  const open = shell.pullRequests.some(
+    (link) => link.source !== "stack-dismissed" && link.snapshot?.state === "open",
+  );
+  if (!open) return null;
+  return {
+    id: "pull-request",
+    label: "Until PR update",
+    whenLabel: "",
+    snoozedUntil: UNTIMED_SNOOZE_WAKE_AT,
+    wakeOnPullRequest: true,
+  };
+}
+
+export function snoozeWaitsOnPullRequest(shell: ThreadPullRequestShell): boolean {
+  return shell.pullRequests.some((link) => link.snoozeWatch !== undefined);
 }
 
 /**

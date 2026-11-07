@@ -2998,12 +2998,14 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
+    /** Also wake when an open linked pull request needs attention. */
+    wakeOnPullRequest: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
     commandId: CommandId,
     threadId: ThreadId,
-    reason: Schema.Literal("user"),
+    reason: Schema.Literals(["user", "pull-request"]),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.auto-settle.set"),
@@ -3431,6 +3433,10 @@ const OrchestrationV2InternalCommand = Schema.Union([
     watch: Schema.NullOr(ThreadPullRequestWatch),
     /** With `watch: null`, the state the ended watch keeps instead of its last saved one. */
     endedWatch: Schema.optional(ThreadPullRequestWatch),
+    /** Targets the link's `snoozeWatch` instead of its `watch`. */
+    snooze: Schema.optional(Schema.Literal(true)),
+    /** With `snooze`, ends the thread's snooze as its timer would. */
+    wakeThread: Schema.optional(Schema.Literal(true)),
     wake: Schema.optional(
       Schema.Struct({
         messageId: MessageId,

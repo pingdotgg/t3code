@@ -2,6 +2,18 @@ import { describe, expect, it } from "vite-plus/test";
 
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 
+describe("planThreadUndo", () => {
+  it("restores a pull request snooze with its watch", () => {
+    const snoozedUntil = "9999-01-01T00:00:00.000Z";
+    expect(
+      ThreadUndo.planThreadUndo("unpin", { snoozedUntil, pullRequests: [{ snoozeWatch: {} }] }),
+    ).toContainEqual({ action: "snooze", snoozedUntil, wakeOnPullRequest: true });
+    expect(ThreadUndo.planThreadUndo("unpin", { snoozedUntil, pullRequests: [{}] })).toContainEqual(
+      { action: "snooze", snoozedUntil },
+    );
+  });
+});
+
 describe("thread action ownership", () => {
   it("does not revive the first Undo after a later pin and unpin", () => {
     const firstUnpin = ThreadUndo.begin("pin", "env/thread");

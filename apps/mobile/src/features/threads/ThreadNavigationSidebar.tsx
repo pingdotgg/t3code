@@ -250,6 +250,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    pullRequestSnoozeEnvironmentIds,
     snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
@@ -456,6 +457,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
             onSettleThread={settleThread}
             snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
+            pullRequestSnoozeSupported={pullRequestSnoozeEnvironmentIds.has(thread.environmentId)}
             snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}

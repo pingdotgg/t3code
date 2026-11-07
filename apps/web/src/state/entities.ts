@@ -364,6 +364,14 @@ export function readEnvironmentSupportsAutoSettleOptOut(environmentId: Environme
   );
 }
 
+export function readEnvironmentSupportsPullRequestSnooze(environmentId: EnvironmentId): boolean {
+  const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+  return (
+    config?.environment.capabilities.threadPullRequestSnooze === true &&
+    config.settings.pullRequestSnoozeEnabled
+  );
+}
+
 export function readEnvironmentThreadRefs(
   environmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {

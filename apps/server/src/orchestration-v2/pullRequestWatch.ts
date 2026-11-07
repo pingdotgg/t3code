@@ -158,6 +158,16 @@ export function evaluatePullRequestWatch(
   };
 }
 
+/** Whether a snooze watch's report should bring the thread back to the user. */
+export function pullRequestNeedsAttention(
+  watch: ThreadPullRequestWatch,
+  report: PullRequestWatchReport,
+): boolean {
+  return report.changes.some(
+    (change) => change.kind === "remarks" || (change.kind !== "no-checks" && watch.unread !== true),
+  );
+}
+
 function snippet(body: string): string {
   const text = body
     .replaceAll(/<!--[\s\S]*?-->/g, " ")

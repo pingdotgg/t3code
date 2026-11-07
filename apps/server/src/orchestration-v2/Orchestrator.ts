@@ -74,6 +74,7 @@ import {
   ThreadId,
   TurnItemId,
   TrimmedNonEmptyString,
+  UNTIMED_SNOOZE_WAKE_AT,
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -729,6 +730,30 @@ function withPullRequestWatch(
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
 }
 
+function withoutSnoozeWatch(link: ThreadPullRequestLink): ThreadPullRequestLink {
+  const { snoozeWatch: _snoozeWatch, ...rest } = link;
+  return rest;
+}
+
+const canWakeSnooze = (link: ThreadPullRequestLink) =>
+  link.source !== "stack-dismissed" && link.snapshot?.state === "open";
+
+const UNTIMED_SNOOZE_WAKE_MS = Date.parse(UNTIMED_SNOOZE_WAKE_AT);
+
+// An untimed snooze has no timer behind it, so losing its last watch would hide the thread for good.
+function wakeUnwatchedSnooze(
+  thread: OrchestrationV2AppThread,
+  now: DateTime.Utc,
+): OrchestrationV2AppThread {
+  return thread.snoozedUntil != null &&
+    DateTime.toEpochMillis(thread.snoozedUntil) === UNTIMED_SNOOZE_WAKE_MS &&
+    !visibleThreadPullRequests(threadPullRequestsOf(thread)).some(
+      (link) => link.snoozeWatch !== undefined,
+    )
+    ? { ...thread, snoozedUntil: now }
+    : thread;
+}
+
 function legacyPullRequestLink(
   thread: OrchestrationV2AppThread,
   linked: ThreadLinkedPullRequest,
@@ -750,6 +775,7 @@ function legacyPullRequestLink(
         repositoryWebUrl: existing.repositoryWebUrl,
       }),
       ...(existing?.endedWatch && { endedWatch: existing.endedWatch }),
+      ...(existing?.snoozeWatch && { snoozeWatch: existing.snoozeWatch }),
     },
     existing?.watch,
   );
@@ -3104,12 +3130,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.settledOverride === "settled" ||
         thread.settledAt !== null ||
         isProviderNativeSubagentThread(thread);
-      if (link?.watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
+      const watch = command.snooze === true ? link?.snoozeWatch : link?.watch;
+      if (
+        watch?.startedAt !== command.startedAt ||
+        (command.wake && inactive) ||
+        (command.wakeThread === true && thread.snoozedUntil == null)
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: "The pull request watch ended or its thread settled while it was read.",
         });
+      }
+      if (command.wakeThread === true) {
+        return yield* dispatchThreadMutation(
+          {
+            type: "thread.unsnooze",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            reason: "pull-request",
+          },
+          events,
+          effects,
+        );
       }
       yield* dispatchThreadMutation(command, events, effects);
       if (command.wake === undefined) return;
@@ -3662,6 +3705,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a queued run and cannot be snoozed.`,
         });
       }
+      if (command.wakeOnPullRequest === true && !threadPullRequestsOf(thread).some(canWakeSnooze)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has no open linked pull request to wake it.`,
+        });
+      }
       snoozedUntil = parsedSnoozedUntil.value;
     }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
@@ -3683,7 +3733,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
-    const updatedThread: OrchestrationV2AppThread = (() => {
+    const mutatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
           return {
@@ -3729,18 +3779,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.snooze": {
           // Re-snoozing acknowledges the latest wake even at the same time; commandId deduplicates retries.
+          const startedAt = DateTime.formatIso(now);
           return {
             ...thread,
             snoozedUntil,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,
             updatedAt: now,
+            pullRequests:
+              command.wakeOnPullRequest === true
+                ? threadPullRequestsOf(thread).map((link) =>
+                    canWakeSnooze(link)
+                      ? {
+                          ...link,
+                          snoozeWatch: {
+                            startedAt,
+                            headSha: null,
+                            failedChecks: [],
+                            passed: false,
+                            passedChecks: [],
+                            remarksThrough: startedAt,
+                            remarkIds: [],
+                            conflicting: false,
+                            wakes: 0,
+                            unread: true,
+                          },
+                        }
+                      : withoutSnoozeWatch(link),
+                  )
+                : thread.pullRequests?.map(withoutSnoozeWatch),
           };
         }
         case "thread.unsnooze": {
+          const pullRequests = thread.pullRequests?.map(withoutSnoozeWatch);
+          // Reads as an expired timer, so every client shows the thread as woken.
+          if (command.reason === "pull-request") {
+            return { ...thread, snoozedUntil: now, pullRequests, updatedAt: now };
+          }
           const alreadyAwake = thread.snoozedUntil == null;
           return {
             ...thread,
+            pullRequests,
             snoozedUntil: null,
             snoozedAt: null,
             lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
@@ -3851,6 +3930,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
+                  pullRequests: thread.pullRequests?.map(withoutSnoozeWatch),
                 }
               : command.limitRecovery !== undefined &&
                   thread.limitRecovery?.snooze &&
@@ -4006,6 +4086,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const linked = threadPullRequestsOf(thread);
           const visible = (link: ThreadPullRequestLink) =>
             link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key);
+          if (command.type === "thread.pull-request-watch.sync" && command.snooze === true) {
+            const { watch: snoozeWatch, startedAt: commandStartedAt } = command;
+            const target = linked.find(visible);
+            if (target?.snoozeWatch?.startedAt !== commandStartedAt) return thread;
+            return {
+              ...thread,
+              pullRequests: linked.map((link) =>
+                link !== target
+                  ? link
+                  : snoozeWatch === null
+                    ? withoutSnoozeWatch(link)
+                    : { ...link, snoozeWatch },
+              ),
+            };
+          }
           const dismissed = linked.find((link) => threadPullRequestKeysEqual(link, key));
           const links =
             command.type === "thread.pull-request.watch" &&
@@ -4135,6 +4230,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    const updatedThread = wakeUnwatchedSnooze(mutatedThread, now);
     if (
       command.type === "thread.pull-request-link.sync" ||
       command.type === "thread.pull-request-watch.sync"

@@ -12,7 +12,7 @@ export type ThreadListProvider = Pick<
   "instanceId" | "driver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
 >;
 
-const capabilityKeys = ["threadAutoSettleOptOut"] as const;
+const capabilityKeys = ["threadAutoSettleOptOut", "threadPullRequestSnooze"] as const;
 
 function selectEnvironment(config: ServerConfig, isConnected: boolean) {
   return {
@@ -30,6 +30,7 @@ function selectEnvironment(config: ServerConfig, isConnected: boolean) {
     machineKind: resolveEnvironmentMachineKind(config),
     capabilities: config.environment.capabilities,
     snoozePresets: config.settings.snoozePresets,
+    pullRequestSnoozeEnabled: config.settings.pullRequestSnoozeEnabled,
   };
 }
 
@@ -61,17 +62,21 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   // Every protocol-2 server supports these thread actions; they only wait for its config.
   const loadedEnvironmentIds = new Set<EnvironmentId>();
   const autoSettleOptOutEnvironmentIds = new Set<EnvironmentId>();
+  const pullRequestSnoozeEnvironmentIds = new Set<EnvironmentId>();
   const reorderableEnvironmentIds = new Set<EnvironmentId>();
   const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
   for (const [
     id,
-    { providers, machineKind, capabilities, isConnected, snoozePresets },
+    { providers, machineKind, capabilities, isConnected, snoozePresets, pullRequestSnoozeEnabled },
   ] of environments) {
     providersByEnvironmentId.set(id, providers);
     snoozePresetsByEnvironmentId.set(id, snoozePresets);
     machineByEnvironmentId.set(id, machineKind);
     loadedEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
+    if (capabilities.threadPullRequestSnooze === true && pullRequestSnoozeEnabled) {
+      pullRequestSnoozeEnvironmentIds.add(id);
+    }
     if (isConnected) reorderableEnvironmentIds.add(id);
   }
   return {
@@ -79,6 +84,7 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
     machineByEnvironmentId,
     settlementEnvironmentIds: loadedEnvironmentIds,
     snoozeEnvironmentIds: loadedEnvironmentIds,
+    pullRequestSnoozeEnvironmentIds,
     pinningEnvironmentIds: loadedEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds: reorderableEnvironmentIds,
@@ -114,6 +120,7 @@ export function createThreadListEnvironmentsAtom(
         prior.machineKind === selected.machineKind &&
         prior.isConnected === selected.isConnected &&
         prior.snoozePresets === selected.snoozePresets &&
+        prior.pullRequestSnoozeEnabled === selected.pullRequestSnoozeEnabled &&
         capabilityKeys.every(
           (key) => (prior.capabilities[key] === true) === (selected.capabilities[key] === true),
         );
