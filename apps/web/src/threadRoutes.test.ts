@@ -138,7 +138,7 @@ describe("threadRoutes", () => {
     ).toBe("ready");
   });
 
-  it.each(["missing", "deleted", "archived"] as const)(
+  it.each(["missing", "deleted"] as const)(
     "redirects an unlisted thread only after detail confirms it is %s",
     (outcome) => {
       const route = {
@@ -172,8 +172,7 @@ describe("threadRoutes", () => {
                     ...projection,
                     thread: {
                       ...projection.thread,
-                      deletedAt: outcome === "deleted" ? removedAt : null,
-                      archivedAt: outcome === "archived" ? removedAt : null,
+                      deletedAt: removedAt,
                     },
                   }),
                 },
@@ -181,6 +180,30 @@ describe("threadRoutes", () => {
       ).toBe("missing");
     },
   );
+
+  it("opens an archived thread by its link once its detail arrives", () => {
+    const projection = makeThreadProjectionFixture();
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: isThreadRouteSnapshotAuthoritative("live"),
+        // The active shell snapshot does not list archived threads.
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        unlistedThreadDetail: {
+          ...EMPTY_ENVIRONMENT_THREAD_STATE,
+          status: "live",
+          data: Option.some({
+            ...projection,
+            thread: {
+              ...projection.thread,
+              archivedAt: DateTime.makeUnsafe("2026-01-02T00:00:00Z"),
+            },
+          }),
+        },
+        draftThreadExists: false,
+      }),
+    ).toBe("ready");
+  });
 
   it("waits for the live shell before redirecting a deleted thread", () => {
     expect(
