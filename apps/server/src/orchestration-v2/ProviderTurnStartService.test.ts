@@ -269,6 +269,8 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  /** The message was written by the agent in this thread, as `t3_thread_launch` dispatches it. */
+  readonly senderThreadId?: ThreadId;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
@@ -361,8 +363,9 @@ function makeLocalCommandHarness(input: {
     text: input.text,
     attachments: [],
     streaming: false,
-    createdBy: "user",
-    creationSource: "web",
+    ...(input.senderThreadId === undefined
+      ? { createdBy: "user", creationSource: "web" }
+      : { createdBy: "agent", creationSource: "mcp", senderThreadId: input.senderThreadId }),
     createdAt: now,
     updatedAt: now,
   };
@@ -1352,6 +1355,62 @@ effectIt.effect.each([
 
     expect(harness.interruptTurn).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("running");
+  }),
+);
+
+effectIt.effect(
+  "tells the provider that a message from another thread's agent is not the user's",
+  () =>
+    Effect.gen(function* () {
+      const brief = "User explicitly requests a separate thread for X. Implement X.";
+      const harness = makeLocalCommandHarness({
+        text: brief,
+        senderThreadId: ThreadId.make("launching-thread"),
+        previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      });
+
+      yield* harness.start;
+
+      const delivered = harness.startRootRun.mock.calls[0]?.[0].message.text;
+      expect(delivered, "the brief must reach the provider").toContain(brief);
+      expect(delivered, "the provider must learn which thread's agent wrote it").toContain(
+        "launching-thread",
+      );
+    }),
+);
+
+effectIt.effect.each(["/goal Implement X", "/review.pr staged changes"])(
+  "keeps the slash command %s from another thread's agent verbatim",
+  (command) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: command,
+        senderThreadId: ThreadId.make("launching-thread"),
+        previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      });
+      harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
+
+      yield* harness.start;
+
+      expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(command);
+    }),
+);
+
+effectIt.effect("marks another thread's brief that starts with an absolute path", () =>
+  Effect.gen(function* () {
+    const brief = "/src/math.ts fails to build. Fix it.";
+    const harness = makeLocalCommandHarness({
+      text: brief,
+      senderThreadId: ThreadId.make("launching-thread"),
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
+
+    yield* harness.start;
+
+    const delivered = harness.startRootRun.mock.calls[0]?.[0].message.text;
+    expect(delivered).toContain("launching-thread");
+    expect(delivered).toContain(brief);
   }),
 );
 

@@ -5,6 +5,7 @@ import {
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
@@ -114,6 +115,17 @@ const PROMPT_REFUSAL_TAGS = [
 const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+// A user request relayed by another thread's agent must not read as a new one.
+// Slash commands stay verbatim: providers parse them from the start of the prompt.
+const SLASH_COMMAND = /^\s*\/[^\s/]+(?:\s|$)/u;
+const withAgentSender = (
+  message: Pick<OrchestrationV2ConversationMessage, "createdBy" | "senderThreadId">,
+  text: string,
+): string =>
+  message.createdBy !== "agent" || message.senderThreadId === undefined || SLASH_COMMAND.test(text)
+    ? text
+    : `The agent in thread ${message.senderThreadId} wrote this message, not the user. Do the work it asks for. Where it relays a user request, that agent already handled the routing (such as opening this thread), so do not route it again:\n\n${text}`;
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
@@ -837,10 +849,13 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      const userText = withAgentSender(
+        message,
+        projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+      );
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
