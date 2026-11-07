@@ -285,6 +285,19 @@ describe("CodexAdapterV2 native protocol logging", () => {
         return;
       }
 
+      const awsCredentialsOutput = `${JSON.stringify(
+        {
+          Credentials: {
+            AccessKeyId: "fake-access-key-id",
+            SecretAccessKey: "fake-secret-access-key",
+            SessionToken: "fake-session-token",
+            Expiration: "2026-11-07T12:00:00+00:00",
+          },
+        },
+        null,
+        4,
+      )}\n`;
+
       yield* protocolLogger({
         direction: "incoming",
         stage: "decoded",
@@ -294,6 +307,11 @@ describe("CodexAdapterV2 native protocol logging", () => {
             id: "evt-1",
             http_headers: { Authorization: "Bearer secret-codex-token" },
             usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+            item: {
+              type: "commandExecution",
+              command: "aws sts get-session-token",
+              aggregatedOutput: awsCredentialsOutput,
+            },
           },
         },
       });
@@ -320,6 +338,18 @@ describe("CodexAdapterV2 native protocol logging", () => {
               id: "evt-1",
               http_headers: { Authorization: "[REDACTED]" },
               usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+              item: {
+                type: "commandExecution",
+                command: "aws sts get-session-token",
+                aggregatedOutput: JSON.stringify({
+                  Credentials: {
+                    AccessKeyId: "[REDACTED]",
+                    SecretAccessKey: "[REDACTED]",
+                    SessionToken: "[REDACTED]",
+                    Expiration: "2026-11-07T12:00:00+00:00",
+                  },
+                }),
+              },
             },
           },
         },

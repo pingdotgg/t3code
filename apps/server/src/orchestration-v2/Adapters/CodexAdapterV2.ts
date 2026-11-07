@@ -1565,7 +1565,8 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
     normalized.endsWith("apikey") ||
     normalized.endsWith("token") ||
     normalized.endsWith("password") ||
-    normalized.endsWith("secret")
+    normalized.endsWith("accesskeyid") ||
+    normalized.includes("secret")
   );
 }
 
