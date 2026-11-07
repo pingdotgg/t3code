@@ -506,8 +506,11 @@ function ContextOccupancyChart({
     ...series.points.map((point) => point.usedTokens),
   );
   const windowMax = series.maxTokens;
-  // Prefer window ceiling when known so fill reads as % of context, not a full chart.
-  const ceiling = windowMax !== null && windowMax > 0 ? Math.max(windowMax, dataPeak) : dataPeak;
+  // Scale to peak unless fill is near the window; the meta label still shows absolute %.
+  const ceiling =
+    windowMax !== null && windowMax > 0 && dataPeak >= windowMax * 0.5
+      ? Math.max(windowMax, dataPeak)
+      : dataPeak;
   const lastIndex = Math.max(0, series.points.length - 1);
   const xForIndex = (index: number) =>
     padLeft + (lastIndex === 0 ? 0 : (index / lastIndex) * plotWidth);
