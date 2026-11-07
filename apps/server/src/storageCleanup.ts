@@ -672,18 +672,25 @@ const make = Effect.gen(function* () {
       });
     const exceeded = "submodule inspection exceeded the limit";
     const unpushed = "submodule has commits not on a remote-tracking ref";
-    const reachable = Effect.fnUntraced(function* (revisions: string[], stdin?: string) {
+    const reachable = Effect.fnUntraced(function* (stdin?: string) {
       const result = yield* inspect(
-        ["rev-list", "--max-count=1", ...revisions, "--not", "--remotes"],
+        [
+          "rev-list",
+          "--max-count=1",
+          ...(stdin === undefined ? [] : ["--stdin"]),
+          "HEAD",
+          "--all",
+          "--reflog",
+          "--not",
+          "--remotes",
+        ],
         stdin === undefined ? {} : { stdin },
       );
       if (result.stdoutTruncated || result.stderrTruncated) return exceeded;
       return result.stdout.trim() === "" ? null : unpushed;
     });
-    const all = yield* reachable(["HEAD", "--all", "--reflog"]);
+    const all = yield* reachable();
     if (all !== unpushed) return all;
-    const untagged = yield* reachable(["HEAD", "--exclude=refs/tags/*", "--all", "--reflog"]);
-    if (untagged !== null) return untagged;
     // Clones fetch every upstream tag, so a tag a remote has at the same object is pushed.
     const tags = yield* inspect(
       ["for-each-ref", "--format=%(objectname)%09%(refname)", "refs/tags"],
@@ -692,41 +699,47 @@ const make = Effect.gen(function* () {
       },
     );
     const remotes = yield* inspect(["remote"]);
+    const worktree = yield* inspect(["config", "core.worktree"], { allowNonZeroExit: true });
     if (tags.stdoutTruncated || tags.stderrTruncated || remotes.stdoutTruncated) return exceeded;
-    let local = tags.stdout.split("\n").filter(Boolean);
+    // Relative remote paths resolve from the submodule's work tree. Deinit unsets it.
+    const base = path.resolve(directory, worktree.stdout.trim() || ".");
+    const local = tags.stdout.split("\n").filter(Boolean);
+    const pushed = new Set<string>();
     for (const remote of remotes.stdout.split("\n").filter(Boolean)) {
-      if (local.length === 0) break;
+      if (pushed.size === local.length) break;
       const url = yield* inspect(["ls-remote", "--get-url", "--", remote]);
       if (url.stdoutTruncated) return exceeded;
       const location = url.stdout.trim();
-      // Relative remote paths resolve from the worktree, so key them by absolute path.
       const key =
         path.isAbsolute(location) || /^[^/]*:/.test(location)
           ? location
-          : path.resolve(cwd, location);
+          : path.resolve(base, location);
       let published = remoteTags.get(key);
       if (published === undefined) {
-        published = yield* inspect(["ls-remote", "--tags", "--refs", "--", remote], {
-          operation: "StorageCleanup.remoteTags",
-          env: NON_INTERACTIVE_GIT_ENV,
-          timeoutMs: 20_000,
-          maxOutputBytes: 16 * 1024 * 1024,
-        }).pipe(
-          Effect.map((result) =>
-            result.stdoutTruncated ? null : new Set(result.stdout.split("\n")),
-          ),
-          // An unreachable remote vouches for no tags.
-          Effect.orElseSucceed(() => new Set<string>()),
-        );
+        published = yield* git
+          .execute({
+            operation: "StorageCleanup.remoteTags",
+            cwd: base,
+            args: ["--git-dir", directory, "ls-remote", "--tags", "--refs", "--", remote],
+            env: NON_INTERACTIVE_GIT_ENV,
+            timeoutMs: 20_000,
+            maxOutputBytes: 16 * 1024 * 1024,
+          })
+          .pipe(
+            Effect.map((result) =>
+              result.stdoutTruncated ? null : new Set(result.stdout.split("\n")),
+            ),
+            // An unreachable remote vouches for no tags.
+            Effect.orElseSucceed(() => new Set<string>()),
+          );
         remoteTags.set(key, published);
       }
       if (published === null) return exceeded;
-      local = local.filter((line) => !published.has(line));
+      for (const line of local) if (published.has(line)) pushed.add(line);
     }
-    if (local.length === 0) return null;
+    if (pushed.size === 0) return unpushed;
     return yield* reachable(
-      ["--stdin"],
-      local.map((line) => `${line.slice(line.indexOf("\t") + 1)}\n`).join(""),
+      [...pushed].map((line) => `^${line.slice(line.indexOf("\t") + 1)}\n`).join(""),
     );
   });
 

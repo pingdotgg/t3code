@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import type * as Path from "effect/Path";
+import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
@@ -656,17 +656,23 @@ it.live("removes submodules whose tags match the remote's tags off every remote 
   runCleanupTest(
     Effect.gen(function* () {
       const { service, fs, repo, worktree, submodule, command } = yield* submoduleCleanupFixture();
-      const tree = (yield* command(repo, ["rev-parse", "HEAD^{tree}"])).stdout.trim();
+      const head = (yield* command(submodule, ["rev-parse", "HEAD"])).stdout.trim();
+      const tree = (yield* command(submodule, ["rev-parse", "HEAD^{tree}"])).stdout.trim();
       const release = (yield* command(repo, [
         "commit-tree",
         tree,
         "-p",
-        "HEAD",
+        head,
         "-m",
         "release",
       ])).stdout.trim();
       yield* command(repo, ["tag", "v0.9.1", release]);
       yield* command(submodule, ["fetch", "origin", "tag", "v0.9.1"]);
+      // Pinning the submodule at the release puts the tag's commit in HEAD and the reflog.
+      yield* command(submodule, ["checkout", "--detach", "v0.9.1"]);
+      yield* command(worktree, ["commit", "-am", "pin module release"]);
+      const { relative } = yield* Path.Path;
+      yield* command(submodule, ["config", "remote.origin.url", relative(submodule, repo)]);
       const report = yield* service.runNow;
       expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
         outcome: "removed",
