@@ -1334,8 +1334,15 @@ export function moveLayoutTab(
     return state;
   }
 
+  const growPaneId =
+    destination.kind === "pane" &&
+    location.pane.tabs.length === 1 &&
+    location.column.panes.some((pane) => pane.id === destination.paneId)
+      ? destination.paneId
+      : null;
   // Detach without normalizing so the destination pane cannot disappear.
   const detached = mapPanes(state, (pane) => {
+    if (pane.id === growPaneId) return { ...pane, size: pane.size + location.pane.size };
     if (pane.id !== location.pane.id) return pane;
     const tabs = pane.tabs.filter((tab) => tab.id !== tabId);
     const activeTabId =
