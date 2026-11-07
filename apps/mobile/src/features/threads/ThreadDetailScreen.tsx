@@ -173,9 +173,6 @@ import type {
   ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
-import { ComposerErrorNotice } from "./ComposerErrorNotice";
-import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
-import { FreshSessionNotice } from "./FreshSessionNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -1701,35 +1698,6 @@ function ThreadDetailBody(
                         onDismiss={() => props.onDismissFeedback(submission.id)}
                       />
                     ))}
-                    {freshSessionAvailable ? (
-                      <FreshSessionNotice threadKey={selectedThreadKey} />
-                    ) : null}
-                    {props.canOperateThread ? (
-                      <ManagedRuntimeModeNotice
-                        threadKey={selectedThreadKey}
-                        threadRuntimeMode={props.selectedThread.runtimeMode}
-                        supportedRuntimeModes={
-                          props.serverConfig?.providers.find(
-                            (provider) =>
-                              provider.instanceId ===
-                              props.selectedThread.modelSelection.instanceId,
-                          )?.supportedRuntimeModes
-                        }
-                        policy={props.serverConfig?.managedPolicy}
-                      />
-                    ) : null}
-                    {composerError !== null ? (
-                      <Animated.View
-                        className="shrink-0"
-                        entering={FadeInDown.duration(180)}
-                        exiting={FadeOut.duration(120)}
-                      >
-                        <ComposerErrorNotice
-                          message={composerError}
-                          onDismiss={() => clearThreadComposerError(selectedThreadKey)}
-                        />
-                      </Animated.View>
-                    ) : null}
                     {usageLimitsReport && activeUserInputRequestId === null ? (
                       <Animated.View
                         className="shrink-0 px-4"
@@ -1936,6 +1904,8 @@ function ThreadDetailBody(
                         onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                         onHeightChange={handleComposerHeightChange}
                         onEditorFocusChange={handleOwnedInputFocusChange}
+                        composerError={composerError}
+                        onDismissComposerError={() => clearThreadComposerError(selectedThreadKey)}
                       />
                     </>
                   )}

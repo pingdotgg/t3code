@@ -28,6 +28,7 @@ import { SliderRow } from "../../components/ui/SliderRow";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { MOBILE_THEME_IDS } from "../../lib/mobileTheme";
+import { ComposerBannerStack } from "../threads/ComposerBannerStack";
 
 const CHOICES = [
   { value: "overview", label: "Overview" },
@@ -216,6 +217,36 @@ export function ComponentCatalogScreen() {
           <View className="gap-3">
             <AppText className="text-lg font-t3-semibold">Feedback and presentation</AppText>
             <Notice message="This action could not finish. Try again." tone="danger" />
+            <AppText className="text-sm text-foreground-muted">Attached composer banners</AppText>
+            <View
+              className="overflow-hidden border border-border"
+              style={{ borderRadius: 27, borderCurve: "circular" }}
+            >
+              <ComposerBannerStack
+                items={[
+                  {
+                    id: "catalog-compatibility",
+                    variant: "warning",
+                    icon: "exclamationmark.triangle",
+                    title: "Provider version is unsupported",
+                    description: "Upgrade Claude Code to continue.",
+                    action: { label: "Open model settings", onPress: announceAction },
+                  },
+                  {
+                    id: "catalog-model",
+                    variant: "error",
+                    icon: "exclamationmark.circle",
+                    title: "Model unavailable",
+                    description: "Choose another model to send.",
+                    action: { label: "Open model settings", onPress: announceAction },
+                  },
+                ]}
+              >
+                <View className="bg-composer-surface px-4 py-5">
+                  <AppText className="text-sm text-foreground-muted">Composer surface</AppText>
+                </View>
+              </ComposerBannerStack>
+            </View>
             <Button label="Show notice" onPress={announceAction} />
             <View className="flex-row flex-wrap gap-2">
               <Button label="Sheet" onPress={() => setSheet(true)} />
