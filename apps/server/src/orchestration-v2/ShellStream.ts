@@ -138,15 +138,42 @@ function hiddenChildAncestorIds(
   return ancestorIds;
 }
 
+/** Live subagents and the subagents above them, so each live one keeps its chain to the root. */
+function liveSubagentChainIds<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineage">>(
+  rows: ReadonlyArray<T>,
+  isLive: (row: T) => boolean,
+): ReadonlySet<string> {
+  const subagents = new Map<string, T>();
+  for (const row of rows) {
+    if (row.lineage.relationshipToParent === "subagent") subagents.set(row.id, row);
+  }
+  const kept = new Set<string>();
+  for (const row of subagents.values()) {
+    if (!isLive(row)) continue;
+    let current: T | undefined = row;
+    while (current !== undefined && !kept.has(current.id)) {
+      kept.add(current.id);
+      const parentId: string | null = current.lineage.parentThreadId;
+      current = parentId === null ? undefined : subagents.get(parentId);
+    }
+  }
+  return kept;
+}
+
 function omitIdleSubagentShellsWith(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
   facts: Pick<ShellTrimFacts, "subagentParentIds">,
+  omitIdleSubagentParents: boolean,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
+  const chains = omitIdleSubagentParents
+    ? liveSubagentChainIds(threads, isLiveSubagentShell)
+    : null;
   return threads.filter(
     (thread) =>
       thread.lineage.relationshipToParent !== "subagent" ||
-      isLiveSubagentShell(thread) ||
-      facts.subagentParentIds.has(thread.id),
+      (chains === null
+        ? isLiveSubagentShell(thread) || facts.subagentParentIds.has(thread.id)
+        : chains.has(thread.id)),
   );
 }
 
@@ -183,14 +210,20 @@ function omitOlderSettledShellsWith(
 }
 
 /**
- * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
- * family instead. A child stays while it is live or the parent of another child, so the request
- * and working walks over shell rows never meet a gap in a nested chain.
+ * Idle subagent children have no sidebar row; opted-in clients read them from their thread family.
+ * A child stays while it is live or the parent of another child, so shell walks never meet a gap.
+ * With `omitIdleSubagentParents` it stays only while live or above a live one, for clients that
+ * read the family of a child whose parent row is missing.
  */
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  options: { readonly omitIdleSubagentParents: boolean } = { omitIdleSubagentParents: false },
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
-  return omitIdleSubagentShellsWith(threads, shellTrimFacts(threads));
+  return omitIdleSubagentShellsWith(
+    threads,
+    shellTrimFacts(threads),
+    options.omitIdleSubagentParents,
+  );
 }
 
 /**
@@ -206,7 +239,7 @@ export function activeShellRowsForSubscriber(
 } {
   const facts = shellTrimFacts(threads);
   return {
-    threads: omitIdleSubagents ? omitIdleSubagentShellsWith(threads, facts) : threads,
+    threads: omitIdleSubagents ? omitIdleSubagentShellsWith(threads, facts, false) : threads,
     subagentThreadIds: facts.subagentThreadIds,
   };
 }
@@ -230,6 +263,8 @@ export function omitOlderSettledShells(input: {
 
 interface ShellSubscriberOptions {
   readonly omitIdleSubagents: boolean;
+  /** Only with `omitIdleSubagents`. */
+  readonly omitIdleSubagentParents: boolean;
   readonly omitOlderSettled: boolean;
 }
 
@@ -239,7 +274,7 @@ function trimShellSnapshot(
   options: ShellSubscriberOptions & { readonly now: DateTime.Utc },
 ): OrchestrationV2ShellSnapshot {
   const threads = options.omitIdleSubagents
-    ? omitIdleSubagentShellsWith(base.threads, facts)
+    ? omitIdleSubagentShellsWith(base.threads, facts, options.omitIdleSubagentParents)
     : base.threads;
   if (!options.omitOlderSettled) return { ...base, threads };
   const older = omitOlderSettledShellsWith(
@@ -258,10 +293,17 @@ function shellSubscriberThreadIds(
   options: ShellSubscriberOptions,
 ): ReadonlyArray<ThreadId> {
   const facts = shellTrimFacts(index);
+  const chains =
+    options.omitIdleSubagents && options.omitIdleSubagentParents
+      ? liveSubagentChainIds(index, (entry) => entry.mayBeLive)
+      : null;
   const subagents = index.filter(
     (entry) =>
       entry.lineage.relationshipToParent === "subagent" &&
-      (!options.omitIdleSubagents || entry.mayBeLive || facts.subagentParentIds.has(entry.id)),
+      (!options.omitIdleSubagents ||
+        (chains === null
+          ? entry.mayBeLive || facts.subagentParentIds.has(entry.id)
+          : chains.has(entry.id))),
   );
   const ancestorIds = hiddenChildAncestorIds([
     ...subagents,

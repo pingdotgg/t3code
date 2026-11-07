@@ -181,15 +181,22 @@ describe("omitIdleSubagentShells", () => {
       // Idle, but a woken grandchild walks through it to reach the root's badge.
       row("middle", "root"),
       row("grandchild", "middle"),
+      row("upper", "root"),
+      row("lower", "upper"),
+      row("deep", "lower", { activityRunStatus: "running" }),
     ];
+    const live = ["root", "running", "queued", "asking", "background"];
     expect(omitIdleSubagentShells(threads).map((thread) => thread.id)).toEqual([
-      "root",
-      "running",
-      "queued",
-      "asking",
-      "background",
+      ...live,
       "middle",
+      "upper",
+      "lower",
+      "deep",
     ]);
+    // Clients that walk past a missing parent keep only the chains above live children.
+    expect(
+      omitIdleSubagentShells(threads, { omitIdleSubagentParents: true }).map((thread) => thread.id),
+    ).toEqual([...live, "upper", "lower", "deep"]);
   });
 
   it("still filters the transcript events of omitted children for a subscriber that opts in", () => {

@@ -1,14 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
-import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
+import { threadFamilyRead, visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { SidebarInset } from "./ui/sidebar";
+import { Button } from "./ui/button";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
@@ -17,13 +19,17 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import { useEnvironmentShellStatus } from "../state/shell";
-import { environmentThreadShells, useEnvironmentThread } from "../state/threads";
+import { environmentThreadShells, threadFamilies, useEnvironmentThread } from "../state/threads";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   buildThreadRouteParams,
   isThreadRouteSnapshotAuthoritative,
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
+
+const EMPTY_FAMILY_ATOM = Atom.make(AsyncResult.success({ snapshotSequence: 0, threads: [] }));
+const EMPTY_MOUNTED_ATOM = Atom.make(false);
 
 /**
  * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
@@ -47,6 +53,26 @@ export function ThreadRouteView({
     draftId === null ? null : store.getPromotedDraftRedirect(draftId),
   );
   const serverThreadRef = target.kind === "server" ? target.threadRef : null;
+  const familyEnvironmentId = serverThreadRef?.environmentId;
+  const familyThreadId = serverThreadRef?.threadId;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the viewed thread's omitted family rows mounted until navigation
+  useEffect(() => {
+    if (familyEnvironmentId === undefined || familyThreadId === undefined) return;
+    return threadFamilies.mount(appAtomRegistry, familyEnvironmentId, familyThreadId);
+  }, [familyEnvironmentId, familyThreadId]);
+  const familyRead = threadFamilyRead(
+    useAtomValue(
+      serverThreadRef === null
+        ? EMPTY_FAMILY_ATOM
+        : threadFamilies.familyAtom(serverThreadRef.environmentId, serverThreadRef.threadId),
+    ),
+  );
+  const familyMounted = useAtomValue(
+    serverThreadRef === null
+      ? EMPTY_MOUNTED_ATOM
+      : threadFamilies.mountedAtom(serverThreadRef.environmentId, serverThreadRef.threadId),
+  );
+  const familySettled = familyMounted && familyRead === "settled";
   const serverThreadShell = useQuietThreadShell(serverThreadRef);
   const shellStatus = useEnvironmentShellStatus(serverThreadRef?.environmentId ?? null);
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
@@ -135,6 +161,30 @@ export function ThreadRouteView({
 
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
+  if (
+    serverThreadRef !== null &&
+    (hiddenByTagFilter || offShellBlocked) &&
+    familyMounted &&
+    familyRead === "failed"
+  ) {
+    view = (
+      <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-3 p-6">
+        <p className="text-sm text-muted-foreground">Could not load the thread family.</p>
+        <Button
+          variant="outline"
+          onClick={() =>
+            threadFamilies.refresh(
+              appAtomRegistry,
+              serverThreadRef.environmentId,
+              serverThreadRef.threadId,
+            )
+          }
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  }
   if (target.kind === "draft") {
     if (
       draftSession &&
@@ -188,10 +238,12 @@ export function ThreadRouteView({
       redirect = <Navigate to="/" replace />;
     }
   } else if (hiddenByTagFilter) {
-    redirect = <Navigate to="/" replace />;
+    if (familySettled) redirect = <Navigate to="/" replace />;
   } else if (offShellBlocked) {
     // Before the shell bootstraps, a listed visible thread can still look off-shell.
-    if (bootstrapComplete && unlistedThread !== null) redirect = <Navigate to="/" replace />;
+    if (bootstrapComplete && familySettled && unlistedThread !== null) {
+      redirect = <Navigate to="/" replace />;
+    }
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
       <ChatView
