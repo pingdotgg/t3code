@@ -769,6 +769,8 @@ const DELIVERY_ANSWER_TURN_ITEM_TYPES: ReadonlyArray<OrchestrationV2TurnItem["ty
   "file_search",
   "web_search",
   "dynamic_tool",
+  "user_input_request",
+  "approval_request",
 ];
 
 function delegatedCompletionWakeDetail(

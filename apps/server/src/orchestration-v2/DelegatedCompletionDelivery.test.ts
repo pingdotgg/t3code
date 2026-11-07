@@ -2402,7 +2402,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
 
     const finishFollowup = (input: {
       readonly name: string;
-      readonly startedBy: "background-command" | "parent";
+      readonly startedBy: "background-command" | "parent" | "user";
       /** The parent steers a message into the follow-up's run before it answers. */
       readonly steeredByParent?: boolean;
       readonly result: "repeat" | "new";
@@ -2520,11 +2520,15 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               }
             : {
                 type: "message.dispatch",
-                createdBy: "agent",
-                creationSource: "mcp",
                 commandId: CommandId.make(`command:${name}-followup`),
                 threadId: child.childThreadId,
-                senderThreadId: parentThreadId,
+                ...(input.startedBy === "user"
+                  ? { createdBy: "user" as const, creationSource: "web" as const }
+                  : {
+                      createdBy: "agent" as const,
+                      creationSource: "mcp" as const,
+                      senderThreadId: parentThreadId,
+                    }),
                 messageId,
                 text: "Check the same work again.",
                 attachments: [],
@@ -2675,11 +2679,11 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
-    it.effect("a parent-sent repeat still wakes", () =>
+    it.effect.each(["parent", "user"] as const)("a %s-sent repeat still wakes", (startedBy) =>
       Effect.gen(function* () {
         const { followup, delivery } = yield* finishFollowup({
-          name: "followup-parent-repeat",
-          startedBy: "parent",
+          name: `followup-${startedBy}-repeat`,
+          startedBy,
           result: "repeat",
         });
         assert.equal(followup.completionDelivery?.state, "claimed");
@@ -3589,14 +3593,15 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
   );
 
   it.effect.each([
-    { origin: "provider_native", state: "delivered" },
-    { origin: "app_owned", state: "claimed" },
-  ] as const)("a cut delivery run whose only item is a $origin subagent ends $state", (input) =>
+    { item: "provider_native subagent", state: "delivered" },
+    { item: "app_owned subagent", state: "claimed" },
+    { item: "question", state: "delivered" },
+  ] as const)("a cut delivery run whose only item is a $item ends $state", (input) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
       const now = yield* DateTime.now;
-      const name = `delivery-cut-${input.origin}`;
+      const name = `delivery-cut-${input.item.replace(" ", "-")}`;
       const threadId = ThreadId.make(`thread:${name}`);
       const runId = RunId.make(`run:${name}`);
       const taskId = NodeId.make(`node:${name}-task`);
@@ -3659,14 +3664,26 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
               startedAt: now,
               completedAt: null,
               updatedAt: now,
-              type: "subagent",
-              subagentId: NodeId.make(`node:${name}-launched`),
-              origin: input.origin,
-              driver,
-              providerInstanceId: modelSelection.instanceId,
-              childThreadId: null,
-              prompt: "Check the merged findings.",
-              result: null,
+              ...(input.item === "question"
+                ? {
+                    type: "user_input_request" as const,
+                    requestId: RuntimeRequestId.make(`request:${name}`),
+                    questions: [],
+                    responseMode: "message" as const,
+                  }
+                : {
+                    type: "subagent" as const,
+                    subagentId: NodeId.make(`node:${name}-launched`),
+                    origin:
+                      input.item === "provider_native subagent"
+                        ? ("provider_native" as const)
+                        : ("app_owned" as const),
+                    driver,
+                    providerInstanceId: modelSelection.instanceId,
+                    childThreadId: null,
+                    prompt: "Check the merged findings.",
+                    result: null,
+                  }),
             },
           },
           runEvent({
