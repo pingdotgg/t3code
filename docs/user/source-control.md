@@ -140,6 +140,12 @@ like `pinball-stats` for "Pinball Stats". Turn on **Create private repository on
 publish it. If Git has no name or email on that machine, the project is created without the
 first commit.
 
+To create new projects somewhere else, such as `~/repos`, set **New projects directory** in
+**Settings → Projects**. The path is on the machine running T3 Code, and `~` is that machine's
+home folder. Existing projects stay where they are. Clear the setting to go back to
+`~/.t3/projects`. With a custom folder, a new project's first thread follows your default
+thread mode, because that folder can also hold repositories you added yourself.
+
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
 provider or paste a Git URL, then choose where to save it. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files
@@ -149,7 +155,7 @@ clones over HTTPS with Git's credentials for that host instead, and the project'
 HTTPS URL.
 
 To lay clones out like [ghq](https://github.com/x-motemen/ghq), turn on **Clone into host folders**
-under **Settings → Threads** (or **Source control** on mobile). Clones then default to
+under **Settings → Projects** (or **Source control** on mobile). Clones then default to
 `<host>/<owner>/<repo>` under **Add project starts in**, so set that to `~/ghq` to share ghq's
 folders. You can still change the destination before cloning.
 

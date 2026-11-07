@@ -14,7 +14,7 @@ import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.
 import type { SettingsScopeSearch } from "./settingsScope";
 import {
   filterAvailableSettingsSearchItems,
-  getThreadAutoSettlementSearchAvailability,
+  getSettingsSearchTargetAvailability,
 } from "./settingsSearch";
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
@@ -39,8 +39,14 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
           hasServerConfig: true,
         }),
     ) === true;
+  const hasWorktreesDirectory =
+    getSettingsSearchTargetAvailability(environments, undefined, "worktreesDirectory")
+      .eligibleEnvironmentIds.length > 0;
+  const hasNewProjectsDirectory =
+    getSettingsSearchTargetAvailability(environments, undefined, "newProjectsDirectory")
+      .eligibleEnvironmentIds.length > 0;
   const hasThreadAutoSettlement =
-    getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
+    getSettingsSearchTargetAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;
@@ -69,5 +75,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasThreadAutoSettlement,
     managedTunnelActive,
     hasPeerLinkHost,
+    hasWorktreesDirectory,
+    hasNewProjectsDirectory,
   });
 }

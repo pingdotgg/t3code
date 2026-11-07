@@ -166,7 +166,9 @@ const layerTools = Layer.mergeAll(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
   Layer.provide(
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      resolveNamedProjectsRoot: () => "/p",
+    }),
   ),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
   Layer.provide(

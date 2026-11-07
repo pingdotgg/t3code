@@ -24,6 +24,9 @@ describe("path helpers", () => {
     expect(normalizeProjectPathForComparison("C:")).toBe(normalizeProjectPathForComparison("C:\\"));
     expect(normalizeProjectPathForComparison("C:")).toBe(normalizeProjectPathForComparison("C:/"));
     expect(normalizeProjectPathForDispatch("C:\\repo\\")).toBe("C:\\repo");
+    expect(normalizeProjectPathForComparison("C:\\Users\\Me\\.t3\\projects")).toBe(
+      normalizeProjectPathForComparison("c:/users/me/.t3/projects/"),
+    );
   });
 
   it("names a new project's folder from any typed name", () => {

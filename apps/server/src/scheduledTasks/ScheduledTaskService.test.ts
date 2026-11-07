@@ -206,7 +206,7 @@ it.effect(
                     ),
                 }),
                 Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-                  namedProjectsRoot: "/projects",
+                  resolveNamedProjectsRoot: () => "/projects",
                   isScratchProject: () => Effect.succeed(false),
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
@@ -304,7 +304,7 @@ it.effect(
                     ),
                 }),
                 Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-                  namedProjectsRoot: "/projects",
+                  resolveNamedProjectsRoot: () => "/projects",
                   isScratchProject: () => Effect.succeed(false),
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
@@ -361,7 +361,7 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
+            resolveNamedProjectsRoot: () => "/projects",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -447,7 +447,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
+            resolveNamedProjectsRoot: () => "/projects",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -696,7 +696,7 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
+            resolveNamedProjectsRoot: () => "/projects",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -766,7 +766,7 @@ it.effect("a run interrupted right after it reserves the task does not block the
           Layer.mock(ThreadManagementService.ThreadManagementService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
+            resolveNamedProjectsRoot: () => "/projects",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,

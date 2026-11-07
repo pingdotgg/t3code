@@ -649,6 +649,8 @@ export const ServerConfig = Schema.Struct({
   secretRequestReferences: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The root came from `newProjectsDirectory`, not T3's own projects folder. */
+  newProjectsRootIsCustom: Schema.optionalKey(Schema.Boolean),
   /**
    * The latest stall long enough to notice, sent only for a few minutes after
    * it. A client that reconnects reads it to say why the host stopped
@@ -722,6 +724,8 @@ export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderSta
 
 export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
   settings: ServerSettings,
+  newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  newProjectsRootIsCustom: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerConfigSettingsUpdatedPayload = typeof ServerConfigSettingsUpdatedPayload.Type;
 

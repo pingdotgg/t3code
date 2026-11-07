@@ -78,4 +78,25 @@ describe("applyServerConfigProjection settingsUpdated", () => {
     } as ServerConfigStreamEvent);
     expect(Option.getOrThrow(next).config).toBe(Option.getOrThrow(current).config);
   });
+
+  it("follows the new-projects root and keeps it when an update omits it", () => {
+    const settings = decodeSettings(encodeSettings(DEFAULT_SERVER_SETTINGS));
+    const current = Option.some({
+      config: { settings, newProjectsRoot: "/home/me/.t3/projects" } as unknown as ServerConfig,
+      latestEvent: {} as ServerConfigStreamEvent,
+      source: "live" as const,
+    });
+    const moved = applyServerConfigProjection(current, {
+      type: "settingsUpdated",
+      payload: { settings, newProjectsRoot: "/home/me/repos", newProjectsRootIsCustom: true },
+    } as ServerConfigStreamEvent);
+    expect(Option.getOrThrow(moved).config.newProjectsRoot).toBe("/home/me/repos");
+    expect(Option.getOrThrow(moved).config.newProjectsRootIsCustom).toBe(true);
+    const fromOlderServer = applyServerConfigProjection(moved, {
+      type: "settingsUpdated",
+      payload: { settings },
+    } as ServerConfigStreamEvent);
+    expect(Option.getOrThrow(fromOlderServer).config.newProjectsRoot).toBe("/home/me/repos");
+    expect(Option.getOrThrow(fromOlderServer).config.newProjectsRootIsCustom).toBe(true);
+  });
 });

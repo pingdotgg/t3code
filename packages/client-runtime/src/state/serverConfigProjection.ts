@@ -109,11 +109,22 @@ export function applyServerConfigProjection(
     case "settingsUpdated":
       return Option.map(current, (projection) => {
         const settings = reuseUnchanged(projection.config.settings, event.payload.settings);
+        // Older servers omit the root fields, so the snapshot's stay.
+        const newProjectsRoot = event.payload.newProjectsRoot ?? projection.config.newProjectsRoot;
+        const newProjectsRootIsCustom =
+          event.payload.newProjectsRootIsCustom ?? projection.config.newProjectsRootIsCustom;
         return {
           config:
-            settings === projection.config.settings
+            settings === projection.config.settings &&
+            newProjectsRoot === projection.config.newProjectsRoot &&
+            newProjectsRootIsCustom === projection.config.newProjectsRootIsCustom
               ? projection.config
-              : { ...projection.config, settings },
+              : {
+                  ...projection.config,
+                  settings,
+                  ...(newProjectsRoot === undefined ? {} : { newProjectsRoot }),
+                  ...(newProjectsRootIsCustom === undefined ? {} : { newProjectsRootIsCustom }),
+                },
           latestEvent: event,
           source: "live",
         };

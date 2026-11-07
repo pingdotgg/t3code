@@ -48,6 +48,9 @@ export type SettingsSearchScope =
   | "checkout"
   | "connections";
 
+/** Environment capabilities a search result's row needs before it renders. */
+export type SettingsSearchCapability = "worktreesDirectory" | "newProjectsDirectory";
+
 export interface SettingsSearchItem {
   readonly id: string;
   readonly title: string;
@@ -69,6 +72,7 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
+  readonly requiredCapability?: SettingsSearchCapability;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -84,6 +88,9 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  /** Some connected environment serves the setting. Landing asks for one when the scope lacks it. */
+  readonly hasWorktreesDirectory?: boolean;
+  readonly hasNewProjectsDirectory?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -251,6 +258,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/worktrees",
     scope: "environment-defaults",
     searchTerms: ["worktree location folder directory path drive external disk"],
+    requiredCapability: "worktreesDirectory",
   },
   {
     id: "storage-artifacts",
@@ -758,16 +766,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new worktrees start remote origin latest fetched branch local"],
   },
   {
+    id: "new-projects-directory",
+    title: "New projects directory",
+    to: "/settings/projects",
+    scope: "environment-defaults",
+    searchTerms: ["new project folder location path repos repositories create default"],
+    requiredCapability: "newProjectsDirectory",
+  },
+  {
     id: "add-project-starts-in",
     title: "Add project starts in",
-    to: "/settings/threads",
+    to: "/settings/projects",
     scope: "environment-defaults",
     searchTerms: ["base directory folder browser path home"],
   },
   {
     id: "ghq-clone-layout",
     title: "Clone into host folders",
-    to: "/settings/threads",
+    to: "/settings/projects",
     scope: "environment-defaults",
     searchTerms: ["ghq clone destination host owner repository root layout"],
   },
@@ -1343,6 +1359,7 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/source-control",
   "/settings/connections",
+  "/settings/threads",
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
 // Section anchors that moved but are not search results themselves.
@@ -1350,6 +1367,7 @@ const MOVED_SECTION_ANCHORS: Readonly<Record<string, SettingsPath>> = {
   "authorized-clients": "/settings/access",
   "legacy-features": "/settings/labs",
   "text-generation": "/settings/threads",
+  "new-projects": "/settings/projects",
   about: "/settings/about",
 };
 
@@ -1375,25 +1393,38 @@ export function getSettingsSearchTargetScope(targetId: string) {
         title: item.title,
         scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to],
         ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
+        ...(item.requiredCapability ? { requiredCapability: item.requiredCapability } : {}),
       }
     : null;
 }
 
-interface AutoSettlementSearchEnvironment {
+interface SearchTargetEnvironment {
   readonly environmentId: EnvironmentId;
   readonly connection: { readonly phase: EnvironmentConnectionPhase };
-  readonly serverConfig: object | null;
+  readonly serverConfig: {
+    readonly environment: {
+      readonly capabilities: { readonly [Capability in SettingsSearchCapability]?: boolean };
+    };
+  } | null;
 }
 
-export function getThreadAutoSettlementSearchAvailability(
-  environments: readonly AutoSettlementSearchEnvironment[],
+/** Connected environments that can show the target, and whether the selected scope is all of them. */
+export function getSettingsSearchTargetAvailability(
+  environments: readonly SearchTargetEnvironment[],
   scope?: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
+  capability?: SettingsSearchCapability,
 ) {
   const connected = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" && environment.serverConfig !== null,
   );
-  const eligibleEnvironmentIds = connected.map((environment) => environment.environmentId);
+  const eligibleEnvironmentIds = connected
+    .filter(
+      (environment) =>
+        capability === undefined ||
+        environment.serverConfig?.environment.capabilities[capability] === true,
+    )
+    .map((environment) => environment.environmentId);
   const selected = connected.filter((environment) =>
     scope?.environmentIds.includes(environment.environmentId),
   );
@@ -1455,7 +1486,11 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (item.requiredCapability !== "worktreesDirectory" ||
+        availability.hasWorktreesDirectory === true) &&
+      (item.requiredCapability !== "newProjectsDirectory" ||
+        availability.hasNewProjectsDirectory === true),
   );
 }
 

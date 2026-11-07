@@ -196,6 +196,8 @@ export function createNewThreadHandler(router: AnyRouter) {
         ),
         workspaceRoot: project?.workspaceRoot ?? null,
         newProjectsRoot: environmentServerConfigs.get(projectRef.environmentId)?.newProjectsRoot,
+        newProjectsRootIsCustom: environmentServerConfigs.get(projectRef.environmentId)
+          ?.newProjectsRootIsCustom,
         projectHasThreads:
           readThreadShells().some(
             (thread) =>

@@ -28,7 +28,7 @@ const dependencies = Layer.mergeAll(
     launch: () => Effect.die("synthetic dispatch failure"),
   }),
   Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-    namedProjectsRoot: "/projects",
+    resolveNamedProjectsRoot: () => "/projects",
     isScratchProject: () => Effect.succeed(false),
   }),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
@@ -220,7 +220,7 @@ it.effect.each([
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           return Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
+            resolveNamedProjectsRoot: () => "/projects",
             isScratchProject: () =>
               sql`UPDATE scheduled_tasks SET next_run_at = ${MOVED}, enabled = ${pause ? 0 : 1}`.pipe(
                 Effect.as(false),

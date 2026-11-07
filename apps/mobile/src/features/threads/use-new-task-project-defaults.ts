@@ -65,6 +65,7 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
         projectSettings,
         workspaceRoot: project?.workspaceRoot ?? null,
         newProjectsRoot: serverConfig?.newProjectsRoot,
+        newProjectsRootIsCustom: serverConfig?.newProjectsRootIsCustom,
         projectHasThreads,
       });
   // While t3.json loads, the environment default is provisional; t3.json may replace it.
