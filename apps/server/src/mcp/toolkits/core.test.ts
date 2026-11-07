@@ -1,4 +1,5 @@
 import * as AssetSigner from "../../assets/AssetSigner.ts";
+import * as Upload from "../../assets/AttachmentUpload.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -46,6 +47,9 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
+import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
+import * as Repositories from "../../sourceControl/SourceControlRepositoryService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
@@ -968,64 +972,147 @@ it.effect("discovers workflow stop targets and requires orchestration capability
   );
 });
 
-it.effect("only the caller that prepared a pending upload can discard it", () =>
-  Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    const call = (
-      name: string,
-      args: Record<string, unknown>,
-      invocation: McpInvocationContext.McpInvocationScope,
-    ) =>
-      server
-        .callTool({ name, arguments: args })
-        .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.provideService(McpSchema.McpServerClient, client),
-        );
-    const prepared = yield* call(
-      "t3_attachment_prepare_upload",
-      { upload: { name: "shot.png", mimeType: "image/png", sizeBytes: 4 } },
-      scope,
-    );
-    const { attachmentId } = prepared.structuredContent as { readonly attachmentId: string };
-    const otherThread = {
-      ...scope,
-      requestNamespace: "other-session",
-      thread: { ...scope.thread!, threadId: ThreadId.make("other-thread") },
-    };
+it.effect(
+  "only the caller that prepared a pending upload can send, launch with or discard it",
+  () => {
+    const sent: Array<ThreadId> = [];
+    const launchedBy: Array<ThreadId | undefined> = [];
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const call = (
+        name: string,
+        args: Record<string, unknown>,
+        invocation: McpInvocationContext.McpInvocationScope,
+      ) =>
+        server
+          .callTool({ name, arguments: args })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+      const upload = { type: "file", name: "notes.txt", mimeType: "text/plain", sizeBytes: 4 };
+      const prepared = yield* call("t3_attachment_prepare_upload", { upload }, scope);
+      const { attachmentId, relativeUrl } = prepared.structuredContent as {
+        readonly attachmentId: string;
+        readonly relativeUrl: string;
+      };
+      const claims = yield* Upload.validateAttachmentUploadToken(
+        relativeUrl.slice(`${Upload.ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+      );
+      expect(yield* Upload.storeAttachmentUpload(claims!, new Uint8Array(4))).toEqual({ ok: true });
+      const otherThread = {
+        ...scope,
+        requestNamespace: "other-session",
+        thread: { ...scope.thread!, threadId: ThreadId.make("other-thread") },
+      };
+      const attachments = [{ ...upload, id: attachmentId }];
 
-    const refused = yield* call("t3_attachment_discard", { attachmentId }, otherThread);
-    expect(declaredFailure(refused)).toMatchObject({ code: "invalid_request" });
+      const refused = yield* call("t3_attachment_discard", { attachmentId }, otherThread);
+      expect(declaredFailure(refused)).toMatchObject({ code: "invalid_request" });
+      const stolen = yield* call("t3_thread_send_attachments", { attachments }, otherThread);
+      expect(declaredFailure(stolen)).toMatchObject({ code: "invalid_request" });
+      const launchedWithStolen = yield* call(
+        "t3_thread_launch",
+        { title: "Stolen", attachments },
+        otherThread,
+      );
+      expect(declaredFailure(launchedWithStolen)).toMatchObject({ code: "invalid_request" });
+      expect(sent).toEqual([]);
+      expect(launchedBy).toEqual([]);
+      const own = yield* call("t3_thread_send_attachments", { attachments }, scope);
+      expect(own.isError).toBe(false);
+      expect(sent).toEqual([threadId]);
+      const ownLaunch = yield* call("t3_thread_launch", { title: "Own", attachments }, scope);
+      expect(ownLaunch.isError).toBe(false);
+      expect(launchedBy).toEqual([threadId]);
 
-    yield* TestClock.adjust(24 * 60 * 60 * 1000 + 5 * 60_000);
-    yield* call(
-      "t3_attachment_prepare_upload",
-      { upload: { name: "later.png", mimeType: "image/png", sizeBytes: 4 } },
-      scope,
-    );
+      yield* TestClock.adjust(24 * 60 * 60 * 1000 + 5 * 60_000);
+      yield* call(
+        "t3_attachment_prepare_upload",
+        { upload: { name: "later.png", mimeType: "image/png", sizeBytes: 4 } },
+        scope,
+      );
 
-    const discarded = yield* call(
-      "t3_attachment_discard",
-      { attachmentId },
-      { ...scope, requestNamespace: "mcp-core-session-2" },
-    );
-    expect(discarded.isError).toBe(false);
-  }).pipe(
-    Effect.provide(
-      McpHttpServer.layerAttachmentToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-        Layer.provide(AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer))),
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
-        Layer.provide(
-          DocumentText.layer.pipe(
-            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      const discarded = yield* call(
+        "t3_attachment_discard",
+        { attachmentId },
+        { ...scope, requestNamespace: "mcp-core-session-2" },
+      );
+      expect(discarded.isError).toBe(false);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          McpHttpServer.layerAttachmentToolkit,
+          McpHttpServer.layerProjectRegistration,
+        ).pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              launch: (input) =>
+                Effect.sync(() => {
+                  launchedBy.push(input.initialMessage?.senderThreadId);
+                  return {
+                    threadId: input.threadId,
+                    projection: {
+                      thread: {
+                        id: input.threadId,
+                        projectId: input.projectId,
+                        modelSelection: input.modelSelection,
+                      },
+                      runs: [],
+                      messages: [{ attachments: input.initialMessage?.attachments ?? [] }],
+                    },
+                    resumed: false,
+                  } as unknown as ThreadLaunchService.ThreadLaunchResult;
+                }),
+            }),
           ),
+          Layer.provide(
+            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
+          Layer.provide(
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+            }),
+          ),
+          Layer.provide(Layer.mock(Repositories.SourceControlRepositoryService)({})),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+              getProjectThreadRecords: (input) =>
+                Effect.succeed(
+                  McpToolAccessTestkit.idleThreadProjection(
+                    McpToolAccessTestkit.liveThreadShell(input.threadId),
+                  ),
+                ),
+              sendToThread: (input) =>
+                Effect.sync(() => {
+                  sent.push(input.threadId);
+                  return {
+                    run: { id: RunId.make("run:sent"), status: "running" },
+                    message: { attachments: input.attachments },
+                  } as unknown as ThreadManagement.ThreadManagementSendResult;
+                }),
+            }),
+          ),
+          Layer.provideMerge(AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer))),
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" }),
+          ),
+          Layer.provideMerge(
+            DocumentText.layer.pipe(
+              Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+            ),
+          ),
+          Layer.provide(NodeCrypto.layer),
         ),
-        Layer.provide(NodeCrypto.layer),
       ),
-    ),
-  ),
+    );
+  },
 );
 
 it.effect(

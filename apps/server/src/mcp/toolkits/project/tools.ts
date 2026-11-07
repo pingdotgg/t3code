@@ -37,6 +37,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as PendingUploadOwners from "../../PendingUploadOwners.ts";
 
 const shared = {
   success: Project,
@@ -173,6 +174,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     ProviderRegistry.ProviderRegistry,
     DocumentText.DocumentText,
     Digest.Digest,
+    PendingUploadOwners.PendingUploadOwners,
   ],
 })
   .annotate(Tool.Destructive, true)

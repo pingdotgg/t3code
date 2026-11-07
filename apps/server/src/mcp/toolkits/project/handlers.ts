@@ -29,6 +29,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as PendingUploadOwners from "../../PendingUploadOwners.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -106,6 +107,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             code: "invalid_request",
             message: "A new thread accepts only pending attachment uploads.",
           });
+        yield* (yield* PendingUploadOwners.PendingUploadOwners).requireOwner(
+          scope,
+          attachments.map((attachment) => attachment.id),
+          "send",
+        );
         if (
           input.scratch === true &&
           (input.projectId !== undefined || input.workspaceStrategy !== undefined)

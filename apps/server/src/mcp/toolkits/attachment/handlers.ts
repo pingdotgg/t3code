@@ -1,17 +1,12 @@
-import {
-  ATTACHMENT_UPLOAD_URL_TTL_MS,
-  type ChatAttachment,
-  MessageId,
-  OrchestratorMcpFailure,
-} from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
+import { type ChatAttachment, MessageId, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as PendingUploadOwners from "../../PendingUploadOwners.ts";
 import { newCommandId, readThread, unavailable } from "../../threadAccess.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
@@ -35,18 +30,11 @@ export function resolveAttachmentReferences(
   });
 }
 
-/** The 24-hour sweep starts at upload completion, possibly one upload-URL lifetime after issue. */
-const UPLOAD_OWNER_TTL_MS = 24 * 60 * 60 * 1000 + ATTACHMENT_UPLOAD_URL_TTL_MS;
-
-const uploadOwner = McpInvocationContext.McpInvocationContext.pipe(
-  Effect.map((scope) => scope.thread?.threadId ?? scope.requestNamespace),
-);
-
 export const layer = McpToolAccess.toLayer(
   AttachmentToolkit,
   Effect.gen(function* () {
     const assetSigner = yield* AssetSigner.AssetSigner;
-    const uploadOwners = new Map<string, { readonly owner: string; readonly issuedAt: number }>();
+    const owners = yield* PendingUploadOwners.PendingUploadOwners;
     return {
       // A pending upload belongs to its caller until a send claims it, so
       // linked callers may stage the uploads their own sends need.
@@ -57,11 +45,10 @@ export const layer = McpToolAccess.toLayer(
               Effect.provideService(AssetSigner.AssetSigner, assetSigner),
               Effect.mapError(unavailable),
             );
-            const now = yield* Clock.currentTimeMillis;
-            for (const [id, entry] of uploadOwners) {
-              if (now - entry.issuedAt > UPLOAD_OWNER_TTL_MS) uploadOwners.delete(id);
-            }
-            uploadOwners.set(result.attachmentId, { owner: yield* uploadOwner, issuedAt: now });
+            yield* owners.record(
+              yield* McpInvocationContext.McpInvocationContext,
+              result.attachmentId,
+            );
             return result;
           }),
         { linkedCallers: "allowed" },
@@ -69,14 +56,13 @@ export const layer = McpToolAccess.toLayer(
       t3_attachment_discard: McpToolAccess.writes(
         (input) =>
           Effect.gen(function* () {
-            if (uploadOwners.get(input.attachmentId)?.owner !== (yield* uploadOwner)) {
-              return yield* new OrchestratorMcpFailure({
-                code: "invalid_request",
-                message: "Only the caller that prepared a pending upload can discard it.",
-              });
-            }
+            yield* owners.requireOwner(
+              yield* McpInvocationContext.McpInvocationContext,
+              [input.attachmentId],
+              "discard",
+            );
             yield* Upload.deletePendingAttachment(input.attachmentId);
-            uploadOwners.delete(input.attachmentId);
+            yield* owners.forget(input.attachmentId);
             return {};
           }),
         { linkedCallers: "allowed" },
@@ -91,6 +77,13 @@ export const layer = McpToolAccess.toLayer(
                 code: "invalid_request",
                 message: "Unarchive the target thread before sending attachments.",
               });
+            yield* owners.requireOwner(
+              yield* McpInvocationContext.McpInvocationContext,
+              input.attachments
+                .filter(Claims.attachmentIsPendingUpload)
+                .map((attachment) => attachment.id),
+              "send",
+            );
             const attachments = yield* resolveAttachmentReferences(
               input.attachments,
               projection.messages.flatMap((message) => message.attachments),
