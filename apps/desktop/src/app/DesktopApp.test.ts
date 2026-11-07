@@ -41,6 +41,7 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
+import * as DesktopGatewayHeaders from "./DesktopGatewayHeaders.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
@@ -139,6 +140,9 @@ it.effect.each([false, true])(
           Effect.provideService(PreviewPasskeys.PreviewPasskeys, {
             configure: Effect.void,
           } as PreviewPasskeys.PreviewPasskeys["Service"]),
+          Effect.provideService(DesktopGatewayHeaders.DesktopGatewayHeaders, {
+            install: Effect.void,
+          } as unknown as DesktopGatewayHeaders.DesktopGatewayHeaders["Service"]),
           Effect.provideService(DesktopApplicationMenu.DesktopApplicationMenu, {
             configure: Effect.void,
           }),

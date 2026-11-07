@@ -205,6 +205,29 @@ For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a
 scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
+### Behind Cloudflare Access or another access proxy
+
+The desktop app can reach an environment that an access proxy such as
+Cloudflare Access protects, while that proxy and T3 Code pairing both stay on.
+Create a service token for the proxy. In Cloudflare Zero Trust, that is
+**Access → Service credentials → Service Tokens**; then add a **Service Auth**
+policy that allows that token to the application. Cloudflare Access rejects
+CORS preflight requests even when they carry the token, so also turn on
+**Bypass options requests to origin** in the application's CORS settings. Your
+T3 Code server answers those itself.
+
+When you add the environment, open **Behind an access proxy?** below the
+pairing code and enter the token's client ID and client secret. For a proxy
+other than Cloudflare Access, choose **Custom headers** and enter the header
+names and values it expects. To add headers for an environment you already
+added, or to replace or remove them, use **Settings → Environments → Access
+proxy headers**.
+
+The desktop app sends those headers with its own requests to that host,
+including the WebSocket, and keeps them encrypted on the device. Pages you open
+in the in-app browser do not get them. The web and mobile apps cannot send
+access proxy headers yet.
+
 ## Desktop-managed SSH
 
 In the desktop app, open **Settings → Environments → Add environment**, choose
