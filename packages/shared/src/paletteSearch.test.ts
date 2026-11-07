@@ -40,6 +40,15 @@ describe("scoreThreadSearch", () => {
         thread("Share auth across worktrees"),
       ]),
     ).toEqual(["Share auth across worktrees", "Authentication cleanup", "Fix oauth redirect"]);
+    expect(
+      rankTitles("share auth", [
+        thread("Share authentication cleanup", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 12, picks: [] },
+        }),
+        thread("Auth across worktrees to share", { activityAt: NOW - 90 * DAY }),
+      ]),
+    ).toEqual(["Auth across worktrees to share", "Share authentication cleanup"]);
   });
 
   it("treats camelCase, kebab, path, and digit boundaries as word starts", () => {

@@ -344,6 +344,8 @@ interface WeightedSearchField {
 interface SearchFieldsMatch {
   /** Roughly 0.3 (inside a word) to 1.5 (exact title). */
   readonly quality: number;
+  /** Every counted token matched a whole word at full weight, before phrase bonuses. */
+  readonly wholeWords: boolean;
   /** Every token matched at a word start, without a typo. */
   readonly strong: boolean;
   /** Source ranges matched in the first field, for highlighting. */
@@ -441,6 +443,7 @@ function matchSearchFields(
   }
   return {
     quality,
+    wholeWords: total >= counted * WHOLE_WORD,
     strong,
     primaryRanges: mergeRanges(primaryRanges),
   };
@@ -851,7 +854,7 @@ function matchReference(
   };
   return (thread.id && matches(thread.id)) ||
     thread.pullRequests?.some((pullRequest) => pullRequest.references?.some(matches))
-    ? { quality: 0.6, strong: true, primaryRanges: [] }
+    ? { quality: 0.6, wholeWords: false, strong: true, primaryRanges: [] }
     : null;
 }
 
@@ -888,6 +891,7 @@ export interface ThreadSearchMatch {
   readonly score: number;
   /** Match quality alone; see `rankSearchGroups`. */
   readonly quality: number;
+  readonly wholeWords: boolean;
   /** Every token matched at a word start; see `rankSearchGroups`. */
   readonly strong: boolean;
   /** Matched ranges in the title. */
@@ -1043,6 +1047,7 @@ export function scoreThreadSearch(
   return {
     score: match.quality * threadUsageBoost(thread, now),
     quality: match.quality,
+    wholeWords: match.wholeWords,
     // A thread's whole title never lifts its group over a command or project
     // of that name: every new thread is titled "New thread" for a while.
     groupQuality: Math.min(match.quality, WHOLE_NAME - 0.01),
@@ -1146,6 +1151,7 @@ export function rankSearchGroups<
     readonly pickedAt?: number;
     readonly pickedExactly?: boolean;
     readonly groupQuality?: number;
+    readonly wholeWords?: boolean;
   },
 >(
   groups: ReadonlyArray<{ readonly group: G; readonly items: ReadonlyArray<T> }>,
@@ -1173,12 +1179,15 @@ export function rankSearchGroups<
       // A longer-query pick must not pass a whole-name match for the current query.
       const wordMatch = (match: M) => Math.min(matchClass(match.quality), 2);
       const exactPickAt = (match: M) => (match.pickedExactly ? (match.pickedAt ?? 0) : 0);
+      // Use reorders whole words or prefixes among themselves, never a prefix above a whole word.
+      const wholeWord = (match: M) => Number(match.wholeWords ?? match.quality >= WHOLE_WORD);
       const sorted = [...items].sort(
         (left, right) =>
           wordMatch(right.match) - wordMatch(left.match) ||
           exactPickAt(right.match) - exactPickAt(left.match) ||
           matchClass(right.match.quality) - matchClass(left.match.quality) ||
           (right.match.pickedAt ?? 0) - (left.match.pickedAt ?? 0) ||
+          wholeWord(right.match) - wholeWord(left.match) ||
           right.match.score - left.match.score,
       );
       const best = Math.max(
