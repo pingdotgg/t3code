@@ -69,6 +69,7 @@ export type ChangeRequestHostIdentity =
   | {
       readonly canonicalKey?: string | undefined;
       readonly locator?: { readonly remoteUrl: string } | undefined;
+      readonly webUrl?: string | undefined;
     }
   | null
   | undefined;
