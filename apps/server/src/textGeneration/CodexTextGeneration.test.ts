@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -56,6 +57,7 @@ interface FakeCodexInput {
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
   requiredCwd?: string;
   requireInstructions?: string;
+  mcpListLog?: string;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -74,6 +76,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
+    mcpListLog: input.mcpListLog ?? null,
   });
   return Effect.gen(function* () {
     const path = yield* Path.Path;
@@ -95,6 +98,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
               "}",
             ]),
         "if (isMcpList) {",
+        '  if (check.mcpListLog !== null) NodeFS.appendFileSync(check.mcpListLog, "list\\n");',
         '  if (typeof check.mcpServers === "number") process.exit(check.mcpServers);',
         "  process.stdout.write(JSON.stringify(check.mcpServers));",
         "  process.exit(0);",
@@ -284,6 +288,54 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             expect(result.title).toBe("Live title");
           }),
       ),
+  );
+
+  it.effect("lists MCP servers again only after a Codex config changes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const codexHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-home-" });
+      const configPath = path.join(codexHome, "config.toml");
+      const mcpListLog = path.join(codexHome, "mcp-list.log");
+      yield* fs.writeFileString(configPath, "");
+      yield* fs.writeFileString(mcpListLog, "");
+      const listCount = fs
+        .readFileString(mcpListLog)
+        .pipe(Effect.map((log) => log.split("\n").filter(Boolean).length));
+      yield* withFakeCodexEnv(
+        {
+          output: JSON.stringify({ title: "Live title" }),
+          environment: { CODEX_HOME: codexHome },
+          mcpServers: [{ name: "augmenter", enabled: true }],
+          requireArg: '--config mcp_servers={"augmenter"={enabled=false}}',
+          mcpListLog,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generate = textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Describe this change",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            });
+            yield* generate;
+            yield* generate;
+            expect(yield* listCount).toBe(1);
+
+            yield* fs.utimes(configPath, 0, 0);
+            yield* generate;
+            expect(yield* listCount).toBe(2);
+
+            yield* fs.writeFileString(path.join(codexHome, "managed_config.toml"), "");
+            yield* generate;
+            expect(yield* listCount).toBe(3);
+
+            // Layers no file stamp sees (MDM, cloud config) are bounded by the cache lifetime.
+            yield* TestClock.adjust("1 minute");
+            yield* generate;
+            expect(yield* listCount).toBe(4);
+          }),
+      );
+    }),
   );
 
   it.effect("drops the requested model's options when falling back to another model", () =>
