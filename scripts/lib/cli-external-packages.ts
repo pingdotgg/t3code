@@ -21,6 +21,10 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "utf-8-validate",
 ] as const;
 
+// Only spawned workers load these from disk; the bundle never imports them, so they are staged
+// with their dependencies but need no bundler rule.
+const CLI_STAGED_WORKER_DEPENDENCIES = ["kokoro-js"] as const;
+
 // Match Cursor dependency boundaries so zod does not externalize zod-to-json-schema.
 const CURSOR_RUNTIME_DEPENDENCIES = [
   "@bufbuild/protobuf",
@@ -55,7 +59,11 @@ export function selectCliRuntimeExternalDependencies(
   dependencies: Readonly<Record<string, string>>,
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(dependencies).filter(([name]) => isRuntimeExternalCliDependency(name)),
+    Object.entries(dependencies).filter(
+      ([name]) =>
+        isRuntimeExternalCliDependency(name) ||
+        (CLI_STAGED_WORKER_DEPENDENCIES as readonly string[]).includes(name),
+    ),
   );
 }
 
