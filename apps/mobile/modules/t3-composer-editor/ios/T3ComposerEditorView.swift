@@ -434,6 +434,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var tokensJson = "[]"
   private var tokens: [ComposerTokenPayload] = []
   private var requestedSelection: ComposerSelectionPayload?
+  private var paragraphDirections: [ComposerTextDirection.Paragraph] = []
+  private var directionText: String?
   private var theme = ComposerThemePayload(
     text: "#262626",
     placeholder: "#8e8e93"
@@ -846,6 +848,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard self.textView.serializedText() == value else {
       return
     }
+    updateParagraphDirections()
     emitSelection()
   }
 
@@ -984,6 +987,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
         to: result
       )
     }
+    applyParagraphDirections(to: result)
     return result
   }
 
@@ -1120,17 +1124,65 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     return nil
   }
 
-  private func baseAttributes() -> [NSAttributedString.Key: Any] {
+  private func applyParagraphDirections(to storage: NSMutableAttributedString) {
+    directionText = storage.string
+    paragraphDirections = ComposerTextDirection.paragraphs(in: storage.string)
+    let fullRange = NSRange(location: 0, length: storage.length)
+    storage.enumerateAttribute(.writingDirection, in: fullRange) { value, range, _ in
+      if value != nil { storage.removeAttribute(.writingDirection, range: range) }
+    }
+    for paragraph in paragraphDirections where paragraph.range.length > 0 {
+      let style = paragraphStyle(isRTL: paragraph.isRTL)
+      storage.enumerateAttribute(.paragraphStyle, in: paragraph.range) { value, range, _ in
+        if (value as? NSParagraphStyle)?.isEqual(style) != true {
+          storage.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+      }
+      for code in paragraph.codeRanges where code.length > 0 {
+        storage.addAttribute(
+          .writingDirection,
+          value: [NSWritingDirection.leftToRight.rawValue | NSWritingDirectionFormatType.embedding.rawValue],
+          range: code
+        )
+      }
+    }
+  }
+
+  private func updateParagraphDirections() {
+    guard textView.markedTextRange == nil else { return }
+    guard directionText != textView.textStorage.string else {
+      restoreBaseTypingAttributes()
+      return
+    }
+    isApplyingControlledValue = true
+    let undo = textView.undoManager
+    let wasRecordingUndo = undo?.isUndoRegistrationEnabled == true
+    if wasRecordingUndo { undo?.disableUndoRegistration() }
+    textView.textStorage.beginEditing()
+    applyParagraphDirections(to: textView.textStorage)
+    textView.textStorage.endEditing()
+    if wasRecordingUndo { undo?.enableUndoRegistration() }
+    restoreBaseTypingAttributes()
+    isApplyingControlledValue = false
+  }
+
+  private func baseAttributes(isRTL: Bool = false) -> [NSAttributedString.Key: Any] {
     let font = UIFont(name: fontFamily, size: fontSize)
       ?? UIFont.systemFont(ofSize: fontSize)
-    let paragraph = NSMutableParagraphStyle()
-    paragraph.minimumLineHeight = lineHeight
-    paragraph.maximumLineHeight = lineHeight
     return [
       .font: font,
       .foregroundColor: UIColor(composerHex: theme.text) ?? .label,
-      .paragraphStyle: paragraph,
+      .paragraphStyle: paragraphStyle(isRTL: isRTL),
     ]
+  }
+
+  private func paragraphStyle(isRTL: Bool) -> NSParagraphStyle {
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.minimumLineHeight = lineHeight
+    paragraph.maximumLineHeight = lineHeight
+    paragraph.alignment = .natural
+    paragraph.baseWritingDirection = isRTL ? .rightToLeft : .leftToRight
+    return paragraph
   }
 
   private func applyTypography() {
@@ -1146,7 +1198,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard textView.markedTextRange == nil else {
       return
     }
-    textView.typingAttributes = baseAttributes()
+    let isRTL = paragraphDirections.last {
+      $0.range.location <= textView.selectedRange.location
+    }?.isRTL ?? false
+    textView.typingAttributes = baseAttributes(isRTL: isRTL)
   }
 
   private func applyTheme() {
@@ -1159,6 +1214,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard !isApplyingControlledValue else {
       return
     }
+    updateParagraphDirections()
     value = textView.serializedText()
     revealSelectionAfterLayout()
     let selection = sourceSelection()
