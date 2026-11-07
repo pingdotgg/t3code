@@ -155,15 +155,25 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
     </Menu>
   ));
   const confirmButton = props.confirm ? (
-    <View className="self-center">
-      <Button
-        label={props.confirm.label}
-        tone="text"
-        loading={props.confirm.loading}
+    props.confirm.showLabel || !props.confirm.icon ? (
+      <View className="self-center">
+        <Button
+          label={props.confirm.label}
+          accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+          tone="text"
+          loading={props.confirm.loading}
+          disabled={props.confirm.disabled}
+          onPress={props.confirm.onPress}
+        />
+      </View>
+    ) : (
+      <AndroidHeaderIconButton
+        accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+        icon={props.confirm.icon}
         disabled={props.confirm.disabled}
         onPress={props.confirm.onPress}
       />
-    </View>
+    )
   ) : null;
   const options =
     props.embedded || props.sheet ? null : (

@@ -8,7 +8,7 @@ import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
   threadTerminalMenu,
-  useThreadGitMenuDefinition,
+  useThreadGitBar,
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
 
@@ -25,8 +25,9 @@ export function ThreadHeader(props: {
   const goBack = useWorkspaceBackNavigation("threads");
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
-  const gitMenu = useThreadGitMenuDefinition(props.gitControls);
-  const terminalMenu = threadTerminalMenu(props.gitControls);
+  const { primaryAction: gitPrimaryAction, menu: gitMenu } = useThreadGitBar(props.gitControls);
+  // Keep the bar narrow when Create/View PR is on it — terminal stays in split/inspector flows.
+  const terminalMenu = gitPrimaryAction === null ? threadTerminalMenu(props.gitControls) : null;
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
@@ -59,6 +60,7 @@ export function ThreadHeader(props: {
       }
       actions={actions}
       menus={menus}
+      confirm={gitPrimaryAction ?? undefined}
       hideBottomBorder
     />
   );

@@ -53,6 +53,15 @@ export interface AppBarConfirm {
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly loading?: boolean;
+  /**
+   * When true, shows `label` in the toolbar. Sheets keep the checkmark-only control by
+   * leaving this unset. With `icon` and no label, both platforms use an icon button.
+   */
+  readonly showLabel?: boolean;
+  /** Custom glyph; without `showLabel`, replaces the default checkmark (iOS) / text (Android). */
+  readonly icon?: AppSymbolName;
+  /** Defaults to `label`. Use when the visible control is icon-only or shortened. */
+  readonly accessibilityLabel?: string;
 }
 
 export interface AppBarSearch {

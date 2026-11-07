@@ -46,6 +46,13 @@ describe("git action copy", () => {
   it("says PR for a GitHub ref", () => {
     expect(resolveQuickAction(status({ aheadCount: 1 }), false).label).toBe("Push & create PR");
     expect(resolveQuickAction(status({ pr: openPr }), false).label).toBe("View PR");
+    expect(resolveQuickAction(status({ aheadOfDefaultCount: 1 }), false)).toMatchObject({
+      label: "Create PR",
+      disabled: false,
+      kind: "run_action",
+      action: "create_pr",
+    });
+    expect(resolveQuickAction(status({ aheadOfDefaultCount: 1 }), false, true).disabled).toBe(true);
     const [, , prItem] = buildMenuItems(status(), false);
     expect(prItem?.label).toBe("Create PR");
     expect(
