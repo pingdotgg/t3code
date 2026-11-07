@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
+import * as UrlParams from "effect/http/UrlParams";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PREVIEW_RECORDING_STOP_TIMEOUT_MS,
@@ -34,6 +35,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
+import { redactPreviewOutput } from "./redactOutput.ts";
 
 /** Whether a preview the agent
  * said nothing about surfaces is the user's `browserAutoShowFloatingPreview`
@@ -49,51 +51,56 @@ function normalizePreviewOpenInput(input: PreviewAutomationOpenInput): PreviewAu
   };
 }
 
-const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
-  operation: PreviewAutomationOperation,
-  input: unknown,
-  timeoutMs?: number,
-  tabId?: PreviewTabId,
-): Effect.fn.Return<
-  { result: A; toolIcon?: ToolActivityIcon },
-  import("@t3tools/contracts").PreviewAutomationError,
-  McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
-> {
-  const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
-  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-  let targetTabId = tabId;
-  const result = yield* broker.invoke<A>({
-    onTargetTab: (resolvedTabId) => {
-      targetTabId = resolvedTabId;
-    },
-    scope,
-    operation,
-    input,
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    ...(tabId === undefined ? {} : { tabId }),
-  });
-  if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
-  const statusTabId =
-    (operation !== "evaluate" && typeof result === "object" && result !== null
-      ? (result as { tabId?: PreviewTabId }).tabId
-      : undefined) ?? targetTabId;
-  const page = yield* broker
-    .invoke<PreviewAutomationStatus>({
+const invoke = Effect.fn("PreviewToolkit.invoke")(
+  function* <A>(
+    operation: PreviewAutomationOperation,
+    input: unknown,
+    timeoutMs?: number,
+    tabId?: PreviewTabId,
+  ): Effect.fn.Return<
+    { result: A; toolIcon?: ToolActivityIcon },
+    import("@t3tools/contracts").PreviewAutomationError,
+    McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
+  > {
+    const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
+    const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    let targetTabId = tabId;
+    const result = yield* broker.invoke<A>({
+      onTargetTab: (resolvedTabId) => {
+        targetTabId = resolvedTabId;
+      },
       scope,
-      operation: "status",
-      input: {},
-      timeoutMs: 500,
-      updateCurrentTab: false,
-      ...(statusTabId === undefined ? {} : { tabId: statusTabId }),
-    })
-    .pipe(Effect.orElseSucceed(() => null));
-  return {
-    result,
-    ...(page?.url && /^https?:\/\//i.test(page.url) && page.url.length <= 4096
-      ? { toolIcon: { _tag: "website" as const, pageUrl: page.url } }
-      : {}),
-  };
-});
+      operation,
+      input,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(tabId === undefined ? {} : { tabId }),
+    });
+    if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
+    const statusTabId =
+      (operation !== "evaluate" && typeof result === "object" && result !== null
+        ? (result as { tabId?: PreviewTabId }).tabId
+        : undefined) ?? targetTabId;
+    const page = yield* broker
+      .invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+        timeoutMs: 500,
+        updateCurrentTab: false,
+        ...(statusTabId === undefined ? {} : { tabId: statusTabId }),
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    return {
+      result,
+      ...(page?.url && /^https?:\/\//i.test(page.url) && page.url.length <= 4096
+        ? { toolIcon: { _tag: "website" as const, pageUrl: page.url } }
+        : {}),
+    };
+  },
+  Effect.flatMap((output) =>
+    Effect.map(UrlParams.CurrentRedactedNames, (names) => redactPreviewOutput(output, names)),
+  ),
+);
 
 const invokeTargeted = <A extends object>(
   operation: PreviewAutomationOperation,

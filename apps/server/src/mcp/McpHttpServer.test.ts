@@ -175,6 +175,139 @@ const callTool = (name: string, args: Record<string, unknown>) =>
 const callSnapshot = (args: Record<string, unknown>) => callTool("preview_snapshot", args);
 
 it.effect.each([
+  { name: "preview_status", input: {} },
+  {
+    name: "preview_open",
+    input: { url: "https://example.test/?token=fixture-token&mode=preview" },
+  },
+  {
+    name: "preview_navigate",
+    input: { url: "https://example.test/?token=fixture-token&mode=preview" },
+  },
+  { name: "preview_snapshot", input: { includeImage: false } },
+  { name: "preview_evaluate", input: { expression: "location.href" } },
+  { name: "preview_act", input: { action: "click", selector: "#download" } },
+])(
+  "redacts credential query values in serialized $name output without changing browser URLs",
+  ({ name, input }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const url =
+          "https://example.test/download?mode=preview%20one&Token=fixture-token&%63ookie=fixture-cookie&X-Amz-Signature=fixture-signature&code=fixture-code&access_token=fixture-access#section";
+        const redacted =
+          "https://example.test/download?mode=preview%20one&Token=REDACTED&%63ookie=REDACTED&X-Amz-Signature=REDACTED&code=REDACTED&access_token=REDACTED#section";
+        const harmless = "https://example.test/search?q=hello%20world&sort=asc&tag=a&tag=b#results";
+        const response = {
+          ...snapshotResult,
+          available: true,
+          visible: false,
+          tabId: alternateTabId,
+          url,
+          title: "Download report",
+          visibleText: `Report: ${url}\nSearch: ${harmless}\nLabel: token=ordinary`,
+          accessibilityTree: `- link "Report":\n  - /url: "${url}"\n- link "Local":\n  - /url: /download?sig=fixture-local&size=large\n- link "Data":\n  - /url: data:text/plain,…`,
+          consoleEntries: [
+            { level: "info", text: `Loaded ${url}`, timestamp: "2026-11-05T00:00:00Z" },
+          ],
+          networkEntries: [
+            { url, method: "GET", status: 200, failed: false, timestamp: "2026-11-05T00:00:00Z" },
+          ],
+          downloads: [
+            {
+              fileName: "report.pdf",
+              path: "/downloads/report.pdf",
+              sizeBytes: 123,
+              url,
+              completedAt: "2026-11-05T00:00:00Z",
+            },
+          ],
+          tabs: [
+            { tabId: alternateTabId, url },
+            { tabId: PreviewTabId.make("harmless-tab"), url: harmless },
+          ],
+          relativeUrls: [
+            "/download?sig=fixture-local&size=large%20one",
+            "//example.test/file?token=fixture-relative&mode=preview",
+            "download?access_token=fixture-document&mode=preview",
+            "?cookie=fixture-query&mode=preview",
+            "/search?q=hello%20world&tag=a&tag=b#results",
+            "token=ordinary",
+          ],
+          downloadUrl: "//example.test/file?token=fixture-relative&mode=preview",
+          harmless,
+        };
+        const original = JSON.stringify(response);
+        const inputs = yield* serveSnapshots("credential-output-client", response);
+        const result = yield* callTool(name, input);
+        expect(result.isError).not.toBe(true);
+        const serialized = JSON.stringify(result);
+        for (const credential of [
+          "fixture-token",
+          "fixture-cookie",
+          "fixture-signature",
+          "fixture-code",
+          "fixture-access",
+          "fixture-local",
+          "fixture-relative",
+          "fixture-document",
+          "fixture-query",
+        ]) {
+          expect(serialized).not.toContain(credential);
+        }
+        expect(JSON.stringify(response)).toBe(original);
+        if (name === "preview_act") {
+          expect(result.structuredContent).toMatchObject({ toolIcon: { pageUrl: redacted } });
+          return;
+        }
+        const output =
+          name === "preview_evaluate"
+            ? (result.structuredContent as { value: unknown }).value
+            : result.structuredContent;
+        expect(output).toMatchObject({ url: redacted, title: "Download report" });
+        if (name === "preview_snapshot" || name === "preview_evaluate") {
+          expect(output).toMatchObject({
+            visibleText: `Report: ${redacted}\nSearch: ${harmless}\nLabel: token=ordinary`,
+            accessibilityTree: `- link "Report":\n  - /url: "${redacted}"\n- link "Local":\n  - /url: /download?sig=REDACTED&size=large\n- link "Data":\n  - /url: data:text/plain,…`,
+            consoleEntries: [{ text: `Loaded ${redacted}` }],
+            networkEntries: [{ url: redacted, method: "GET", status: 200 }],
+          });
+        }
+        if (name !== "preview_snapshot") {
+          expect(output).toMatchObject({
+            downloads: [
+              {
+                fileName: "report.pdf",
+                path: "/downloads/report.pdf",
+                sizeBytes: 123,
+                url: redacted,
+              },
+            ],
+            tabs: [
+              { tabId: alternateTabId, url: redacted },
+              { tabId: "harmless-tab", url: harmless },
+            ],
+          });
+        }
+        if ("url" in input) expect(inputs[0]).toMatchObject({ url: input.url });
+        if (name === "preview_evaluate") {
+          expect(output).toMatchObject({
+            relativeUrls: [
+              "/download?sig=REDACTED&size=large%20one",
+              "//example.test/file?token=REDACTED&mode=preview",
+              "download?access_token=REDACTED&mode=preview",
+              "?cookie=REDACTED&mode=preview",
+              "/search?q=hello%20world&tag=a&tag=b#results",
+              "token=ordinary",
+            ],
+            downloadUrl: "//example.test/file?token=REDACTED&mode=preview",
+          });
+          expect(result.structuredContent).toMatchObject({ toolIcon: { pageUrl: redacted } });
+        }
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
   { input: {}, open: false, message: "No device is open in this thread. Call device_open first." },
   {
     input: { deviceId: "missing" },
