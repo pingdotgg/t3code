@@ -57,6 +57,7 @@ export function SettingsLabsRouteScreen() {
           setting="fastWorktreeCheckout"
           description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
         />
+        <LanGatewaySettingsSection />
       </ScrollView>
     </SettingsScreen>
   );
@@ -296,6 +297,51 @@ function MachineBetaSection({
         })}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">{description}</Text>
+    </View>
+  );
+}
+
+/** Per machine: reverse-proxy LAN/Tailscale peers through a Connect-linked host. */
+function LanGatewaySettingsSection() {
+  const { environments } = useEnvironments();
+  const supported = environments.filter(
+    (environment) => environment.connection.phase === "connected",
+  );
+  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "lan gateway beta update",
+    reportFailure: true,
+  });
+  if (supported.length === 0) return null;
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Beta: LAN gateway">
+        {supported.map((environment) => {
+          const policy = environment.serverConfig?.managedPolicy;
+          const managed = isManagedSettingPath(policy, "lanGatewayEnabled");
+          return (
+            <SettingsSwitchRow
+              key={environment.environmentId}
+              icon="arrow.triangle.branch"
+              label={environment.label}
+              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+              value={environment.serverConfig?.settings.lanGatewayEnabled === true}
+              disabled={managed || !writable.has(environment.environmentId)}
+              onValueChange={(value) =>
+                void updateSettings({
+                  environmentId: environment.environmentId,
+                  input: { patch: { lanGatewayEnabled: value } },
+                })
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Reverse-proxy LAN or Tailscale peers through this Connect-linked machine. Pair each peer on
+        the LAN once; the gateway route appears while that host is reachable. Manage peers from the
+        web or desktop Connections settings.
+      </Text>
     </View>
   );
 }

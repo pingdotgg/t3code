@@ -4,7 +4,12 @@ import {
   isSharedAddressSpaceHost,
   isTailnetHost,
 } from "@t3tools/shared/hostClassification";
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  LAN_GATEWAY_ROUTE_PREFIX,
+  type DesktopSshEnvironmentTarget,
+  type LanGatewayPeerAdvertisement,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import {
@@ -16,6 +21,7 @@ import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
 
 export type ConnectionRouteKind =
   | "relay"
+  | "gateway"
   | "loopback"
   | "lan"
   | "tailnet"
@@ -82,6 +88,10 @@ function routeHostname(route: ConnectionRoute): string | null {
 }
 
 export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind {
+  const profile = Option.getOrNull(route.profile);
+  if (profile?._tag === "BearerConnectionProfile" && profile.gatewayEnvironmentId !== undefined) {
+    return "gateway";
+  }
   switch (route.target._tag) {
     case "RelayConnectionTarget":
       return "relay";
@@ -92,7 +102,6 @@ export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind
       const hostname = routeHostname(route);
       if (hostname === null) return "public";
       if (isLocalLoopbackHost(hostname)) return "loopback";
-      const profile = Option.getOrNull(route.profile);
       const tailscale =
         profile?._tag === "BearerConnectionProfile" && profile.network === "tailscale";
       if (tailscale || isTailnetHost(hostname)) return "tailnet";
@@ -109,7 +118,8 @@ const ROUTE_KIND_RANK: Record<ConnectionRouteKind, number> = {
   vpn: 2,
   public: 3,
   ssh: 4,
-  relay: 5,
+  gateway: 5,
+  relay: 6,
 };
 
 export function insertRoute(
@@ -164,6 +174,8 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
   switch (connectionRouteKind(route)) {
     case "relay":
       return "T3 Connect";
+    case "gateway":
+      return "LAN gateway";
     case "loopback":
       return "This device";
     case "lan":
@@ -376,6 +388,9 @@ function withNetwork(route: ConnectionRoute, tailscale: boolean): ConnectionRout
         wsBaseUrl: profile.wsBaseUrl,
         ...(profile.learned === undefined ? {} : { learned: profile.learned }),
         ...(profile.authorization === undefined ? {} : { authorization: profile.authorization }),
+        ...(profile.gatewayEnvironmentId === undefined
+          ? {}
+          : { gatewayEnvironmentId: profile.gatewayEnvironmentId }),
         ...(tailscale ? { network: "tailscale" as const } : {}),
       }),
     ),
@@ -392,11 +407,121 @@ function learnedConnectionId(
     : `learned:${environmentId}:${origin}@${sharedCredential}`;
 }
 
+function gatewayConnectionId(
+  gatewayEnvironmentId: EnvironmentId,
+  peerEnvironmentId: EnvironmentId,
+  sharedCredential: string | undefined,
+): string {
+  const base = `gateway:${gatewayEnvironmentId}:${peerEnvironmentId}`;
+  return sharedCredential === undefined ? base : `${base}@${sharedCredential}`;
+}
+
 export function credentialConnectionId(connectionId: string): string {
   const at = connectionId.indexOf("@");
-  return connectionId.startsWith("learned:") && at !== -1
+  return (connectionId.startsWith("learned:") || connectionId.startsWith("gateway:")) && at !== -1
     ? connectionId.slice(at + 1)
     : connectionId;
+}
+
+function isGatewayRouteFor(route: ConnectionRoute, gatewayEnvironmentId: EnvironmentId): boolean {
+  const profile = Option.getOrNull(route.profile);
+  return (
+    profile?._tag === "BearerConnectionProfile" &&
+    profile.gatewayEnvironmentId === gatewayEnvironmentId
+  );
+}
+
+function gatewayHttpBaseUrl(gatewayHttpBaseUrl: string, peerEnvironmentId: EnvironmentId): string {
+  const origin = new URL(gatewayHttpBaseUrl).origin;
+  return `${origin}${LAN_GATEWAY_ROUTE_PREFIX}/${peerEnvironmentId}/`;
+}
+
+function gatewayWsBaseUrl(httpBaseUrl: string): string {
+  const url = new URL(httpBaseUrl);
+  return `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}${url.pathname}`;
+}
+
+/**
+ * Upserts reverse-proxy routes through a Connect/LAN gateway host for peers it
+ * advertises that match this catalog entry. Routes drop when the host stops
+ * advertising the peer. They borrow the peer's paired bearer when possible.
+ */
+export function mergeGatewayRoutes(input: {
+  readonly entry: ConnectionCatalogEntry;
+  readonly gatewayEnvironmentId: EnvironmentId;
+  readonly gatewayHttpBaseUrl: string;
+  readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
+}): ReadonlyArray<ConnectionRoute> | null {
+  const { entry, gatewayEnvironmentId } = input;
+  let gatewayOrigin: string;
+  try {
+    gatewayOrigin = new URL(input.gatewayHttpBaseUrl).origin;
+  } catch {
+    return null;
+  }
+  const peerEnvironmentId = entry.target.environmentId;
+  const advertised = input.advertised.some((peer) => peer.environmentId === peerEnvironmentId);
+  const saved = connectionRoutes(entry);
+  const sharedCredential = (() => {
+    for (const route of saved) {
+      if (isLearned(route) || route.target._tag !== "BearerConnectionTarget") continue;
+      const profile = Option.getOrNull(route.profile);
+      if (profile?._tag === "BearerConnectionProfile" && profile.authorization === "t3-connect") {
+        continue;
+      }
+      return credentialConnectionId(connectionRouteId(route.target));
+    }
+    return undefined;
+  })();
+
+  const kept = saved.flatMap((route): ReadonlyArray<ConnectionRoute> => {
+    if (!isGatewayRouteFor(route, gatewayEnvironmentId)) return [route];
+    return advertised ? [route] : [];
+  });
+
+  let next: ReadonlyArray<ConnectionRoute> = kept;
+  if (advertised) {
+    const httpBaseUrl = gatewayHttpBaseUrl(gatewayOrigin, peerEnvironmentId);
+    const connectionId = gatewayConnectionId(
+      gatewayEnvironmentId,
+      peerEnvironmentId,
+      sharedCredential,
+    );
+    const existing = kept.find((route) => connectionRouteId(route.target) === connectionId);
+    const route: ConnectionRoute = {
+      target: new BearerConnectionTarget({
+        environmentId: peerEnvironmentId,
+        label: entry.target.label,
+        connectionId,
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId,
+          environmentId: peerEnvironmentId,
+          label: entry.target.label,
+          httpBaseUrl,
+          wsBaseUrl: gatewayWsBaseUrl(httpBaseUrl),
+          learned: true,
+          gatewayEnvironmentId,
+        }),
+      ),
+    };
+    next =
+      existing === undefined
+        ? insertRoute(kept, route)
+        : kept.map((candidate) =>
+            connectionRouteId(candidate.target) === connectionId ? route : candidate,
+          );
+  }
+
+  const signature = (routes: ReadonlyArray<ConnectionRoute>) =>
+    routes
+      .map(
+        (route) =>
+          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
+      )
+      .join("\n");
+  return signature(saved) === signature(next) ? null : next;
 }
 
 export function isLearned(route: ConnectionRoute): boolean {

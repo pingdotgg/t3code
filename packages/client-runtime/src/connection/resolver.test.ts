@@ -14,13 +14,16 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   BearerConnectionCredential,
+  BearerConnectionProfile,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
   type ConnectionCredential,
   type ConnectionProfile,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
+import * as GatewayHop from "./gatewayHop.ts";
 import {
+  BearerConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   SshConnectionTarget,
@@ -165,7 +168,11 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     Layer.succeed(ClientCapabilities.SshEnvironmentGateway, ssh),
   );
 
-  return Effect.succeed(ConnectionResolver.layer.pipe(Layer.provide(layerDependencies)));
+  return Effect.succeed(
+    ConnectionResolver.layer.pipe(
+      Layer.provide(Layer.mergeAll(layerDependencies, GatewayHop.layer)),
+    ),
+  );
 });
 
 describe("ConnectionResolver", () => {
@@ -207,6 +214,33 @@ describe("ConnectionResolver", () => {
         httpAuthorization: null,
         target,
       });
+    }),
+  );
+
+  it.effect("blocks a LAN gateway peer route when the gateway host is not connected", () =>
+    Effect.gen(function* () {
+      const gatewayId = EnvironmentId.make("env_gateway");
+      const target = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Peer",
+        connectionId: `gateway:${gatewayId}:${ENVIRONMENT_ID}@lan`,
+      });
+      const profile = new BearerConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: ENVIRONMENT_ID,
+        label: "Peer",
+        httpBaseUrl: `https://gateway.example/__t3_gateway/${ENVIRONMENT_ID}/`,
+        wsBaseUrl: `wss://gateway.example/__t3_gateway/${ENVIRONMENT_ID}/`,
+        learned: true,
+        gatewayEnvironmentId: gatewayId,
+      });
+      const layerBroker = yield* makeDependencies({
+        credentials: [["lan", new BearerConnectionCredential({ token: "peer-token" })]],
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const error = yield* Effect.flip(broker.prepare(catalogEntry(target, Option.some(profile))));
+      expect(error).toMatchObject({ reason: "remote-unavailable" });
+      expect(error.message).toContain("LAN gateway host is not connected");
     }),
   );
 

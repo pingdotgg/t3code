@@ -40,6 +40,7 @@ const REMOVE_SIZE = 20;
 
 const ROUTE_ICONS: Record<ConnectionRouteKind, AppSymbolName> = {
   relay: "cloud",
+  gateway: "arrow.triangle.branch",
   loopback: "desktopcomputer",
   lan: "wifi",
   tailnet: "point.3.connected.trianglepath.dotted",

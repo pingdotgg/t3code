@@ -15,6 +15,8 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 
+import type { LanGatewayPeerAdvertisement } from "@t3tools/contracts";
+
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -146,6 +148,11 @@ export interface EnvironmentSupervisorOptions {
     readonly activeRoute: ConnectionRoute;
     readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
+  /** Apply LAN-gateway advertisements from this connected host onto peer catalog entries. */
+  readonly learnGatewayPeers?: (input: {
+    readonly gatewayHttpBaseUrl: string;
+    readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
+  }) => Effect.Effect<void>;
 }
 
 function retryDelayMs(failureCount: number, random: number): number {
@@ -365,6 +372,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           }
         }),
       ),
+      Effect.ignoreCause({ log: true }),
+    );
+  });
+
+  const learnGatewayPeersFrom = Effect.fnUntraced(function* (
+    learn: NonNullable<EnvironmentSupervisorOptions["learnGatewayPeers"]>,
+    lease: ConnectedLease,
+  ) {
+    const gatewayHttpBaseUrl = lease.prepared.httpBaseUrl;
+    yield* lease.session.subscribeServerConfig().pipe(
+      Stream.filter((event) => event.type === "snapshot"),
+      Stream.map((event) => event.config.lanGatewayPeers ?? []),
+      Stream.changesWith((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
+      Stream.runForEach((advertised) => learn({ gatewayHttpBaseUrl, advertised })),
       Effect.ignoreCause({ log: true }),
     );
   });
@@ -999,6 +1020,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     yield* SubscriptionRef.set(session, Option.some(connectedLease.session));
     if (options?.learnRoutes !== undefined) {
       yield* learnRoutesFrom(options.learnRoutes, connectedLease).pipe(Effect.forkScoped);
+    }
+    if (options?.learnGatewayPeers !== undefined) {
+      yield* learnGatewayPeersFrom(options.learnGatewayPeers, connectedLease).pipe(
+        Effect.forkScoped,
+      );
     }
     yield* setState({
       desired: true,

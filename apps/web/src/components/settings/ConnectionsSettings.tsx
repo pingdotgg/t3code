@@ -43,6 +43,7 @@ import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
+import { LanGatewaySettings } from "./LanGatewaySettings";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
@@ -146,6 +147,37 @@ const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
 const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
 
+function AdvertisedGatewayPeersNotice({
+  hosts,
+  knownEnvironmentIds,
+}: {
+  readonly hosts: ReadonlyArray<EnvironmentPresentation>;
+  readonly knownEnvironmentIds: ReadonlySet<EnvironmentId>;
+}) {
+  const unknown = hosts.flatMap((host) =>
+    (host.serverConfig?.lanGatewayPeers ?? [])
+      .filter((peer) => !knownEnvironmentIds.has(peer.environmentId))
+      .map((peer) => ({
+        gatewayLabel: host.label,
+        peerLabel: peer.label,
+      })),
+  );
+  if (unknown.length === 0) return null;
+  return (
+    <SettingsRow
+      title="Gateway peers not paired here yet"
+      description={
+        <>
+          {unknown.map((item) => item.peerLabel).join(", ")} {unknown.length === 1 ? "is" : "are"}{" "}
+          advertised by a LAN gateway host. Pair {unknown.length === 1 ? "it" : "them"} once on the
+          LAN (or Tailscale), then the gateway route appears automatically while that host is
+          reachable.
+        </>
+      }
+    />
+  );
+}
+
 // Subscribes on its own so desktop download progress does not re-render the page.
 function LocalVersionStatusLabel() {
   const updateState = useDesktopUpdateState();
@@ -247,6 +279,11 @@ function ConnectionsSettingsContent({
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const peerLinkHosts = usePeerLinkHosts();
+  const lanGatewayHosts = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.settings.lanGatewayEnabled === true,
+  );
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
@@ -1624,6 +1661,12 @@ function ConnectionsSettingsContent({
             }}
           />
         ))}
+        <AdvertisedGatewayPeersNotice
+          hosts={lanGatewayHosts}
+          knownEnvironmentIds={
+            new Set(environments.map((environment) => environment.environmentId))
+          }
+        />
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
@@ -1646,6 +1689,14 @@ function ConnectionsSettingsContent({
           key={environment.environmentId}
           environmentId={environment.environmentId}
           environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
+          isSearchTarget={index === 0}
+        />
+      ))}
+      {lanGatewayHosts.map((environment, index) => (
+        <LanGatewaySettings
+          key={`lan-gateway:${environment.environmentId}`}
+          environmentId={environment.environmentId}
+          environmentLabel={lanGatewayHosts.length > 1 ? environment.label : null}
           isSearchTarget={index === 0}
         />
       ))}

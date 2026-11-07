@@ -9,6 +9,7 @@ import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as ConnectionDriver from "./driver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import * as GatewayHop from "./gatewayHop.ts";
 import * as ConnectionOnboarding from "./onboarding.ts";
 import { connectionRoutes, hasRelayRoute } from "./routes.ts";
 import * as PlatformConnectionSource from "../platform/source.ts";
@@ -72,16 +73,21 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
 );
 
 export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
+  const layerGatewayHop = GatewayHop.layer;
+  const layerResolver = ConnectionResolver.layer.pipe(Layer.provide(layerGatewayHop));
   const layerDriver = ConnectionDriver.layer.pipe(
-    Layer.provide(Layer.mergeAll(ConnectionResolver.layer, RpcSession.layer(options))),
+    Layer.provide(Layer.mergeAll(layerResolver, RpcSession.layer(options))),
   );
-  const layerRegistry = EnvironmentRegistry.layer.pipe(Layer.provide(layerDriver));
+  const layerRegistry = EnvironmentRegistry.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerDriver, layerGatewayHop)),
+  );
   const layerOnboarding = ConnectionOnboarding.layer.pipe(Layer.provide(layerRegistry));
   const layerConnectionServices = Layer.mergeAll(
     layerRegistry,
     RelayEnvironmentDiscovery.layer,
     layerOnboarding,
-    ConnectionResolver.layer,
+    layerResolver,
+    layerGatewayHop,
   );
   const layerConnectionStartup = Layer.effectDiscard(
     Effect.gen(function* () {

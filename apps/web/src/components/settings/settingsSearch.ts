@@ -505,12 +505,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta tab autocomplete predict next message claude codex ghost text"],
   },
   {
+    id: "lan-gateway-beta",
+    title: "LAN gateway",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [
+      "beta lan gateway reverse proxy tailscale peers tunnel connect phone browser remote",
+    ],
+  },
+  {
     id: "simlock-hosts",
     title: "Simlock device hosts (alpha)",
     to: "/settings/labs",
     scope: "environment",
     searchTerms: ["beta alpha simlock callstack simulator emulator ios android pool lease gateway"],
   },
+
   {
     id: "worktree-fast-checkout",
     title: "Fast worktree checkout",
@@ -1276,6 +1286,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     targetId: "linked-environments",
     searchTerms: ["link peer another machine vps agents work there handoff pairing code"],
+  },
+  {
+    id: "lan-gateway-peers",
+    title: "LAN gateway peers",
+    to: "/settings/connections",
+    targetId: "lan-gateway-peers",
+    searchTerms: ["lan gateway peers reverse proxy tailscale tunnel connect add url"],
   },
   {
     id: "remote-environments",

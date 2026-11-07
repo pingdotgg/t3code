@@ -4,6 +4,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as LanGateway from "./gateway/LanGateway.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -81,6 +82,7 @@ import {
   ProviderSetupError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
+  type LanGatewayPeerAdvertisement,
   type ServerConfig as ClientServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
@@ -328,6 +330,7 @@ export const withLateConfigDiscovery = <E, R>(
   launcher: EditorDiscovery,
   remoteOpenTargets: RemoteOpenTargets.RemoteOpenTargets["Service"],
   directEndpoints: Pick<DirectEndpoints.DirectEndpoints["Service"], "resolve">,
+  lanGatewayPeers?: Stream.Stream<ReadonlyArray<LanGatewayPeerAdvertisement>>,
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -360,9 +363,16 @@ export const withLateConfigDiscovery = <E, R>(
     Stream.map((endpoints) => ({ type: "directEndpointsResolved" as const, endpoints })),
   );
 
+  const lateLanGatewayPeers = (lanGatewayPeers ?? Stream.empty).pipe(
+    Stream.map((peers) => ({ type: "lanGatewayPeersResolved" as const, peers })),
+  );
+
   return Stream.merge(
     liveUpdates,
-    Stream.merge(lateEditorConfig, Stream.merge(lateRemoteOpenTargets, lateDirectEndpoints)),
+    Stream.merge(
+      lateEditorConfig,
+      Stream.merge(lateRemoteOpenTargets, Stream.merge(lateDirectEndpoints, lateLanGatewayPeers)),
+    ),
   ).pipe(
     Stream.mapAccum(
       (): ClientServerConfig => config,
@@ -387,6 +397,13 @@ export const withLateConfigDiscovery = <E, R>(
               return [current, []];
             }
             const next = { ...current, directEndpoints: event.endpoints };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "lanGatewayPeersResolved": {
+            if (JSON.stringify(current.lanGatewayPeers ?? []) === JSON.stringify(event.peers)) {
+              return [current, []];
+            }
+            const next = { ...current, lanGatewayPeers: event.peers };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -1516,6 +1533,7 @@ export const layerWsRpc = (
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+      const lanGateway = yield* LanGateway.LanGateway;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1990,6 +2008,7 @@ export const layerWsRpc = (
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
+          lanGatewayPeers: yield* lanGateway.advertise,
         };
       });
 
@@ -2710,6 +2729,11 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
           ),
+        [WS_METHODS.lanGatewayList]: (_input) =>
+          lanGateway.list.pipe(Effect.map((peers) => ({ peers }))),
+        [WS_METHODS.lanGatewayAdd]: (input) => lanGateway.add(input),
+        [WS_METHODS.lanGatewayRemove]: ({ environmentId }) =>
+          lanGateway.remove(environmentId).pipe(Effect.map((removed) => ({ removed }))),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
@@ -3446,6 +3470,7 @@ export const layerWsRpc = (
                     resolveTargets: () => Fiber.join(remoteTargets),
                   },
                   { resolve: () => Fiber.join(directResult) },
+                  lanGateway.advertisementChanges,
                 ),
               );
             }),
@@ -3534,6 +3559,7 @@ export const layer = Layer.unwrap(
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+    const lanGateway = yield* LanGateway.LanGateway;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3623,6 +3649,7 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
+              Layer.provide(Layer.succeed(LanGateway.LanGateway, lanGateway)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
