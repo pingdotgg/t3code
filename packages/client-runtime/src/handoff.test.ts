@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   resolveHandoffEndpoints,
+  resolveHandoffLabel,
   resolveModelSwitchChange,
   resolvePendingHandoff,
   type HandoffTimelineRun,
@@ -66,6 +67,28 @@ describe("handoff endpoints shared by web and mobile", () => {
       from: [{ instanceId: from, model: undefined }],
       to: { instanceId: to, model: undefined },
     });
+    expect(resolveHandoffEndpoints({ ...item, toProviderInstanceId: from }, [])).toEqual({
+      from: [{ instanceId: from, model: undefined }],
+      to: { instanceId: from, model: undefined },
+    });
+  });
+
+  it("names a same-model fork by its title instead of a handoff to itself", () => {
+    const sameModel = { instanceId: from, model: "gpt-6.1-sol" };
+    const fork = {
+      ...item,
+      title: "Fork context",
+      fromModelSelections: [sameModel],
+      toProviderInstanceId: from,
+      toModel: "gpt-6.1-sol",
+    };
+    const endpoints = resolveHandoffEndpoints(fork, []);
+    expect(endpoints).toEqual({ from: [], to: sameModel });
+    expect(resolveHandoffLabel(fork, endpoints)).toBe("Fork context");
+    const providerSwitch = { ...item, title: "Provider handoff" };
+    expect(resolveHandoffLabel(providerSwitch, resolveHandoffEndpoints(providerSwitch, []))).toBe(
+      "Context handoff",
+    );
   });
 
   it("does not borrow a target model from another provider", () => {
