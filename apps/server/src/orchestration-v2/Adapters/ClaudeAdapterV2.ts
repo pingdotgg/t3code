@@ -3232,6 +3232,24 @@ function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   return message.type === "system" && (message.subtype as string) === "background_tasks_changed";
 }
 
+// Claude Code drops a requested Fast mode to standard speed without failing the turn.
+function claudeFastModeNotice(message: SDKMessage): string | null {
+  if (message.type === "system" && message.subtype === "notification") {
+    return message.key.startsWith("fast-mode") ? message.text : null;
+  }
+  // Result frames carry the state too, for Fast turned on in a process whose init predates it.
+  const stateFrame =
+    message.type === "result" || (message.type === "system" && message.subtype === "init")
+      ? message
+      : null;
+  if (stateFrame?.fast_mode_state !== "off") return null;
+  const reason = stateFrame.fast_mode_disabled_reason;
+  // pending: Claude Code has not decided yet, so a later frame may still turn Fast on.
+  if (reason === "pending") return null;
+  const label = reason?.replaceAll("_", " ");
+  return `Fast mode is off${label === undefined ? "" : ` (${label})`}, using standard speed`;
+}
+
 function isClaudeTurnStartMessage(message: SDKMessage): boolean {
   return message.type === "system" && message.subtype === "init";
 }
@@ -4437,6 +4455,7 @@ interface ClaudeLiveQueryContext {
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
   receivedInit: boolean;
+  announcedFastModeNotice: boolean;
   // From system/init; feature-detects control requests such as MCP Apps.
   capabilities: ReadonlySet<string>;
   permissionMode: PermissionMode;
@@ -9272,14 +9291,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
 
-          if (
+          const cliNotice =
             message.type === "system" &&
             (message.subtype === "model_refusal_fallback" ||
               (message.subtype === "informational" && message.level !== "info"))
-          ) {
+              ? message.content
+              : null;
+          const fastModeNotice =
+            liveQuery.selection.settings.fastMode === true && !liveQuery.announcedFastModeNotice
+              ? claudeFastModeNotice(message)
+              : null;
+          if (fastModeNotice !== null) liveQuery.announcedFastModeNotice = true;
+          for (const notice of [cliNotice, fastModeNotice]) {
+            if (notice === null || !("uuid" in message)) continue;
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
-            context.assistant.noticeTexts.add(message.content);
+            context.assistant.noticeTexts.add(notice);
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CLAUDE_PROVIDER,
@@ -9302,15 +9329,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ordinal: yield* resolveItemOrdinal(context, nativeItemId),
                 type: "system_notice",
                 status: "completed",
-                title: message.content,
-                message: message.content,
+                title: notice,
+                message: notice,
                 startedAt: now,
                 completedAt: now,
                 updatedAt: now,
               },
             });
-            return;
           }
+          // Fast-mode frames (init, result) still need their normal handling below.
+          if (cliNotice !== null) return;
 
           if (message.type === "system" && message.subtype === "api_retry") {
             const updatedAt = yield* DateTime.now;
@@ -11002,6 +11030,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
             receivedInit: false,
+            announcedFastModeNotice: false,
             capabilities: new Set(),
             permissionMode: queryOptions.permissionMode,
             stopping: false,
