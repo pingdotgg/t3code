@@ -53,13 +53,13 @@ import { tokenTypeSegments } from "./usage/usageBreakdown";
 import { UsageShareBar, type ShareSegment } from "./usage/UsageShareBar";
 
 const SPAN_BAR_CLASS: Record<TimingSpanKind, string> = {
-  queue: "border-border/60 bg-foreground/15 text-foreground",
-  reasoning: "border-border/60 bg-foreground/20 text-foreground",
+  queue: "border-border/60 bg-foreground/10 text-foreground",
+  reasoning: "border-border/60 bg-foreground/35 text-foreground",
   assistant: "border-black/10 bg-foreground/70 text-background",
   tool: "border-black/10 bg-foreground/85 text-background",
   subagent: "border-black/10 bg-foreground/85 text-background",
-  wait: "border-black/10 bg-warning text-background",
-  other: "border-border/60 bg-foreground/18 text-foreground",
+  wait: "border-black/10 bg-warning text-black",
+  other: "border-border/60 bg-foreground/20 text-foreground",
 };
 
 const TURN_ROW_HEIGHT = 28;
@@ -388,7 +388,7 @@ function FlameChartPanel({
           <div className="flex min-w-0 items-center gap-1">
             <h3 className="shrink-0 text-sm font-medium text-foreground">Timeline</h3>
             <p className="mr-auto min-w-0 truncate text-2xs text-muted-foreground">
-              Scroll to zoom · drag to pan · click for detail
+              Scroll to zoom · drag to pan
             </p>
             <Button
               type="button"
@@ -544,7 +544,7 @@ function ContextOccupancyChart({
       </div>
       <svg
         role="img"
-        aria-label={`Context occupancy peaked at ${meta}`}
+        aria-label={`Context occupancy ${meta}`}
         viewBox={`0 0 ${width} ${height}`}
         className="h-16 w-full overflow-hidden rounded-md border border-border/50 bg-muted/15"
         preserveAspectRatio="none"
@@ -1289,7 +1289,7 @@ function DetailCard({
   return (
     <section
       aria-label="Selection detail"
-      className="flex max-h-44 shrink-0 flex-col gap-2 overflow-hidden rounded-lg border border-border/60 bg-card/40 p-2.5"
+      className="flex max-h-[min(18rem,32vh)] shrink-0 flex-col gap-2 overflow-hidden rounded-lg border border-border/60 bg-card/40 p-2.5"
     >
       <header className="flex shrink-0 items-start justify-between gap-2">
         <div className="min-w-0">
