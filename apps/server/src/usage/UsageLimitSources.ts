@@ -3,6 +3,7 @@ import {
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
+  type ProviderDriverKind,
   type ServerSettings,
   UsageLimitSourceConfig,
   settingsSecretLiteral,
@@ -10,6 +11,7 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { hubRoutes } from "@t3tools/shared/usageLimits";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -197,4 +199,59 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(UsageLimitSources, make).pipe(
   Layer.provide(SecretResolverLayer.layer),
+);
+
+/** A hub returns a usage limit only when every account it routes the model to is spent. */
+export function hubPoolResetAt(
+  sources: ReadonlyArray<UsageLimitSourceSnapshot>,
+  driver: ProviderDriverKind,
+  model: string | null,
+  now: number,
+): string | null {
+  let earliest: number | null = null;
+  const routes = hubRoutes(sources, driver, model);
+  for (const account of sources.flatMap((source) => source.accounts).filter(routes)) {
+    // An unread account may be the one still blocked, so its refill is unknown.
+    if (account.usageLimits.unavailable) return null;
+    const spent = account.usageLimits.windows.filter((window) => window.usedPercent >= 100);
+    if (spent.length === 0) return null;
+    const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));
+    if (resets.some((reset) => !Number.isFinite(reset))) return null;
+    const recoversAt = Math.max(...resets);
+    if (recoversAt <= now) return null;
+    earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
+  }
+  return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
+}
+
+export class UsageLimitResetFallback extends Context.Reference<{
+  readonly resetAt: (
+    driver: ProviderDriverKind,
+    model: string | null,
+  ) => Effect.Effect<string | null>;
+}>("t3/usage/UsageLimitResetFallback", {
+  defaultValue: () => ({ resetAt: () => Effect.succeed(null) }),
+}) {}
+
+export const layerResetFallback = Layer.effect(
+  UsageLimitResetFallback,
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources;
+    return {
+      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver, model) {
+        const serving = (snapshots: ReadonlyArray<UsageLimitSourceSnapshot>) => {
+          const routes = hubRoutes(snapshots, driver, model);
+          return snapshots.filter((source) => source.accounts.some(routes));
+        };
+        // Two hubs for one model leave no way to tell which one served the failed turn.
+        if (serving(yield* sources.current).length !== 1) return null;
+        // The terminal waits on this, so a slow hub falls back to its last reading.
+        yield* sources.refresh.pipe(Effect.timeoutOption("5 seconds"));
+        const hubs = serving(yield* sources.current);
+        return hubs.length === 1
+          ? hubPoolResetAt(hubs, driver, model, DateTime.toEpochMillis(yield* DateTime.now))
+          : null;
+      }),
+    };
+  }),
 );

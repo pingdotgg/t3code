@@ -573,7 +573,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       ),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
-      input.skipNativeUsage
+      input.skipNativeUsage || !accountResponse.account
         ? Effect.undefined
         : withCodexDiscoveryDeadline(
             client.request("account/rateLimits/read", null),
@@ -842,7 +842,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
   const usageLimits =
-    snapshot.account.account?.type === "apiKey"
+    // A custom model provider has no subscription for Codex to read.
+    snapshot.account.account?.type === "apiKey" ||
+    (!managedAuth && !snapshot.account.account && !snapshot.account.requiresOpenaiAuth)
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({

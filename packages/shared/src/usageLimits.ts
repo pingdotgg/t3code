@@ -13,6 +13,7 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
@@ -750,14 +751,55 @@ export function withUsageLimitsCommands(
   });
 }
 
+/** An instance that sends requests through a hub reads no limits of its own. */
+export function isProxied(provider: ServerProvider): boolean {
+  return (
+    provider.auth.type === "customEndpoint" ||
+    provider.usageLimits?.unavailable?.reason === "unsupported"
+  );
+}
+
+/** Only an instance sent to a custom endpoint is known to reach the hub that routes its model. */
+export function hubRoutedModel(provider: ServerProvider, model: string | null): string | null {
+  return provider.auth.type === "customEndpoint" ? model : null;
+}
+
+/** The hub accounts that serve a model: those that list it, else every account of the driver. */
+export function hubRoutes(
+  sources: UsageLimitSourceSnapshots,
+  driver: ServerProvider["driver"],
+  model: string | null,
+): (account: UsageLimitSourceAccount) => boolean {
+  // Claude Code's 1M-context suffix is not part of the model id a hub routes.
+  const slug = model?.replace(/\[1m\]$/i, "");
+  const listed = (account: UsageLimitSourceAccount) =>
+    slug !== undefined && account.models?.includes(slug) === true;
+  const serving = new Set(
+    sources.flatMap((source) => source.accounts.filter(listed).map((account) => account.driver)),
+  );
+  // Model ids such as "opus" are aliases no hub lists, so no listing falls back to the driver.
+  if (serving.size === 0) return (account) => account.driver === driver;
+  // An account whose model list was unreadable may serve the model too.
+  return (account) => (account.models ? listed(account) : serving.has(account.driver));
+}
+
 export function collectProviderUsageLimits(
   instanceId: ProviderInstanceId,
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   now: number,
+  model: string | null = null,
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
-  if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
+  if (!selected) return null;
+  const routes = hubRoutes(sources, selected.driver, hubRoutedModel(selected, model));
+  const drivers = new Set(
+    sources.flatMap((source) => source.accounts.filter(routes).map((account) => account.driver)),
+  );
+  if (drivers.size === 0) drivers.add(selected.driver);
+  if (![...drivers].some((driver) => hasProviderUsageLimits(driver, providers, sources))) {
+    return null;
+  }
   const resolveKey = accountKeyResolver([
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
@@ -768,7 +810,7 @@ export function collectProviderUsageLimits(
     { usage: NativeSnapshot; credits: NativeSnapshot | null }
   >();
   for (const provider of providersWithLimits(providers)) {
-    if (provider.driver !== selected.driver || !provider.usageLimits) continue;
+    if (!drivers.has(provider.driver) || !provider.usageLimits) continue;
     const snapshot = { provider, limits: provider.usageLimits };
     const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
@@ -848,7 +890,7 @@ export function collectProviderUsageLimits(
     });
   }
   for (const source of sources) {
-    const matching = source.accounts.filter((account) => account.driver === selected.driver);
+    const matching = source.accounts.filter(routes);
     for (const account of matching) {
       const key = resolveKey(account);
       if (key && nativeAccountKeys.has(key)) continue;

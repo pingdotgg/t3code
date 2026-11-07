@@ -201,3 +201,49 @@ export function codexUsageLimitResetAt(
     null,
   );
 }
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/**
+ * Codex words a usage limit's reset in its own local time, to the minute, and omits the date for
+ * today. A proxy that strips the rate-limit snapshot leaves this text as the only reset time.
+ */
+export function codexMessageResetAt(
+  message: string,
+  now: DateTime.Utc,
+  codexTimeZone: string | undefined,
+): string | null {
+  const match =
+    /try again at (?:([a-z]{3}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) )?(\d{1,2}):(\d{2}) ([ap]m)\b/i.exec(
+      message,
+    );
+  if (!match) return null;
+  const [, month, day, year, hour, minute, meridiem] = match;
+  const monthIndex = month ? MONTHS.indexOf(month.toLowerCase()) : 0;
+  if (monthIndex < 0) return null;
+  const timeZone =
+    codexTimeZone === undefined
+      ? DateTime.zoneMakeLocal()
+      : // An empty TZ means UTC on Unix.
+        Option.getOrElse(
+          DateTime.zoneFromString(codexTimeZone.replace(/^:/, "") || "UTC"),
+          DateTime.zoneMakeLocal,
+        );
+  const { weekDay: _, ...today } = DateTime.toParts(DateTime.makeZonedUnsafe(now, { timeZone }));
+  const reset = DateTime.makeZonedUnsafe(
+    {
+      ...today,
+      ...(year ? { year: Number(year), month: monthIndex + 1, day: Number(day) } : {}),
+      hour: (Number(hour) % 12) + (meridiem!.toLowerCase() === "pm" ? 12 : 0),
+      minute: Number(minute),
+      second: 0,
+      millisecond: 0,
+    },
+    // A wall time repeated by a DST change resolves to its later instant, so recovery never runs early.
+    { timeZone, adjustForTimeZone: true, disambiguation: "later" },
+  ).pipe(
+    // The minute is truncated, so wait it out rather than resume early.
+    DateTime.add({ minutes: 1 }),
+  );
+  return DateTime.isGreaterThan(reset, now) ? DateTime.formatIso(reset) : null;
+}

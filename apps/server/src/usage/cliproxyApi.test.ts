@@ -51,11 +51,13 @@ function fixture(
     accounts?: Array<
       (typeof accounts)[number] & {
         disabled?: boolean;
+        recent_requests?: ReadonlyArray<{ time: string; success: number; failed: number }>;
         id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
       }
     >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
+    models?: (name: string) => Response;
   } = {},
 ) {
   const requests: Array<{ path: string; body?: RequestBody }> = [];
@@ -68,6 +70,12 @@ function fixture(
           ? decodeRequest(new TextDecoder().decode(request.body.body))
           : undefined;
       requests.push({ path, ...(body ? { body } : {}) });
+      if (path.endsWith("/auth-files/models"))
+        return HttpClientResponse.fromWeb(
+          request,
+          options.models?.(new URL(request.url).searchParams.get("name")!) ??
+            Response.json({}, { status: 404 }),
+        );
       if (path.endsWith("/auth-files"))
         return HttpClientResponse.fromWeb(
           request,
@@ -222,6 +230,43 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         ).toBe("account-b");
       }),
+  );
+
+  it.effect("names the models the hub routes to each account, when the hub lists them", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [...accounts, { ...accounts[1]!, id: "third.json", auth_index: "c" }],
+        models: (name) =>
+          name === "first.json"
+            ? Response.json({ models: [{ id: "gpt-5.6-sol" }, { id: " " }] })
+            : name === "third.json"
+              ? Response.json({ models: [] })
+              : Response.json({}, { status: 404 }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.models)).toEqual([["gpt-5.6-sol"], undefined, []]);
+      expect(result[1]?.usageLimits.windows).toHaveLength(1);
+    }),
+  );
+
+  it.effect("dates each account's last served request from the hub's request buckets", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-10-30T12:05:00Z"));
+      const bucket = (success: number, failed = 0) => ({ time: "", success, failed });
+      const test = fixture({
+        accounts: [
+          { ...accounts[0]!, recent_requests: [bucket(2), bucket(3), bucket(0, 4)] },
+          { ...accounts[1]!, recent_requests: [bucket(0), bucket(0, 1)] },
+        ],
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.lastServedAt)).toEqual([
+        "2026-10-30T11:50:00.000Z",
+        undefined,
+      ]);
+    }),
   );
 
   it.effect("resolves a missing usage plan from current, then legacy, token plans", () =>

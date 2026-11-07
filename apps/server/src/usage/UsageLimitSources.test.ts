@@ -1,6 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { SecretProviderId, ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  SecretProviderId,
+  ServerConfigStreamEvent,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -156,4 +161,71 @@ it.effect("reads a management key from its secret provider", () => {
     ]),
     Effect.scoped,
   );
+});
+
+it("waits for the first refill only when every pooled account of the driver is spent", () => {
+  const now = Date.parse("2026-11-06T12:00:00.000Z");
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const account = (id: string, windows: ReadonlyArray<object>, models?: ReadonlyArray<string>) => ({
+    id,
+    driver: claude,
+    ...(models ? { models } : {}),
+    usageLimits: { checkedAt: "2026-11-06T12:00:00.000Z", windows },
+  });
+  const session = (usedPercent: number, resetsAt: string) => ({
+    id: "five_hour",
+    kind: "session",
+    label: "Session",
+    usedPercent,
+    resetsAt,
+  });
+  const hub = (accounts: ReadonlyArray<ReturnType<typeof account>>) =>
+    [
+      {
+        id: UsageLimitSourceId.make("hub"),
+        kind: "cliproxy",
+        label: "Hub",
+        checkedAt: "",
+        accounts,
+      },
+    ] as never;
+  const spent = [
+    account("a", [session(100, "2026-11-06T14:00:00.000Z")]),
+    account("b", [
+      session(100, "2026-11-06T13:00:00.000Z"),
+      {
+        id: "seven_day_fable",
+        kind: "weekly",
+        label: "Weekly · Fable",
+        usedPercent: 100,
+        resetsAt: "2026-11-10T00:00:00.000Z",
+      },
+    ]),
+  ];
+  expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, null, now)).toBe(
+    "2026-11-06T14:00:00.000Z",
+  );
+  const withRoom = [...spent, account("c", [session(40, "2026-11-06T15:00:00.000Z")])];
+  expect(UsageLimitSources.hubPoolResetAt(hub(withRoom), claude, null, now)).toBeNull();
+  const unread = {
+    id: "d",
+    driver: claude,
+    usageLimits: { checkedAt: "", windows: [], unavailable: { reason: "probeFailed" } },
+  };
+  expect(UsageLimitSources.hubPoolResetAt(hub([...spent, unread]), claude, null, now)).toBeNull();
+  expect(
+    UsageLimitSources.hubPoolResetAt(hub(spent), ProviderDriverKind.make("codex"), null, now),
+  ).toBeNull();
+  const routed = [
+    account("opus", [session(100, "2026-11-06T13:00:00.000Z")], ["claude-opus-5-5"]),
+    account("sonnet", [session(40, "2026-11-06T15:00:00.000Z")], ["claude-sonnet-5-5"]),
+  ];
+  expect(UsageLimitSources.hubPoolResetAt(hub(routed), claude, "claude-opus-5-5[1m]", now)).toBe(
+    "2026-11-06T13:00:00.000Z",
+  );
+  expect(UsageLimitSources.hubPoolResetAt(hub(routed), claude, null, now)).toBeNull();
+  const unlisted = account("unlisted", [session(30, "2026-11-06T15:00:00.000Z")]);
+  expect(
+    UsageLimitSources.hubPoolResetAt(hub([...routed, unlisted]), claude, "claude-opus-5-5", now),
+  ).toBeNull();
 });
