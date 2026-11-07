@@ -28,6 +28,19 @@ describe("QuizCardTimelineCard", () => {
     const textarea = screen.getByRole("textbox", { name: "Explain your thinking" });
     expect(document.activeElement).toBe(textarea.element());
     await userEvent.type(textarea, "Because it follows.");
+    // The virtualized timeline remounts a card scrolled out of view.
+    await screen.rerender(
+      <QuizCardTimelineCard
+        key="remounted"
+        quizCard={{ question: "Explain this." }}
+        seed="open-1"
+        answered={false}
+        onSendMessage={onSendMessage}
+      />,
+    );
+    await expect
+      .element(screen.getByRole("textbox", { name: "Explain your thinking" }))
+      .toHaveValue("Because it follows.");
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(onSendMessage).toHaveBeenCalledWith("Because it follows.");
 
