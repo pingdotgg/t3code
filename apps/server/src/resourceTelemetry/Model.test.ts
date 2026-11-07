@@ -111,33 +111,40 @@ function merge(input: {
 }
 
 describe("resource telemetry process model", () => {
-  it("builds complete descendant depths and isolates monitor overhead", () => {
-    const result = merge({
-      sidecarPid: 900,
-      native: nativeSnapshot(BASE_TIME_MS, [
-        processSample({ pid: SERVER_PID, ppid: 1, startTimeMs: 1_000 }),
-        processSample({ pid: 200, ppid: SERVER_PID, startTimeMs: 2_000 }),
-        processSample({ pid: 201, ppid: 200, startTimeMs: 3_000 }),
-        processSample({ pid: 202, ppid: 201, startTimeMs: 4_000 }),
-        processSample({ pid: 900, ppid: SERVER_PID, startTimeMs: 5_000 }),
-      ]),
-    });
+  it.each([0, 1, 256])(
+    "builds descendant depths with %i siblings and isolates monitor overhead",
+    (siblings) => {
+      const result = merge({
+        sidecarPid: 900,
+        native: nativeSnapshot(BASE_TIME_MS, [
+          ...Array.from({ length: siblings }, (_, index) =>
+            processSample({ pid: 1_000 + index, ppid: 200, startTimeMs: 6_000 + index }),
+          ),
+          processSample({ pid: SERVER_PID, ppid: 1, startTimeMs: 1_000 }),
+          processSample({ pid: 200, ppid: SERVER_PID, startTimeMs: 2_000 }),
+          processSample({ pid: 201, ppid: 200, startTimeMs: 3_000 }),
+          processSample({ pid: 202, ppid: 201, startTimeMs: 4_000 }),
+          processSample({ pid: 900, ppid: SERVER_PID, startTimeMs: 5_000 }),
+        ]),
+      });
 
-    expect(result.processes.map((process) => [process.identity.pid, process.depth])).toEqual([
-      [100, 0],
-      [200, 1],
-      [201, 2],
-      [202, 3],
-      [900, 1],
-    ]);
-    expect(result.processes.find((process) => process.identity.pid === 900)?.category).toBe(
-      "resource-monitor",
-    );
-    expect(result.groups.backend.processCount).toBe(4);
-    expect(result.groups.monitor.processCount).toBe(1);
-    expect(result.groups.monitor.processStarts).toBe(1);
-    expect(result.groups.allT3.processStarts).toBe(5);
-  });
+      expect(result.processes.map((process) => [process.identity.pid, process.depth])).toEqual([
+        [100, 0],
+        [200, 1],
+        [201, 2],
+        [202, 3],
+        ...Array.from({ length: siblings }, (_, index) => [1_000 + index, 2]),
+        [900, 1],
+      ]);
+      expect(result.processes.find((process) => process.identity.pid === 900)?.category).toBe(
+        "resource-monitor",
+      );
+      expect(result.groups.backend.processCount).toBe(4 + siblings);
+      expect(result.groups.monitor.processCount).toBe(1);
+      expect(result.groups.monitor.processStarts).toBe(1);
+      expect(result.groups.allT3.processStarts).toBe(5 + siblings);
+    },
+  );
 
   it("deduplicates Electron metrics and classifies Electron descendants", () => {
     const electronStart = 10_000;
