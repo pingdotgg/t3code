@@ -1237,7 +1237,7 @@ const decodeAward = Schema.decodeUnknownExit(RawAwardSchema);
 export function decodeOwnAwardIdJson(
   raw: string,
   input: { readonly content: PullRequestReactionContent; readonly viewer: string },
-): Result.Result<number | null, DecodeFailure> {
+): Result.Result<{ readonly id: number | null; readonly empty: boolean }, DecodeFailure> {
   const decoded = decodeUnknownList(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
@@ -1249,9 +1249,9 @@ export function decodeOwnAwardIdJson(
     const value = award.value;
     if (trimmed(value.name)?.toLowerCase() !== name) continue;
     if (trimmed(value.user?.username) !== input.viewer) continue;
-    return Result.succeed(value.id);
+    return Result.succeed({ id: value.id, empty: false });
   }
-  return Result.succeed(null);
+  return Result.succeed({ id: null, empty: decoded.success.length === 0 });
 }
 
 export const REPOSITORY_BLOBS_GRAPHQL_QUERY = `query($fullPath: ID!, $ref: String!, $paths: [String!]!) {

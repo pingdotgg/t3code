@@ -1467,37 +1467,58 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
   it.effect("removes an award by listing them and deleting the reader's own id", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
-      );
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            JSON.stringify([
-              { id: 5, name: "thumbsup", user: { username: "bilal" } },
-              { id: 6, name: "thumbsup", user: { username: "julius" } },
-            ]),
-          ),
-        ),
-      );
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.setReaction({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        content: "thumbs-up",
-        reacted: false,
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      expect(argsOfCall(2)).toEqual([
-        "api",
-        "projects/acme%2Fweb/merge_requests/7/award_emoji/5",
-        "--method",
-        "DELETE",
-      ]);
+      for (const noteId of [undefined, "9"]) {
+        for (const ownIndex of [0, 100, -1]) {
+          mockedExecute.mockReset();
+          const awards = Array.from({ length: 101 }, (_, index) =>
+            index === ownIndex
+              ? { id: index + 1, name: "thumbsup", user: { username: "bilal" } }
+              : index % 2 === 0
+                ? null
+                : { id: index + 1, name: "thumbsup", user: { username: "julius" } },
+          );
+          const deleted: number[] = [];
+          mockedExecute.mockImplementation((input) => {
+            const path = input.args[1]!;
+            if (path === "user") {
+              return Effect.succeed(output(JSON.stringify({ username: "bilal" })));
+            }
+            if (input.args.includes("DELETE")) {
+              deleted.push(Number(path.split("/").at(-1)));
+              return Effect.succeed(output("{}"));
+            }
+            const url = new URL(path, "https://gitlab.example.com");
+            const page = Number(url.searchParams.get("page") ?? 1);
+            const size = Number(url.searchParams.get("per_page") ?? 20);
+            return Effect.succeed(
+              output(JSON.stringify(awards.slice((page - 1) * size, page * size))),
+            );
+          });
+          yield* cli.setReaction({
+            cwd: "/w",
+            host: "gitlab.example.com",
+            repository: "acme/web",
+            number: 7,
+            ...(noteId === undefined ? {} : { noteId }),
+            content: "thumbs-up",
+            reacted: false,
+          });
+          expect(deleted).toEqual(ownIndex === -1 ? [] : [ownIndex + 1]);
+          expect(
+            mockedExecute.mock.calls.filter(([input]) => input.args[1] === "user"),
+          ).toHaveLength(1);
+          for (const [input] of mockedExecute.mock.calls) {
+            expect(input).toMatchObject({ cwd: "/w", host: "gitlab.example.com" });
+            if (input.args[1] !== "user") {
+              expect(input.args[1]).toContain(
+                `merge_requests/7/${noteId === undefined ? "" : `notes/${noteId}/`}award_emoji`,
+              );
+            }
+          }
+          if (ownIndex === 0) expect(mockedExecute.mock.calls).toHaveLength(3);
+        }
+      }
     }),
   );
 

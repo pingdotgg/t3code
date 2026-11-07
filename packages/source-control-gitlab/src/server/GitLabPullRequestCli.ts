@@ -2092,26 +2092,39 @@ export const make = Effect.gen(function* () {
       // GitLab deletes an award by its id and takes no emoji name there, so the reader's own
       // award of that name is looked up first.
       const viewer = yield* viewerUsername(input);
-      const listed = yield* api({ cwd: input.cwd, host: input.host, path: subject });
-      const own = decodeOwnAwardIdJson(listed.stdout.trim(), {
-        content: input.content,
-        viewer,
-      });
-      if (!Result.isSuccess(own)) {
-        return yield* new GitLabMergeRequestReadError({
-          command: "glab",
+      for (let page = 1; ; page++) {
+        const listed = yield* api({
           cwd: input.cwd,
-          operation: "setReaction",
-          cause: own.failure,
+          host: input.host,
+          path: `${subject}?${query([
+            ["per_page", "100"],
+            ["page", String(page)],
+          ])}`,
         });
+        const own = decodeOwnAwardIdJson(listed.stdout.trim(), {
+          content: input.content,
+          viewer,
+        });
+        if (!Result.isSuccess(own)) {
+          return yield* new GitLabMergeRequestReadError({
+            command: "glab",
+            cwd: input.cwd,
+            operation: "setReaction",
+            cause: own.failure,
+          });
+        }
+        if (own.success.id !== null) {
+          yield* api({
+            cwd: input.cwd,
+            host: input.host,
+            path: `${subject}/${own.success.id}`,
+            method: "DELETE",
+          });
+          return;
+        }
+        // An empty raw page establishes exhaustion even when the host caps page size.
+        if (own.success.empty) return;
       }
-      if (own.success === null) return;
-      yield* api({
-        cwd: input.cwd,
-        host: input.host,
-        path: `${subject}/${own.success}`,
-        method: "DELETE",
-      });
     }),
 
     listCommits: Effect.fn("GitLabPullRequestCli.listCommits")(function (input) {
