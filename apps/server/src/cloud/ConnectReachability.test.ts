@@ -196,7 +196,10 @@ describe("ConnectReachability stale connector recovery", () => {
 
         // Reaching the endpoint resets the wait, and a 530 for a broken DNS record is left alone.
         status = 200;
-        expect(yield* reachability.check).toMatchObject({ status: "reachable" });
+        expect(yield* reachability.check).toMatchObject({
+          status: "reachable",
+          hostname: connected.hostname,
+        });
         status = 530;
         body = { cloudflareError: 1016 };
         expect(yield* reachability.check).toMatchObject({ cause: "unexpected_response" });

@@ -450,6 +450,8 @@ export const EnvironmentConnectReachability = Schema.Union([
     /** Null when cloudflared did not report a count. */
     readyConnections: Schema.NullOr(Schema.Int),
     protocol: Schema.NullOr(Schema.String),
+    /** The host the tunnel answered on. Older servers leave it out. */
+    hostname: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     status: Schema.Literal("unreachable"),

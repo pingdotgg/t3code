@@ -98,6 +98,7 @@ export function classifyReachability(
       checkedAt,
       readyConnections: connector.readyConnections,
       protocol: connector.protocol,
+      ...(connector.hostname ? { hostname: connector.hostname } : {}),
     };
   }
   // The edge test is TCP only. With QUIC connections up, a 502 from a working tunnel, or

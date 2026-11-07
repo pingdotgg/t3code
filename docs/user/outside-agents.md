@@ -19,6 +19,10 @@ https://<environment-address>/mcp
 The copied URL uses the route this device is connected over, so an agent on the
 same device can reach it.
 
+For the environment at the top of **Settings → Sharing & access**, open the
+menu next to its name. Once T3 Connect reports its tunnel connected, **Copy MCP
+URL** there gives the address that tunnel serves.
+
 - **An agent on your own computers** can use `localhost` on the host, T3
   Connect, or any `https` address, such as
   [Tailscale HTTPS](./remote-access.md#tailscale-https). Signing in sends the

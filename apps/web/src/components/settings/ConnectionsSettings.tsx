@@ -135,6 +135,7 @@ import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import {
   CloudLinkRow,
   CloudRemoteEnvironmentRows,
+  ConnectMcpUrlMenuItem,
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
@@ -1174,6 +1175,7 @@ function ConnectionsSettingsContent({
                       environmentId={accessEnvironmentId}
                       serverConfig={accessServerConfig}
                     />
+                    <ConnectMcpUrlMenuItem environmentId={accessEnvironmentId} />
                   </MenuPopup>
                 </Menu>
               ) : null
