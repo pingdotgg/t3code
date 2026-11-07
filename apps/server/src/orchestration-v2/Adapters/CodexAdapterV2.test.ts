@@ -6107,6 +6107,90 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #30179 a Codex safety stop hid the misalignment explanation
+  it.effect.each([
+    "error notification",
+    "failed completion only",
+    "failed completion after a bare notification",
+  ] as const)(
+    "shows the misalignment explanation when Codex stops a turn for safety (%s)",
+    (source) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "native-misalignment-stop";
+          const nativeTurnId = "turn-misalignment-stop";
+          const detailedExplanation = "Synthetic review explanation for the stopped conversation.";
+          const error = {
+            message: "This request was blocked by our safety systems. Reason: Synthetic reason.",
+            codexErrorInfo: "misalignmentPolicyViolation",
+            additionalDetails: null,
+            misalignment: { detailedExplanation },
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario: "codex-misalignment-stop",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+              ...(source !== "failed completion only"
+                ? [
+                    {
+                      type: "emit_inbound" as const,
+                      label: "error",
+                      frame: {
+                        method: "error",
+                        params: {
+                          threadId: nativeThreadId,
+                          turnId: nativeTurnId,
+                          willRetry: false,
+                          error:
+                            source === "error notification"
+                              ? error
+                              : { ...error, misalignment: null },
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: { ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }), error },
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              text: "Continue.",
+              attemptId: RunAttemptId.make("attempt-misalignment-stop"),
+            }),
+          );
+          yield* harness.firstTerminal;
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          if (terminal?.status !== "failed") return;
+          assert.equal(terminal.failure.message.split(detailedExplanation).length - 1, 1);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   const FAILED_SCENARIO = "codex-failed-mid-command";
   const FAILED_NATIVE_THREAD = "native-codex-failed-thread";
   const FAILED_NATIVE_TURN = "native-codex-failed-turn";
