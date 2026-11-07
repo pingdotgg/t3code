@@ -54,8 +54,7 @@ const ICON_CLASS = {
 /**
  * Notices about sending from this composer, each its own attached card. Consecutive
  * cards join edge to edge, and the last joins the composer below it. Horizontal inset
- * belongs on the parent so the stack and composer share one column. Pass `attached` so
- * the parent can clip the stack and composer as one rounded column.
+ * belongs on the parent so the stack and composer share one column.
  */
 export function ComposerBannerStack(props: {
   readonly items: ReadonlyArray<ComposerBannerStackItem>;
@@ -64,8 +63,8 @@ export function ComposerBannerStack(props: {
   const ordered = GROUPS.flatMap((group) =>
     props.items.filter((item) => (item.group ?? "attention") === group),
   );
-  if (ordered.length === 0) return props.children ?? null;
-
+  // Keep a stable wrapper so the composer child is not remounted when the first
+  // banner appears or the last is dismissed (native editor undo/revision state).
   return (
     <View>
       {ordered.map((item) => (
