@@ -4928,6 +4928,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       yield* fileSystem.stream(transcriptPath).pipe(
         Stream.decodeText,
         Stream.splitLines,
+        Stream.filter((line) => line.includes(prefix)),
         Stream.filterMap(decodeClaudeAssistantCursorLine),
         Stream.runForEach((entry) =>
           Effect.sync(() => {
