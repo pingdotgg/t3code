@@ -234,7 +234,8 @@ export class ServerBrowserContexts {
 
   async connectDesktopPage(endpoint: string) {
     const { chromium } = loadPlaywright();
-    const browser = await chromium.connectOverCDP(endpoint, { timeout: 15_000 });
+    // Only a same-machine desktop backend gets the browser channel, so uploads can pass file paths.
+    const browser = await chromium.connectOverCDP(endpoint, { isLocal: true, timeout: 15_000 });
     const page = browser.contexts().flatMap((context) => context.pages())[0];
     if (!page) {
       await browser.close().catch(constVoid);
