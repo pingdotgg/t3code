@@ -102,6 +102,7 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const COPILOT_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "github-copilot-cli" });
 
 const layerHost = TestProviderHost.layer().pipe(
   Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -3125,6 +3126,154 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("settles Copilot foreground idle while the original prompt remains pending", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "copilot-lifecycle-" });
+      const mockAgentPath = path.join(directory, "agent.cjs");
+      yield* fileSystem.writeFileString(
+        mockAgentPath,
+        `
+        const readline = require("node:readline");
+        const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
+        const promptIds = [];
+        readline.createInterface({ input: process.stdin }).on("line", line => {
+          const frame = JSON.parse(line);
+          const respond = result => send({ jsonrpc: "2.0", id: frame.id, result });
+          if (frame.method === "initialize") respond({ protocolVersion: 1, agentCapabilities: {} });
+          else if (frame.method === "session/new") respond({ sessionId: "mock-session-1" });
+          else if (frame.method === "session/prompt") promptIds.push(frame.id);
+          else if (frame.method === "_test/emit") {
+            send({ jsonrpc: "2.0", method: "github.com/copilot/sessionEvent",
+              params: { sessionId: "mock-session-1", ...frame.params } });
+            respond({});
+          } else if (frame.method === "_test/release") {
+            send({ jsonrpc: "2.0", id: promptIds[frame.params.index], result: { stopReason: "end_turn" } });
+            respond({});
+          }
+        });
+      `,
+      );
+      const promptDispatched = yield* Deferred.make<void>();
+      const nextPromptDispatched = yield* Deferred.make<void>();
+      const firstPromptReturned = yield* Deferred.make<void>();
+      const continuations = yield* Queue.unbounded<void>();
+      let prompts = 0;
+      let nativeRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
+      const instanceId = ProviderInstanceId.make("copilot-foreground-idle");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        settings: COPILOT_SETTINGS,
+        environment: {},
+        continuationRequests: {
+          offer: () => Queue.offer(continuations, undefined).pipe(Effect.asVoid),
+        },
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          wrapRuntime: (runtime) => {
+            nativeRuntime = runtime;
+            return {
+              ...runtime,
+              prompt: (payload, options) =>
+                Effect.gen(function* () {
+                  prompts += 1;
+                  const ordinal = prompts;
+                  const fiber = yield* runtime.prompt(payload, options).pipe(Effect.forkChild);
+                  if (options?.dispatched) yield* Deferred.await(options.dispatched);
+                  yield* Deferred.succeed(
+                    ordinal === 1 ? promptDispatched : nextPromptDispatched,
+                    undefined,
+                  );
+                  const result = yield* Fiber.join(fiber);
+                  if (ordinal === 1) yield* Deferred.succeed(firstPromptReturned, undefined);
+                  return result;
+                }),
+            };
+          },
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+        ),
+      );
+      const threadId = ThreadId.make("copilot-foreground-idle-thread");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("copilot-foreground-idle-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((item) => Queue.offer(events, item)),
+        Effect.forkScoped,
+      );
+      const terminal = () =>
+        Stream.fromQueue(events).pipe(
+          Stream.filter((item) => item.type === "turn.terminal"),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const turn = (ordinal: number) =>
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal });
+      yield* runtime.startTurn(turn(1));
+      yield* Deferred.await(promptDispatched);
+      assert.isDefined(nativeRuntime);
+      const event = (type: string, agentId?: string) =>
+        nativeRuntime!.request("_test/emit", { type, ...(agentId ? { agentId } : {}) });
+      yield* event("assistant.turn_start");
+      yield* event("assistant.idle", "child-agent");
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(2)))));
+      yield* event("assistant.idle");
+      assert.equal((yield* terminal())[0]?.status, "completed");
+      yield* event("assistant.turn_start");
+      yield* Queue.take(continuations);
+      const continuation = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now,
+        ordinal: 2,
+        messageCreatedBy: "agent",
+        messageCreationSource: "provider",
+      });
+      const next = yield* Effect.exit(runtime.startTurn(continuation));
+      assert.isTrue(Exit.isSuccess(next), "root idle must settle before the prompt RPC returns");
+      yield* event("assistant.idle", "child-agent");
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(3)))));
+      yield* event("assistant.idle");
+      assert.equal((yield* terminal())[0]?.status, "completed");
+      yield* event("session.idle");
+      yield* runtime.startTurn(turn(3));
+      yield* Deferred.await(nextPromptDispatched);
+      yield* nativeRuntime!.request("_test/release", { index: 0 });
+      yield* Deferred.await(firstPromptReturned);
+      yield* event("assistant.turn_start");
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(runtime.startTurn(turn(4)))));
+      yield* event("assistant.idle");
+      assert.equal((yield* terminal())[0]?.status, "completed");
+      yield* nativeRuntime!.request("_test/release", { index: 1 });
+      assert.equal(prompts, 2, "continuation must not send a prompt");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("routes interleaved Copilot subagent output into subagent threads", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -5250,6 +5399,9 @@ describe("AcpAdapterV2", () => {
       const backgroundMutationHandlers: Array<
         AcpAdapterV2ExtensionContext["applyBackgroundTaskMutation"] | undefined
       > = [];
+      const foregroundWorkHandlers: Array<
+        AcpAdapterV2ExtensionContext["updateForegroundWork"] | undefined
+      > = [];
       const availableCommandUpdates: Array<ReadonlyArray<EffectAcpSchema.AvailableCommand>> = [];
       let registeredExtensionOrdinal = 0;
       let runtimeOrdinalSeen = 0;
@@ -5307,6 +5459,7 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           enablePostSettleContinuation: true,
+          followAgentWorkState: true,
           onAvailableCommandsUpdate: (commands) =>
             Effect.sync(() => {
               availableCommandUpdates.push(commands);
@@ -5315,6 +5468,7 @@ describe("AcpAdapterV2", () => {
             Effect.sync(() => {
               backgroundMutationHandlers[registeredExtensionOrdinal] =
                 context.applyBackgroundTaskMutation;
+              foregroundWorkHandlers[registeredExtensionOrdinal] = context.updateForegroundWork;
               registeredExtensionOrdinal += 1;
             }),
           makeRuntime,
@@ -5383,6 +5537,10 @@ describe("AcpAdapterV2", () => {
         taskId: "stale-failed-replacement-task",
         status: "running",
       });
+      assert.isFalse(yield* hasPendingBackgroundWork);
+      const staleForegroundWork = foregroundWorkHandlers[1];
+      assert.isDefined(staleForegroundWork);
+      yield* staleForegroundWork!({ sessionId: "mock-session-3", state: "running" });
       assert.isFalse(yield* hasPendingBackgroundWork);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );

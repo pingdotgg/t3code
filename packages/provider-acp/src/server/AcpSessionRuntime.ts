@@ -114,6 +114,7 @@ export interface AcpSessionRuntimeOptions {
   readonly posixProcessTreeController?: AcpPosixProcessTreeController;
   readonly linuxCgroupController?: AcpLinuxCgroupController | null;
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
+  readonly allowOverlappingPrompts?: boolean;
   readonly cancelTimeout?: Duration.Input;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
@@ -2603,67 +2604,79 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ),
       Effect.andThen(runLoggedRequest("logout", {}, acp.agent.logout({}))),
     ),
-    prompt: (payload, promptOptions?) =>
-      promptSerializationSemaphore.withPermit(
-        Effect.acquireUseRelease(
-          promptDispatchSemaphore.withPermit(
-            Effect.gen(function* () {
-              const started = yield* getStartedState;
-              yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
-              yield* Ref.set(assistantUpdatesOpenRef, true);
-              const requestPayload = {
-                sessionId: started.sessionId,
-                ...payload,
-              } satisfies EffectAcpSchema.PromptRequest;
-              const completed = yield* Deferred.make<void>();
-              const fiber = yield* runLoggedRequest(
-                "session/prompt",
-                requestPayload,
-                acp.agent.prompt(requestPayload),
-              ).pipe(Effect.forkIn(runtimeScope));
-              const active = { fiber, completed } satisfies AcpActivePrompt;
-              yield* Ref.set(activePromptRef, Option.some(active));
-              if (promptOptions?.dispatched) {
-                yield* Deferred.succeed(promptOptions.dispatched, undefined);
-              }
-              return active;
-            }).pipe(notificationSemaphore.withPermit),
-          ),
-          (activePrompt) =>
-            Fiber.join(activePrompt.fiber).pipe(
-              Effect.catchCauseIf(
-                (cause) =>
-                  options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause),
-                (_cause) =>
-                  Effect.succeed({
-                    stopReason: "cancelled",
-                  } satisfies EffectAcpSchema.PromptResponse),
-              ),
-              Effect.tap(() =>
-                closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),
+    prompt: (payload, promptOptions?) => {
+      const prompt = Effect.acquireUseRelease(
+        promptDispatchSemaphore.withPermit(
+          Effect.gen(function* () {
+            const started = yield* getStartedState;
+            yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
+            yield* Ref.set(assistantUpdatesOpenRef, true);
+            const requestPayload = {
+              sessionId: started.sessionId,
+              ...payload,
+            } satisfies EffectAcpSchema.PromptRequest;
+            const completed = yield* Deferred.make<void>();
+            const fiber = yield* runLoggedRequest(
+              "session/prompt",
+              requestPayload,
+              acp.agent.prompt(requestPayload),
+            ).pipe(Effect.forkIn(runtimeScope));
+            const active = { fiber, completed } satisfies AcpActivePrompt;
+            yield* Ref.set(activePromptRef, Option.some(active));
+            if (promptOptions?.dispatched) {
+              yield* Deferred.succeed(promptOptions.dispatched, undefined);
+            }
+            return active;
+          }).pipe(notificationSemaphore.withPermit),
+        ),
+        (activePrompt) =>
+          Fiber.join(activePrompt.fiber).pipe(
+            Effect.catchCauseIf(
+              (cause) =>
+                options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause),
+              (_cause) =>
+                Effect.succeed({
+                  stopReason: "cancelled",
+                } satisfies EffectAcpSchema.PromptResponse),
+            ),
+            Effect.tap(() =>
+              notificationSemaphore.withPermit(
+                Ref.get(activePromptRef).pipe(
+                  Effect.flatMap((current) =>
+                    Option.isSome(current) && current.value === activePrompt
+                      ? closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef })
+                      : Effect.void,
+                  ),
+                ),
               ),
             ),
-          (activePrompt, result) =>
-            Effect.gen(function* () {
-              if (
-                options.cancelBehavior === "wait-for-prompt" &&
-                Exit.isFailure(result) &&
-                Cause.hasInterrupts(result.cause)
-              ) {
-                yield* retireRuntime(
-                  new EffectAcpErrors.AcpTransportError({
-                    method: "session/prompt",
-                    detail: "The ACP prompt stopped before the agent confirmed completion.",
-                    cause: undefined,
-                  }),
-                );
-              }
-              yield* Fiber.interrupt(activePrompt.fiber).pipe(Effect.ignore);
-              yield* Ref.set(activePromptRef, Option.none());
-              yield* Deferred.succeed(activePrompt.completed, undefined);
-            }),
-        ),
-      ),
+          ),
+        (activePrompt, result) =>
+          Effect.gen(function* () {
+            if (
+              options.cancelBehavior === "wait-for-prompt" &&
+              Exit.isFailure(result) &&
+              Cause.hasInterrupts(result.cause)
+            ) {
+              yield* retireRuntime(
+                new EffectAcpErrors.AcpTransportError({
+                  method: "session/prompt",
+                  detail: "The ACP prompt stopped before the agent confirmed completion.",
+                  cause: undefined,
+                }),
+              );
+            }
+            yield* Fiber.interrupt(activePrompt.fiber).pipe(Effect.ignore);
+            yield* Ref.update(activePromptRef, (current) =>
+              Option.isSome(current) && current.value === activePrompt ? Option.none() : current,
+            );
+            yield* Deferred.succeed(activePrompt.completed, undefined);
+          }),
+      );
+      return options.allowOverlappingPrompts === true
+        ? prompt
+        : promptSerializationSemaphore.withPermit(prompt);
+    },
     cancel:
       options.cancelBehavior === "wait-for-prompt"
         ? promptDispatchSemaphore.withPermit(cancel)

@@ -16,6 +16,9 @@ const COPILOT_SESSION_EVENT = "github.com/copilot/sessionEvent";
 export const copilotClientCapabilitiesMeta = {
   [COPILOT_META_KEY]: {
     events: [
+      "assistant.turn_start",
+      "assistant.idle",
+      "session.idle",
       "subagent.started",
       "subagent.completed",
       "subagent.failed",
@@ -86,6 +89,14 @@ export function makeCopilotSubagentRouting() {
       const data = event.data ?? {};
       const task = typeof data.parentToolCallId === "string" ? data.parentToolCallId : undefined;
       switch (event.type) {
+        case "assistant.turn_start":
+        case "assistant.idle":
+          return event.agentId === undefined
+            ? context.updateForegroundWork({
+                sessionId: event.sessionId,
+                state: event.type === "assistant.turn_start" ? "running" : "idle",
+              })
+            : Effect.void;
         case "assistant.message_delta":
         case "assistant.reasoning_delta": {
           if (typeof data.deltaContent !== "string") return Effect.void;

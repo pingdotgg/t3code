@@ -177,6 +177,7 @@ export interface AcpAdapterV2RuntimeInput {
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly resumeSessionId?: string;
   readonly interruptPromptOnCancel?: boolean;
+  readonly allowOverlappingPrompts?: boolean;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: AcpSessionRuntime.AcpSessionRuntimeOptions["clientInfo"];
   readonly requestLogger?: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["requestLogger"]>;
@@ -202,6 +203,10 @@ export interface AcpAdapterV2UserInputRequest {
 
 export interface AcpAdapterV2ExtensionContext {
   readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly updateForegroundWork: (input: {
+    readonly sessionId: string;
+    readonly state: "running" | "idle";
+  }) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly reportProviderRetry: (input: {
     readonly sessionId: string;
     readonly failure: OrchestrationV2ProviderFailure;
@@ -547,6 +552,7 @@ export interface AcpAdapterV2Flavor {
   readonly enablePostSettleContinuation?: boolean;
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
+  readonly followForegroundEvents?: boolean;
   /**
    * Grok CLI currently accepts and vision-processes image blocks while still
    * reporting the capability as false; without this override, screenshot turns
@@ -1890,6 +1896,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         };
         let pendingStopCloseTurn: ActiveAcpTurn | null = null;
         let followsAgentWorkState = false;
+        let pendingForegroundPrompts = 0;
         let agentWork: Extract<
           EffectAcpSchema.SessionUpdate,
           { sessionUpdate: "state_update" }
@@ -1922,9 +1929,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
         ) {
           followsAgentWorkState =
-            flavor.followAgentWorkState === true &&
             continuationRequests !== undefined &&
-            setup.initializeResult.protocolVersion === 2;
+            ((flavor.followAgentWorkState === true &&
+              setup.initializeResult.protocolVersion === 2) ||
+              (flavor.followForegroundEvents === true &&
+                setup.initializeResult.protocolVersion === 1));
           agentWork = null;
           agentRequests.clear();
           nativeChildren.clear();
@@ -2365,6 +2374,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : { processEnvironment: mcpContext.processEnvironment }),
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
+            ...(flavor.followForegroundEvents === true ? { allowOverlappingPrompts: true } : {}),
             clientCapabilities: {
               fs: {
                 readTextFile: flavor.clientFileSystem !== undefined,
@@ -6790,6 +6800,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (flavor.registerExtensions !== undefined) {
             yield* flavor.registerExtensions({
               runtime: targetRuntime,
+              updateForegroundWork: (notice) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if (!followsAgentWorkState) return;
+                    if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    const context = yield* Ref.get(activeTurn);
+                    if (notice.state === "running" && context !== null) context.workAccepted = true;
+                    yield* handleSessionUpdate({
+                      sessionId: notice.sessionId,
+                      update: { sessionUpdate: "state_update", state: notice.state },
+                    });
+                  }),
+                ).pipe(
+                  Effect.asVoid,
+                  Effect.mapError(
+                    (cause) =>
+                      new EffectAcpErrors.AcpTransportError({
+                        detail: "Failed to project ACP foreground state",
+                        cause,
+                      }),
+                  ),
+                ),
               reportProviderRetry: (notice) =>
                 runRuntimeCallbackAtGeneration(handlerGeneration, reportProviderRetry(notice)).pipe(
                   Effect.asVoid,
@@ -8367,6 +8401,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const compactSession = isCompactionMessage(turnInput.message)
               ? flavor.compactSession
               : undefined;
+            if (flavor.followForegroundEvents === true) pendingForegroundPrompts += 1;
             yield* (
               compactSession === undefined
                 ? runtime.prompt({ prompt: promptParts!.prompt }, promptOptions)
@@ -8418,7 +8453,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
-                    if (context.finalized || followsAgentWorkState) return;
+                    if (
+                      context.finalized ||
+                      (followsAgentWorkState && flavor.followForegroundEvents !== true)
+                    )
+                      return;
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
                     const idleError = result.stopReason === "error" && !context.interrupted;
                     const hiddenFailure =
@@ -8511,6 +8550,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
                   }),
                 ).pipe(Effect.asVoid),
+              ),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  if (flavor.followForegroundEvents === true) pendingForegroundPrompts -= 1;
+                }),
               ),
               Effect.forkIn(sessionScope),
             );
@@ -8608,6 +8652,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ...(postSettleContinuationEnabled || followsAgentWorkState
             ? {
                 hasPendingBackgroundWork: Effect.gen(function* () {
+                  if (pendingForegroundPrompts > 0) return true;
                   const rootSessionId = yield* Ref.get(activeSessionId);
                   if (
                     followsAgentWorkState &&

@@ -205,6 +205,64 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("keeps a newer prompt cancellable after an older overlapping prompt returns", () =>
+    Effect.gen(function* () {
+      const firstStarted = yield* Deferred.make<void>();
+      const secondStarted = yield* Deferred.make<void>();
+      const script = `
+        const readline = require("node:readline");
+        let first, count = 0;
+        const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
+        readline.createInterface({ input: process.stdin }).on("line", line => {
+          const frame = JSON.parse(line);
+          const respond = result => send({ jsonrpc: "2.0", id: frame.id, result });
+          if (frame.method === "initialize") respond({ protocolVersion: 1, agentCapabilities: {} });
+          else if (frame.method === "session/new") respond({ sessionId: "test-session" });
+          else if (frame.method === "session/prompt") {
+            count += 1;
+            if (count === 1) first = frame.id;
+            send({ jsonrpc: "2.0", method: "session/update", params: {
+              sessionId: "test-session", update: { sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: "prompt-" + count + "-started" } }
+            }});
+          } else if (frame.method === "_test/release-first") {
+            send({ jsonrpc: "2.0", id: first, result: { stopReason: "end_turn" } });
+            respond({});
+          }
+        });
+      `;
+      const runtime = yield* AcpSessionRuntime.make({
+        cwd: process.cwd(),
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        allowOverlappingPrompts: true,
+        spawn: { command: process.execPath, args: ["-e", script] },
+      });
+      yield* runtime.getEvents().pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "ThoughtDelta" && event.text === "prompt-1-started")
+            return Deferred.succeed(firstStarted, undefined).pipe(Effect.asVoid);
+          if (event._tag === "ThoughtDelta" && event.text === "prompt-2-started")
+            return Deferred.succeed(secondStarted, undefined).pipe(Effect.asVoid);
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+      yield* runtime.start();
+      const first = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "first" }] })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(firstStarted);
+      const second = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "second" }] })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(secondStarted);
+      yield* runtime.request("_test/release-first", {});
+      expect(yield* Fiber.join(first)).toMatchObject({ stopReason: "end_turn" });
+      yield* runtime.cancel;
+      expect(yield* Fiber.join(second)).toMatchObject({ stopReason: "cancelled" });
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("reports an idle child exit and rejects later prompts", () =>
     Effect.gen(function* () {
       const stopped = yield* Deferred.make<string>();
