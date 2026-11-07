@@ -32,8 +32,10 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
+import { normalizePairingCredential } from "../auth/PairingGrantStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
@@ -175,6 +177,7 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -434,6 +437,16 @@ const make = Effect.gen(function* () {
       return yield* new PeerLinkError({
         reason: "incompatible",
         message: `${peer.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
+      });
+    }
+    // A code issued here, even a used or expired one, must not reach the peer.
+    const issuedHere = yield* pairingLinks
+      .getByCredential({ credential: normalizePairingCredential(input.pairingCode.trim()) })
+      .pipe(Effect.catch(failStorage));
+    if (Option.isSome(issuedHere)) {
+      return yield* new PeerLinkError({
+        reason: "pairing_rejected",
+        message: `That pairing code was created on ${self.label}, not on ${peer.label}. Create the link on ${peer.label} and paste its code here.`,
       });
     }
     const issued = yield* signIn(primary, input, `T3 Code · ${self.label}`);
