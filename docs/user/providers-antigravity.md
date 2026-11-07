@@ -46,6 +46,11 @@ Choose **Sign-in method** in the Antigravity provider settings:
 The environment stores the Antigravity API key outside its settings file, and
 clients only see whether one is saved. The agent uses the method and credentials selected for this instance;
 ambient `GEMINI_API_KEY` and Google credential variables do not override them.
+The exception is Agent Platform without a saved API key, which uses Application
+Default Credentials: it reads `GOOGLE_APPLICATION_CREDENTIALS` from the instance's
+**Environment variables** or from the machine T3 Code runs on. Set it to the
+absolute path of a service-account JSON key, and clear any saved API key, which
+takes precedence.
 Changing the method stops the instance's sessions. Sign out before replacing an
 account.
 
