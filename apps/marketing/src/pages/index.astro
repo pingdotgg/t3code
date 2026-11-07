@@ -45,6 +45,7 @@ const mobileEndorsementRows = [
         { key: "codex", icon: "/harnesses/openai_dark.svg", cls: "hf-codex" },
         { key: "grok", icon: "/harnesses/grok-dark.svg", cls: "hf-grok" },
         { key: "cursor", icon: "/harnesses/cursor_light.svg", cls: "hf-cursor" },
+        { key: "kiro", icon: "/harnesses/kiro.svg", cls: "hf-kiro" },
       ].map((m) => (
         <span class:list={["hero-float-mark", m.cls]}>
           <span class="hero-float-card"><img src={m.icon} alt="" /></span>
@@ -58,8 +59,10 @@ const mobileEndorsementRows = [
       </h1>
 
       <p class="hero-sub" data-rise style="--d:300ms">
-        Orchestrate Claude Code, Codex, Antigravity, OpenCode, Cursor, and Grok from one surface.
+        Orchestrate Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok, and Kiro from one surface.
         Bring your own subscription. Fork the whole thing.
+        Kiro requires a <a href="/download?channel=nightly">nightly build</a>.{" "}
+        <a href="https://github.com/pingdotgg/t3code/blob/main/docs/user/providers-kiro.md">Set up Kiro</a>.
       </p>
 
       <div class="hero-actions" data-rise style="--d:400ms">
@@ -201,7 +204,7 @@ const mobileEndorsementRows = [
         <h2>Bring your own sub</h2>
         <p>
           T3 Code doesn't resell tokens. Plug in Claude Code, Codex, Antigravity,
-          OpenCode, Cursor, or Grok with the credentials you already have. We
+          OpenCode, Cursor, Grok, or Kiro with the credentials you already have. We
           orchestrate them, you keep your plan.
         </p>
       </div>
@@ -247,6 +250,13 @@ const mobileEndorsementRows = [
           <div class="harness-meta">
             <div class="harness-name">Antigravity</div>
             <div class="harness-tag">Google sign-in</div>
+          </div>
+        </div>
+        <div class="harness">
+          <div class="harness-mark"><img src="/harnesses/kiro.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">Kiro CLI</div>
+            <div class="harness-tag">kiro-cli login</div>
           </div>
         </div>
       </div>
@@ -579,6 +589,8 @@ const mobileEndorsementRows = [
     text-wrap: balance;
   }
 
+  .hero-sub a { text-decoration: underline; text-underline-offset: 3px; }
+
   .hero-actions {
     display: flex;
     flex-direction: column;
@@ -702,6 +714,7 @@ const mobileEndorsementRows = [
   .hf-codex    { --x: min(560px, 38vw); --y: 128px; --s: 96px; --rot: 7deg; --depth: 1.2; --d: 460ms; --fx: 160px; --fy: -40px; }
   .hf-grok     { --x: max(-440px, -30vw); --y: 440px; --s: 80px; --rot: 4deg; --depth: 0.9; --d: 540ms; --fx: -120px; --fy: 80px; }
   .hf-cursor   { --x: min(440px, 30vw); --y: 440px; --s: 80px; --rot: -5deg; --depth: 0.9; --d: 700ms; --fx: 120px; --fy: 80px; }
+  .hf-kiro     { --x: max(-600px, -42vw); --y: 300px; --s: 72px; --rot: -6deg; --depth: 0.8; --d: 500ms; --fx: -120px; --fy: 20px; }
 
   @media (prefers-reduced-motion: reduce) {
     .hero-float-card { animation: none; transform: rotate(var(--rot)); }
@@ -711,6 +724,7 @@ const mobileEndorsementRows = [
   @media (max-width: 1180px) {
     .hf-claude, .hf-codex { --s: 80px; }
     .hf-grok, .hf-cursor { --s: 68px; --y: 420px; }
+    .hf-kiro { --s: 60px; --y: 290px; }
   }
 
   @media (max-width: 820px) {
@@ -728,17 +742,18 @@ const mobileEndorsementRows = [
       margin-bottom: 40px;
     }
 
-    /* Four above the headline, two beside the CTA. Keeps the copy clear. */
-    .hf-claude      { --x: -37vw; --y: 44px; --s: 64px; --rot: -10deg; }
-    .hf-opencode    { --x: -12vw; --y: 52px; --s: 56px; --rot: -4deg; }
-    .hf-antigravity { --x: 12vw; --y: 52px; --s: 56px; --rot: 5deg; }
-    .hf-codex       { --x: 37vw; --y: 44px; --s: 64px; --rot: 8deg; }
+    /* Five above the headline, two beside the CTA. Keeps the copy clear. */
+    .hf-claude      { --x: -38vw; --y: 44px; --s: 60px; --rot: -10deg; }
+    .hf-opencode    { --x: -19vw; --y: 52px; --s: 52px; --rot: -4deg; }
+    .hf-kiro        { --x: 0vw; --y: 40px; --s: 52px; --rot: -3deg; }
+    .hf-antigravity { --x: 19vw; --y: 52px; --s: 52px; --rot: 5deg; }
+    .hf-codex       { --x: 38vw; --y: 44px; --s: 60px; --rot: 8deg; }
     .hf-grok     { --x: -36vw; --y: 474px; --s: 64px; --rot: -6deg; }
     .hf-cursor   { --x: 36vw; --y: 474px; --s: 64px; --rot: 7deg; }
   }
 
   @media (max-width: 340px) {
-    .hf-opencode, .hf-antigravity, .hf-grok, .hf-cursor { --s: 48px; }
+    .hf-opencode, .hf-antigravity, .hf-grok, .hf-cursor, .hf-kiro { --s: 48px; }
     .hf-grok, .hf-cursor { --y: 580px; }
   }
 
@@ -773,7 +788,7 @@ const mobileEndorsementRows = [
 
   .harness-grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -800,11 +815,12 @@ const mobileEndorsementRows = [
   .harness-name {
     font-size: 14px; font-weight: 500;
     letter-spacing: -0.01em; margin-bottom: 2px;
+    overflow-wrap: anywhere;
   }
   .harness-tag {
     font-family: var(--font-mono);
     font-size: 11px; color: var(--fg-muted);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
 
   .harness-footer {
@@ -1209,16 +1225,20 @@ const mobileEndorsementRows = [
     margin-bottom: 24px;
   }
 
+  @media (max-width: 1180px) {
+    .harness-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .harness { border-right: 0; border-bottom: 1px solid var(--border); }
+    .harness:nth-child(odd) { border-right: 1px solid var(--border); }
+    .harness:nth-child(even) { border-right: 0; }
+    .harness:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: 0; }
+  }
+
   @media (max-width: 960px) {
     .hero-preview {
       width: min(860px, calc(100vw - 24px));
       margin-left: 50%;
       transform: translateX(-50%);
     }
-    .harness-grid { grid-template-columns: 1fr 1fr; }
-    .harness { border-right: 0; border-bottom: 1px solid var(--border); }
-    .harness:nth-child(odd) { border-right: 1px solid var(--border); }
-    .harness:nth-child(even) { border-right: 0; }
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
     .open-grid { grid-template-columns: 1fr; }
   }
