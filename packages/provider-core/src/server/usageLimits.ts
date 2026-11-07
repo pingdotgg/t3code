@@ -49,37 +49,32 @@ export function makeUnavailableUsageLimits(input: {
 
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
-  /** `replaceWindows` marks a complete window set: omitted windows and resets are gone. */
-  readonly update: ProviderUsageLimitsUpdate & { readonly replaceWindows?: boolean };
+  readonly update: ProviderUsageLimitsUpdate;
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  const replace = update.replaceWindows === true;
-  if (
-    previous?.unavailable?.reason === "unsupported" ||
-    (update.windows.length === 0 && (!replace || !previous?.windows.length))
-  ) {
+  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
     return previous;
   }
-  const published = new Map(previous?.windows.map((window) => [window.id, window] as const));
-  const merged = replace ? new Map<string, ServerProviderUsageWindow>() : new Map(published);
+  const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
   // Codex repeats unchanged limits on token ticks; avoid allocating snapshots for no-ops.
-  let changed = replace && update.windows.length !== published.size;
+  let changed = false;
   for (const window of update.windows) {
-    const existing = published.get(window.id);
-    const kept = replace ? undefined : existing;
+    const existing = merged.get(window.id);
     const next: ServerProviderUsageWindow = {
       ...window,
       usedPercent: clampPercent(window.usedPercent),
-      ...(window.resetsAt === undefined && kept?.resetsAt !== undefined
-        ? { resetsAt: kept.resetsAt }
+      ...(window.resetsAt === undefined && existing?.resetsAt !== undefined
+        ? { resetsAt: existing.resetsAt }
         : {}),
-      ...(window.windowDurationMins === undefined && kept?.windowDurationMins !== undefined
-        ? { windowDurationMins: kept.windowDurationMins }
+      ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
+        ? { windowDurationMins: existing.windowDurationMins }
         : {}),
     };
-    if (existing === undefined || !usageWindowEquals(existing, next)) changed = true;
-    merged.set(window.id, next);
+    if (existing === undefined || !usageWindowEquals(existing, next)) {
+      merged.set(window.id, next);
+      changed = true;
+    }
   }
   if (!changed && previous !== undefined) {
     return previous;

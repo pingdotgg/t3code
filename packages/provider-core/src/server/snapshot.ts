@@ -16,14 +16,8 @@ export interface ManagedServerProvider {
   readonly refresh: Effect.Effect<ServerProvider>;
   readonly refreshUsage?: Effect.Effect<void, ServerSettingsError>;
   readonly streamChanges: Stream.Stream<ServerProvider>;
-  /**
-   * Merge windows by ID; updates with no usable window leave the snapshot untouched.
-   * `replaceWindows` publishes a complete window set instead, clearing omitted windows.
-   */
+  /** Merge windows by ID; updates with no usable window leave the snapshot untouched. */
   readonly applyUsageLimits: (
-    update: ProviderUsageLimitsUpdate & {
-      readonly checkedAt: string;
-      readonly replaceWindows?: boolean;
-    },
+    update: ProviderUsageLimitsUpdate & { readonly checkedAt: string },
   ) => Effect.Effect<void>;
 }

@@ -1214,8 +1214,6 @@ describe("CodexAdapterV2 session initialize", () => {
   );
 });
 
-const individualLimit = { limit: "100", used: "99", resetsAt: 2000100000 };
-
 describe("CodexAdapterV2 post-settle continuation", () => {
   // The harness notifies after every recorded event or continuation, so a wait
   // re-checks exactly when the state it reads changes. Subscribing before the
@@ -1239,7 +1237,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
-    hooks: Pick<CodexAdapterV2.CodexAdapterV2Options, "onUsageLimits"> = {},
+    onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1297,6 +1295,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
+        ...(onUsageLimits ? { onUsageLimits } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -1307,7 +1306,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               continuationRequests.push(request);
             }).pipe(Effect.andThen(changes.notify)),
         },
-        ...hooks,
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -5569,306 +5567,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
   it.effect.each([
     {
+      name: "usage",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    // regression: #27773 a first-request 429 only notifies the reset-less premium limit
+    {
       name: "first-request-reset",
       code: "usageLimitExceeded",
       notification: false,
       expectedClass: "usage_limit",
     },
     {
-      name: "reset-read-callback-defect",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-    },
-    {
-      name: "stale-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { primary: { usedPercent: 99, resetsAt: 2000000000 } },
-        during: { primary: { usedPercent: 50, resetsAt: 2000200000 } },
-        read: { primary: { usedPercent: 100, resetsAt: 2000000000 } },
-        resetAt: null,
-      },
-    },
-    {
-      name: "complete-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: {
-          primary: { usedPercent: 100, resetsAt: 2000200000 },
-          secondary: { usedPercent: 100 },
-        },
-        read: { secondary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-        windows: [
-          {
-            id: "secondary",
-            kind: "weekly",
-            label: "Weekly",
-            usedPercent: 100,
-            windowDurationMins: 10_080,
-            resetsAt: "2033-05-19T07:20:00.000Z",
-          },
-        ],
-      },
-    },
-    {
-      name: "unknown-reset-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: {},
-        during: { primary: { usedPercent: 100 } },
-        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-      },
-    },
-    {
-      name: "first-unknown-reset-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        during: { secondary: { usedPercent: 100 } },
-        read: { secondary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-      },
-    },
-    {
-      name: "cleared-reset-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { primary: { usedPercent: 99, resetsAt: 2000100000 } },
-        during: { primary: { usedPercent: 100 } },
-        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: null,
-      },
-    },
-    {
-      name: "repeated-unknown-reset-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: {},
-        during: [{ primary: { usedPercent: 99 } }, { primary: { usedPercent: 100 } }],
-        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-      },
-    },
-    {
-      name: "notified-then-cleared-reset-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { primary: { usedPercent: 100 } },
-        during: [
-          { primary: { usedPercent: 99, resetsAt: 2000100000 } },
-          { primary: { usedPercent: 100 } },
-        ],
-        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: null,
-      },
-    },
-    {
-      name: "resized-window-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: {},
-        during: { primary: { usedPercent: 100, windowDurationMins: 10_080 } },
-        read: { primary: { usedPercent: 100, resetsAt: 2000100000, windowDurationMins: 300 } },
-        resetAt: null,
-      },
-    },
-    {
-      name: "plan-change-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { planType: "plus", primary: { usedPercent: 100 } },
-        during: { planType: "free" },
-        read: { planType: "plus", primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: null,
-      },
-    },
-    {
-      name: "secondary-plan-change-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { planType: "plus", secondary: { usedPercent: 100 } },
-        during: { planType: "free" },
-        read: { planType: "plus", secondary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: null,
-      },
-    },
-    {
-      name: "matching-plan-change-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { planType: "plus", primary: { usedPercent: 100 } },
-        during: { planType: "free" },
-        read: { planType: "free", primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-      },
-    },
-    {
-      name: "plan-change-used-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { planType: "plus", primary: { usedPercent: 50, resetsAt: 2000100000 } },
-        during: { planType: "free" },
-        read: { planType: "plus", primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: null,
-      },
-    },
-    {
-      name: "plan-change-new-window-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { planType: "plus" },
-        during: { planType: "free" },
-        read: { planType: "plus", primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: null,
-      },
-    },
-    {
-      name: "plan-change-individual-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: {
-          planType: "plus",
-          individualLimit: { ...individualLimit, remainingPercent: 50 },
-        },
-        during: { planType: "free" },
-        read: {
-          planType: "plus",
-          individualLimit: { ...individualLimit, remainingPercent: 0 },
-        },
-        resetAt: null,
-      },
-    },
-    {
-      name: "rolled-window-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: {},
-        during: { primary: { usedPercent: 5 } },
-        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: null,
-        windows: [
-          {
-            id: "primary",
-            kind: "session",
-            label: "Session",
-            usedPercent: 5,
-            windowDurationMins: 300,
-          },
-        ],
-      },
-    },
-    {
-      name: "unchanged-window-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { primary: { usedPercent: 100 } },
-        during: { primary: { usedPercent: 100 } },
-        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-      },
-    },
-    {
-      name: "unchanged-secondary-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { secondary: { usedPercent: 100 } },
-        during: { secondary: { usedPercent: 100 } },
-        read: { secondary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-      },
-    },
-    {
-      name: "unchanged-individual-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: {
-          primary: { usedPercent: 100 },
-          individualLimit: { ...individualLimit, remainingPercent: 0 },
-        },
-        during: { individualLimit: { ...individualLimit, remainingPercent: 0 } },
-        read: {
-          primary: { usedPercent: 100, resetsAt: 2000000000 },
-          individualLimit: null,
-        },
-        resetAt: "2033-05-18T03:33:20.000Z",
-      },
-    },
-    {
-      name: "unreset-notification-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { primary: { usedPercent: 99 } },
-        during: { primary: { usedPercent: 100 } },
-        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-      },
-    },
-    {
-      name: "same-window-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { primary: { usedPercent: 99, resetsAt: 2000100000 } },
-        during: { primary: { usedPercent: 97, resetsAt: 2000100000 } },
-        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-      },
-    },
-    {
-      name: "same-window-individual-read",
-      code: "usageLimitExceeded",
-      notification: false,
-      expectedClass: "usage_limit",
-      race: {
-        before: { individualLimit: { ...individualLimit, remainingPercent: 1 } },
-        during: { individualLimit: { ...individualLimit, remainingPercent: 5 } },
-        read: { individualLimit: { ...individualLimit, remainingPercent: 0 } },
-        resetAt: "2033-05-19T07:20:00.000Z",
-      },
-    },
-    {
-      name: "usage",
+      name: "newer-reset-during-read",
       code: "usageLimitExceeded",
       notification: false,
       expectedClass: "usage_limit",
@@ -5882,7 +5594,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     {
       name: "late-reset",
       code: "usageLimitExceeded",
-      notification: true,
+      notification: false,
       expectedClass: "usage_limit",
     },
     {
@@ -5971,12 +5683,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const message = "message" in scenario ? scenario.message : "Provider stopped this request.";
         const errorInfo = "errorInfo" in scenario ? scenario.errorInfo : scenario.code;
         const resetAt = "2033-05-19T07:20:00.000Z";
-        const readsReset =
-          scenario.name === "first-request-reset" || scenario.name === "reset-read-callback-defect";
-        let usageCallbackDied = false;
-        const usageUpdates: Array<
-          Parameters<NonNullable<CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"]>>[0]
-        > = [];
         const snapshot = {
           type: "emit_inbound" as const,
           label: "account/rateLimits/updated",
@@ -5990,14 +5696,32 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           },
         };
-        const codexRateLimits = (rateLimits: object) => ({
-          type: "emit_inbound" as const,
-          label: "account/rateLimits/updated",
+        const readsReset =
+          scenario.name === "first-request-reset" || scenario.name === "newer-reset-during-read";
+        const premium = {
+          ...snapshot,
           frame: {
             method: "account/rateLimits/updated",
-            params: { rateLimits: { limitId: "codex", ...rateLimits } },
+            params: { rateLimits: { limitId: "premium", primary: null, secondary: null } },
           },
-        });
+        };
+        const newerSnapshot = {
+          ...snapshot,
+          frame: {
+            method: "account/rateLimits/updated",
+            params: {
+              rateLimits: {
+                limitId: "codex",
+                primary: { usedPercent: 100, resetsAt: 2000200000, windowDurationMins: 300 },
+              },
+            },
+          },
+        };
+        const readRequest = {
+          type: "expect_outbound" as const,
+          label: "account/rateLimits/read",
+          frame: { id: 4, method: "account/rateLimits/read", params: null },
+        };
         const transcript = makeCodexReplayTranscript({
           scenario: `codex-limit-${scenario.name}`,
           entries: [
@@ -6022,22 +5746,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 ]
               : []),
-            ...(readsReset
-              ? [
-                  {
-                    ...snapshot,
-                    frame: {
-                      method: "account/rateLimits/updated",
-                      params: {
-                        rateLimits: { limitId: "premium", primary: null, secondary: null },
-                      },
-                    },
-                  },
-                ]
-              : []),
-            ...("race" in scenario && "before" in scenario.race
-              ? [codexRateLimits(scenario.race.before)]
-              : []),
+            ...(readsReset ? [premium] : []),
             ...(scenario.name === "deferred-reset" ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
               ? [
@@ -6085,10 +5794,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       params: {
                         threadId: nativeThreadId,
                         turnId: nativeTurnId,
-                        willRetry:
-                          scenario.name === "retry" ||
-                          scenario.name === "late-reset" ||
-                          "willRetry" in scenario,
+                        willRetry: scenario.name === "retry" || "willRetry" in scenario,
                         error: {
                           message,
                           codexErrorInfo: errorInfo,
@@ -6125,46 +5831,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
+            ...(readsReset || scenario.name === "late-reset" ? [readRequest] : []),
+            ...(scenario.name === "newer-reset-during-read" ? [newerSnapshot] : []),
             ...(readsReset
               ? [
                   {
-                    type: "expect_outbound" as const,
-                    label: "account/rateLimits/read",
-                    frame: { id: 4, method: "account/rateLimits/read", params: null },
-                  },
-                  {
                     type: "emit_inbound" as const,
                     label: "account/rateLimits/read",
                     frame: {
                       id: 4,
                       result: {
-                        rateLimits: { limitId: "premium", primary: null, secondary: null },
-                        rateLimitsByLimitId: {
-                          codex: snapshot.frame.params.rateLimits,
-                        },
-                      },
-                    },
-                  },
-                ]
-              : []),
-            ...("race" in scenario
-              ? [
-                  {
-                    type: "expect_outbound" as const,
-                    label: "account/rateLimits/read",
-                    frame: { id: 4, method: "account/rateLimits/read", params: null },
-                  },
-                  ...("during" in scenario.race
-                    ? [scenario.race.during].flat().map(codexRateLimits)
-                    : []),
-                  {
-                    type: "emit_inbound" as const,
-                    label: "account/rateLimits/read",
-                    frame: {
-                      id: 4,
-                      result: {
-                        rateLimits: { limitId: "premium", primary: null, secondary: null },
-                        rateLimitsByLimitId: { codex: { limitId: "codex", ...scenario.race.read } },
+                        ...premium.frame.params,
+                        rateLimitsByLimitId: { codex: snapshot.frame.params.rateLimits },
                       },
                     },
                   },
@@ -6172,20 +5850,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               : []),
             ...(scenario.name === "late-reset"
               ? [
-                  {
-                    type: "expect_outbound" as const,
-                    label: "account/rateLimits/read",
-                    frame: { id: 4, method: "account/rateLimits/read", params: null },
-                  },
                   {
                     type: "emit_inbound" as const,
                     label: "account/rateLimits/read",
                     frame: { id: 4, error: { code: -32600, message: "Not signed in." } },
                   },
+                  { ...snapshot, label: "account/rateLimits/updated/late" },
                 ]
-              : []),
-            ...(scenario.name === "late-reset"
-              ? [{ ...snapshot, label: "account/rateLimits/updated/late" }]
               : []),
             ...("resetAfter" in scenario ? [snapshot] : []),
             ...(scenario.name === "deferred-reset"
@@ -6225,9 +5896,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const resetReceipt = yield* Deferred.make<void>();
-        const terminalReceipt = yield* Deferred.make<void>();
         const snapshotReceipt = yield* Deferred.make<void>();
-        let resetReads = 0;
+        const terminalReceipt = yield* Deferred.make<void>();
         const harness = yield* makeCodexReplayHarness(
           transcript,
           (event) =>
@@ -6238,30 +5908,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   event.turnItem.failure.resetAt === resetAt
                 ? Deferred.succeed(resetReceipt, undefined)
                 : Effect.void,
-          (method) =>
-            Effect.sync(() => {
-              if (method === "account/rateLimits/read") resetReads += 1;
-            }),
           undefined,
+          undefined,
+          // The late reset must land after the terminal its failed read released.
           (entry) =>
             entry.label === "account/rateLimits/updated/late"
               ? Deferred.await(terminalReceipt)
-              : entry.label === "turn/completed" && scenario.name === "late-reset"
-                ? TestClock.adjust("1 second")
-                : Effect.void,
-          scenario.name === "reset-read-callback-defect"
-            ? {
-                onUsageLimits: () =>
-                  Effect.sync(() => {
-                    usageCallbackDied = true;
-                  }).pipe(Effect.andThen(Effect.die("usage snapshot unavailable"))),
-              }
-            : {
-                onUsageLimits: (update) =>
-                  Effect.sync(() => {
-                    usageUpdates.push(update);
-                  }).pipe(Effect.andThen(Deferred.succeed(snapshotReceipt, undefined))),
-              },
+              : Effect.void,
+          () => Deferred.succeed(snapshotReceipt, undefined),
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -6278,16 +5932,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
         assert.equal(terminal.threadDisposition, "reusable");
-        if (scenario.name === "deferred-reset" || readsReset)
+        if (scenario.name === "deferred-reset" || scenario.name === "first-request-reset")
           assert.equal(terminal.failure.resetAt, resetAt);
-        assert.equal(usageCallbackDied, scenario.name === "reset-read-callback-defect");
-        if (scenario.name === "late-reset") assert.isNull(terminal.failure.resetAt);
-        if ("race" in scenario) assert.equal(terminal.failure.resetAt, scenario.race.resetAt);
-        if ("race" in scenario && "windows" in scenario.race)
-          assert.deepInclude(usageUpdates.at(-1), {
-            windows: scenario.race.windows,
-            replaceWindows: true,
-          });
+        if (scenario.name === "newer-reset-during-read")
+          assert.equal(terminal.failure.resetAt, "2033-05-20T11:06:40.000Z");
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
         if ("resetAfter" in scenario) {
@@ -6310,11 +5958,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               event.turnItem.failure.resetAt === resetAt,
           );
           assert.isDefined(item);
-          assert.equal(terminal.retry?.attempt, 1);
-          if (item?.type === "turn_item.updated" && item.turnItem.type === "error") {
-            assert.deepEqual(item.turnItem.retry, terminal.retry);
-            assert.deepEqual(item.turnItem.startedAt, terminal.retryStartedAt);
-          }
         }
         if (scenario.name === "retry" || "willRetry" in scenario)
           assert.equal(terminal.retry?.attempt, 1);
@@ -6322,7 +5965,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(terminal.failure.code, scenario.expectedCode);
           assert.include(terminal.failure.message, scenario.expectedMessage);
           assert.equal(terminal.failure.resetAt, null);
-          assert.equal(resetReads, 0);
         }
       }).pipe(
         Effect.provide(
@@ -6332,125 +5974,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             NodeServices.layer,
             NodeCrypto.layer,
           ),
-        ),
-      ),
-    ),
-  );
-
-  it.effect("shares one reset read between overlapping usage-limit terminals", () =>
-    Effect.gen(function* () {
-      const nativeThreadId = "native-limit-overlap";
-      const turnFailed = (turnId: string) => ({
-        type: "emit_inbound" as const,
-        label: `turn/completed/${turnId}`,
-        frame: {
-          method: "turn/completed",
-          params: {
-            threadId: nativeThreadId,
-            turn: {
-              ...makeCodexReplayTurn({ id: turnId, status: "failed" }),
-              error: {
-                message: "Provider stopped this request.",
-                codexErrorInfo: "usageLimitExceeded",
-              },
-            },
-          },
-        },
-      });
-      const second = codexReplayPreamble({
-        nativeThreadId,
-        nativeTurnId: "turn-overlap-2",
-        prompt: "Continue.",
-      });
-      const readSent = yield* Deferred.make<void>();
-      let reads = 0;
-      const harness = yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({
-          scenario: "codex-limit-overlapping-reads",
-          entries: [
-            ...codexReplayPreamble({
-              nativeThreadId,
-              nativeTurnId: "turn-overlap-1",
-              prompt: "Continue.",
-            }),
-            turnFailed("turn-overlap-1"),
-            {
-              type: "expect_outbound",
-              label: "account/rateLimits/read",
-              frame: { id: 4, method: "account/rateLimits/read", params: null },
-            },
-            {
-              type: "emit_inbound",
-              label: "read-sent",
-              frame: {
-                method: "account/rateLimits/updated",
-                params: { rateLimits: { limitId: "premium", primary: null, secondary: null } },
-              },
-            },
-            ...second.slice(5, 7).map((entry) => withReplayRequestId(entry, 5)),
-            second[7]!,
-            turnFailed("turn-overlap-2"),
-            {
-              type: "emit_inbound",
-              label: "account/rateLimits/read",
-              frame: {
-                id: 4,
-                result: {
-                  rateLimits: {
-                    limitId: "codex",
-                    primary: { usedPercent: 100, resetsAt: 2000100000 },
-                  },
-                },
-              },
-            },
-          ],
-        }),
-        undefined,
-        (method) =>
-          Effect.sync(() => {
-            if (method === "account/rateLimits/read") reads += 1;
-          }),
-        undefined,
-        (entry) =>
-          entry.label === "read-sent" ? Deferred.succeed(readSent, undefined) : Effect.void,
-      );
-      const first = makeCodexTestTurnInput({
-        threadId: harness.threadId,
-        providerThread: harness.providerThread,
-        now: yield* DateTime.now,
-        text: "Continue.",
-        attemptId: RunAttemptId.make("attempt-overlap-1"),
-      });
-      yield* harness.runtime.startTurn(first);
-      yield* Deferred.await(readSent);
-      yield* harness.runtime.startTurn({
-        ...first,
-        runId: RunId.make("overlap-2"),
-        attemptId: RunAttemptId.make("attempt-overlap-2"),
-        rootNodeId: NodeId.make("overlap-2"),
-        runOrdinal: 2,
-        providerTurnOrdinal: 2,
-      });
-      yield* harness.awaitTerminal(2);
-      assert.equal(reads, 1);
-      assert.deepEqual(
-        harness
-          .terminalEvents()
-          .map((event) => [event.runOrdinal, event.status === "failed" && event.failure.resetAt])
-          .toSorted(([left], [right]) => Number(left) - Number(right)),
-        [
-          [1, "2033-05-19T07:20:00.000Z"],
-          [2, "2033-05-19T07:20:00.000Z"],
-        ],
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
         ),
       ),
     ),

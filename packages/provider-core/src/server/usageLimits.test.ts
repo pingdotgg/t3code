@@ -60,37 +60,6 @@ describe("applyUsageLimitsUpdate", () => {
     ).toBe(published);
   });
 
-  it("replaces every window and reset with a complete window set", () => {
-    const resetCredits = { availableCount: 2 };
-    const previous = { ...published, resetCredits };
-    const { resetsAt: _dropped, ...sessionWithoutReset } = session;
-    expect(
-      applyUsageLimitsUpdate({
-        previous,
-        checkedAt: "2026-09-03T12:00:05.000Z",
-        update: { windows: [sessionWithoutReset], replaceWindows: true },
-      }),
-    ).toEqual({
-      checkedAt: "2026-09-03T12:00:05.000Z",
-      windows: [sessionWithoutReset],
-      resetCredits,
-    });
-    expect(
-      applyUsageLimitsUpdate({
-        previous,
-        checkedAt: "2026-09-03T12:00:05.000Z",
-        update: { windows: [], replaceWindows: true },
-      }),
-    ).toEqual({ checkedAt: "2026-09-03T12:00:05.000Z", windows: [], resetCredits });
-    expect(
-      applyUsageLimitsUpdate({
-        previous,
-        checkedAt: "2026-09-03T12:00:05.000Z",
-        update: { windows: [weekly, session], replaceWindows: true },
-      }),
-    ).toBe(previous);
-  });
-
   it("marks a first sparse update as unavailable", () => {
     expect(
       applyUsageLimitsUpdate({ previous: undefined, checkedAt, update: { windows: [weekly] } }),
