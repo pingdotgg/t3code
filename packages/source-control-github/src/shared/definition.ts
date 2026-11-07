@@ -9,6 +9,7 @@ import {
   parseChangeRequestPath,
   parseCommitPath,
   projectChangeRequestHost,
+  repositoryUrlFromPagePath,
   remoteWebOrigin,
   type SourceControlAppSignIn,
 } from "@t3tools/source-control-core/shared/definition";
@@ -26,6 +27,7 @@ const CHANGE_REQUEST_REFERENCE =
 const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+\/[^/]+)\/(?:commit|pull\/\d+\/commits)\/([0-9a-f]+)\/?$/iu;
 const ISSUE_PATH = /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u;
+const PAGE_PATH = /^\/([^/]+\/[^/]+)\/(?:tree|blob)\/./u;
 
 const KIND = SourceControlProviderKind.make("github");
 
@@ -98,6 +100,9 @@ export const definition = defineSourceControl({
   parseCommitUrl: (url, known) =>
     known || isGitHubHost(url.hostname) ? parseCommitPath(url, COMMIT_PATH) : null,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
+  // `tree` and `blob` are also ordinary group names on other hosts, so only GitHub's hosts read them.
+  repositoryUrlFromPageUrl: (url) =>
+    isGitHubHost(url.hostname) ? repositoryUrlFromPagePath(url, PAGE_PATH) : null,
   // GitHub writes every bare reference through `/issues/`, including pull requests.
   changeRequestUrlFromReferenceAutolink: (url) => {
     const match = isGitHubHost(url.hostname) ? ISSUE_PATH.exec(url.pathname) : null;

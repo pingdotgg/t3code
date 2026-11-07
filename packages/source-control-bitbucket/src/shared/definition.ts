@@ -15,6 +15,7 @@ import {
   parseChangeRequestPath,
   parseCommitPath,
   projectChangeRequestHost,
+  repositoryUrlFromPagePath,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
@@ -23,6 +24,7 @@ const repositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
 const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+\/[^/]+)\/commits\/([0-9a-f]+)\/?$/iu;
+const PAGE_PATH = /^\/([^/]+\/[^/]+)\/src\//u;
 
 const KIND = SourceControlProviderKind.make("bitbucket");
 
@@ -93,6 +95,8 @@ export const definition = defineSourceControl({
       : `https://${host}/${repository}/pull-requests/${number}`,
   parseChangeRequestUrl: (url) =>
     isBitbucketHost(url.hostname) ? parseChangeRequestPath(url, CHANGE_REQUEST_PATH) : null,
+  repositoryUrlFromPageUrl: (url) =>
+    isBitbucketHost(url.hostname) ? repositoryUrlFromPagePath(url, PAGE_PATH) : null,
   commitUrl: (input) => buildCommitUrl(input, "commits"),
   parseCommitUrl: (url) =>
     isBitbucketHost(url.hostname) ? parseCommitPath(url, COMMIT_PATH) : null,

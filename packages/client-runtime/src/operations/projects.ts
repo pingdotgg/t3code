@@ -128,7 +128,9 @@ export function githubIncompleteOwnerRepositoryMessage(
 
 export function normalizePastedCloneUrl(input: string): string {
   const trimmed = input.trim();
-  return REPOSITORY_SHORTHAND.test(trimmed) ? (defaultHostCloneUrl(trimmed) ?? trimmed) : trimmed;
+  if (REPOSITORY_SHORTHAND.test(trimmed)) return defaultHostCloneUrl(trimmed) ?? trimmed;
+  // A URL copied from the browser is often a page inside the repository, which git can't clone.
+  return sourceControlClients.repositoryUrlFromPageUrl(trimmed) ?? trimmed;
 }
 
 export function getDefaultCloneUrl(

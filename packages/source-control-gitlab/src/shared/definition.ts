@@ -8,6 +8,7 @@ import {
   parseChangeRequestPath,
   parseCommitPath,
   projectChangeRequestHost,
+  repositoryUrlFromPagePath,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
@@ -20,6 +21,7 @@ const CHANGE_REQUEST_REFERENCE =
 // Self-managed GitLab runs on any hostname and nests projects in groups.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/commit\/([0-9a-f]+)\/?$/iu;
+const PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/-\//u;
 
 const KIND = SourceControlProviderKind.make("gitlab");
 
@@ -45,6 +47,7 @@ export const definition = defineSourceControl({
       ? changeRequestUrlBelow(webUrl, `-/merge_requests/${number}`)
       : `${remoteWebOrigin(host, remoteUrl)}/${repository}/-/merge_requests/${number}`,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
+  repositoryUrlFromPageUrl: (url) => repositoryUrlFromPagePath(url, PAGE_PATH),
   commitUrl: (input) => buildCommitUrl(input, "-/commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
   // `!12` already links the merge request itself; `#12` is always an issue.

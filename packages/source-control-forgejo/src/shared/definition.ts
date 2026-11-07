@@ -12,6 +12,7 @@ import {
   parseCommitPath,
   projectChangeRequestHost,
   remoteWebOrigin,
+  repositoryUrlFromPagePath,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
@@ -22,6 +23,7 @@ const CHANGE_REQUEST_REFERENCE =
 // Forgejo and Gitea run on any hostname, possibly mounted below a path.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/commit\/([0-9a-f]+)\/?$/iu;
+const PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/src\/(?:branch|tag|commit)\//u;
 
 const KIND = SourceControlProviderKind.make("forgejo");
 
@@ -84,6 +86,7 @@ export const definition = defineSourceControl({
     const link = parseChangeRequestPath(url, CHANGE_REQUEST_PATH);
     return link === null ? null : { ...link, authority: url.host.toLowerCase() };
   },
+  repositoryUrlFromPageUrl: (url) => repositoryUrlFromPagePath(url, PAGE_PATH),
   changeRequestUrlFromReferenceAutolink: () => null,
   commitUrl: (input) => buildCommitUrl(input, "commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),

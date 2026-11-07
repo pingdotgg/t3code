@@ -258,6 +258,8 @@ export interface SourceControlDefinition {
   readonly parseCommitUrl?: (url: URL, known: boolean) => CommitLink | null;
   /** Null when the URL is not one of this host's change requests. */
   readonly parseChangeRequestUrl: (url: URL) => ParsedChangeRequestUrl | null;
+  /** The repository's URL when `url` is a page inside it, such as a branch's file tree. */
+  readonly repositoryUrlFromPageUrl?: (url: URL) => string | null;
   /**
    * The change request URL a `reference` autolink might name, such as a GitHub `#123` written
    * through the issue route. Only a candidate: the caller must read it as a change request
@@ -408,6 +410,18 @@ export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeReq
         repositoryUrl: `${url.origin}/${repository}`,
       }
     : null;
+}
+
+/** Reads the repository `url` is a page of with `route`, whose first group is the repository path. */
+export function repositoryUrlFromPagePath(url: URL, route: RegExp): string | null {
+  const repository = route.exec(url.pathname)?.[1];
+  if (!repository) return null;
+  // Keeps any credentials in the pasted URL, which a clone still needs.
+  const repositoryUrl = new URL(url);
+  repositoryUrl.pathname = `/${repository}`;
+  repositoryUrl.search = "";
+  repositoryUrl.hash = "";
+  return repositoryUrl.toString();
 }
 
 export function changeRequestUrlBelow(webUrl: string, route: string): string {
@@ -611,6 +625,8 @@ export interface SourceControlDefinitionRegistry {
   /** The first host, in registry order, that reads `url` as one of its change requests. */
   readonly parseChangeRequestUrl: (url: string) => ParsedChangeRequest | null;
   readonly parseCommitUrl: (url: string, kind?: SourceControlProviderKind) => ParsedCommit | null;
+  /** The first host, in registry order, that reads `url` as a page inside a repository. */
+  readonly repositoryUrlFromPageUrl: (url: string) => string | null;
   readonly findByChangeRequestUrl: (url: string) => SourceControlDefinition | undefined;
   readonly hostLabelForChangeRequestUrl: (url: string) => string;
   readonly isSameChangeRequest: (left: string, right: string) => boolean;
@@ -717,6 +733,15 @@ export function makeSourceControlDefinitionRegistry(
       for (const definition of kind === undefined ? claimOrder : preferred ? [preferred] : []) {
         const link = definition.parseCommitUrl?.(url, preferred !== undefined);
         if (link != null) return { definition, link };
+      }
+      return null;
+    },
+    repositoryUrlFromPageUrl: (value) => {
+      const url = httpUrl(value);
+      if (url === null) return null;
+      for (const definition of claimOrder) {
+        const repositoryUrl = definition.repositoryUrlFromPageUrl?.(url);
+        if (repositoryUrl != null) return repositoryUrl;
       }
       return null;
     },

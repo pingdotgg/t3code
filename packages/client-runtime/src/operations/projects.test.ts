@@ -63,6 +63,30 @@ describe("add project shared logic", () => {
     );
     expect(normalizePastedCloneUrl("group/subgroup/project")).toBe("group/subgroup/project");
     expect(normalizePastedCloneUrl("/srv/git/repo.git")).toBe("/srv/git/repo.git");
+    expect(normalizePastedCloneUrl("https://gitlab.example.com/group/tree/main")).toBe(
+      "https://gitlab.example.com/group/tree/main",
+    );
+  });
+
+  it.each([
+    ["https://github.com/owner/repo/tree/main", "https://github.com/owner/repo"],
+    ["https://github.com/owner/repo/tree/feature/x/src", "https://github.com/owner/repo"],
+    ["https://github.com/owner/repo/blob/main/README.md", "https://github.com/owner/repo"],
+    ["https://github.example.com/owner/repo/tree/main", "https://github.example.com/owner/repo"],
+    ["https://gitlab.com/group/sub/project/-/tree/main", "https://gitlab.com/group/sub/project"],
+    [
+      "https://gitlab.example.com/group/project/-/blob/main/x",
+      "https://gitlab.example.com/group/project",
+    ],
+    ["https://codeberg.org/owner/repo/src/branch/main", "https://codeberg.org/owner/repo"],
+    ["https://codeberg.org/owner/repo/src/tag/v1/docs", "https://codeberg.org/owner/repo"],
+    ["https://bitbucket.org/workspace/repo/src/master/", "https://bitbucket.org/workspace/repo"],
+    ["https://token@github.com/owner/repo/tree/main?x=1#L2", "https://token@github.com/owner/repo"],
+  ])("clones the repository a pasted page belongs to: %s", (pageUrl, repositoryUrl) => {
+    expect(normalizePastedCloneUrl(pageUrl)).toBe(repositoryUrl);
+    expect(getCloneDirectoryName(normalizePastedCloneUrl(pageUrl))).toBe(
+      repositoryUrl.split("/").at(-1),
+    );
   });
 
   it("uses HTTPS for repositories selected through a provider", () => {
