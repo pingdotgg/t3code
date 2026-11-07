@@ -2,6 +2,11 @@
   "name": "neon-website-astro",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/neon-website-astro"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -15,20 +20,17 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/neon": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/vite": "catalog:",
+    "@vercel/nft": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:",
     "tailwindcss": "catalog:",
-    "typescript": "catalog:",
-    "@vercel/nft": "catalog:"
+    "typescript": "catalog:"
   },
   "engines": {
     "node": ">=24"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/neon-website-astro"
   }
 }

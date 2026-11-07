@@ -2,14 +2,7 @@
  *  The `.dark` class on <html> is the single source of truth; the
  *  pre-paint script in index.html applies it before hydration using the
  *  same storage contract (key "theme"; absent = system). */
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
 export type ThemePreference = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
@@ -28,11 +21,7 @@ const readPreference = (): ThemePreference => {
 const systemDark = () => window.matchMedia("(prefers-color-scheme: dark)");
 
 const resolve = (preference: ThemePreference): ResolvedTheme =>
-  preference === "system"
-    ? systemDark().matches
-      ? "dark"
-      : "light"
-    : preference;
+  preference === "system" ? (systemDark().matches ? "dark" : "light") : preference;
 
 const apply = (resolved: ResolvedTheme) => {
   document.documentElement.classList.toggle("dark", resolved === "dark");
@@ -70,11 +59,8 @@ export const useDiffThemeOptions = (): {
 };
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
-  const [preference, setPreferenceState] =
-    useState<ThemePreference>(readPreference);
-  const [resolved, setResolved] = useState<ResolvedTheme>(() =>
-    resolve(readPreference()),
-  );
+  const [preference, setPreferenceState] = useState<ThemePreference>(readPreference);
+  const [resolved, setResolved] = useState<ResolvedTheme>(() => resolve(readPreference()));
 
   const setPreference = useCallback((next: ThemePreference) => {
     try {
