@@ -3,6 +3,7 @@ import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -312,4 +313,45 @@ it.effect(
         );
       }).pipe(Effect.provide(layer(layerMetadata)));
     }),
+);
+
+it.effect("does not let a lookup invalidated mid-flight replace a newer last identity", () =>
+  Effect.gen(function* () {
+    const firstStarted = yield* Deferred.make<void>();
+    const releaseFirst = yield* Deferred.make<void>();
+    const resolveCalls = yield* Ref.make(0);
+    const layerMetadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          Effect.gen(function* () {
+            const call = yield* Ref.updateAndGet(resolveCalls, (count) => count + 1);
+            if (call === 1) {
+              yield* Deferred.succeed(firstStarted, undefined);
+              yield* Deferred.await(releaseFirst);
+            }
+            return identity(workspaceRoot, call);
+          }),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: () => Effect.succeed(null),
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      const firstLookup = yield* Effect.forkChild(service.readRepositoryIdentity("/widgets"));
+      yield* Deferred.await(firstStarted);
+      yield* service.invalidate(["/widgets"]);
+      const newer = yield* service.readRepositoryIdentity("/widgets");
+      assert.equal(newer?.canonicalKey, "example.test/v2/widgets");
+
+      yield* Deferred.succeed(releaseFirst, undefined);
+      yield* Fiber.join(firstLookup);
+      yield* TestClock.adjust(Duration.seconds(61));
+
+      const expired = yield* service.peek("/widgets");
+      assert.equal(expired.repositoryIdentity?.canonicalKey, "example.test/v2/widgets");
+    }).pipe(Effect.provide(layer(layerMetadata)));
+  }),
 );

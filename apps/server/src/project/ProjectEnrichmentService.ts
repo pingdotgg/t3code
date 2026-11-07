@@ -93,6 +93,8 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   // Outlives the cache entry so an expired or refreshing identity still reads as its last value.
   const lastRepositoryIdentities = new Map<string, RepositoryIdentity>();
+  // A lookup still running when `invalidate` lands must not overwrite what a newer lookup remembered.
+  let invalidations = 0;
   const rememberRepositoryIdentity = (
     workspaceRoot: string,
     repositoryIdentity: RepositoryIdentity | null,
@@ -108,13 +110,16 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   const repositoryIdentityCache = yield* Cache.makeWith(
     (workspaceRoot: string) =>
-      Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)).pipe(
-        Effect.tap((result) =>
-          Exit.isSuccess(result)
-            ? Effect.sync(() => rememberRepositoryIdentity(workspaceRoot, result.value))
-            : Effect.void,
-        ),
-      ),
+      Effect.suspend(() => {
+        const startedAfter = invalidations;
+        return Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)).pipe(
+          Effect.tap((result) =>
+            Exit.isSuccess(result) && startedAfter === invalidations
+              ? Effect.sync(() => rememberRepositoryIdentity(workspaceRoot, result.value))
+              : Effect.void,
+          ),
+        );
+      }),
     {
       capacity: cacheCapacity,
       timeToLive: Exit.match({
@@ -312,7 +317,10 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         Effect.all(
           [
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
-            Effect.sync(() => lastRepositoryIdentities.delete(workspaceRoot)),
+            Effect.sync(() => {
+              invalidations += 1;
+              lastRepositoryIdentities.delete(workspaceRoot);
+            }),
             Cache.invalidate(faviconCache, workspaceRoot),
             // The resolver keeps its own misses, which would outlive a clone filling the folder.
             faviconResolver.invalidate(workspaceRoot),
