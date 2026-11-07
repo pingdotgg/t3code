@@ -24,6 +24,9 @@ const SECTIONS = [
     rows: [
       { id: "SettingsProviderAccounts", label: "Provider accounts" },
       { id: "SettingsEnvironmentSourceControl", label: "Source control" },
+      { id: "SettingsDiffs", label: "Diffs & pull requests" },
+      { id: "SettingsAccess", label: "Sharing & access" },
+      { id: "SettingsSecrets", label: "Secrets" },
     ],
   },
 ];
@@ -52,12 +55,26 @@ describe("filterSettingsSections", () => {
     { query: "agent credits", expected: [["Server settings", ["Source control"]]] },
     {
       query: "server settings",
-      expected: [["Server settings", ["Provider accounts", "Source control"]]],
+      expected: [
+        [
+          "Server settings",
+          [
+            "Provider accounts",
+            "Source control",
+            "Diffs & pull requests",
+            "Sharing & access",
+            "Secrets",
+          ],
+        ],
+      ],
     },
     {
       query: "accounts",
       expected: [["Server settings", ["Provider accounts"]]],
     },
+    { query: "1password", expected: [["Server settings", ["Secrets"]]] },
+    { query: "pairing", expected: [["Server settings", ["Sharing & access"]]] },
+    { query: "test files", expected: [["Server settings", ["Diffs & pull requests"]]] },
     { query: "usage", expected: [[null, ["Usage"]]] },
     { query: "zzzz", expected: [] },
   ])("$query", ({ query, expected }) => {
