@@ -69,6 +69,33 @@ const makeFakePi = (
     return { spawner, received };
   });
 
+it.effect("sets the requested thinking level before prompting", () =>
+  Effect.gen(function* () {
+    const pi = yield* makeFakePi(JSON.stringify({ subject: "Update README", body: "" }));
+    const textGeneration = yield* makePiTextGeneration(
+      { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+      {},
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
+
+    yield* textGeneration.generateCommitMessage({
+      cwd: process.cwd(),
+      branch: "main",
+      stagedSummary: "M README.md",
+      stagedPatch: "diff --git a/README.md b/README.md",
+      modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "rtx/GLM-5.3-Flash", [
+        { id: "thinking", value: "low" },
+      ]),
+    });
+
+    assert.deepEqual(
+      pi.received
+        .filter((record) => record["type"] !== "get_last_assistant_text")
+        .map(({ type, level }) => (level === undefined ? type : `${type}:${level}`)),
+      ["set_model", "set_thinking_level:low", "prompt"],
+    );
+  }),
+);
+
 it.effect("runs Pi offline, since the process is stopped as soon as it answers", () =>
   Effect.gen(function* () {
     const pi = yield* makeFakePi(JSON.stringify({ subject: "Update README", body: "" }));

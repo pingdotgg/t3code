@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { TextGenerationError } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import type { PiSettings } from "../settings.ts";
 
 import { makePiRpcConnection, parsePiModelSlug, piRecordString } from "./rpc.ts";
@@ -86,6 +87,14 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
                 : error,
             ),
           );
+      }
+
+      const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+      if (thinking !== undefined) {
+        // Best effort: a level the model lacks should not cost the user the generated text.
+        yield* connection
+          .request({ type: "set_thinking_level", level: thinking })
+          .pipe(Effect.ignoreCause({ log: true }));
       }
 
       yield* connection.request({ type: "prompt", message: prompt });
