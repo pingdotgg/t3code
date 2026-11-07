@@ -9,6 +9,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -17,6 +18,9 @@ import type { BackendStartupFailure } from "../backend/DesktopBackendManager.ts"
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopState from "./DesktopState.ts";
+import * as DesktopHomeRecovery from "./DesktopHomeRecovery.ts";
+import * as DesktopLifecycle from "./DesktopLifecycle.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
 const RELEASES_URL = "https://github.com/pingdotgg/t3code/releases";
 const LAST_STARTED_VERSION_FILE = "desktop-last-started-version";
@@ -145,10 +149,14 @@ export const listen: Effect.Effect<
   | DesktopState.DesktopState
   | DesktopUpdates.DesktopUpdates
   | DesktopEnvironment.DesktopEnvironment
+  | DesktopAppSettings.DesktopAppSettings
+  | DesktopLifecycle.DesktopLifecycle
+  | DesktopLifecycle.DesktopLifecycleRuntimeServices
   | ElectronApp.ElectronApp
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
   | ElectronWindow.ElectronWindow
+  | ElectronDialog.ElectronDialog
   | FileSystem.FileSystem
   | Scope.Scope
 > = Effect.gen(function* () {
@@ -343,6 +351,10 @@ export const listen: Effect.Effect<
           yield* Ref.set(failureRef, Option.none());
           yield* closeWhenMainReady;
           yield* rememberStartedVersion;
+          return;
+        }
+        if (startup._tag === "StateDirOwned") {
+          yield* DesktopHomeRecovery.recover();
           return;
         }
         if (startup._tag !== "Failing") return;

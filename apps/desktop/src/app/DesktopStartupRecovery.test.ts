@@ -10,7 +10,12 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
+import * as DesktopLifecycle from "./DesktopLifecycle.ts";
+import * as DesktopShutdown from "./DesktopShutdown.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -139,6 +144,17 @@ it.effect.each([
       yield* listen.pipe(
         Effect.provide(
           Layer.mergeAll(
+            ElectronDialog.layer,
+            DesktopAppSettings.layerTest(),
+            DesktopShutdown.layer,
+            Layer.succeed(DesktopLifecycle.DesktopLifecycle, {
+              register: Effect.void,
+              relaunch: () => Effect.die("unexpected relaunch"),
+            }),
+            Layer.succeed(
+              DesktopWindow.DesktopWindow,
+              {} as DesktopWindow.DesktopWindow["Service"],
+            ),
             FileSystem.layerNoop({
               readFileString: () => Effect.succeed("0.1.2"),
               writeFileString: () => Deferred.succeed(remembered, undefined).pipe(Effect.asVoid),
