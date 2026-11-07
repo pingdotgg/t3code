@@ -2006,6 +2006,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           loadingIndex: 0,
         });
         const snapshotReloadRequired = yield* Ref.make(false);
+        // Replayed history for the active session must not read as post-turn output.
+        const snapshotReloading = yield* Ref.make(false);
         const resetConversationCaches = Effect.all(
           [
             Ref.set(promptInstructionStates, new Map()),
@@ -4789,7 +4791,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             };
           }
           const rootSessionId = yield* Ref.get(activeSessionId);
-          if (rootSessionId === null || notification.sessionId !== rootSessionId) {
+          if (
+            rootSessionId === null ||
+            notification.sessionId !== rootSessionId ||
+            (yield* Ref.get(snapshotReloading))
+          ) {
             return {
               buffered: false,
               offerContinuation: false,
@@ -5108,6 +5114,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (
             followsAgentWorkState &&
             !(yield* Ref.get(stoppedRunQuarantine)) &&
+            !(yield* Ref.get(snapshotReloading)) &&
             notification.sessionId === (yield* Ref.get(activeSessionId))
           ) {
             if (update.sessionUpdate === "state_update") agentWork = update;
@@ -9362,16 +9369,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       loadingMessageId: null,
                       loadingIndex: 0,
                     });
-                    // Replayed history for the active session would read as post-turn output.
-                    yield* Ref.set(activeSessionId, null);
                     const mcpContext = yield* readMcpContext(
                       snapshotInput.providerThread.appThreadId,
                     );
                     prepareTerminalEnvironment(mcpContext, sessionId);
-                    const activated = yield* runtime.loadSession(
-                      sessionId,
-                      acpMcpActivation(mcpContext),
-                    );
+                    yield* Ref.set(snapshotReloading, reload);
+                    const activated = yield* runtime
+                      .loadSession(sessionId, acpMcpActivation(mcpContext))
+                      .pipe(Effect.ensuring(Ref.set(snapshotReloading, false)));
                     yield* Ref.set(snapshotReloadRequired, false);
                     rememberTerminalEnvironment(
                       activated.sessionId,

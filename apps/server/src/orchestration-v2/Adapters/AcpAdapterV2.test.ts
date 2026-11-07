@@ -5310,12 +5310,18 @@ describe("AcpAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("acp-test-native-rewind");
       const prompts: Array<string> = [];
       let loads = 0;
+      let extensions: AcpAdapterV2ExtensionContext | undefined;
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          enablePostSettleContinuation: true,
           rollbackSession: () => Effect.void,
+          registerExtensions: (context) =>
+            Effect.sync(() => {
+              extensions = context;
+            }),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
@@ -5327,12 +5333,15 @@ describe("AcpAdapterV2", () => {
               },
               loadSession: (sessionId, activation) => {
                 loads += 1;
-                return nativeRuntime.loadSession(sessionId, activation);
+                return extensions!
+                  .applyBackgroundTaskMutation({ sessionId, taskId: "task-1", status: "running" })
+                  .pipe(Effect.andThen(nativeRuntime.loadSession(sessionId, activation)));
               },
             }),
           }),
         },
         selfInvocation,
+        continuationRequests: { offer: () => Effect.void },
       });
       const threadId = ThreadId.make("thread-acp-native-rewind");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -5396,6 +5405,7 @@ describe("AcpAdapterV2", () => {
       const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
       assert.strictEqual(loads, 1);
       assert.deepEqual(snapshot.providerTurns, []);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
 
       yield* runTurn(2);
       assert.strictEqual(prompts.length, 2);
