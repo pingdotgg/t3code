@@ -5299,6 +5299,110 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("rebuilds the snapshot and resends instructions after a native rewind", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-native-rewind");
+      const prompts: Array<string> = [];
+      let loads = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          rollbackSession: () => Effect.void,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (nativeRuntime) => ({
+              ...nativeRuntime,
+              prompt: (payload, options) => {
+                prompts.push(JSON.stringify(payload.prompt));
+                return nativeRuntime.prompt(payload, options);
+              },
+              loadSession: (sessionId, activation) => {
+                loads += 1;
+                return nativeRuntime.loadSession(sessionId, activation);
+              },
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-native-rewind");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-native-rewind"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runTurn = Effect.fn("runTurn")(function* (ordinal: number) {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal,
+          }),
+        );
+        while ((yield* Queue.take(events)).type !== "turn.terminal");
+      });
+      yield* runTurn(1);
+      const [providerTurn] = (yield* runtime.readThreadSnapshot({ providerThread })).providerTurns;
+      assert.isDefined(providerTurn);
+      assert.strictEqual(loads, 0);
+
+      yield* runtime.rollbackThread({
+        providerThread,
+        providerThreadTurns: [],
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-acp-native-rewind"),
+          appRunOrdinal: 1,
+          providerTurn: {
+            ...providerTurn!,
+            nativeTurnRef: {
+              driver: ACP_TEST_DRIVER,
+              strength: "strong",
+              nativeId: "native-turn-1",
+            },
+          },
+        },
+      });
+
+      const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.strictEqual(loads, 1);
+      assert.deepEqual(snapshot.providerTurns, []);
+
+      yield* runTurn(2);
+      assert.strictEqual(prompts.length, 2);
+      assert.strictEqual(prompts[1], prompts[0]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("quarantines callbacks from a failed rollback replacement before retrying", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

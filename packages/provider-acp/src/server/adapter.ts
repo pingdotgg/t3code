@@ -2005,6 +2005,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           loadingMessageId: null,
           loadingIndex: 0,
         });
+        const snapshotReloadRequired = yield* Ref.make(false);
+        const resetConversationCaches = Effect.all(
+          [
+            Ref.set(promptInstructionStates, new Map()),
+            Ref.set(compactionMarkers, new Map()),
+            Ref.set(providerTurns, new Map()),
+            Ref.set(snapshot, {
+              order: [],
+              messages: new Map(),
+              loadingRole: null,
+              loadingMessageId: null,
+              loadingIndex: 0,
+            }),
+            Ref.set(snapshotReloadRequired, false),
+          ],
+          { discard: true },
+        );
 
         const awaitRuntimeTeardown = Effect.fnUntraced(function* () {
           const state = yield* Ref.get(runtimeTeardownState);
@@ -7168,16 +7185,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* setActiveSessionSetup(candidate);
             yield* Ref.set(activeSelection, null);
             yield* Ref.set(activeInteractionMode, null);
-            yield* Ref.set(promptInstructionStates, new Map());
-            yield* Ref.set(compactionMarkers, new Map());
-            yield* Ref.set(providerTurns, new Map());
-            yield* Ref.set(snapshot, {
-              order: [],
-              messages: new Map(),
-              loadingRole: null,
-              loadingMessageId: null,
-              loadingIndex: 0,
-            });
+            yield* resetConversationCaches;
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -9336,7 +9344,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     snapshotInput.providerThread.appThreadId,
                   );
                   const sessionId = yield* nativeThreadId(driver, snapshotInput.providerThread);
-                  if ((yield* Ref.get(activeSessionId)) !== sessionId) {
+                  const reload =
+                    (yield* Ref.get(snapshotReloadRequired)) &&
+                    capabilities.threads.canReadThreadSnapshot &&
+                    (yield* Ref.get(activeTurn)) === null;
+                  if ((yield* Ref.get(activeSessionId)) !== sessionId || reload) {
                     if (!capabilities.threads.canReadThreadSnapshot) {
                       return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                         driver,
@@ -9350,6 +9362,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       loadingMessageId: null,
                       loadingIndex: 0,
                     });
+                    // Replayed history for the active session would read as post-turn output.
+                    yield* Ref.set(activeSessionId, null);
                     const mcpContext = yield* readMcpContext(
                       snapshotInput.providerThread.appThreadId,
                     );
@@ -9358,6 +9372,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       sessionId,
                       acpMcpActivation(mcpContext),
                     );
+                    yield* Ref.set(snapshotReloadRequired, false);
                     rememberTerminalEnvironment(
                       activated.sessionId,
                       yield* readMcpContext(snapshotInput.providerThread.appThreadId),
@@ -9438,6 +9453,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         ),
                       );
                     if (rewound) {
+                      yield* resetConversationCaches;
+                      yield* Ref.set(snapshotReloadRequired, true);
                       return {
                         providerThread: {
                           ...rollbackInput.providerThread,
@@ -9535,6 +9552,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* setActiveSessionSetup(forked);
                   yield* Ref.set(activeSelection, null);
                   yield* Ref.set(activeInteractionMode, null);
+                  yield* Ref.set(snapshotReloadRequired, true);
                   itemIdentityVersion = 2;
                   const now = yield* DateTime.now;
                   const providerThread = makeProviderThread({

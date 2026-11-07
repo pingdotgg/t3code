@@ -1,7 +1,17 @@
 import { assert, it } from "@effect/vitest";
 import type { ModelInfo } from "@github/copilot-sdk";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
-import { gitHubCopilotAuth, gitHubCopilotModels, gitHubCopilotSlashCommands } from "./status.ts";
+import type { CopilotSdkClient } from "./copilotSdkRuntime.ts";
+import {
+  gitHubCopilotAuth,
+  gitHubCopilotModels,
+  gitHubCopilotSlashCommands,
+  readGitHubCopilotAccount,
+} from "./status.ts";
 
 const model = (overrides: Partial<ModelInfo>) =>
   ({ id: "m", name: "M", capabilities: {}, ...overrides }) as ModelInfo;
@@ -46,3 +56,51 @@ it("reports the signed-in account", () => {
   });
   assert.deepEqual(gitHubCopilotAuth({ isAuthenticated: false }), { status: "unauthenticated" });
 });
+
+const probeClient = (overrides: Partial<CopilotSdkClient>) =>
+  ({
+    start: async () => undefined,
+    authStatus: async () => ({ isAuthenticated: false }),
+    stop: async () => undefined,
+    forceStop: async () => undefined,
+    ...overrides,
+  }) as CopilotSdkClient;
+
+it.effect("force stops a CLI that never finishes its handshake", () =>
+  Effect.gen(function* () {
+    let forced = false;
+    const probe = yield* readGitHubCopilotAccount(
+      probeClient({
+        start: () => new Promise(() => undefined),
+        forceStop: async () => {
+          forced = true;
+        },
+      }),
+    ).pipe(Effect.forkChild);
+
+    yield* TestClock.adjust("10 seconds");
+
+    assert.isTrue(Option.isNone(yield* Fiber.join(probe)));
+    assert.isTrue(forced);
+  }),
+);
+
+it.effect("force stops a CLI that will not shut down", () =>
+  Effect.gen(function* () {
+    let forced = false;
+    const probe = yield* readGitHubCopilotAccount(
+      probeClient({
+        stop: () => new Promise(() => undefined),
+        forceStop: async () => {
+          forced = true;
+        },
+      }),
+    ).pipe(Effect.forkChild);
+
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("2 seconds");
+
+    assert.isTrue(Option.isSome(yield* Fiber.join(probe)));
+    assert.isTrue(forced);
+  }),
+);
