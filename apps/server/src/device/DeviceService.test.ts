@@ -60,7 +60,7 @@ it.effect.each([400, 500])(
           ),
         ),
         run: () => Effect.die("Screenshot does not run a command"),
-        platformAvailable: () => Effect.succeed(false),
+        availablePlatforms: Effect.succeed({ ios: false, android: false }),
       });
       const result = yield* operations
         .screenshot({
@@ -104,7 +104,7 @@ const fixture = Effect.fn("fixture")(function* (
   const devices: Array<Omit<DeviceSummary, "hostId">> = [];
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const androidAvailable = yield* Ref.make(true);
-  const iosAvailable = yield* Ref.make(true);
+  const iosAvailable = yield* Ref.make(false);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
   const listing = { hangs: false, requested: yield* Deferred.make<void>() };
   let booted = false;
@@ -213,8 +213,10 @@ const fixture = Effect.fn("fixture")(function* (
         origin: "http://device.test",
         http,
         run,
-        platformAvailable: (platform) =>
-          Ref.get(platform === "ios" ? iosAvailable : androidAvailable),
+        availablePlatforms: Effect.all({
+          ios: Ref.get(iosAvailable),
+          android: Ref.get(androidAvailable),
+        }),
       }),
       ...(options.endsDevices ? { endsDevices: true } : {}),
     },
@@ -1070,7 +1072,7 @@ it.effect.each(["shutdown", "close"] as const)(
           origin: "http://device.test",
           http,
           run,
-          platformAvailable: () => Effect.succeed(true),
+          availablePlatforms: Effect.succeed({ ios: false, android: true }),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -1232,7 +1234,7 @@ it.effect("leaves a session its host leases to every thread open when one thread
           origin: "http://device.test",
           http,
           run,
-          platformAvailable: () => Effect.succeed(true),
+          availablePlatforms: Effect.succeed({ ios: false, android: true }),
         }),
         agentEndpoint: () =>
           Effect.succeed({
@@ -1354,7 +1356,7 @@ it.effect.each([
           origin: "http://device.test",
           http,
           run,
-          platformAvailable: () => Effect.succeed(true),
+          availablePlatforms: Effect.succeed({ ios: false, android: true }),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -1426,7 +1428,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           origin: "http://device.test",
           http,
           run,
-          platformAvailable: () => Effect.succeed(true),
+          availablePlatforms: Effect.succeed({ ios: false, android: true }),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
