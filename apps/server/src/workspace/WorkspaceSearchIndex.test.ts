@@ -7,6 +7,7 @@ import {
 } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -27,6 +28,44 @@ function fileItem(relativePath: string): FileItem {
     gitStatus: "clean",
   };
 }
+
+it.effect("reads never rescan after the former recovery interval", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const scanFiles = vi.fn(() => ({ ok: true as const, value: undefined }));
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        scanFiles,
+        mixedSearch: () => ({ ok: true as const, value: { items: [], totalMatched: 0 } }),
+        fileSearch: () => ({
+          ok: true as const,
+          value: { items: [fileItem("watched.ts")], scores: [], totalMatched: 1, totalFiles: 1 },
+        }),
+        grep: () => ({ ok: true as const, value: { items: [], nextCursor: null } }),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+      const index = yield* WorkspaceSearchIndex.make("/workspace/project");
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* index.list()).toEqual({ entries: [], truncated: false });
+      expect((yield* index.search("", 10, "file")).entries).toEqual([
+        { path: "watched.ts", kind: "file" },
+      ]);
+      expect(
+        yield* index.searchContents({
+          query: "needle",
+          limit: 1,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        }),
+      ).toEqual({ matches: [], truncated: false });
+      expect(scanFiles).not.toHaveBeenCalled();
+      yield* index.refresh();
+      expect(scanFiles).toHaveBeenCalledTimes(1);
+    }),
+  ),
+);
 
 it.effect("filters image searches before applying the result limit", () =>
   Effect.scoped(
