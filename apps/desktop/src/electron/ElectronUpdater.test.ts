@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { vi } from "vite-plus/test";
@@ -98,10 +99,10 @@ describe.skipIf(process.platform !== "linux")("AppImage launch paths", () => {
     Effect.gen(function* () {
       using f = fixture("My T3-0.1.7.AppImage", "T3-Code-x86_64.AppImage");
       yield* ElectronUpdater.make.quitAndInstall({ isSilent: true, isForceRunAfter: true });
-      process.env.APPIMAGE = f.newPath;
+      const env = yield* HostProcess.Environment;
+      env.APPIMAGE = f.newPath;
       const nextDownload = NodePath.join(f.directory, "cache", "T3-Code-x86_64.AppImage");
       NodeFS.writeFileSync(nextDownload, "#!/bin/sh\necho updated\n", { mode: 0o755 });
-      process.env.APPIMAGE = NodePath.join(f.directory, "T3-Code-x86_64.AppImage");
       getUpdater.mockReturnValue(new FixtureUpdater(nextDownload));
       yield* ElectronUpdater.make.quitAndInstall({ isSilent: true, isForceRunAfter: true });
       assert.equal(NodeChildProcess.execFileSync(f.launcher, { encoding: "utf8" }), "updated\n");
