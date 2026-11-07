@@ -595,7 +595,7 @@ function ThreadRenameInput(props: {
   onCommit: () => void;
   onCancel: () => void;
 }) {
-  // Enter and Escape blur the input as it unmounts; that blur must not commit again.
+  // Enter and Escape blur the input as it unmounts; that blur must not cancel again.
   const settledRef = useRef(false);
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     event.stopPropagation();
@@ -620,7 +620,7 @@ function ThreadRenameInput(props: {
       onFocus={(event) => event.currentTarget.select()}
       onKeyDown={handleKeyDown}
       onBlur={() => {
-        if (!settledRef.current) props.onCommit();
+        if (!settledRef.current) props.onCancel();
       }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
