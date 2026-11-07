@@ -120,8 +120,8 @@ export function GuideStop({
                 aria-hidden
                 className="ml-1 flex items-center gap-0.5 @max-[30rem]/guide:hidden"
               >
-                <Kbd>J</Kbd>
                 <Kbd>K</Kbd>
+                <Kbd>J</Kbd>
               </span>
             </div>
           </header>
