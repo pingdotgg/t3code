@@ -34,6 +34,8 @@ export const ServerProviderUsageLimits = Schema.Struct({
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  /** null means the provider did not report weekly at-limit reset availability. */
+  atLimitReset: Schema.optional(Schema.Struct({ available: Schema.NullOr(Schema.Boolean) })),
   externalUsage: Schema.optional(
     Schema.Struct({
       label: TrimmedNonEmptyString,

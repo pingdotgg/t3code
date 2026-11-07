@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { resetAvailability } from "@t3tools/shared/usageLimits";
 import { EnvironmentId } from "@t3tools/contracts";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
@@ -26,7 +27,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
-import { ResetCredits } from "./UsageLimitsSection";
+import { ResetCredits, ResetStatus } from "./UsageLimitsSection";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = {
@@ -327,12 +328,13 @@ function PoolWindowCard({
         if (!window) return null;
         const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
         const credits = account.limits.resetCredits?.availableCount ?? 0;
+        const weeklyReset = resetAvailability(account.limits)?.weekly;
         const resetsIn = formatResetsIn(window, now);
         return (
           <Pressable
             key={account.key}
             accessibilityRole="button"
-            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
+            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${weeklyReset ? ", weekly reset available" : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
@@ -551,6 +553,17 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
   const evenPace = window ? paceRemainingPercent(window, now) : null;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
+  const resets = account ? resetAvailability(account.limits) : null;
+  const redeemCredits =
+    account?.redeem && account.limits.resetCredits ? (
+      <ResetCredits
+        key={account.key}
+        environmentId={account.redeem.environmentId}
+        input={account.redeem.input}
+        credits={account.limits.resetCredits}
+        now={now}
+      />
+    ) : null;
   const [revealed, setRevealed] = useState(false);
   return (
     <SettingsScreen title="Account">
@@ -629,16 +642,15 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                 <Text className="text-sm text-foreground-muted">{account.sourceLabel}</Text>
               )}
             </View>
-            {account.redeem && account.limits.resetCredits ? (
+            {resets ? (
+              <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
+                <Text className="text-sm font-t3-medium text-foreground">Resets</Text>
+                <ResetStatus resets={resets} now={now} redeem={redeemCredits} />
+              </View>
+            ) : redeemCredits ? (
               <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
                 <Text className="text-sm font-t3-medium text-foreground">Reset credits</Text>
-                <ResetCredits
-                  key={account.key}
-                  environmentId={account.redeem.environmentId}
-                  input={account.redeem.input}
-                  credits={account.limits.resetCredits}
-                  now={now}
-                />
+                {redeemCredits}
               </View>
             ) : null}
           </>

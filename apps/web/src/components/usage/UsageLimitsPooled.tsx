@@ -1,3 +1,4 @@
+import { resetAvailability } from "@t3tools/shared/usageLimits";
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
@@ -42,6 +43,7 @@ import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../u
 import {
   PaceIcon,
   ResetCreditDialog,
+  ResetStatus,
   barColor,
   usePaceMark,
   resetCreditsSummary,
@@ -156,8 +158,24 @@ function SegmentPopover({
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
       : account.sourceLabel;
+  const resets = resetAvailability(account.limits);
   const credits =
     redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const redeemCredits =
+    credits && redeem ? (
+      <span className="flex items-center gap-3">
+        <span className="tabular-nums">{resetCreditsSummary(credits, now, true)}</span>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={redeem.busy || !redeem.canManageProviders}
+          className="ms-auto"
+          onClick={onRedeem}
+        >
+          {redeem.busy ? "Using…" : "Use reset"}
+        </Button>
+      </span>
+    ) : null;
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -196,20 +214,13 @@ function SegmentPopover({
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
       </div>
-      {credits && redeem ? (
+      {resets ? (
+        <div className="border-t border-border/60 pt-2.5">
+          <ResetStatus compact resets={resets} now={now} redeem={redeemCredits} />
+        </div>
+      ) : redeemCredits ? (
         <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
-          <span className="flex items-center gap-3">
-            <span className="tabular-nums">{resetCreditsSummary(credits, now, true)}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={redeem.busy || !redeem.canManageProviders}
-              className="ms-auto"
-              onClick={onRedeem}
-            >
-              {redeem.busy ? "Using…" : "Use reset"}
-            </Button>
-          </span>
+          {redeemCredits}
         </div>
       ) : null}
     </div>
@@ -348,6 +359,7 @@ function SegmentTriggers({
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const weeklyReset = resetAvailability(account.limits)?.weekly;
   return (
     <>
       <PopoverTrigger
@@ -359,7 +371,7 @@ function SegmentTriggers({
             ref={segmentRef}
             type="button"
             style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${weeklyReset ? ", weekly reset available" : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
             className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
