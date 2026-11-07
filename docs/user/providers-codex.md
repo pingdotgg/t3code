@@ -28,6 +28,10 @@ T3 Code can use your installed Codex and its existing login. Run `codex login`
 on the environment's machine to sign in. [Provider setup](./install.md#providers)
 covers installation and custom configuration.
 
+Running `codex login` does not change a managed ChatGPT connection. Add a Codex
+instance in **Settings > Providers**, choose **Use existing CLI**, then select
+that instance from the thread's model picker. See [Use multiple accounts](#use-multiple-accounts).
+
 ## Use multiple accounts
 
 Add another ChatGPT account in **Settings → Providers**, then select the account
