@@ -78,6 +78,25 @@ const remark = (
 
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
+const codeRabbitReply = (status: string, action = "Action performed") =>
+  `<!-- coderabbit-ai-generated:v1 -->
+
+<!-- This is an auto-generated reply by CodeRabbit -->
+<!-- CodeRabbit review command invocation: test -->
+<details>
+<summary>${action}</summary>
+<dl>
+<dd>
+<br>
+
+${status}
+
+> Note: CodeRabbit is an incremental review system and does not re-review already reviewed commits.
+
+</dd>
+</dl>
+</details>`;
+
 describe("evaluatePullRequestWatch", () => {
   it("reports each failure at once, even while another check never finishes", () => {
     const bot = check("CodeRabbit", "pending");
@@ -333,6 +352,71 @@ describe("evaluatePullRequestWatch", () => {
     const report = evaluatePullRequestWatch(watch(), detail(), comments);
     assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [comments[1]!] }]);
     assert.equal(report.next.remarksThrough, "2026-10-02T12:06:00Z");
+    assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), comments).changes, []);
+  });
+
+  it("skips CodeRabbit review acknowledgements and wakes once for their outcome edits", () => {
+    for (const status of ["Review triggered.", "Full review triggered."]) {
+      const queued = {
+        ...remark("coderabbitai[bot]", "2026-10-02T12:06:00Z", codeRabbitReply(status)),
+        kind: "issue-comment" as const,
+        path: null,
+      };
+      const watching = watch({ headSha: "aaaaaaaaaa", wakes: 2 });
+      const progress = evaluatePullRequestWatch(watching, detail(), [queued]);
+      assert.deepEqual(progress.changes, []);
+      assert.equal(progress.next.remarksThrough, queued.createdAt);
+      assert.deepEqual(progress.next.remarkIds, [queued.id]);
+      assert.equal(progress.next.wakes, 2);
+      assert.isFalse(progress.exhausted);
+      assert.deepEqual(evaluatePullRequestWatch(progress.next, detail(), [queued]).changes, []);
+
+      for (const body of [
+        codeRabbitReply("Review finished."),
+        codeRabbitReply("Review rate limited.", "Action not completed"),
+      ]) {
+        const outcome = { ...queued, body, editedAt: "2026-10-02T12:07:00Z" };
+        const finished = evaluatePullRequestWatch(progress.next, detail(), [outcome]);
+        assert.deepEqual(finished.changes, [{ kind: "remarks", remarks: [outcome] }]);
+        assert.equal(finished.next.remarksThrough, outcome.editedAt);
+        assert.equal(finished.next.wakes, 3);
+        assert.deepEqual(evaluatePullRequestWatch(finished.next, detail(), [outcome]).changes, []);
+      }
+
+      const late = remark("reviewer", queued.createdAt);
+      const mixed = evaluatePullRequestWatch(watching, detail(), [queued, late]);
+      assert.deepEqual(mixed.changes, [{ kind: "remarks", remarks: [late] }]);
+      assert.deepEqual(mixed.next.remarkIds, [queued.id, late.id]);
+      assert.deepEqual(evaluatePullRequestWatch(progress.next, detail(), [queued, late]).changes, [
+        { kind: "remarks", remarks: [late] },
+      ]);
+    }
+  });
+
+  it("keeps other replies and outcomes actionable beside CodeRabbit review progress", () => {
+    const bodies = [
+      codeRabbitReply("Full review triggered.", "Actions performed"),
+      codeRabbitReply("Review finished."),
+      codeRabbitReply("Review rate limited.", "Action not completed"),
+      codeRabbitReply("Unable to review.", "Action not completed"),
+      codeRabbitReply("Here is the answer to your question."),
+      "Review triggered.",
+      codeRabbitReply("Review triggered.").replace(
+        "<!-- This is an auto-generated reply by CodeRabbit -->",
+        "",
+      ),
+      `${"x".repeat(1_000)}${codeRabbitReply("Review triggered.")}`,
+    ];
+    const comments = [
+      ...bodies.map((body, index) => ({
+        ...remark("coderabbitai[bot]", "2026-10-02T12:06:00Z", body),
+        id: `coderabbit-${index}`,
+      })),
+      remark("other-bot[bot]", "2026-10-02T12:06:00Z", bodies[0]),
+      remark("reviewer", "2026-10-02T12:06:00Z", bodies[0]),
+    ];
+    const report = evaluatePullRequestWatch(watch(), detail(), comments);
+    assert.deepEqual(report.changes, [{ kind: "remarks", remarks: comments.slice(1) }]);
     assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), comments).changes, []);
   });
 
