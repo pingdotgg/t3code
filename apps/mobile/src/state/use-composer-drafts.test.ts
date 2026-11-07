@@ -131,6 +131,20 @@ const incomingShareStorageMocks = vi.hoisted(() => ({
   ),
 }));
 
+const appStateMocks = vi.hoisted(() => ({
+  listeners: new Set<(state: string) => void>(),
+}));
+
+vi.mock("react-native", () => ({
+  AppState: {
+    currentState: "active",
+    addEventListener: (_event: string, listener: (state: string) => void) => {
+      appStateMocks.listeners.add(listener);
+      return { remove: () => appStateMocks.listeners.delete(listener) };
+    },
+  },
+}));
+
 vi.mock("expo-file-system", () => ({
   Directory: composerDraftFileMocks.Directory,
   File: composerDraftFileMocks.File,
@@ -2078,6 +2092,24 @@ describe("mobile composer drafts", () => {
       },
     });
   });
+
+  it.each(["inactive", "background"])(
+    "persists a cleared send before the app goes %s",
+    async (state) => {
+      vi.useFakeTimers();
+      const draftKey = "environment-1:thread-1";
+      setComposerDraftText(draftKey, "Ship the release notes");
+      await flushComposerDrafts();
+      expect(composerDraftFileMocks.getDocument()).toContain("Ship the release notes");
+
+      clearComposerDraftContent(draftKey);
+      appStateMocks.listeners.forEach((listener) => listener(state));
+      // One macrotask lets a started flush land; the 200 ms debounce stays pending.
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(composerDraftFileMocks.getDocument()).not.toContain("Ship the release notes");
+    },
+  );
 
   it("clears sent content without clearing the selected model or workspace", () => {
     const draftKey = "environment-1:thread-1";
