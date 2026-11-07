@@ -10,6 +10,7 @@ import {
   countLayoutTabs,
   findLayoutPane,
   findLayoutTab,
+  findLayoutTabByContent,
   selectFocusedChatTab,
   selectFocusedWorkspace,
   type LayoutDirection,
@@ -39,6 +40,7 @@ export interface LayoutDragPane {
   paneId: string;
   rect: LayoutDragRect;
   tabs?: readonly { id: string; rect: LayoutDragRect }[];
+  tabRow?: LayoutDragRect;
   /** A side panel or terminal pane: splits beside it, but no tabs into it. */
   companion: boolean;
 }
@@ -49,6 +51,8 @@ export interface LayoutDragState {
   panes: readonly LayoutDragPane[];
   strip: LayoutDragRect;
   target: LayoutDropTarget | null;
+  /** The open tab this drag moves: the dragged tab, or a dragged thread's existing chat. */
+  movingTabId: string | null;
 }
 
 /** The chrome row at the top of a pane: dropping there adds a tab (pen: zones start 48px down). */
@@ -88,6 +92,20 @@ function toRect(rect: DOMRect): LayoutDragRect {
   return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
 }
 
+function unionRect(elements: readonly (Element | null)[]): LayoutDragRect | undefined {
+  const rects = elements.flatMap((element) => {
+    const rect = element?.getBoundingClientRect();
+    return rect && rect.width > 0 && rect.height > 0 ? [rect] : [];
+  });
+  if (rects.length === 0) return undefined;
+  return {
+    left: Math.min(...rects.map((rect) => rect.left)),
+    top: Math.min(...rects.map((rect) => rect.top)),
+    right: Math.max(...rects.map((rect) => rect.right)),
+    bottom: Math.max(...rects.map((rect) => rect.bottom)),
+  };
+}
+
 function measure(): { panes: LayoutDragPane[]; strip: LayoutDragRect } | null {
   const strip = document.querySelector<HTMLElement>("[data-layout-strip]");
   if (!strip) return null;
@@ -99,8 +117,18 @@ function measure(): { panes: LayoutDragPane[]; strip: LayoutDragRect } | null {
       const tabs = [...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].map(
         (tab) => ({ id: tab.dataset.layoutPaneTab!, rect: toRect(tab.getBoundingClientRect()) }),
       );
+      const tabRow = unionRect([
+        element.querySelector("[data-layout-tab-strip]"),
+        element.querySelector("[data-pane-notch-add]"),
+      ]);
       return [
-        { paneId, rect: toRect(rect), tabs, companion: element.dataset.layoutCompanion != null },
+        {
+          paneId,
+          rect: toRect(rect),
+          tabs,
+          ...(tabRow ? { tabRow } : {}),
+          companion: element.dataset.layoutCompanion != null,
+        },
       ];
     },
   );
@@ -226,8 +254,8 @@ function isLayoutDropUseful(
 }
 
 /** The label on the pill under the pointer (pen MI18S "Side by side", nYpzc "Below"). */
-export function layoutDropLabel(target: LayoutDropTarget): string {
-  if (target.kind === "into") return "Add as tab";
+export function layoutDropLabel(target: LayoutDropTarget, reorder: boolean): string {
+  if (target.kind === "into") return reorder ? "Move here" : "Add as tab";
   if (target.kind === "extend") {
     return target.edge === "bottom" ? "New workspace" : "New column";
   }
@@ -262,11 +290,18 @@ export function moveLayoutDrag(
     options.allowTarget === false
       ? null
       : resolveLayoutDropTarget(point, measured.panes, measured.strip);
+  const movingTabId =
+    source.kind === "tab"
+      ? source.tabId
+      : (findLayoutTabByContent(layout, {
+          kind: "chat",
+          target: { kind: "server", threadRef: source.threadRef },
+        })?.tab.id ?? null);
   if (raw?.kind === "into") {
     const paneId = raw.paneId;
     const tabs = measured.panes
       .find((pane) => pane.paneId === paneId)
-      ?.tabs?.filter((tab) => source.kind !== "tab" || tab.id !== source.tabId);
+      ?.tabs?.filter((tab) => tab.id !== movingTabId);
     if (tabs) {
       const before = tabs.findIndex((tab) => point.x < (tab.rect.left + tab.rect.right) / 2);
       raw = { ...raw, index: before === -1 ? tabs.length : before };
@@ -284,7 +319,14 @@ export function moveLayoutDrag(
   ) {
     return;
   }
-  setDragState({ source, point, panes: measured.panes, strip: measured.strip, target });
+  setDragState({
+    source,
+    point,
+    panes: measured.panes,
+    strip: measured.strip,
+    target,
+    movingTabId,
+  });
 }
 
 function sameSource(a: LayoutDragSource, b: LayoutDragSource): boolean {
