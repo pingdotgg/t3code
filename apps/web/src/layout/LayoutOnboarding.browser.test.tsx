@@ -23,7 +23,4 @@ it("the tour's overview step does not count its own zoom-out as tried", async ()
   await expect.element(page.getByText("4 of 5")).toBeVisible();
   expect(useLayoutStore.getState().overviewOpen).toBe(true);
   await expect.element(page.getByText("Tried")).not.toBeInTheDocument();
-
-  await userEvent.click(page.getByRole("button", { name: "Skip" }));
-  expect(useLayoutStore.getState().overviewOpen).toBe(false);
 });

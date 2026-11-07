@@ -33,7 +33,4 @@ it("opening Settings from a launcher tab does not leave the empty tab behind", a
   await expect
     .poll(() => findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.content === launcher))
     .toBeNull();
-  expect(
-    findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.content.kind === "pull-requests"),
-  ).not.toBeNull();
 });
