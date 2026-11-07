@@ -22,6 +22,7 @@ import { constVoid } from "effect/Function";
 import * as Schema from "effect/Schema";
 import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
 import * as NodeCrypto from "node:crypto";
+import * as NodeVM from "node:vm";
 import { BrowserControlInterrupted } from "./SessionControl.ts";
 
 const isBrowserControlInterrupted = Schema.is(BrowserControlInterrupted);
@@ -878,17 +879,59 @@ export const scroll = async (page: Page, input: PreviewAutomationScrollInput) =>
   await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta);
 };
 
+// Parses without running, so a classic script keeps the single evaluate call it always had.
+const compilesAsScript = (expression: string) => {
+  try {
+    return new NodeVM.Script(expression) instanceof NodeVM.Script;
+  } catch {
+    return false;
+  }
+};
+
+// The devtools console's mode: top-level await, and the last expression is the result.
+// By value it reports a promise result as `{}`, so the result comes back by reference first.
+const evaluateRepl = async (
+  cdp: CDPSession,
+  input: PreviewAutomationEvaluateInput,
+  objectGroup: string,
+) => {
+  const evaluated = await cdp.send("Runtime.evaluate", {
+    expression: input.expression,
+    replMode: true,
+    objectGroup,
+  });
+  const { objectId, subtype } = evaluated.result;
+  if (evaluated.exceptionDetails || objectId === undefined) return evaluated;
+  const returnByValue = input.returnByValue ?? true;
+  if (subtype === "promise" && (input.awaitPromise ?? true)) {
+    return cdp.send("Runtime.awaitPromise", { promiseObjectId: objectId, returnByValue });
+  }
+  if (!returnByValue) return evaluated;
+  return cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: 'function () { "use strict"; return this; }',
+    returnByValue,
+    objectGroup,
+  });
+};
+
 /** Terminate expired page scripts so a hung expression cannot block the tab's control queue. */
 export const evaluate = async (
   cdp: CDPSession,
   input: PreviewAutomationEvaluateInput,
   timeoutMs: number,
 ) => {
+  const repl = input.expression.includes("await") && !compilesAsScript(input.expression);
+  // Per call, so a timed-out evaluation settling late cannot release the next one's objects.
+  const objectGroup = `t3-preview-evaluate-${NodeCrypto.randomUUID()}`;
+  const release = () =>
+    void cdp.send("Runtime.releaseObjectGroup", { objectGroup }).catch(constVoid);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       // Stops a busy script; an awaited promise is abandoned and settles unread.
       void cdp.send("Runtime.terminateExecution").catch(constVoid);
+      if (repl) release();
       reject(
         new ServerBrowserOperationError({
           tag: "PreviewAutomationTimeoutError",
@@ -897,11 +940,13 @@ export const evaluate = async (
       );
     }, timeoutMs);
   });
-  const evaluation = cdp.send("Runtime.evaluate", {
-    expression: input.expression,
-    awaitPromise: input.awaitPromise ?? true,
-    returnByValue: input.returnByValue ?? true,
-  });
+  const evaluation = repl
+    ? evaluateRepl(cdp, input, objectGroup).finally(release)
+    : cdp.send("Runtime.evaluate", {
+        expression: input.expression,
+        awaitPromise: input.awaitPromise ?? true,
+        returnByValue: input.returnByValue ?? true,
+      });
   void evaluation.catch(constVoid);
   const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
   if (result.exceptionDetails) {

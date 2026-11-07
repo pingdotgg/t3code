@@ -269,6 +269,39 @@ describe("server browser element refs", () => {
     await ServerBrowserPage.click(page, { selector: 'button[data-example=" >> aria-ref=e1"]' });
     expect(await page.locator("button").textContent()).toBe("saved");
   });
+
+  it("evaluates top-level await and returns the last expression's value", async () => {
+    await page.setContent("<title>Ready</title>");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "await Promise.resolve(); document.title" },
+      5_000,
+    );
+    expect(result).toBe("Ready");
+  });
+
+  it("still awaits a promise the last expression returns", async () => {
+    await page.setContent("<title>Ready</title>");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "await 0; (async () => document.title)()" },
+      5_000,
+    );
+    expect(result).toBe("Ready");
+  });
+
+  it("returns the result of an expression that reloads the page", async () => {
+    await page.route("http://preview.test/", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" }),
+    );
+    await page.goto("http://preview.test/");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "location.reload(); ({ clicked: true })" },
+      5_000,
+    );
+    expect(result).toEqual({ clicked: true });
+  });
 });
 
 describe("server browser snapshot screenshot", () => {
