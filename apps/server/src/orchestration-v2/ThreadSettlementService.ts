@@ -604,22 +604,24 @@ export const make = Effect.gen(function* () {
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
-      if ((yield* projections.getThread(threadId)).settledOverride !== "settled") return;
-      // Per device: a thread without devices skips the lock a starting host holds, and one
-      // unreachable host leaves no other device claimed.
+      // Per device: a thread without devices skips the lock a starting host holds, one unreachable
+      // host leaves no other device claimed, and a thread re-engaged meanwhile keeps the rest.
       yield* Effect.forEach(
         yield* devices.sessionsForThread(threadId),
         ({ hostId, deviceId }) =>
-          devices.close({ threadId, hostId, deviceId }).pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("releasing a settled thread's device failed", {
-                threadId,
-                hostId,
-                deviceId,
-                error,
-              }),
-            ),
-          ),
+          Effect.gen(function* () {
+            if ((yield* projections.getThread(threadId)).settledOverride !== "settled") return;
+            yield* devices.close({ threadId, hostId, deviceId }).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("releasing a settled thread's device failed", {
+                  threadId,
+                  hostId,
+                  deviceId,
+                  error,
+                }),
+              ),
+            );
+          }),
         { discard: true },
       );
       const worktreePath = settled.worktreePath;

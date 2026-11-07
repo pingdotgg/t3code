@@ -564,6 +564,7 @@ interface HarnessOptions {
     input: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput,
   ) => Effect.Effect<void>;
   readonly onCloseIdle?: () => Effect.Effect<void>;
+  readonly onDeviceClose?: (hostId: string | undefined) => Effect.Effect<void>;
   readonly deviceCloseError?: DeviceHostUnavailableError;
   readonly deviceSessions?: ReadonlyArray<{ readonly hostId: string; readonly deviceId: string }>;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
@@ -706,6 +707,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
         ),
       close: (input) =>
         Ref.update(deviceCloses, (closes) => [...closes, input]).pipe(
+          Effect.andThen(options.onDeviceClose?.(input.hostId) ?? Effect.void),
           Effect.andThen(
             options.deviceCloseError && options.deviceCloseError.hostId === input.hostId
               ? Effect.fail(options.deviceCloseError)
@@ -1502,6 +1504,48 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(settled));
           yield* fixture.publishEvent(settledEvent(marker));
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("keeps the remaining devices of a thread re-engaged during an earlier release", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const firstFinished = yield* Deferred.make<void>();
+        const settled = appThread("multi-device-thread", "settled");
+        const marker = appThread("marker-thread", "settled");
+        const currentThreads = [settled, marker];
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads,
+          deviceSessions: [
+            { hostId: "slow-ssh", deviceId: "pixel" },
+            { hostId: "local", deviceId: "emulator-5554" },
+          ],
+          onDeviceClose: (hostId) =>
+            hostId === "slow-ssh"
+              ? Deferred.succeed(firstStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(firstFinished)),
+                )
+              : Effect.void,
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          yield* Deferred.await(firstStarted);
+          currentThreads[0] = { ...settled, settledOverride: "active" };
+          yield* Deferred.succeed(firstFinished, undefined);
+          yield* fixture.publishEvent(settledEvent(marker));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.deviceCloses)).filter((close) => close.threadId === settled.id),
+            [{ threadId: settled.id, hostId: "slow-ssh", deviceId: "pixel" }],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
