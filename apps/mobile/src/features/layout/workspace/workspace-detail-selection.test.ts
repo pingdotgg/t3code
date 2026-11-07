@@ -180,6 +180,28 @@ describe("workspaceDetailOpenStep", () => {
     ).toEqual({ type: "push" });
   });
 
+  it("pushes a new draft when a different draft is under the current page", () => {
+    const earlier = {
+      name: "Thread" as const,
+      params: { draft: { draftId: "new-task:earlier", title: "Earlier ask" } },
+    };
+    const next = {
+      name: "Thread" as const,
+      params: { draft: { draftId: "new-task:next", title: "Ask about #1" } },
+    };
+    const state = push(select(home(), earlier), "PullRequest", pullRequest.params);
+    expect(workspaceDetailOpenStep(state, next)).toEqual({ type: "push" });
+  });
+
+  it("pops back to the same draft under a drilled-in page", () => {
+    const draft = {
+      name: "Thread" as const,
+      params: { draft: { draftId: "new-task:ask", title: "Ask about #1" } },
+    };
+    const state = push(select(home(), draft), "PullRequest", pullRequest.params);
+    expect(workspaceDetailOpenStep(state, draft)).toEqual({ type: "pop", count: 1 });
+  });
+
   it("stays when the pull request is already focused", () => {
     const state = select(home(), pullRequest);
     expect(workspaceDetailOpenStep(state, pullRequest)).toEqual({ type: "stay" });

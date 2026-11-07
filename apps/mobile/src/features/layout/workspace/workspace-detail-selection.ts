@@ -6,6 +6,7 @@ import type {
   Router,
   StackNavigationState,
 } from "@react-navigation/native";
+import { draftRouteIdentity, type NewTaskDraftRouteParams } from "../../threads/thread-route-state";
 import { workspaceRoutesOf } from "../workspace-overlay-routes";
 
 type RootParams = ReactNavigation.RootParamList;
@@ -50,6 +51,18 @@ export function workspaceDetailMatches(route: RouteLike, detail: WorkspaceDetail
   if (route.name !== detail.name) return false;
   const current = route.params as Readonly<Record<string, unknown>> | undefined;
   const target = detail.params as Readonly<Record<string, unknown>> | undefined;
+  if (detail.name === "Thread") {
+    const currentDraft = current?.draft as NewTaskDraftRouteParams | undefined;
+    const targetDraft = target?.draft as NewTaskDraftRouteParams | undefined;
+    // Drafts omit top-level environmentId/threadId, so IDENTITY alone treats every draft as equal.
+    if (currentDraft || targetDraft) {
+      return (
+        currentDraft !== undefined &&
+        targetDraft !== undefined &&
+        draftRouteIdentity(currentDraft) === draftRouteIdentity(targetDraft)
+      );
+    }
+  }
   return IDENTITY[detail.name].every((key) => current?.[key] === target?.[key]);
 }
 
