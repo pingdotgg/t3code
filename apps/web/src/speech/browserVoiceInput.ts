@@ -12,7 +12,7 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { SpeechTranscriptionOptions, SpeechStreamText } from "@t3tools/contracts";
 
 import { translateNow } from "~/components/media/translateNow";
-import { runtime } from "../lib/runtime";
+import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 
 export function createBrowserVoiceInputPlatform(input: {
@@ -27,7 +27,7 @@ export function createBrowserVoiceInputPlatform(input: {
 }) {
   return createBrowserPcmCapture(input, async (options) => {
     const recordingOptions = input.getTranscriptionOptions();
-    const status = await runtime.runPromise(getEnvironmentSpeechStatus(input.prepared), options);
+    const status = await runEnvironmentSpeech(getEnvironmentSpeechStatus(input.prepared), options);
     throwIfVoiceTranscriptionAborted(options.signal);
     if (!status.supported)
       throw new VoiceTranscriptionError({ code: "unavailable", message: status.reason });
@@ -53,7 +53,7 @@ export function createBrowserVoiceInputPlatform(input: {
       try {
         const response = await fetch(uri, { signal: transcriptionSignal });
         const pcm = new Uint8Array(await response.arrayBuffer());
-        const result = await runtime.runPromise(
+        const result = await runEnvironmentSpeech(
           transcribeEnvironmentPcm(input.prepared, pcm, recordingOptions, input.hasAudioConsent),
           {
             signal: transcriptionSignal,
@@ -73,7 +73,7 @@ export function createBrowserVoiceInputPlatform(input: {
     if (!status.supportsStreaming && !status.supportsBufferedStreaming) {
       return { locale, transcribe: transcribeRecording };
     }
-    const url = await runtime.runPromise(getEnvironmentSpeechStreamUrl(input.prepared), options);
+    const url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(input.prepared), options);
     return {
       locale,
       transcribe: transcribeRecording,
