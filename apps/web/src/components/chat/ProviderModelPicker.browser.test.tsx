@@ -1,4 +1,5 @@
 import { ProviderDriverKind, ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -168,4 +169,71 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
+});
+
+it("lists a model reported twice by one provider once, with contiguous jump shortcuts", async () => {
+  const instanceId = ProviderInstanceId.make("claude");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const options = new Map([
+    [
+      instanceId,
+      ["a", "b", "c", "c", "d", "d"].map((slug) => ({
+        slug,
+        name: `Model ${slug.toUpperCase()}`,
+      })),
+    ],
+  ]);
+  const keybindings = compileResolvedKeybindingsConfig(
+    ([1, 2, 3, 4, 5, 6] as const).map((index) => ({
+      key: `mod+${index}`,
+      command: `modelPicker.jump.${index}` as const,
+      when: "modelPickerOpen",
+    })),
+  );
+
+  await using screen = await render(
+    <ProviderModelPicker
+      environmentId={null}
+      activeInstanceId={instanceId}
+      model="a"
+      lockedProvider={null}
+      instanceEntries={entries}
+      modelOptionsByInstance={options}
+      keybindings={keybindings}
+      triggerAriaLabel="Choose model"
+      onInstanceModelChange={() => {}}
+    />,
+  );
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  await expect.element(page.getByRole("option", { name: /Model A/ })).toBeVisible();
+  await vi.waitFor(() =>
+    expect(
+      page
+        .getByRole("option")
+        .elements()
+        .map((row) => [
+          row.textContent?.match(/Model [A-Z]/)?.[0],
+          row.querySelector("kbd")?.textContent?.slice(-1),
+        ]),
+    ).toEqual([
+      ["Model A", "1"],
+      ["Model B", "2"],
+      ["Model C", "3"],
+      ["Model D", "4"],
+    ]),
+  );
 });
