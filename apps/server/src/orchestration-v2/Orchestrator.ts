@@ -176,7 +176,12 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
-import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import {
+  drainBlockedPreparedRunQueuePosition,
+  isAutomaticCompletionRun,
+  queuedRunsInDeliveryOrder,
+  selectStartableQueuedRun as selectStartableQueuedRunFromCandidates,
+} from "./QueuedRunOrder.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
@@ -1769,32 +1774,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     queuedCandidates: ReadonlyArray<OrchestrationV2Run>,
   ) {
-    let blockedCandidate = false;
+    const providerSessionIds = projection.providerSessions.map((session) => session.id);
+    const drainBlocked = new Map<RunId, boolean>();
+    const saveWork = new Map<MessageId, boolean>();
     for (const candidate of queuedCandidates) {
       const candidateSelection = queuedRunModelSelection(projection, candidate);
-      if (
+      drainBlocked.set(
+        candidate.id,
         yield* gracefulShutdownGate.shouldQueueNewTurns({
           threadId,
           providerInstanceId: candidateSelection.instanceId,
-          providerSessionIds: projection.providerSessions.map((session) => session.id),
+          providerSessionIds,
           messageId: candidate.userMessageId,
-        })
-      ) {
-        blockedCandidate = true;
-        continue;
+        }),
+      );
+      if (!saveWork.has(candidate.userMessageId)) {
+        saveWork.set(
+          candidate.userMessageId,
+          yield* gracefulShutdownGate.isSaveWorkMessage(candidate.userMessageId),
+        );
       }
-      if (
-        blockedCandidate &&
-        !(yield* gracefulShutdownGate.isSaveWorkMessage(candidate.userMessageId))
-      ) {
-        continue;
-      }
-      return {
-        storedQueuedRun: candidate,
-        modelSelection: candidateSelection,
-      } as const;
     }
-    return undefined;
+    const selected = selectStartableQueuedRunFromCandidates(queuedCandidates, {
+      isDrainBlocked: (run) => drainBlocked.get(run.id) === true,
+      isSaveWorkMessage: (messageId) => saveWork.get(messageId) === true,
+    });
+    if (selected === undefined) return undefined;
+    return {
+      storedQueuedRun: selected,
+      modelSelection: queuedRunModelSelection(projection, selected),
+    } as const;
   });
 
   const failQueuedRunStart = Effect.fn("Orchestrator.failQueuedRunStart")(function* (
@@ -10693,13 +10702,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messageId: state.run.userMessageId,
       });
       if (drainBlocksStart) {
-        const queuePosition =
-          Math.max(
-            0,
-            ...projection.runs
-              .filter((candidate) => candidate.status === "queued")
-              .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
-          ) + 1;
         yield* emitEvent({
           type: "run.updated",
           threadId: command.threadId,
@@ -10710,7 +10712,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: {
             ...state.run,
             status: "queued",
-            queuePosition,
+            queuePosition: drainBlockedPreparedRunQueuePosition({
+              queuePosition: state.run.queuePosition,
+              ordinal: state.run.ordinal,
+            }),
             startedAt: null,
           },
         });

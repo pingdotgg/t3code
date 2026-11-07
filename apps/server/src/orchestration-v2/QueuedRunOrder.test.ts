@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import {
+  drainBlockedPreparedRunQueuePosition,
+  queuedRunsInDeliveryOrder,
+  selectStartableQueuedRun,
+} from "./QueuedRunOrder.ts";
 
 describe("queued run delivery order", () => {
   it("keeps automatic completion delivery ahead of visible queued messages", () => {
@@ -47,5 +51,67 @@ describe("queued run delivery order", () => {
       "run:visible-first",
       "run:visible-second",
     ]);
+  });
+
+  it("lets a registered save-work turn start ahead of earlier drain-blocked runs", () => {
+    const ordinary = {
+      id: "run:ordinary",
+      ordinal: 1,
+      queuePosition: 1,
+      status: "queued",
+      userMessageId: "message:ordinary",
+    } as never;
+    const saveWork = {
+      id: "run:save-work",
+      ordinal: 2,
+      queuePosition: 2,
+      status: "queued",
+      userMessageId: "message:graceful-shutdown-save",
+    } as never;
+    const laterOrdinary = {
+      id: "run:later-ordinary",
+      ordinal: 3,
+      queuePosition: 3,
+      status: "queued",
+      userMessageId: "message:later-ordinary",
+    } as never;
+
+    expect(
+      selectStartableQueuedRun([ordinary, saveWork, laterOrdinary], {
+        isDrainBlocked: (run) => run.id !== "run:save-work",
+        isSaveWorkMessage: (messageId) => messageId === "message:graceful-shutdown-save",
+      })?.id,
+    ).toBe("run:save-work");
+
+    expect(
+      selectStartableQueuedRun([ordinary, laterOrdinary], {
+        isDrainBlocked: () => true,
+        isSaveWorkMessage: () => false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("keeps a drain-blocked prepared run ahead of later ordinary queued turns", () => {
+    const prepared = { queuePosition: null, ordinal: 1 };
+    const laterQueued = {
+      id: "run:later",
+      ordinal: 2,
+      queuePosition: 1,
+      status: "queued",
+      userMessageId: "message:later",
+    };
+    const requeued = {
+      id: "run:prepared",
+      ordinal: prepared.ordinal,
+      queuePosition: drainBlockedPreparedRunQueuePosition(prepared),
+      status: "queued",
+      userMessageId: "message:prepared",
+    };
+    expect(
+      queuedRunsInDeliveryOrder({
+        messages: [{ id: "message:prepared" }, { id: "message:later" }],
+        runs: [laterQueued, requeued],
+      } as never).map((run) => run.id),
+    ).toEqual(["run:prepared", "run:later"]);
   });
 });

@@ -1,4 +1,8 @@
-import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type {
+  MessageId,
+  OrchestrationV2Run,
+  OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 
 export function isAutomaticCompletionRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -29,4 +33,37 @@ export function queuedRunsInDeliveryOrder(
         left.ordinal - right.ordinal
       );
     });
+}
+
+/**
+ * During a drain, earlier candidates may be blocked from starting. Only a
+ * privileged save-work message may leapfrog those blocked runs.
+ */
+export function selectStartableQueuedRun(
+  queuedCandidates: ReadonlyArray<OrchestrationV2Run>,
+  input: {
+    readonly isDrainBlocked: (run: OrchestrationV2Run) => boolean;
+    readonly isSaveWorkMessage: (messageId: MessageId) => boolean;
+  },
+): OrchestrationV2Run | undefined {
+  let blockedCandidate = false;
+  for (const candidate of queuedCandidates) {
+    if (input.isDrainBlocked(candidate)) {
+      blockedCandidate = true;
+      continue;
+    }
+    if (blockedCandidate && !input.isSaveWorkMessage(candidate.userMessageId)) {
+      continue;
+    }
+    return candidate;
+  }
+  return undefined;
+}
+
+/** Keep prepare→queue during a drain in original delivery order, not at the tail. */
+export function drainBlockedPreparedRunQueuePosition(run: {
+  readonly queuePosition: number | null | undefined;
+  readonly ordinal: number;
+}): number {
+  return run.queuePosition ?? run.ordinal;
 }
