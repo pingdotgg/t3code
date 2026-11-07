@@ -641,13 +641,13 @@ describe("VoiceInputController", () => {
     expect(harness.controller.currentState.error).toContain("draft changed");
   });
 
-  it("inserts the transcript at the current caret when the draft changed while recording", async () => {
+  it("inserts the transcript where recording started when the draft changed meanwhile", async () => {
     const harness = createHarness();
     await harness.controller.start();
     harness.setDraft(
       draft({
         text: "> cited line\n\nhello world",
-        selection: { start: 25, end: 25 },
+        selection: { start: 0, end: 25 },
       }),
     );
     await harness.controller.stop();
@@ -658,7 +658,7 @@ describe("VoiceInputController", () => {
       errorAction: null,
     });
     expect(harness.commits).toEqual([
-      { text: "> cited line\n\nhello world new text", selection: { start: 34, end: 34 } },
+      { text: "> cited line\n\nhello new text", selection: { start: 28, end: 28 } },
     ]);
   });
 

@@ -123,10 +123,27 @@ export function resolveTranscriptCommit(
     return { kind: "empty" };
   }
 
-  const {
-    text,
-    selection: { start, end },
-  } = current;
+  // The read-only editor still lets a selection move, so carry the starting one through edits instead.
+  const before = captured.text;
+  const { text } = current;
+  const shared = Math.min(before.length, text.length);
+  let prefix = 0;
+  while (prefix < shared && before[prefix] === text[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < shared - prefix &&
+    before[before.length - 1 - suffix] === text[text.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const map = (position: number) =>
+    position <= prefix
+      ? position
+      : position >= before.length - suffix
+        ? position + text.length - before.length
+        : text.length - suffix;
+  const start = map(captured.selection.start);
+  const end = map(captured.selection.end);
   const isEmptySelection = start === end;
   const language = locale.split(/[-_]/)[0]!.toLowerCase();
   let insertion = replacement;
