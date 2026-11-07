@@ -26,6 +26,11 @@ export function useApplyThreadModelPick() {
     void setModelSelection({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, modelSelection: pick },
+    }).then((result) => {
+      // Released on the reply, so a later change from another client shows.
+      if (result._tag === "Success") {
+        useComposerDraftStore.getState().releaseModelSelection(target, pick);
+      }
     });
   };
 }

@@ -173,7 +173,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
       throw new Error("Unexpected network command in the inline read test");
     }
     modelCommandMocks.runs.push(value);
-    return Promise.resolve();
+    return Promise.resolve({ _tag: "Failure" });
   },
   squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
 }));

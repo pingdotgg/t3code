@@ -460,7 +460,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       activeOrderKey: input.orderKey,
     })),
-    // Pending until durable, so draft reconciliation cannot drop a later pick of the old model.
+    // Shown at once, so a composer that releases its accepted pick keeps showing it.
     setModelSelection: optimistic.wrap(commands.setModelSelection, (thread, input) => ({
       ...thread,
       modelSelection: input.modelSelection,

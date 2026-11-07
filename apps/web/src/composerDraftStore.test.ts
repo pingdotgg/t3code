@@ -1601,6 +1601,29 @@ describe("composerDraftStore modelSelection", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBe(latest);
   });
 
+  it("releases an accepted pick only while it is still the draft's latest choice", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.5"), {
+      explicit: true,
+    });
+    const first = draftFor(threadId, TEST_ENVIRONMENT_ID)!.modelSelectionByProvider[
+      CODEX_INSTANCE
+    ]!;
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+      explicit: true,
+    });
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.5"), {
+      explicit: true,
+    });
+    const latest = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
+
+    // An older acknowledgement of the same model is not the latest pick.
+    store.releaseModelSelection(threadRef, first);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBe(latest);
+    store.releaseModelSelection(threadRef, latest.modelSelectionByProvider[CODEX_INSTANCE]!);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
   it("releases an inactive thread pick only after its queued model becomes durable", () => {
     const store = useComposerDraftStore.getState();
     const pick = modelSelection(CODEX_DRIVER, "gpt-5.5", { fastMode: false });

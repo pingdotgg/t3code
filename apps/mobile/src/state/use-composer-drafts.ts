@@ -1542,6 +1542,20 @@ export function updateComposerDraftSettings(
   });
 }
 
+/** Lets the thread's model show again once the server accepted this exact pick. */
+export function releaseComposerDraftModelSelection(
+  draftKey: string,
+  modelSelection: ModelSelection,
+): void {
+  updateComposerDrafts((current) => {
+    const existing = current[draftKey];
+    // A newer pick, even of the same model, is still waiting for its own reply.
+    if (existing?.modelSelection !== modelSelection) return current;
+    const { modelSelection: _modelSelection, ...draft } = existing;
+    return withComposerDraft(current, draftKey, draft);
+  });
+}
+
 export function setFreshSessionPending(draftKey: string, pending: boolean): void {
   if ((getComposerDraftSnapshot(draftKey).freshContext === true) === pending) return;
   updateComposerDraftSettings(draftKey, { freshContext: pending ? true : undefined });
