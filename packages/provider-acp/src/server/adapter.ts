@@ -8629,6 +8629,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         }),
                       ),
                     );
+                    if (
+                      canFollowForegroundEvents &&
+                      !context.workAccepted &&
+                      !interrupted &&
+                      !(yield* Ref.get(runtimeRestartRequired)) &&
+                      (yield* Ref.get(wakeBuffer)).length > 0
+                    ) {
+                      yield* offerContinuationRun(requestedSessionId);
+                    }
                   }),
                 ).pipe(
                   Effect.asVoid,
