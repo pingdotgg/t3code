@@ -1138,6 +1138,7 @@ export function PullRequestsPage() {
       {rightPanelState.isOpen ? (
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
+          shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggleMaximized")}
           onToggle={toggleRightPanelMaximized}
         />
       ) : null}
