@@ -545,6 +545,12 @@ it.effect.each([
     expected: "Make it red, blue.",
   },
   {
+    cue: undefined,
+    remove: true,
+    text: "Um... make it red, uh… blue.",
+    expected: "make it red, blue.",
+  },
+  {
     cue: "um",
     remove: false,
     text: "Uh, Make it red, um, blue.",
