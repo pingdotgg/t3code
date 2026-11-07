@@ -6,6 +6,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ScrollArea } from "../ui/scroll-area";
 import { cn } from "../../lib/utils";
@@ -18,6 +19,7 @@ import {
 } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
+import { usePanelAnimationSettings, usePanelPresence } from "../../panelAnimations";
 
 export function ThreadDetailsCard({
   threadRef,
@@ -46,6 +48,14 @@ export function ThreadDetailsCard({
   );
   const popoverOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),
+  );
+  const { active: animationsActive, durationMs: animationDurationMs } = usePanelAnimationSettings();
+  const inlinePresence = usePanelPresence(
+    inlineOpen,
+    true,
+    animationsActive,
+    scopedThreadKey(threadRef),
+    animationDurationMs,
   );
   const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}:${contentKey}`;
   const [measurements, setMeasurements] = useState({
@@ -118,6 +128,10 @@ export function ThreadDetailsCard({
         "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-2xl",
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
+        mode === "inline" &&
+          animationsActive &&
+          "origin-top-right transition-[opacity,scale] duration-(--panel-animation-duration) ease-out starting:scale-98 starting:opacity-0",
+        mode === "inline" && !inlineOpen && "scale-98 opacity-0",
       )}
       style={placement ? { maxHeight: height } : undefined}
       onContextMenu={onContextMenu}
@@ -146,7 +160,7 @@ export function ThreadDetailsCard({
         useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", open);
       }}
     >
-      {placement && inlineOpen ? (
+      {placement && inlinePresence.present ? (
         <aside
           {...detailsArea}
           data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
@@ -163,6 +177,7 @@ export function ThreadDetailsCard({
           }}
           data-density={density}
           data-thread-details-panel="inline"
+          inert={!inlineOpen}
         >
           {card}
         </aside>
@@ -187,6 +202,7 @@ export function ThreadDetailsCard({
         sideOffset={topInset}
         variant="panel"
         padding="none"
+        animationDurationMs={animationsActive ? animationDurationMs : 0}
       >
         {mode === "popover" ? (
           <div data-density={density} data-thread-details-panel="popover">
