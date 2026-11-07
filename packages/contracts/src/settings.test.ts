@@ -324,6 +324,16 @@ describe("ClientSettings quit confirmation", () => {
   });
 });
 
+describe("ClientSettings terminal file links", () => {
+  it("preserves external-editor behavior until the file viewer is enabled", () => {
+    expect(decodeClientSettings({}).terminalFileLinksOpenInApp).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("terminalFileLinksOpenInApp");
+    const patch = decodeClientSettingsPatch({ terminalFileLinksOpenInApp: true });
+    expect(patch).toEqual({ terminalFileLinksOpenInApp: true });
+    expect(encodeClientSettings(decodeClientSettings(patch)).terminalFileLinksOpenInApp).toBe(true);
+  });
+});
+
 describe("provider enabled defaults", () => {
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");

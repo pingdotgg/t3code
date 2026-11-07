@@ -17,6 +17,13 @@ then copy. Cmd+A on macOS and Ctrl+Shift+A elsewhere select the same output.
 Ctrl+A still moves to the beginning of shell input on Windows and Linux.
 Jump to latest in the context menu returns to the current output.
 
+## File links
+
+To read a file from terminal output without leaving T3 Code, enable **Settings → General →
+Open terminal file links in T3 Code** on web or desktop. Clicking a file path opens it in the
+side panel at the requested line. Cmd-click on macOS or Ctrl-click elsewhere opens it in your
+preferred editor instead. Folder paths continue to open in the editor.
+
 ## fish
 
 T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal
