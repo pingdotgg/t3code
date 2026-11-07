@@ -1,3 +1,17 @@
+import { translateNow } from "../lib/miscTranslateNow";
+import {
+  __resetClientSettingsStoreForTests,
+  __setClientSettingsStoreForTests,
+  getClientSettings,
+  getClientSettingsHydratedSnapshot,
+  getClientSettingsHydrationStatusSnapshot,
+  getClientSettingsSnapshot,
+  registerClientSettingsHydrator,
+  replaceClientSettingsSnapshot,
+  setClientSettingsHydrationStatus,
+  subscribeClientSettings,
+  subscribeClientSettingsHydration,
+} from "./clientSettingsStore";
 import { useRef, useSyncExternalStore, use } from "react";
 import { useSyncExternalStoreWithSelector } from "use-sync-external-store/with-selector";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
@@ -66,71 +80,13 @@ const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
 type UnifiedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
-const clientSettingsListeners = new Set<() => void>();
-const clientSettingsHydrationListeners = new Set<() => void>();
-type ClientSettingsHydrationStatus = "pending" | "ready" | "failed" | "retrying";
-let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
-let clientSettingsHydrationStatus: ClientSettingsHydrationStatus = "pending";
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
 
-function emitClientSettingsChange() {
-  for (const listener of clientSettingsListeners) {
-    listener();
-  }
-}
-
-function emitClientSettingsHydrationChange() {
-  for (const listener of clientSettingsHydrationListeners) {
-    listener();
-  }
-}
-
-function getClientSettingsSnapshot(): ClientSettings {
-  return clientSettingsSnapshot;
-}
-
-function replaceClientSettingsSnapshot(settings: ClientSettings): void {
-  clientSettingsSnapshot = settings;
-  emitClientSettingsChange();
-}
-
-function setClientSettingsHydrationStatus(nextStatus: ClientSettingsHydrationStatus): void {
-  if (clientSettingsHydrationStatus === nextStatus) {
-    return;
-  }
-  clientSettingsHydrationStatus = nextStatus;
-  emitClientSettingsHydrationChange();
-}
-
-export function subscribeClientSettings(listener: () => void): () => void {
-  clientSettingsListeners.add(listener);
-  void hydrateClientSettings().catch(() => undefined);
-  return () => {
-    clientSettingsListeners.delete(listener);
-  };
-}
-
-export function getClientSettingsHydratedSnapshot(): boolean {
-  return clientSettingsHydrationStatus === "ready";
-}
-
-function getClientSettingsHydrationStatusSnapshot(): ClientSettingsHydrationStatus {
-  return clientSettingsHydrationStatus;
-}
-
-export function subscribeClientSettingsHydration(listener: () => void): () => void {
-  clientSettingsHydrationListeners.add(listener);
-  void hydrateClientSettings().catch(() => undefined);
-  return () => {
-    clientSettingsHydrationListeners.delete(listener);
-  };
-}
-
 async function hydrateClientSettings(): Promise<void> {
-  if (clientSettingsHydrationStatus === "ready") {
+  if (getClientSettingsHydrationStatusSnapshot() === "ready") {
     return;
   }
   if (clientSettingsHydrationPromise) {
@@ -139,7 +95,8 @@ async function hydrateClientSettings(): Promise<void> {
 
   const hydrationGeneration = clientSettingsHydrationGeneration;
   setClientSettingsHydrationStatus(
-    clientSettingsHydrationStatus === "failed" || clientSettingsHydrationStatus === "retrying"
+    getClientSettingsHydrationStatusSnapshot() === "failed" ||
+      getClientSettingsHydrationStatusSnapshot() === "retrying"
       ? "retrying"
       : "pending",
   );
@@ -175,6 +132,8 @@ async function hydrateClientSettings(): Promise<void> {
   return clientSettingsHydrationPromise;
 }
 
+registerClientSettingsHydrator(hydrateClientSettings);
+
 const defaultClientSettingsPersistence = (settings: ClientSettings): Promise<void> =>
   ensureLocalApi().persistence.setClientSettings(settings);
 
@@ -193,7 +152,7 @@ export function persistClientSettingsPatch(
 ): Promise<void> {
   // Patches queued before hydration must publish before newer optimistic patches.
   const deferPatch =
-    clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
+    getClientSettingsHydrationStatusSnapshot() !== "ready" || deferredClientSettingsPatchCount > 0;
   if (deferPatch) {
     deferredClientSettingsPatchCount += 1;
   } else {
@@ -202,7 +161,7 @@ export function persistClientSettingsPatch(
   return enqueueClientSettingsPersistence(async () => {
     if (deferPatch) {
       try {
-        if (clientSettingsHydrationStatus !== "ready") {
+        if (getClientSettingsHydrationStatusSnapshot() !== "ready") {
           await hydrateClientSettings();
         }
         replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
@@ -225,7 +184,7 @@ export async function persistClientSettingsUpdate(
   persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
 ): Promise<ClientSettings> {
   return enqueueClientSettingsPersistence(async () => {
-    if (clientSettingsHydrationStatus !== "ready") {
+    if (getClientSettingsHydrationStatusSnapshot() !== "ready") {
       await hydrateClientSettings();
     }
     for (;;) {
@@ -261,9 +220,12 @@ function splitPatch(patch: UnifiedSettingsPatch): {
   };
 }
 
-export function getClientSettings(): ClientSettings {
-  return getClientSettingsSnapshot();
-}
+export {
+  getClientSettings,
+  getClientSettingsHydratedSnapshot,
+  subscribeClientSettings,
+  subscribeClientSettingsHydration,
+} from "./clientSettingsStore";
 
 export function isClientSettingsHydrated(): boolean {
   return getClientSettingsHydratedSnapshot();
@@ -282,7 +244,7 @@ export function useClientSettingsHydrated(): boolean {
   );
 }
 
-export function useClientSettingsHydrationStatus(): ClientSettingsHydrationStatus {
+export function useClientSettingsHydrationStatus(): "pending" | "ready" | "failed" | "retrying" {
   return useSyncExternalStore(
     subscribeClientSettingsHydration,
     getClientSettingsHydrationStatusSnapshot,
@@ -343,12 +305,12 @@ const modelPreferencesMigrationTargetsAtom = Atom.make((get) =>
 ).pipe(Atom.withLabel("web-model-preferences-migration-targets"));
 
 function migrateModelPreferences(): void {
-  if (clientSettingsHydrationStatus !== "ready") return;
+  if (getClientSettingsHydrationStatusSnapshot() !== "ready") return;
   for (const { environmentId, generation, settings } of appAtomRegistry.get(
     modelPreferencesMigrationTargetsAtom,
   )) {
     if (attemptedMigrationGenerations.get(environmentId) === generation) continue;
-    const patch = modelPreferencesMigrationPatch(settings, clientSettingsSnapshot);
+    const patch = modelPreferencesMigrationPatch(settings, getClientSettingsSnapshot());
     if (!patch) continue;
     attemptedMigrationGenerations.set(environmentId, generation);
     void runAtomCommand(
@@ -445,8 +407,8 @@ export function useUpdateEnvironmentModelPreferences(environmentId: EnvironmentI
     } catch {
       toastManager.add({
         type: "error",
-        title: "Model preferences not saved",
-        description: "Could not load saved model preferences. Try again.",
+        title: translateNow("misc.hooks.settings.modelPrefsNotSaved"),
+        description: translateNow("misc.hooks.settings.loadPrefsFailed"),
       });
       return;
     }
@@ -472,8 +434,8 @@ export function useToggleEnvironmentModelFavorite(environmentId: EnvironmentId |
       } catch {
         toastManager.add({
           type: "error",
-          title: "Favorites not saved",
-          description: "Could not load saved model preferences. Try again.",
+          title: translateNow("misc.hooks.settings.favoritesNotSaved"),
+          description: translateNow("misc.hooks.settings.loadPrefsFailed"),
         });
         return;
       }
@@ -601,8 +563,14 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Setting not saved",
-        description: `Could not save on ${label}: ${error instanceof Error ? error.message : "The save failed. Try reconnecting and saving again."}`,
+        title: translateNow("misc.hooks.settings.notSaved"),
+        description: translateNow("misc.hooks.settings.saveFailed", {
+          label,
+          error:
+            error instanceof Error
+              ? error.message
+              : translateNow("misc.hooks.settings.saveFailedFallback"),
+        }),
       });
     }
     return result;
@@ -623,8 +591,12 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
       options?.onFailed?.();
       toastManager.add({
         type: "warning",
-        title: "Setting not saved",
-        description: `This connection lacks permission to change settings on ${environments.find((target) => target.environmentId === environmentId)?.label ?? "the selected environment"}.`,
+        title: translateNow("misc.hooks.settings.notSaved"),
+        description: translateNow("misc.hooks.settings.noPermission", {
+          label:
+            environments.find((target) => target.environmentId === environmentId)?.label ??
+            translateNow("misc.hooks.settings.selectedEnvironment"),
+        }),
       });
     }
     if (Object.keys(serverPatch).length > 0 && canWriteServerPatch) {
@@ -634,7 +606,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         options?.onFailed?.();
         return toastManager.add({
           type: "warning",
-          title: "Setting not saved",
+          title: translateNow("misc.hooks.settings.notSaved"),
           description,
         });
       };
@@ -749,18 +721,14 @@ export function updateClientSettings(patch: ClientSettingsPatch): Promise<void> 
 
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationGeneration += 1;
-  clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
-  clientSettingsHydrationStatus = "pending";
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
   deferredClientSettingsPatchCount = 0;
-  clientSettingsListeners.clear();
-  clientSettingsHydrationListeners.clear();
+  __resetClientSettingsStoreForTests();
 }
 
 export function __setClientSettingsForTests(settings: ClientSettings): void {
   clientSettingsHydrationGeneration += 1;
-  clientSettingsSnapshot = settings;
-  clientSettingsHydrationStatus = "ready";
   clientSettingsHydrationPromise = null;
+  __setClientSettingsStoreForTests(settings);
 }

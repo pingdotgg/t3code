@@ -1,4 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useT } from "../hooks/useI18n";
 import { findForMessageMatch, openThreadFindOnQuery } from "./chat/threadFindStore";
 import {
   claimThreadOpen,
@@ -98,6 +99,7 @@ export function useCommandPaletteThreadItems(input: {
   readonly threadSearchQuery: string;
 }) {
   const { activeThread, threadSearchQuery } = input;
+  const t = useT();
   const navigate = useNavigate();
   const threads = useVisibleThreadShells();
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
@@ -110,6 +112,7 @@ export function useCommandPaletteThreadItems(input: {
 
   const { environments } = useEnvironments();
   const threadItems = buildThreadActionItems({
+    t,
     threads,
     ...(environments.length > 1
       ? {
@@ -142,7 +145,8 @@ export function useCommandPaletteThreadItems(input: {
           project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
           projectTitle={projectTitle ?? null}
           environmentLabel={
-            projectEnvironmentLocationById.get(thread.environmentId)?.label ?? "Remote"
+            projectEnvironmentLocationById.get(thread.environmentId)?.label ??
+            t("app.palette.remote")
           }
           branch={thread.branch}
           worktreePath={thread.worktreePath}

@@ -4,6 +4,7 @@ import { shortcutLabelForCommand } from "../../keybindings";
 import { commandForProjectScript } from "../../projectScripts";
 import { ScriptIcon } from "../projectScriptEditor";
 import { Button } from "../ui/button";
+import { useT } from "../../hooks/useI18n";
 import { SettingsRow } from "./settingsLayout";
 
 export function ProjectActionsList({
@@ -17,10 +18,11 @@ export function ProjectActionsList({
   disabled: boolean;
   onEdit: (script: ProjectScript) => void;
 }) {
+  const t = useT();
   if (scripts.length === 0)
     return (
       <p className="px-3 py-2 text-base text-muted-foreground sm:px-4 sm:text-sm">
-        No actions configured.
+        {t("settings.code.projectActions.empty")}
       </p>
     );
   return scripts.map((script) => {
@@ -35,17 +37,17 @@ export function ProjectActionsList({
             <span className="min-w-0 truncate">{script.name}</span>
             {script.runOnWorktreeCreate ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">
-                setup
+                {t("settings.code.projectActions.badgeSetup")}
               </span>
             ) : null}
             {script.runOnSettle ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">
-                on settle
+                {t("settings.code.projectActions.badgeOnSettle")}
               </span>
             ) : null}
             {script.previewUrl ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground max-sm:hidden">
-                preview · desktop only
+                {t("settings.code.projectActions.badgePreviewDesktop")}
               </span>
             ) : null}
           </span>
@@ -60,7 +62,7 @@ export function ProjectActionsList({
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={`Edit ${script.name}`}
+                aria-label={t("settings.code.projectActions.editAria", { name: script.name })}
                 disabled={disabled}
                 onClick={() => onEdit(script)}
               >

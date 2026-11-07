@@ -11,31 +11,44 @@ import {
   ClerkUserProfileRow,
 } from "./ClerkUserProfilePage";
 import { useT3ChatLink } from "./useT3ChatLink";
+import { useT } from "../../hooks/useI18n";
+import type { TranslateFn } from "@t3tools/client-runtime/i18n";
 
-const upgradeLink = (
-  <a className="underline" href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer">
-    Upgrade on T3 Chat
-  </a>
-);
-
-function planLabel(link: RelayT3ChatLink): ReactNode {
+function planLabel(link: RelayT3ChatLink, t: TranslateFn): ReactNode {
+  const upgradeLink = (
+    <a
+      className="underline"
+      href={T3CHAT_SUBSCRIPTION_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      {t("misc.clerk.chat.upgradeLink")}
+    </a>
+  );
   switch (link.plan) {
     case "premier":
-      return `Premier · up to ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} tunnels`;
+      return t("misc.clerk.chat.premier", { count: T3CHAT_PLAN_TUNNEL_LIMITS.premier });
     case "pro":
       return (
         <>
-          Pro · up to {T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels. {upgradeLink} to Premier for{" "}
-          {T3CHAT_PLAN_TUNNEL_LIMITS.premier}.
+          {t("misc.clerk.chat.proBefore", { count: T3CHAT_PLAN_TUNNEL_LIMITS.pro })}
+          {upgradeLink}
+          {t("misc.clerk.chat.proAfter", { count: T3CHAT_PLAN_TUNNEL_LIMITS.premier })}
         </>
       );
     case "free":
-      return <>{upgradeLink} for more tunnels</>;
+      return (
+        <>
+          {upgradeLink}
+          {t("misc.clerk.chat.freeAfter")}
+        </>
+      );
   }
 }
 
 /** Links a T3 Chat account so paid subscribers get more tunnels. */
 export function T3ChatUserProfilePage() {
+  const t = useT();
   const { linkState, pending, linkUrl, link: handleLink, unlink: handleUnlink } = useT3ChatLink();
   const usage = useManagedTunnelUsage();
 
@@ -45,7 +58,10 @@ export function T3ChatUserProfilePage() {
   return (
     <ClerkUserProfilePage
       title="T3 Chat"
-      description={`Link a paid T3 Chat account for more T3 Connect tunnels: up to ${T3CHAT_PLAN_TUNNEL_LIMITS.pro} with Pro, ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} with Premier.`}
+      description={t("misc.clerk.chat.description", {
+        pro: T3CHAT_PLAN_TUNNEL_LIMITS.pro,
+        premier: T3CHAT_PLAN_TUNNEL_LIMITS.premier,
+      })}
       action={
         <ClerkUserProfileRefreshButton
           disabled={pending !== null}
@@ -56,12 +72,14 @@ export function T3ChatUserProfilePage() {
     >
       {linkState.error ? (
         <div className="border-t py-3 text-xs" role="alert">
-          <p className="font-medium text-destructive-foreground">Could not load T3 Chat link</p>
+          <p className="font-medium text-destructive-foreground">
+            {t("misc.clerk.chat.loadFailed")}
+          </p>
           <p className="mt-0.5 text-muted-foreground">{linkState.error}</p>
         </div>
       ) : data === null ? null : !data.available ? (
         <p className="border-t py-4 text-xs text-muted-foreground">
-          This T3 Connect server does not support T3 Chat linking.
+          {t("misc.clerk.chat.unsupported")}
         </p>
       ) : (
         <ul className="border-t">
@@ -69,14 +87,14 @@ export function T3ChatUserProfilePage() {
             <div className="flex items-start gap-4">
               <div className="min-w-0 flex-1">
                 <h3 className="truncate text-sm leading-4.5 font-medium text-foreground">
-                  {link ? link.email : "Not linked"}
+                  {link ? link.email : t("misc.clerk.chat.notLinked")}
                 </h3>
                 <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
                   {link ? (
-                    planLabel(link)
+                    planLabel(link, t)
                   ) : linkUrl ? (
                     <>
-                      Confirm on{" "}
+                      {t("misc.clerk.chat.confirmBefore")}
                       <a
                         className="underline"
                         href={linkUrl}
@@ -85,10 +103,10 @@ export function T3ChatUserProfilePage() {
                       >
                         t3.chat
                       </a>
-                      , then select Refresh.
+                      {t("misc.clerk.chat.confirmAfter")}
                     </>
                   ) : (
-                    "You confirm the link on t3.chat."
+                    t("misc.clerk.chat.confirmOnSite")
                   )}
                 </p>
               </div>
@@ -99,11 +117,13 @@ export function T3ChatUserProfilePage() {
                   disabled={pending !== null}
                   onClick={() => void handleUnlink()}
                 >
-                  {pending === "unlink" ? "Unlinking…" : "Unlink"}
+                  {pending === "unlink"
+                    ? t("misc.clerk.chat.unlinking")
+                    : t("misc.clerk.chat.unlink")}
                 </Button>
               ) : (
                 <Button size="sm" disabled={pending !== null} onClick={() => void handleLink()}>
-                  {pending === "link" ? "Opening…" : "Link T3 Chat"}
+                  {pending === "link" ? t("misc.clerk.chat.opening") : t("misc.clerk.chat.link")}
                 </Button>
               )}
             </div>

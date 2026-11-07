@@ -5,6 +5,7 @@ import {
   SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 
 export interface DeviceHostCheckTarget {
   environmentId: EnvironmentId;
@@ -40,12 +41,13 @@ export async function checkDeviceHostConnections(
   host: SshDeviceHostConfig,
   probe: (environmentId: EnvironmentId, host: SshDeviceHostConfig) => Promise<DeviceHostSummary>,
   report: (environmentId: EnvironmentId, result: DeviceHostCheck) => void,
+  t: TranslateFn = createTranslator("en"),
 ) {
   await Promise.all(
     targets.map(async (target) => {
       report(target.environmentId, { status: "pending" });
       try {
-        if (!target.connected) throw new Error("Environment disconnected");
+        if (!target.connected) throw new Error(t("settings.code.deviceHost.disconnected"));
         const result = await probe(target.environmentId, host);
         report(
           target.environmentId,

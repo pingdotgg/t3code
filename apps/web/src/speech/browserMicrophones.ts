@@ -1,3 +1,5 @@
+import { translateNow } from "~/components/media/translateNow";
+
 export type BrowserMicrophone = Pick<MediaDeviceInfo, "deviceId" | "label">;
 
 export async function listBrowserMicrophones(): Promise<BrowserMicrophone[]> {
@@ -6,6 +8,6 @@ export async function listBrowserMicrophones(): Promise<BrowserMicrophone[]> {
     .filter((device) => device.kind === "audioinput")
     .map(({ deviceId, label }, index) => ({
       deviceId,
-      label: label || `Microphone ${index + 1}`,
+      label: label || translateNow("voice.speech.microphoneFallback", { index: index + 1 }),
     }));
 }

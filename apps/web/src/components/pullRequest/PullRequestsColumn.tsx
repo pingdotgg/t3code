@@ -18,6 +18,7 @@ import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
 import type { PullRequestFilterOption } from "./PullRequestListFilters";
 import { INVOLVEMENT_TABS, STATE_TABS } from "./pullRequestListOptions";
 
+import { useT } from "~/hooks/useI18n";
 function ExpandableSearch({
   searchInput,
   searchValue,
@@ -35,6 +36,7 @@ function ExpandableSearch({
    */
   onFocusWithin?: (focused: boolean) => void;
 }) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the search input DOM node when the topbar search opens
   useEffect(() => {
@@ -60,7 +62,7 @@ function ExpandableSearch({
     <Button
       size="icon-sm"
       variant="ghost"
-      aria-label="Search pull requests"
+      aria-label={t("review.extra.search.pull.requests")}
       onClick={() => onOpenChange(true)}
     >
       <SearchIcon className="size-4" />
@@ -109,7 +111,8 @@ export function PullRequestsColumn({
   listBody: ReactNode;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
-  const contentArea = workspaceAreaProps("pull-requests", 1, "Pull requests");
+  const t = useT();
+  const contentArea = workspaceAreaProps("pull-requests", 1, t("review.extra.pull.requests"));
   const markerRef = useRef<HTMLDivElement | null>(null);
   const [condensed, setCondensed] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- IntersectionObserver on the scroll marker condenses the topbar
@@ -176,26 +179,26 @@ export function PullRequestsColumn({
         {condensed ? (
           <WorkspaceBreadcrumb ariaLabel="Pull request scope" className="overflow-hidden">
             <WorkspaceBreadcrumbItem current className={cn(searchExpanded && "sr-only")}>
-              <h1 className="truncate">Pull requests</h1>
+              <h1 className="truncate">{t("review.extra.pull.requests")}</h1>
             </WorkspaceBreadcrumbItem>
             {searchExpanded ? null : <WorkspaceBreadcrumbSeparator />}
             <WorkspaceBreadcrumbItem className="shrink gap-1.5">
               <PullRequestCompactFilterMenu
-                label="Filter by state"
+                label={t("review.extra.filter.by.state")}
                 value={state}
                 options={STATE_TABS}
                 onChange={onState}
                 className="shrink-0"
               />
               <PullRequestCompactFilterMenu
-                label="Filter by involvement"
+                label={t("review.extra.filter.by.involvement")}
                 value={involvement}
                 options={INVOLVEMENT_TABS}
                 onChange={onInvolvement}
               />
               {hostMenuOptions.length > 2 ? (
                 <PullRequestCompactFilterMenu
-                  label="Filter by host"
+                  label={t("review.extra.filter.by.host")}
                   value={host ?? ""}
                   options={hostMenuOptions}
                   onChange={(next) => onHost(next === "" ? undefined : next)}
@@ -206,7 +209,7 @@ export function PullRequestsColumn({
         ) : (
           <WorkspaceBreadcrumb ariaLabel="Pull requests breadcrumb">
             <WorkspaceBreadcrumbItem current>
-              <h1 className="truncate">Pull requests</h1>
+              <h1 className="truncate">{t("review.extra.pull.requests")}</h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         )}
@@ -241,7 +244,7 @@ export function PullRequestsColumn({
               {sortMenu}
               {filtersMenu}
               <PullRequestCompactFilterMenu
-                label="Filter by provider"
+                label={t("review.extra.filter.by.provider")}
                 outlined
                 iconOnly={host !== undefined}
                 triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
@@ -273,11 +276,12 @@ function PullRequestRefreshControl({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const t = useT();
   return (
     <Button
       size={compact ? "icon-sm" : "icon"}
       variant={compact ? "ghost" : "outline"}
-      aria-label="Refresh pull requests"
+      aria-label={t("review.extra.refresh.pull.requests")}
       onClick={onRefresh}
       disabled={refreshing}
     >

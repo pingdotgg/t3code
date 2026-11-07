@@ -6,6 +6,7 @@ import {
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
+import { useT } from "~/hooks/useI18n";
 import { useEnvironmentScope } from "~/state/session";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
@@ -31,6 +32,7 @@ export function PreviewPanel({
   visible,
   onSendAnnotation,
 }: Props) {
+  const t = useT();
   const available = usePreviewAvailable(threadRef.environmentId);
   const canOperatePreview = useEnvironmentScope(threadRef.environmentId, AuthPreviewOperateScope);
   if (!canOperatePreview || !available) {
@@ -39,8 +41,8 @@ export function PreviewPanel({
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <p className="max-w-sm text-sm text-muted-foreground">
             {canOperatePreview
-              ? "Preview is only available in the T3 Code desktop app."
-              : "Pair this client again with preview access to control browser previews."}
+              ? t("review.preview.panel.desktopOnly")
+              : t("review.preview.panel.pairAgain")}
           </p>
         </div>
       </PreviewPanelShell>

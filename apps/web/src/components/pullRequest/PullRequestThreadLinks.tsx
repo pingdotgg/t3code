@@ -32,6 +32,8 @@ import { MenuItem } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
+import { translateNow } from "~/components/media/translateNow";
+import { useT } from "~/hooks/useI18n";
 interface PullRequestThreadLinksProps {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -60,6 +62,7 @@ function EnabledPullRequestThreadLinks({
   display,
   onPickerOpenChange,
 }: PullRequestThreadLinksProps) {
+  const t = useT();
   const parsedUrl = sourceControlClients.parseChangeRequestUrl(url);
   const parsed = parsedUrl?.link ?? null;
   const term = (parsedUrl?.definition ?? sourceControlClients.get(undefined)).changeRequest
@@ -100,7 +103,9 @@ function EnabledPullRequestThreadLinks({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: remove ? `Could not unlink the ${term}` : `Could not link the ${term}`,
+        title: remove
+          ? translateNow("review.pr.couldNotUnlink", { term })
+          : translateNow("review.pr.couldNotLink", { term }),
         description: error instanceof Error ? error.message : String(error),
       });
       return;
@@ -126,8 +131,11 @@ function EnabledPullRequestThreadLinks({
   );
   const linkedThreadsLabel =
     linkedThreads.length > 0
-      ? `Linked from ${linkedThreads.length} ${linkedThreads.length === 1 ? "thread" : "threads"}`
-      : "Linked threads";
+      ? translateNow("review.pr.linkedFrom", {
+          count: linkedThreads.length,
+          noun: linkedThreads.length === 1 ? "thread" : "threads",
+        })
+      : t("review.extra.linked.threads");
   return (
     <>
       {display === "count" && (linkedThreads.length > 0 || relations.error !== null) ? (
@@ -152,7 +160,9 @@ function EnabledPullRequestThreadLinks({
               </Button>
             }
           />
-          <TooltipPopup>{linkedThreadsLabel}. Search in the command palette.</TooltipPopup>
+          <TooltipPopup>
+            {t("review.extra.searchInCommandPalette", { label: linkedThreadsLabel })}
+          </TooltipPopup>
         </Tooltip>
       ) : null}
       {display === "menu-item" ? (
@@ -172,16 +182,18 @@ function EnabledPullRequestThreadLinks({
             <PullRequestGlyph.link aria-hidden className="size-3.5" />
           )}
           {linkedHere
-            ? "Unlink from this thread"
+            ? t("review.extra.unlink.from.this.thread")
             : currentThreadRef
-              ? "Link to this thread"
-              : "Link to thread"}
+              ? t("review.extra.link.to.this.thread")
+              : t("review.extra.link.to.thread")}
         </MenuItem>
       ) : null}
       {display === "picker" ? (
         <Dialog open onOpenChange={onPickerOpenChange}>
           <DialogPopup className="max-w-md" showCloseButton={false}>
-            <DialogTitle className="sr-only">Link {term} to a thread</DialogTitle>
+            <DialogTitle className="sr-only">
+              {t("review.extra.linkTermToThread", { term })}
+            </DialogTitle>
             <ThreadPicker
               environmentId={environmentId}
               url={url}
@@ -206,6 +218,7 @@ function ThreadPicker({
   pending: boolean;
   onSelect: (threadId: ThreadId) => void;
 }) {
+  const t = useT();
   const threads = useVisibleThreadShells();
   const linking = usePullRequestLinking(environmentId);
   const projects = useProjects();
@@ -229,15 +242,21 @@ function ThreadPicker({
     )
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
-    <Command mode="none" value={query} onValueChange={setQuery} aria-label="Choose a thread">
-      <CommandInput placeholder="Search threads or projects..." disabled={pending} />
+    <Command
+      mode="none"
+      value={query}
+      onValueChange={setQuery}
+      aria-label={t("review.extra.choose.a.thread")}
+    >
+      <CommandInput placeholder={t("review.extra.search.threads.or.projects")} disabled={pending} />
       <CommandList className="max-h-80 overflow-y-auto">
         {candidates.length === 0 ? (
           <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-            No active threads found.
+            {t("review.extra.no.active.threads.found")}
           </div>
         ) : (
           candidates.map((thread) => {
+            const t = translateNow;
             const linked = linking.isLinked(thread, url);
             return (
               <CommandItem
@@ -248,7 +267,9 @@ function ThreadPicker({
               >
                 <MessageSquareIcon aria-hidden className="size-4 shrink-0" />
                 <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate">{thread.title || "Untitled thread"}</span>
+                  <span className="truncate">
+                    {thread.title || t("review.extra.untitled.thread")}
+                  </span>
                   <span className="truncate text-xs text-muted-foreground">
                     {projectNames.get(thread.projectId)}
                   </span>
@@ -256,7 +277,9 @@ function ThreadPicker({
                 {linked ? (
                   <>
                     <CheckIcon aria-hidden className="size-3.5" />
-                    <span className="text-xs text-muted-foreground">Linked</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t("review.extra.linked")}
+                    </span>
                   </>
                 ) : null}
               </CommandItem>

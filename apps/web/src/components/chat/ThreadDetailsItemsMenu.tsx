@@ -1,3 +1,4 @@
+import { useT } from "../../hooks/useI18n";
 import {
   getClientSettings,
   updateClientSettings,
@@ -14,11 +15,12 @@ import {
 
 /** Menu body that shows and hides thread details items. The card's context menu and Settings share it. */
 export function ThreadDetailsItemsMenuItems() {
+  const t = useT();
   const visibility = useClientSettings(resolveThreadDetailsVisibility);
   return (
     <>
       <MenuGroup>
-        <MenuGroupLabel>Show in thread details</MenuGroupLabel>
+        <MenuGroupLabel>{t("chat.details.showIn")}</MenuGroupLabel>
         {THREAD_DETAILS_ITEMS.map((item) => (
           <MenuCheckboxItem
             key={item.id}
@@ -29,7 +31,7 @@ export function ThreadDetailsItemsMenuItems() {
               })
             }
           >
-            {item.label}
+            {t(item.label)}
           </MenuCheckboxItem>
         ))}
       </MenuGroup>
@@ -38,7 +40,7 @@ export function ThreadDetailsItemsMenuItems() {
         disabled={isDefaultThreadDetailsVisibility(visibility)}
         onClick={() => updateClientSettings(RESET_THREAD_DETAILS_ITEMS)}
       >
-        Reset to default
+        {t("chat.details.reset")}
       </MenuItem>
     </>
   );

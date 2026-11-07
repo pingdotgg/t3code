@@ -1,9 +1,18 @@
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
+import { useT } from "../../hooks/useI18n";
 import { WizardSteps } from "../ui/wizard";
 import {
   ADD_PROVIDER_WIZARD_STEPS,
   resolveWizardNavigation,
   type WizardNavigation,
 } from "./AddProviderInstanceDialog.logic";
+
+const STEP_LABEL_KEYS: Record<string, MessageKey> = {
+  Provider: "settings.providers.instance.wizard.provider",
+  Identity: "settings.providers.instance.wizard.identity",
+  Config: "settings.providers.instance.wizard.config",
+  "Sign in": "settings.providers.instance.wizard.signIn",
+};
 
 interface AddProviderInstanceWizardStepsProps {
   readonly currentStep: number;
@@ -29,9 +38,10 @@ export function AddProviderInstanceWizardSteps({
   onNavigation,
   disabled = false,
 }: AddProviderInstanceWizardStepsProps) {
+  const t = useT();
   return (
     <WizardSteps
-      steps={steps}
+      steps={steps.map((step) => (STEP_LABEL_KEYS[step] ? t(STEP_LABEL_KEYS[step]) : step))}
       currentStep={currentStep}
       summaries={summaries}
       isStepDisabled={() => disabled}

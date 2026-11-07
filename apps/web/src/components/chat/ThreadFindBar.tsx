@@ -1,5 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
+import { useT } from "../../hooks/useI18n";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { cn } from "~/lib/utils";
@@ -24,6 +25,7 @@ interface ThreadFindBarProps {
 export const THREAD_FIND_BAR_RESERVED_HEIGHT = 36 + THREAD_DETAILS_CARD_GAP;
 
 export function ThreadFindBar(props: ThreadFindBarProps) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when the bar opens or a find shortcut fires
@@ -45,8 +47,8 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   if (hasQuery) {
     label = props.counting ? "1/…" : formatThreadFindCount(props.activeIndex, props.matchCount);
   }
-  if (props.status === "loading") label = "Searching…";
-  if (props.status === "error") label = "Search failed";
+  if (props.status === "loading") label = t("chat.find.searching");
+  if (props.status === "error") label = t("chat.find.failed");
   const navigationDisabled =
     props.matchCount === 0 || props.status === "loading" || props.counting === true;
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -69,7 +71,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
         size="lg"
         onContextMenu={(event) => event.stopPropagation()}
         role="search"
-        aria-label="Find in thread"
+        aria-label={t("chat.find.inThread")}
         aria-busy={props.status === "loading" || props.counting === true}
         className="w-full"
       >
@@ -78,8 +80,8 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
           type="search"
           size="sm"
           value={props.query}
-          aria-label="Find in thread"
-          placeholder="Find in thread"
+          aria-label={t("chat.find.inThread")}
+          placeholder={t("chat.find.inThread")}
           maxLength={200}
           spellCheck={false}
           autoComplete="off"
@@ -98,13 +100,13 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
           </span>
           {props.status === "error" ? (
             <Button size="xs" variant="ghost" onClick={props.onRetry}>
-              Retry
+              {t("chat.find.retry")}
             </Button>
           ) : null}
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Previous match"
+            aria-label={t("chat.find.previous")}
             disabled={navigationDisabled}
             onClick={props.onPrevious}
           >
@@ -113,13 +115,18 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Next match"
+            aria-label={t("chat.find.next")}
             disabled={navigationDisabled}
             onClick={props.onNext}
           >
             <ChevronDownIcon />
           </Button>
-          <Button size="icon-xs" variant="ghost" aria-label="Close find" onClick={props.onClose}>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={t("chat.find.close")}
+            onClick={props.onClose}
+          >
             <XIcon />
           </Button>
         </InputGroupAddon>

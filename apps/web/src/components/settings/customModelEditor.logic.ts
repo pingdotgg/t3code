@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import { type CustomModelDefinition, createModelCapabilities } from "@t3tools/shared/model";
 
 export interface EditorChoice {
@@ -194,23 +195,31 @@ export function descriptorsFromCapabilities(
     .map(descriptorToEditor);
 }
 
-export function validateDraft(draft: CustomModelDraft): string | null {
+export function validateDraft(
+  draft: CustomModelDraft,
+  t: TranslateFn = createTranslator("en"),
+): string | null {
   const seenIds = new Set<string>();
   for (const [index, descriptor] of draft.descriptors.entries()) {
-    const position = `Option ${index + 1}`;
+    const position = t("settings.providers.customModel.optionN", { number: index + 1 });
     const id = descriptor.id.trim();
-    if (!id) return `${position} needs an id.`;
-    if (seenIds.has(id)) return `${position}: id "${id}" is used twice.`;
+    if (!id) return t("settings.providers.customModel.error.needsId", { position });
+    if (seenIds.has(id)) return t("settings.providers.customModel.error.idTwice", { position, id });
     seenIds.add(id);
-    if (!descriptor.label.trim()) return `${position} needs a label.`;
+    if (!descriptor.label.trim())
+      return t("settings.providers.customModel.error.needsLabel", { position });
     if (descriptor.type !== "select") continue;
-    if (descriptor.choices.length === 0) return `${position} needs at least one choice.`;
+    if (descriptor.choices.length === 0)
+      return t("settings.providers.customModel.error.needsChoice", { position });
     const seenChoices = new Set<string>();
     for (const choice of descriptor.choices) {
       const choiceId = choice.id.trim();
-      if (!choiceId) return `${position} has a choice without a value.`;
+      if (!choiceId) return t("settings.providers.customModel.error.choiceNoValue", { position });
       if (seenChoices.has(choiceId)) {
-        return `${position}: choice "${choiceId}" is used twice.`;
+        return t("settings.providers.customModel.error.choiceTwice", {
+          position,
+          choice: choiceId,
+        });
       }
       seenChoices.add(choiceId);
     }

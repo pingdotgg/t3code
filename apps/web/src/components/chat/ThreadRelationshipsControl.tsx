@@ -59,6 +59,7 @@ import {
 import { useRef, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { useT } from "../../hooks/useI18n";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
@@ -113,11 +114,12 @@ function ThreadLineageRowList(props: {
   readonly onShowMore: () => void;
   readonly children: ReactNode;
 }) {
+  const t = useT();
   return (
     <>
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
-        aria-label="Related threads"
+        aria-label={t("chat.lineage.relatedThreads")}
         className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
@@ -397,6 +399,7 @@ export function ThreadRelationshipsPanel(props: {
   readonly showLineage: boolean;
   readonly showSideChats: boolean;
 }) {
+  const t = useT();
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
   const providersByEnvironment = useEnvironmentProviders();
@@ -567,7 +570,7 @@ export function ThreadRelationshipsPanel(props: {
     { id: "active", label: null, rows: [...active, ...remoteActive], expanded: true },
     {
       id: "previous",
-      label: "Previous agents",
+      label: t("chat.lineage.previousAgents"),
       rows: [...previous, ...remotePrevious],
       expanded: false,
     },
@@ -626,7 +629,7 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       mergeErrorToastId.current = toastManager.add({
         type: "error",
-        title: "Could not merge back",
+        title: t("chat.lineage.mergeBackFailed"),
       });
       return;
     }
@@ -648,7 +651,7 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       detachErrorToastId.current = toastManager.add({
         type: "error",
-        title: "Could not disconnect agent session",
+        title: t("chat.lineage.disconnectFailed"),
       });
     }
   };
@@ -665,7 +668,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not stop subagent" });
+      toastManager.add({ type: "error", title: t("chat.lineage.stopSubagentFailed") });
     }
   };
 
@@ -678,7 +681,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not stop workflow" });
+      toastManager.add({ type: "error", title: t("chat.lineage.stopWorkflowFailed") });
     }
   };
 
@@ -917,7 +920,7 @@ export function ThreadRelationshipsPanel(props: {
                     variant="ghost"
                     part="icon"
                     tone="destructive"
-                    aria-label={`Stop subagent ${threadTitle}`}
+                    aria-label={t("chat.lineage.stopSubagentNamed", { title: threadTitle })}
                     disabled={stoppingId !== null}
                     onClick={() => void stopSubagent(threadId, agent)}
                   />
@@ -929,7 +932,7 @@ export function ThreadRelationshipsPanel(props: {
                   <SquareIcon aria-hidden className="size-3 fill-current" />
                 )}
               </TooltipTrigger>
-              <TooltipPopup side="left">Stop subagent</TooltipPopup>
+              <TooltipPopup side="left">{t("chat.lineage.stopSubagent")}</TooltipPopup>
             </Tooltip>
           </div>
         ) : null}
@@ -962,7 +965,7 @@ export function ThreadRelationshipsPanel(props: {
                       size="icon-xs"
                       variant="ghost"
                       part="icon"
-                      aria-label="More thread actions"
+                      aria-label={t("chat.lineage.moreThreadActions")}
                       disabled={busyAction !== null}
                     />
                   }

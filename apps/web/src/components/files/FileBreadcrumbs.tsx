@@ -1,3 +1,4 @@
+import { translateNow } from "~/components/media/translateNow";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -30,6 +31,7 @@ import {
 } from "./filePath";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
+import { useT } from "~/hooks/useI18n";
 interface FileBreadcrumbsProps {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
@@ -84,6 +86,7 @@ function BreadcrumbMenuContent(props: {
   readonly rootPath: string;
   readonly workspaceMutationId: string | null;
 }) {
+  const t = useT();
   const entriesQuery = useProjectEntriesQuery(
     props.environmentId,
     props.cwd,
@@ -127,20 +130,22 @@ function BreadcrumbMenuContent(props: {
         {entriesQuery.isPending && entriesQuery.data === null ? (
           <MenuItem disabled>
             <Spinner />
-            Loading folder…
+            {t("review.extra.loading.folder")}
           </MenuItem>
         ) : entriesQuery.error && entriesQuery.data === null ? (
           <MenuItem closeOnClick={false} onClick={entriesQuery.refresh}>
             <RefreshIcon refreshing={entriesQuery.isPending} />
-            <span className="min-w-0 flex-1 truncate">Retry loading folder</span>
+            <span className="min-w-0 flex-1 truncate">
+              {t("review.extra.retry.loading.folder")}
+            </span>
           </MenuItem>
         ) : !directoryAvailable && !entriesTruncated ? (
-          <MenuItem disabled>This folder is no longer available.</MenuItem>
+          <MenuItem disabled>{t("review.extra.this.folder.is.no.longer.available")}</MenuItem>
         ) : children.length === 0 ? (
           <MenuItem disabled>
             {entriesTruncated
-              ? "No entries from this folder are available in the partial workspace index."
-              : "This folder is empty."}
+              ? t("review.extra.no.entries.from.this.folder.are.available.in")
+              : t("review.extra.this.folder.is.empty")}
           </MenuItem>
         ) : (
           <MenuRadioGroup
@@ -200,14 +205,14 @@ function BreadcrumbMenuContent(props: {
           <MenuSeparator />
           <MenuItem closeOnClick={false} onClick={entriesQuery.refresh}>
             <RefreshIcon refreshing={entriesQuery.isPending} />
-            Refresh failed. Retry
+            {t("review.extra.refresh.failed.retry")}
           </MenuItem>
         </>
       ) : null}
       {entriesTruncated ? (
         <>
           <MenuSeparator />
-          <MenuItem disabled>Some workspace entries are not shown.</MenuItem>
+          <MenuItem disabled>{t("review.extra.some.workspace.entries.are.not.shown")}</MenuItem>
         </>
       ) : null}
     </MenuPopup>
@@ -238,7 +243,7 @@ function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: File
         render={
           <button
             type="button"
-            aria-label={`Browse ${props.crumb.label}`}
+            aria-label={translateNow("review.files.browse", { label: props.crumb.label })}
             className="relative mx-0.5 flex h-5 w-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/60 outline-none pointer-coarse:after:absolute pointer-coarse:after:-inset-3 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-accent data-popup-open:text-foreground"
           />
         }
@@ -293,13 +298,14 @@ function FolderBreadcrumb(props: {
 
 /** Host paths outside the workspace omit contents menus; the browser already lists their destination. */
 export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
+  const t = useT();
   const hostPath = isHostPath(props.relativePath);
   const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail);
   const currentPath = breadcrumbPathOf(props.relativePath);
   const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === currentPath);
 
   return (
-    <nav aria-label="File path" className="flex h-full">
+    <nav aria-label={t("review.extra.file.path")} className="flex h-full">
       <ol className="flex items-center">
         {breadcrumbs.map((crumb, index) => {
           const current = index === currentIndex;

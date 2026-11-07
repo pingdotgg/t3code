@@ -23,6 +23,8 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 
+import { translateNow } from "~/components/media/translateNow";
+import { useT } from "~/hooks/useI18n";
 // Host in chat to survive command palette dismissal.
 const linkPullRequestDialogThreadAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
   Atom.keepAlive,
@@ -63,6 +65,7 @@ function LinkPullRequestDialog({
   projectId,
   onOpenChange,
 }: LinkPullRequestDialogProps) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -93,6 +96,7 @@ function LinkPullRequestDialog({
   });
 
   const submit = async () => {
+    const t = translateNow;
     setDirty(true);
     if (resolved === null || "error" in resolved) return;
     setSubmitError(null);
@@ -103,7 +107,9 @@ function LinkPullRequestDialog({
     setPending(false);
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      setSubmitError(error instanceof Error ? error.message : "Could not link the pull request.");
+      setSubmitError(
+        error instanceof Error ? error.message : t("review.extra.could.not.link.the.pull.request"),
+      );
       return;
     }
     onOpenChange(false);
@@ -112,9 +118,9 @@ function LinkPullRequestDialog({
   const validation = !dirty
     ? null
     : reference.trim().length === 0
-      ? "Paste a pull request URL or enter 123 / #123."
+      ? t("review.extra.paste.a.pull.request.url.or.enter.123")
       : resolved === null
-        ? "Use a pull request URL, 123, or #123."
+        ? t("review.extra.use.a.pull.request.url.123.or.123")
         : "error" in resolved
           ? resolved.error
           : null;
@@ -123,16 +129,15 @@ function LinkPullRequestDialog({
     <Dialog open={open} onOpenChange={(next) => (pending ? undefined : onOpenChange(next))}>
       <DialogPopup className="max-w-xl" initialFocus={inputRef}>
         <DialogHeader>
-          <DialogTitle>Link pull request</DialogTitle>
+          <DialogTitle>{t("review.extra.link.pull.request")}</DialogTitle>
           <DialogDescription>
-            Attach a pull request to this thread by its URL, or by its number for this thread's
-            repository.
+            {t("review.extra.attach.a.pull.request.to.this.thread.by")}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <Input
             ref={inputRef}
-            placeholder="Pull request URL or #42"
+            placeholder={t("review.extra.pull.request.url.or.42")}
             value={reference}
             onChange={(event) => {
               setDirty(true);
@@ -161,7 +166,7 @@ function LinkPullRequestDialog({
             onClick={() => onOpenChange(false)}
             disabled={pending}
           >
-            Cancel
+            {t("review.extra.cancel")}
           </Button>
           <Button
             type="button"
@@ -169,7 +174,7 @@ function LinkPullRequestDialog({
             onClick={() => void submit()}
             disabled={pending || resolved === null || "error" in resolved}
           >
-            {pending ? "Linking..." : "Link"}
+            {pending ? t("review.extra.linking") : t("review.extra.link")}
           </Button>
         </DialogFooter>
       </DialogPopup>

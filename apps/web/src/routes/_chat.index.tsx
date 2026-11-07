@@ -20,6 +20,7 @@ import {
   useVisibleThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { useT } from "../hooks/useI18n";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -91,7 +92,8 @@ function IndexDraftLanding() {
 }
 
 function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
-  const contentArea = workspaceAreaProps("home", 1, "Home");
+  const t = useT();
+  const contentArea = workspaceAreaProps("home", 1, t("misc.routes.homeArea"));
   return (
     <SidebarInset
       {...contentArea}
@@ -101,14 +103,12 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
       {isElectron ? <WorkspacePageHeader electron /> : null}
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
-          <EmptyTitle>Couldn’t start a new thread</EmptyTitle>
-          <EmptyDescription>
-            The project is still available. Try opening the draft again.
-          </EmptyDescription>
+          <EmptyTitle>{t("misc.routes.draftStart.title")}</EmptyTitle>
+          <EmptyDescription>{t("misc.routes.draftStart.description")}</EmptyDescription>
           <div className="mt-5 flex justify-center">
             <Button size="sm" onClick={onRetry}>
               <RefreshIcon size="md" />
-              Try again
+              {t("misc.routes.error.tryAgain")}
             </Button>
           </div>
         </EmptyHeader>

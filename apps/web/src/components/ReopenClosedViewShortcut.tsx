@@ -8,6 +8,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 
+import { useT } from "../hooks/useI18n";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClosedViewStore } from "../closedViewStore";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -57,6 +58,7 @@ const isGlobalPullRequests = (ref: ScopedThreadRef) =>
 
 export function ReopenClosedViewShortcut() {
   const navigate = useNavigate();
+  const t = useT();
   const params = useParams({ strict: false });
   const target = resolveThreadRouteTarget(params);
   const draft = useComposerDraftStore((state) =>
@@ -146,7 +148,7 @@ export function ReopenClosedViewShortcut() {
       .catch((error: unknown) => {
         toastManager.add({
           type: "error",
-          title: "Could not reopen view",
+          title: t("appB.reopenView.failed"),
           description: error instanceof Error ? error.message : String(error),
         });
       });

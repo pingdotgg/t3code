@@ -2,6 +2,8 @@ import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contr
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState } from "react";
 
+import { useT } from "../hooks/useI18n";
+
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentsWithScope } from "~/state/session";
@@ -70,6 +72,7 @@ export function useProviderUpdates() {
 }
 
 export function ProviderUpdatesAction() {
+  const t = useT();
   const { machines, updateAll } = useProviderUpdates();
   const pending = useRef(false);
   const [isPending, setIsPending] = useState(false);
@@ -96,7 +99,7 @@ export function ProviderUpdatesAction() {
             disabled={isPending}
             onClick={() => void handleUpdate()}
           >
-            {isPending ? "Updating…" : "Update all"}
+            {isPending ? t("app.providerUpdates.updating") : t("app.providerUpdates.updateAll")}
           </Button>
         }
       />

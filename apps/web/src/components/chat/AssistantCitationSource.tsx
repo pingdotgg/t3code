@@ -7,6 +7,7 @@ import {
 } from "~/lib/assistantTextSelection";
 import { toastManager } from "../ui/toast";
 import { observeResize } from "~/lib/observeResize";
+import { translateNow } from "../media/translateNow";
 
 const CITATION_PULSE_DURATION_MS = 650;
 const CITATION_HIGHLIGHT_HOLD_MS = 1575;
@@ -194,8 +195,8 @@ function observeAssistantCitationSource({
             request.onComplete();
             toastManager.add({
               type: "warning",
-              title: "Could not open the cited response",
-              description: "Click the citation to try again.",
+              title: translateNow("chat.citation.openFailedTitle"),
+              description: translateNow("chat.citation.openFailedDesc"),
             });
           },
         );
@@ -207,8 +208,8 @@ function observeAssistantCitationSource({
       if (!range) {
         toastManager.add({
           type: "warning",
-          title: "The quoted text has changed",
-          description: "Showing the source response. The saved quote is unchanged.",
+          title: translateNow("chat.citation.changedTitle"),
+          description: translateNow("chat.citation.changedDesc"),
         });
       }
     }

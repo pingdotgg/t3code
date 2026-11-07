@@ -31,6 +31,7 @@ import { sourceControlEnvironment } from "./sourceControl";
 import { useAtomCommand } from "./use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
+import { translateNow } from "../components/media/translateNow";
 
 export type SourceControlActionKind =
   | "init"
@@ -99,7 +100,7 @@ function useAction<
         Cause.fail(
           new EnvironmentAuthorizationError({
             requiredScope: AuthSourceControlWriteScope,
-            message: "This connection cannot change source control.",
+            message: translateNow("misc.sourceControl.noPermission"),
           }),
         ),
       );
@@ -177,7 +178,7 @@ export function useVcsInitAction(scope: SourceControlActionScope) {
       input: { cwd: target.cwd },
     });
   };
-  return useAction({ kind: "init", label: "Initializing repository", scope, action });
+  return useAction({ kind: "init", label: translateNow("misc.sourceControl.init"), scope, action });
 }
 
 export function useVcsPullAction(scope: SourceControlActionScope) {
@@ -210,7 +211,7 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
   };
   return useAction({
     kind: "pull",
-    label: "Pulling latest changes...",
+    label: translateNow("misc.sourceControl.pulling"),
     scope,
     action,
     onSuccess: status.refresh,
@@ -247,7 +248,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
 
   return useAction({
     kind: "runStackedAction",
-    label: "Running source control action",
+    label: translateNow("misc.sourceControl.running"),
     scope,
     action,
     onSuccess: status.refresh,
@@ -300,7 +301,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
   };
   return useAction({
     kind: "publishRepository",
-    label: "Publishing repository",
+    label: translateNow("misc.sourceControl.publishing"),
     scope,
     action,
     onSuccess: status.refresh,
@@ -337,7 +338,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
         Cause.fail(
           new EnvironmentAuthorizationError({
             requiredScope: AuthOrchestrationOperateScope,
-            message: "This connection cannot change threads.",
+            message: translateNow("misc.sourceControl.noThreadPermission"),
           }),
         ),
       );
@@ -354,7 +355,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
   };
   return useAction({
     kind: "preparePullRequestThread",
-    label: "Preparing pull request thread",
+    label: translateNow("misc.sourceControl.preparingPr"),
     scope,
     action,
   });

@@ -1,3 +1,4 @@
+import { translateNow } from "~/components/media/translateNow";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -8,6 +9,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 
+import { useT } from "~/hooks/useI18n";
 interface CrumbsPullRequest {
   readonly url: string;
   readonly provider: string;
@@ -30,6 +32,7 @@ const ROW_CLASS_NAME =
   "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none sm:text-xs";
 
 function BackButton({ onBack, focusable }: { onBack: () => void; focusable: boolean }) {
+  const t = useT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -40,13 +43,13 @@ function BackButton({ onBack, focusable }: { onBack: () => void; focusable: bool
             {...(focusable ? {} : { tabIndex: -1 })}
             onClick={onBack}
             className="-ml-1.5"
-            aria-label="Back to this thread's pull requests"
+            aria-label={t("review.extra.back.to.this.thread.s.pull.requests")}
           >
             <ArrowLeftIcon aria-hidden className="size-3.5" />
           </Button>
         }
       />
-      <TooltipPopup side="top">Back to pull requests</TooltipPopup>
+      <TooltipPopup side="top">{t("review.extra.back.to.pull.requests")}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -78,7 +81,10 @@ function NumberLink({
               "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
               toneClassName,
             )}
-            aria-label={`Open ${sourceControlClients.get(detail.provider).changeRequest.singular} #${detail.number} on host`}
+            aria-label={translateNow("review.pr.openOnHost", {
+              term: sourceControlClients.get(detail.provider).changeRequest.singular,
+              number: detail.number,
+            })}
           >
             #{detail.number}
             <ExternalLinkIcon aria-hidden className="size-2.5" />
@@ -144,7 +150,9 @@ export function PullRequestDetailCrumbs({
                 }
               />
               <TooltipPopup side="top">
-                {repositoryUrl ? `Open ${detail.repository} repository` : detail.repository}
+                {repositoryUrl
+                  ? translateNow("review.pr.openRepository", { repository: detail.repository })
+                  : detail.repository}
               </TooltipPopup>
             </Tooltip>
             <NumberLink

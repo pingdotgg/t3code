@@ -7,6 +7,7 @@ import { ArrowUpLeftIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { tickTextContent } from "~/lib/tickTextContent";
+import { useT } from "../../hooks/useI18n";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { Button } from "../ui/button";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -20,6 +21,7 @@ export function ProviderSubagentBar(props: {
   readonly onOpenParent: (() => void) | null;
   readonly actions?: ReactNode;
 }) {
+  const t = useT();
   const { status } = props;
   const live = status !== null && isOrchestrationV2WorkActive(status.status);
   const modelDescription =
@@ -70,7 +72,7 @@ export function ProviderSubagentBar(props: {
       {props.onOpenParent ? (
         <Button size="sm" variant="ghost" onClick={props.onOpenParent}>
           <ArrowUpLeftIcon />
-          <span className="@max-[320px]/composer-surface:sr-only">Open parent</span>
+          <span className="@max-[320px]/composer-surface:sr-only">{t("chat.work.openParent")}</span>
         </Button>
       ) : null}
     </div>

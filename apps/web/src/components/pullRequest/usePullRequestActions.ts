@@ -46,6 +46,7 @@ import {
 } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
+import { translateNow } from "../media/translateNow";
 export function usePullRequestDefaultMergeMethodResolver(
   environmentId: EnvironmentId,
   projectId: ProjectId | null,
@@ -77,51 +78,45 @@ export function usePullRequestDefaultMergeMethodResolver(
 }
 
 const actionSuccessLabels = (term: string): Record<PullRequestAction, string> => ({
-  merge: "Merge requested",
-  ready: "Marked ready for review",
-  draft: "Converted to draft",
-  close: `${capitalizeTerm(term)} closed`,
-  reopen: `${capitalizeTerm(term)} reopened`,
-  "update-branch": "Branch updated with the base branch",
-  "enable-auto-merge": "Auto-merge enabled",
-  "disable-auto-merge": "Auto-merge disabled",
-  revert: `Revert ${term} opened`,
-  "delete-branch": "Branch deleted",
-  "approve-workflows": "Workflows approved",
+  merge: translateNow("review.extra.merge.requested"),
+  ready: translateNow("review.extra.marked.ready.for.review"),
+  draft: translateNow("review.extra.converted.to.draft"),
+  close: translateNow("review.pr.termClosed", { term: capitalizeTerm(term) }),
+  reopen: translateNow("review.pr.termReopened", { term: capitalizeTerm(term) }),
+  "update-branch": translateNow("review.extra.branch.updated.with.the.base.branch"),
+  "enable-auto-merge": translateNow("review.extra.auto.merge.enabled"),
+  "disable-auto-merge": translateNow("review.extra.auto.merge.disabled"),
+  revert: translateNow("review.pr.revertOpened", { term }),
+  "delete-branch": translateNow("review.extra.branch.deleted"),
+  "approve-workflows": translateNow("review.extra.workflows.approved"),
 });
 
 const actionFailureLabels = (term: string): Record<PullRequestAction, string> => ({
-  merge: `Could not merge this ${term}`,
-  ready: "Could not mark this ready for review",
-  draft: "Could not convert this to a draft",
-  close: `Could not close this ${term}`,
-  reopen: `Could not reopen this ${term}`,
-  "update-branch": "Could not update this branch",
-  "enable-auto-merge": "Could not enable auto-merge",
-  "disable-auto-merge": "Could not disable auto-merge",
-  revert: `Could not open a revert ${term}`,
-  "delete-branch": "Could not delete this branch",
-  "approve-workflows": "Could not approve workflows",
+  merge: translateNow("review.pr.couldNotMerge", { term }),
+  ready: translateNow("review.extra.could.not.mark.this.ready.for.review"),
+  draft: translateNow("review.extra.could.not.convert.this.to.a.draft"),
+  close: translateNow("review.pr.couldNotClose", { term }),
+  reopen: translateNow("review.pr.couldNotReopen", { term }),
+  "update-branch": translateNow("review.extra.could.not.update.this.branch"),
+  "enable-auto-merge": translateNow("review.extra.could.not.enable.auto.merge"),
+  "disable-auto-merge": translateNow("review.extra.could.not.disable.auto.merge"),
+  revert: translateNow("review.pr.couldNotRevert", { term }),
+  "delete-branch": translateNow("review.extra.could.not.delete.this.branch"),
+  "approve-workflows": translateNow("review.extra.could.not.approve.workflows"),
 });
 
 const actionFailureHints = (term: string): Record<PullRequestAction, string> => ({
-  merge:
-    "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting.",
-  ready: "The host refused it. Check that you have write access to this repository.",
-  draft: "The host refused it. Check that you have write access to this repository.",
-  close: "The host refused it. Check that you have write access, or that you opened it.",
-  reopen:
-    "The host refused it. Check that you have write access, and that the branch still exists.",
-  "update-branch":
-    "The host refused it. Check that you have write access, and that the base branch has not diverged in a way the host cannot merge.",
-  "enable-auto-merge":
-    "The host refused it. Check that auto-merge is enabled for this repository and that you have write access.",
-  "disable-auto-merge": "The host refused it. Check that you have write access to this repository.",
-  revert: `The host refused it. Check that you have write access and that this ${term} was merged on the host.`,
-  "delete-branch":
-    "The host refused it. Check that you have write access to the source repository and that the branch has not moved since this page loaded.",
-  "approve-workflows":
-    "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
+  merge: translateNow("review.extra.the.host.refused.the.merge.check.that.you"),
+  ready: translateNow("review.extra.the.host.refused.it.check.that.you.have"),
+  draft: translateNow("review.extra.the.host.refused.it.check.that.you.have"),
+  close: translateNow("review.extra.the.host.refused.it.check.that.you.have2"),
+  reopen: translateNow("review.extra.the.host.refused.it.check.that.you.have3"),
+  "update-branch": translateNow("review.extra.the.host.refused.it.check.that.you.have10"),
+  "enable-auto-merge": translateNow("review.extra.the.host.refused.it.check.that.auto.merge"),
+  "disable-auto-merge": translateNow("review.extra.the.host.refused.it.check.that.you.have"),
+  revert: translateNow("review.pr.revertRefused", { term }),
+  "delete-branch": translateNow("review.extra.the.host.refused.it.check.that.you.have6"),
+  "approve-workflows": translateNow("review.extra.the.host.refused.it.check.that.you.have7"),
 });
 
 export function usePullRequestActionRunner({
@@ -231,8 +226,8 @@ export function usePullRequestCloseBatch(
       type: failures.length > 0 ? "error" : "success",
       title:
         failures.length > 0
-          ? `Closed ${closed} of ${batch.length} pull requests`
-          : `Closed ${closed} pull request${closed === 1 ? "" : "s"}`,
+          ? translateNow("review.pr.closedOfN", { closed, total: batch.length })
+          : translateNow("review.pr.closedN", { closed, plural: closed === 1 ? "" : "s" }),
       ...(failures.length > 0 ? { description: failures.slice(0, 3).join("\n") } : {}),
     });
   };
@@ -310,18 +305,18 @@ export function usePullRequestHandoffs({
     if (opened === null) {
       toastManager.add({
         type: "error",
-        title: "Could not open a thread",
-        description: "Try again from the project, or open a thread first.",
+        title: translateNow("review.extra.could.not.open.a.thread"),
+        description: translateNow("review.extra.try.again.from.the.project.or.open.a"),
       });
       return;
     }
     toastManager.add({
       type: "success",
-      title: "Asked in a thread",
+      title: translateNow("review.extra.asked.in.a.thread"),
       description:
         task.prompt.length > 0
-          ? "The question is in the composer. Read it over, then send."
-          : `The ${terminology.singular} is in the composer. Type your question, then send.`,
+          ? translateNow("review.extra.the.question.is.in.the.composer.read.it")
+          : translateNow("review.pr.inComposer", { term: terminology.singular }),
     });
   };
 
@@ -335,7 +330,7 @@ export function usePullRequestHandoffs({
     // Explicit timeouts survive toast updates and would pin the result after loading.
     const toastId = toastManager.add({
       type: "loading",
-      title: `Preparing the ${terminology.singular} checkout...`,
+      title: translateNow("review.pr.preparingCheckout", { term: terminology.singular }),
     });
     const projectRef = scopeProjectRef(environmentId, detail.projectId);
     // Checkout setup requires the thread to exist first.
@@ -347,8 +342,8 @@ export function usePullRequestHandoffs({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
+        title: translateNow("review.extra.could.not.open.a.thread.for.the.checkout"),
+        description: translateNow("review.extra.try.again.from.the.project.or.open.a"),
       });
       return;
     }
@@ -361,7 +356,7 @@ export function usePullRequestHandoffs({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: `Could not prepare the ${terminology.singular} checkout`,
+        title: translateNow("review.pr.couldNotPrepareCheckout", { term: terminology.singular }),
         description: checkoutFailureDescription(
           isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
         ),
@@ -380,8 +375,8 @@ export function usePullRequestHandoffs({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
+        title: translateNow("review.extra.checked.out.but.the.thread.stayed.where.it"),
+        description: translateNow("review.pr.checkoutReady", { branch: prepared.value.branch }),
       });
       return;
     }
@@ -392,11 +387,14 @@ export function usePullRequestHandoffs({
         prepared.value.isOnPullRequestHead
           ? {
               type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
+              title:
+                mode === "local"
+                  ? translateNow("review.extra.checked.out.here")
+                  : translateNow("review.extra.checked.out"),
               description:
                 mode === "local"
-                  ? `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
-                  : `The ${terminology.singular} is in its own worktree, with a thread open on it.`,
+                  ? translateNow("review.pr.repoOnBranch", { term: terminology.singular })
+                  : translateNow("review.pr.inOwnWorktree", { term: terminology.singular }),
             }
           : offHeadPullRequestCheckoutToast(terminology),
       );
@@ -408,8 +406,8 @@ export function usePullRequestHandoffs({
       prepared.value.isOnPullRequestHead
         ? {
             type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer. Read it over, then send.",
+            title: translateNow("review.extra.checkout.ready"),
+            description: translateNow("review.extra.the.task.is.in.the.composer.read.it"),
           }
         : offHeadPullRequestCheckoutToast(terminology),
     );

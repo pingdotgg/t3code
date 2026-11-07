@@ -2,6 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useT } from "../hooks/useI18n";
 import { usePaginatedBranches } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
 import { vcsEnvironment } from "../state/vcs";
@@ -30,6 +31,7 @@ export function WorktreeBaseBranchPicker({
   disabled?: boolean;
   id?: string;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const branches = usePaginatedBranches({
@@ -61,11 +63,14 @@ export function WorktreeBaseBranchPicker({
   const statusText =
     branches.error ??
     (branches.isPending && branches.data === null
-      ? "Loading refs..."
+      ? t("appB.baseBranch.loadingRefs")
       : branches.isFetchingNextPage
-        ? "Loading more refs..."
+        ? t("appB.baseBranch.loadingMore")
         : hasNextPage
-          ? `Showing ${branches.refs.length} of ${branches.data?.totalCount} refs`
+          ? t("appB.baseBranch.showing", {
+              shown: branches.refs.length,
+              total: String(branches.data?.totalCount),
+            })
           : null);
   const handleOpenChange = (next: boolean) => {
     setOpen(next);

@@ -1,3 +1,4 @@
+import { translateNow } from "../lib/miscTranslateNow";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
@@ -97,22 +98,34 @@ export function useThreadActionMenu(input: {
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
-      toastManager.add({ type: "success", title: "Path copied", description: path });
+      toastManager.add({
+        type: "success",
+        title: translateNow("misc.hooks.menu.pathCopied"),
+        description: path,
+      });
     },
-    onError: (error) => failureToast("Failed to copy path", error),
+    onError: (error) => failureToast(translateNow("misc.hooks.menu.copyPathFailed"), error),
   });
   const { copyToClipboard: copyBranchToClipboard } = useCopyToClipboard<{ branch: string }>({
     target: "branch name",
     onCopy: ({ branch }) => {
-      toastManager.add({ type: "success", title: "Branch copied", description: branch });
+      toastManager.add({
+        type: "success",
+        title: translateNow("misc.hooks.menu.branchCopied"),
+        description: branch,
+      });
     },
-    onError: (error) => failureToast("Failed to copy branch", error),
+    onError: (error) => failureToast(translateNow("misc.hooks.menu.copyBranchFailed"), error),
   });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
     onCopy: ({ threadId }) => {
-      toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
+      toastManager.add({
+        type: "success",
+        title: translateNow("misc.hooks.menu.threadIdCopied"),
+        description: threadId,
+      });
     },
-    onError: (error) => failureToast("Failed to copy thread ID", error),
+    onError: (error) => failureToast(translateNow("misc.hooks.menu.copyThreadIdFailed"), error),
   });
 
   const openMenu = (position: { x: number; y: number }) => {
@@ -267,11 +280,14 @@ export function useThreadActionMenu(input: {
           if (result._tag === "Success") {
             toastManager.add({
               type: "success",
-              title: "Project created",
+              title: translateNow("misc.hooks.menu.projectCreated"),
               description: thread.title,
             });
           } else if (!isAtomCommandInterrupted(result)) {
-            failureToast("Could not turn thread into a project", squashAtomCommandFailure(result));
+            failureToast(
+              translateNow("misc.hooks.menu.turnIntoProjectFailed"),
+              squashAtomCommandFailure(result),
+            );
           }
           return;
         }
@@ -281,8 +297,8 @@ export function useThreadActionMenu(input: {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Path unavailable",
-                description: "This thread does not have a workspace path to copy.",
+                title: translateNow("misc.hooks.menu.pathUnavailable"),
+                description: translateNow("misc.hooks.menu.pathUnavailableDescription"),
               }),
             );
             return;

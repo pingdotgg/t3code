@@ -31,6 +31,7 @@ import {
 } from "~/rightPanelStore";
 
 import { resolveBrowserDefaults } from "./browserDefaults";
+import { translateNow } from "../components/media/translateNow";
 
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
@@ -127,7 +128,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     return AsyncResult.failure(
       Cause.fail(
         new BrowserPreviewUnavailableError({
-          message: "The integrated browser is unavailable in this runtime.",
+          message: translateNow("browser.unavailable"),
         }),
       ),
     );

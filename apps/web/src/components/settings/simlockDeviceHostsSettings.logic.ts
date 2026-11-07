@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 
 const parseSimlockDeviceHostDraft = Schema.decodeUnknownOption(SimlockDeviceHostConfig);
 
@@ -32,21 +33,30 @@ export function updateSimlockDeviceHosts(
 }
 
 /** Why the shared fields keep a draft from saving, or null; tokens are checked per environment. */
-export function simlockDeviceHostProblem(host: SimlockDeviceHostConfigType): string | null {
+export function simlockDeviceHostProblem(
+  host: SimlockDeviceHostConfigType,
+  t: TranslateFn = createTranslator("en"),
+): string | null {
   const withToken = { ...host, agentToken: "token" };
   if (Option.isSome(parseSimlockDeviceHostDraft(withToken))) return null;
-  if (!host.label.trim()) return "Give the host a label.";
+  if (!host.label.trim()) return t("settings.code.simlock.problemLabel");
   // With in-range limits, a draft that still fails has a bad gateway URL.
   return Option.isNone(
     parseSimlockDeviceHostDraft({ ...withToken, maxLeases: 1, maxLeaseMinutes: 60 }),
   )
-    ? "Enter the gateway's origin, such as https://gateway.example.ts.net:4700."
-    : "Keep the limits within the ranges shown.";
+    ? t("settings.code.simlock.problemGateway")
+    : t("settings.code.simlock.problemLimits");
 }
 
-export function simlockLeaseLimits(host: SimlockDeviceHostConfigType) {
-  const devices = host.maxLeases === 1 ? "1 device" : `${host.maxLeases} devices`;
-  return `Up to ${devices} at once, each released after ${host.maxLeaseMinutes} min`;
+export function simlockLeaseLimits(
+  host: SimlockDeviceHostConfigType,
+  t: TranslateFn = createTranslator("en"),
+) {
+  const devices =
+    host.maxLeases === 1
+      ? t("settings.code.simlock.oneDevice")
+      : t("settings.code.simlock.devices", { count: host.maxLeases });
+  return t("settings.code.simlock.limits", { devices, minutes: host.maxLeaseMinutes });
 }
 
 export interface SimlockHostEnvironment {
@@ -69,6 +79,7 @@ export function planSimlockDeviceHostSave(
   environments: ReadonlyArray<SimlockHostEnvironment>,
   draft: SimlockDeviceHostConfigType,
   tokens: ReadonlyMap<EnvironmentId, SimlockTokenEntry>,
+  t: TranslateFn = createTranslator("en"),
 ):
   | { readonly problem: string }
   | {
@@ -77,7 +88,7 @@ export function planSimlockDeviceHostSave(
         hosts: ReadonlyArray<SimlockDeviceHostConfigType>;
       }>;
     } {
-  const shared = simlockDeviceHostProblem(draft);
+  const shared = simlockDeviceHostProblem(draft, t);
   if (shared) return { problem: shared };
   const patches = [];
   for (const environment of environments) {

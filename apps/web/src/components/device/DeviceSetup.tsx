@@ -16,6 +16,8 @@ import { deviceEnvironment, deviceHostProbeAtom, NO_DEVICE_PROBE_ATOM } from "~/
 import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { cn } from "~/lib/utils";
+import { useT } from "../../hooks/useI18n";
+import { translateNow } from "../media/translateNow";
 
 const platformName = (platform: DevicePlatform) => (platform === "ios" ? "iOS" : "Android");
 
@@ -91,7 +93,7 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
   if (platform === "android" && !hasDevices && isAndroidDiscoveryUncertain(state)) {
     return {
       ready: false,
-      message: "The Android device list may be incomplete. Check the device host and try again.",
+      message: translateNow("device.setup.androidIncomplete"),
     };
   }
   const availabilities = state.hosts.flatMap((host) =>
@@ -105,7 +107,9 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
   if (supportingHosts.length === 0) {
     return {
       ready: false,
-      message: availabilities[0]?.reason ?? `${platformName(platform)} support was not detected.`,
+      message:
+        availabilities[0]?.reason ??
+        translateNow("device.setup.platformUndetected", { platform: platformName(platform) }),
     };
   }
   const readyHosts = supportingHosts.filter(
@@ -152,6 +156,7 @@ export function DeviceSetup(props: {
   readonly state: DeviceServiceState;
   readonly onComplete?: () => void;
 }) {
+  const t = useT();
   const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const configure = useAtomCommand(deviceEnvironment.configure);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
@@ -178,10 +183,7 @@ export function DeviceSetup(props: {
 
   return (
     <>
-      <WizardHeader
-        title="Set up devices"
-        description="Review what runs on this environment before using simulators and emulators."
-      >
+      <WizardHeader title={t("device.setup.title")} description={t("device.setup.description")}>
         <WizardSteps
           steps={["Device hub", "Simulators", "Agent access"]}
           currentStep={step}
@@ -194,13 +196,13 @@ export function DeviceSetup(props: {
         <DeviceHostUpdates state={props.state} environmentId={props.environmentId} />
         {step === 0 ? (
           <section className="space-y-3 text-sm">
-            <h3 className="font-medium">Enable the device hub</h3>
+            <h3 className="font-medium">{t("device.setup.enableHub")}</h3>
             <div className="flex items-start justify-between gap-4">
               <p className="text-muted-foreground">{deviceHubDescription}</p>
               <Switch
                 checked={enabled}
                 disabled={!canConfigure || busy || pending !== null}
-                aria-label="Enable device hub"
+                aria-label={t("device.setup.enableHubAria")}
                 onCheckedChange={(checked) =>
                   void update("hub", {
                     enabled: Boolean(checked),
@@ -218,7 +220,7 @@ export function DeviceSetup(props: {
 
         {step === 1 || (step === 0 && enabled && localPlatformsUnavailable) ? (
           <section className={cn("space-y-3 text-sm", step === 0 && "mt-4")}>
-            <h3 className="font-medium">Check simulator support</h3>
+            <h3 className="font-medium">{t("device.setup.checkSupport")}</h3>
             <DevicePlatformSetup
               state={props.state}
               checking={pending === "check"}
@@ -235,13 +237,13 @@ export function DeviceSetup(props: {
 
         {step === 2 ? (
           <section className="space-y-3 text-sm">
-            <h3 className="font-medium">Allow agent control</h3>
+            <h3 className="font-medium">{t("device.setup.allowAgentControl")}</h3>
             <div className="flex items-start justify-between gap-4">
               <p className="text-muted-foreground">{agentDeviceDescription}</p>
               <Switch
                 checked={props.state.agentAccessEnabled}
                 disabled={!canConfigure || !enabled || busy || pending !== null}
-                aria-label="Allow agents to control devices"
+                aria-label={t("device.setup.allowAgentsAria")}
                 onCheckedChange={(checked) =>
                   void update("agent", { agentAccessEnabled: Boolean(checked) })
                 }

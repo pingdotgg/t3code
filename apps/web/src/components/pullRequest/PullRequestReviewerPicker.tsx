@@ -22,15 +22,15 @@ import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
 
+import { translateNow } from "~/components/media/translateNow";
+import { useT } from "~/hooks/useI18n";
+
 const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => string> = {
-  unsearchable: () =>
-    "This repository has more people with access than are listed here. Ask for the rest on the host.",
-  searchable: () =>
-    "This repository has more people with access than are listed here. Search to find them.",
+  unsearchable: () => translateNow("review.pr.truncated.unsearchable"),
+  searchable: () => translateNow("review.pr.truncated.searchable"),
   "search-failed": (error) =>
-    `Only the people already listed are matched: the host search failed. ${error ?? ""}`,
-  "search-truncated": () =>
-    "More people match than the host returned. Keep typing to narrow it down.",
+    translateNow("review.pr.truncated.searchFailed", { error: error ?? "" }),
+  "search-truncated": () => translateNow("review.pr.truncated.searchTruncated"),
 };
 
 export function PullRequestReviewerPicker({
@@ -44,6 +44,7 @@ export function PullRequestReviewerPicker({
   allowed: boolean;
   searchable: boolean;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
@@ -73,6 +74,7 @@ export function PullRequestReviewerPicker({
   });
 
   const toggle = async (candidate: PullRequestReviewerCandidate) => {
+    const t = translateNow;
     if (pending !== null) return;
     setPending(candidate.id);
     const result = await requestReviewers({
@@ -88,11 +90,11 @@ export function PullRequestReviewerPicker({
       toastManager.add({
         type: "error",
         title: candidate.isRequested
-          ? `Could not take back the review request to ${candidate.login}`
-          : `Could not ask ${candidate.login} for a review`,
+          ? translateNow("review.pr.couldNotTakeBack", { login: candidate.login })
+          : translateNow("review.pr.couldNotAsk", { login: candidate.login }),
         description: readableFailure(
           squashAtomCommandFailure(result),
-          "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
+          t("review.extra.the.host.refused.it.check.that.you.have9"),
         ),
       });
       return;
@@ -103,15 +105,15 @@ export function PullRequestReviewerPicker({
     toastManager.add({
       type: "success",
       title: candidate.isRequested
-        ? `Review request to ${candidate.login} taken back`
-        : `Review requested from ${candidate.login}`,
+        ? translateNow("review.pr.takenBack", { login: candidate.login })
+        : translateNow("review.pr.requestedFrom", { login: candidate.login }),
     });
   };
 
   return (
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
-      label="Request a review"
+      label={t("review.extra.request.a.review")}
       allowed={allowed}
       disabledReason="Asking someone to review needs write access on this repository"
       open={open}
@@ -129,7 +131,7 @@ export function PullRequestReviewerPicker({
       }
       candidates={candidates}
       emptyLabel="Nobody else has access to this repository."
-      noMatchLabel="Nobody with access matches that."
+      noMatchLabel={translateNow("review.pr.noMatchingReviewer")}
       errorLabel="The people with access could not be read."
       truncated={truncation !== null}
       truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError)}
@@ -141,10 +143,13 @@ export function PullRequestReviewerPicker({
         <>
           <PullRequestActorLabel actor={candidate} className="flex-1" />
           {candidate.kind === "team" ? (
-            <span className="shrink-0 text-muted-foreground">team</span>
+            <span className="shrink-0 text-muted-foreground">{translateNow("review.pr.team")}</span>
           ) : null}
           {candidate.isRequested ? (
-            <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
+            <CheckIcon
+              aria-label={translateNow("review.extra.already.asked")}
+              className="size-3.5 shrink-0"
+            />
           ) : null}
         </>
       )}

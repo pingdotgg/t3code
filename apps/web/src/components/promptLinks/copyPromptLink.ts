@@ -17,6 +17,7 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { configuredHostedAppUrl } from "~/hostedPairing";
 
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { translateNow } from "../../lib/miscTranslateNow";
 
 /** A shareable link to a prompt on the hosted app, or null when the prompt cannot fit in one. */
 export function promptLinkFor(
@@ -70,13 +71,14 @@ export function composerPromptLink(input: {
 export async function copyPromptLink(link: string): Promise<void> {
   try {
     if (!(await writeTextToClipboard(link))) return;
-    toastManager.add({ type: "success", title: "Prompt link copied" });
+    toastManager.add({ type: "success", title: translateNow("misc.promptLinks.copied") });
   } catch (error) {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not copy the prompt link",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: translateNow("misc.promptLinks.copyFailed"),
+        description:
+          error instanceof Error ? error.message : translateNow("misc.promptLinks.anErrorOccurred"),
       }),
     );
   }

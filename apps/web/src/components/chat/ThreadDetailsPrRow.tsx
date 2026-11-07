@@ -77,6 +77,8 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
 
+import { useT } from "../../hooks/useI18n";
+
 // A null checks response is settled; polling cannot find checks.
 const isSettledWithoutChecks = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
   result._tag === "Success" && result.value === null;
@@ -106,6 +108,7 @@ export function ThreadDetailsPrRow({
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
 }) {
+  const t = useT();
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
   const repository = sourceControlClients.repositorySelector(project?.repositoryIdentity);
@@ -321,42 +324,45 @@ export function ThreadDetailsPrRow({
   const trailingAction =
     rowAction === "resolve"
       ? {
-          label: "Resolve",
-          pendingLabel: "Preparing...",
+          label: t("review.prRow.resolve"),
+          pendingLabel: t("review.prRow.preparing"),
           pending: handoff === "conflicts",
           destructive: true,
           suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-          tooltip: "Check the branch out and resolve the conflicts in a new thread",
+          tooltip: t("review.prRow.resolveTooltip"),
           onClick: startResolveConflicts,
         }
       : rowAction === "ready"
         ? {
-            label: "Ready",
-            pendingLabel: "Marking...",
+            label: t("review.prRow.ready"),
+            pendingLabel: t("review.prRow.marking"),
             pending: actionPending,
             destructive: false,
             suffix: null,
-            tooltip: `Mark this ${terminology.singular} as ready for review`,
+            tooltip: t("review.prRow.readyTooltip", { term: terminology.singular }),
             onClick: () => void perform("ready"),
           }
         : rowAction === "fix"
           ? {
-              label: "Fix",
-              pendingLabel: "Preparing...",
+              label: t("review.prRow.fix"),
+              pendingLabel: t("review.prRow.preparing"),
               pending: handoff === "findings",
               destructive: true,
               suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-              tooltip: "Fix the failing checks in a new thread",
+              tooltip: t("review.prRow.fixTooltip"),
               onClick: startFixChecks,
             }
           : rowAction === "merge"
             ? {
-                label: "Merge",
-                pendingLabel: "Merging...",
+                label: t("review.prRow.merge"),
+                pendingLabel: t("review.prRow.merging"),
                 pending: actionPending,
                 destructive: false,
                 suffix: null,
-                tooltip: `Merge this ${terminology.singular} (${selectedMergeMethod})`,
+                tooltip: t("review.prRow.mergeTooltip", {
+                  term: terminology.singular,
+                  method: selectedMergeMethod,
+                }),
                 onClick: () => setConfirmingMerge(true),
               }
             : null;

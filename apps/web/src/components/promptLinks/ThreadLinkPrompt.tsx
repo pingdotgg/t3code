@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { isThreadRoutePathname } from "../../threadRoutes";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { placeLinkedPrompt } from "./linkedPrompt";
+import { translateNow } from "../../lib/miscTranslateNow";
 
 const handledLinkKeys = new Set<string>();
 
@@ -32,7 +33,7 @@ export function ThreadLinkPrompt({ threadRef }: { readonly threadRef: ScopedThre
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not open the linked prompt",
+            title: translateNow("misc.promptLinks.couldNotOpenPrompt"),
             description: parsed.error,
           }),
         );

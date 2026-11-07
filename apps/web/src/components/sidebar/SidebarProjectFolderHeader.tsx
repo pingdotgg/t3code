@@ -10,6 +10,8 @@ import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useT } from "../../hooks/useI18n";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 
 const FOLDER_DOT_CLASS_NAME = {
   attention: "bg-warning",
@@ -19,11 +21,11 @@ const FOLDER_DOT_CLASS_NAME = {
 } as const;
 
 const FOLDER_DOT_LABEL = {
-  attention: ", needs you",
-  failed: ", failed",
-  unread: ", done",
-  working: ", working",
-} as const;
+  attention: "misc.sidebar.dot.attention",
+  failed: "misc.sidebar.dot.failed",
+  unread: "misc.sidebar.dot.unread",
+  working: "misc.sidebar.dot.working",
+} as const satisfies Record<string, MessageKey>;
 
 /** The folder's sidebar tree row; its thread rows name it as their parent. */
 export function sidebarFolderRowId(projectKey: string) {
@@ -43,6 +45,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   onNewThread: (group: SidebarProjectSnapshot) => void;
   onContextMenu: (group: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
 }) {
+  const t = useT();
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
@@ -81,7 +84,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         </span>
         {dot ? (
           <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
-            <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
+            <span className="sr-only">{t(FOLDER_DOT_LABEL[dot])}</span>
           </span>
         ) : null}
         {collapsed && hiddenThreads.length > 0 ? (
@@ -106,14 +109,14 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
                 data-sidebar-action-for={rowId}
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={`New thread in ${group.displayName}`}
+                aria-label={t("misc.sidebar.newThreadIn", { name: group.displayName })}
                 onClick={() => props.onNewThread(group)}
               />
             }
           >
             <SquarePenIcon aria-hidden />
           </TooltipTrigger>
-          <TooltipPopup>New thread in {group.displayName}</TooltipPopup>
+          <TooltipPopup>{t("misc.sidebar.newThreadIn", { name: group.displayName })}</TooltipPopup>
         </Tooltip>
       </span>
     </li>

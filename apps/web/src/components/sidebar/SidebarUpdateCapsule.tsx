@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { TranslateFn } from "@t3tools/client-runtime/i18n";
 import { type ReactNode, useSyncExternalStore } from "react";
 
 import { cn } from "~/lib/utils";
+import { useT } from "../../hooks/useI18n";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom } from "~/state/server";
 import { useServerUpdate } from "../ServerUpdateAction";
@@ -44,15 +46,24 @@ function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<Updat
   }));
 }
 
-function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, now: number) {
+function localStatusLabel(
+  run: UpdateEverythingRun,
+  local: UpdateRunLocalState,
+  now: number,
+  t: TranslateFn,
+) {
   if (run.phase === "countdown" && run.restartAt !== null) {
-    return `restarts in ${Math.max(0, Math.ceil((run.restartAt - now) / 1000))}s`;
+    return t("appB.updateCapsule.restartsIn", {
+      seconds: Math.max(0, Math.ceil((run.restartAt - now) / 1000)),
+    });
   }
-  if (run.phase === "installing") return "restarting";
+  if (run.phase === "installing") return t("appB.updateCapsule.restarting");
   if (local?.status === "downloading") {
-    return `downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`;
+    return t("appB.updateCapsule.downloading", {
+      progress: local.percent === null ? "" : ` ${Math.floor(local.percent)}%`,
+    });
   }
-  return "restarts after the servers";
+  return t("appB.updateCapsule.restartsAfterServers");
 }
 
 export function SidebarUpdateCapsule({
@@ -67,6 +78,7 @@ export function SidebarUpdateCapsule({
   readonly onRestart?: () => Promise<void>;
 }) {
   const machines = useUpdateRunMachineViews(run);
+  const t = useT();
   const hasActiveMachine = machines.some(
     ({ status }) => status !== "done" && status !== "failed" && status !== "waiting",
   );
@@ -77,7 +89,11 @@ export function SidebarUpdateCapsule({
   const settled = !hasActiveMachine && run.localVersion === null;
 
   const actionLabel =
-    view.action === "later" ? "Later" : view.action === "retry" ? "Retry" : "Dismiss";
+    view.action === "later"
+      ? t("appB.updateCapsule.later")
+      : view.action === "retry"
+        ? t("misc.common.retry")
+        : t("chat.lifecycle.dismiss");
   const runAction = () => {
     if (view.action === "later") postponeUpdateRestart();
     else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
@@ -130,16 +146,16 @@ export function SidebarUpdateCapsule({
         <div className="flex flex-col gap-1 text-xs">
           {run.localVersion !== null ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>{t("appB.updateCapsule.thisApp")}</span>
               <span className="text-muted-foreground tabular-nums">
-                {localStatusLabel(run, local, now)}
+                {localStatusLabel(run, local, now, t)}
               </span>
             </div>
           ) : onRestart ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>{t("appB.updateCapsule.thisApp")}</span>
               <Button size="xs" variant="outline" onClick={() => void onRestart()}>
-                Restart to update
+                {t("appB.updateCapsule.restartToUpdate")}
               </Button>
             </div>
           ) : null}
@@ -168,11 +184,11 @@ export function SidebarUpdateCapsule({
             <div className="mt-1 flex justify-end gap-1">
               {view.action === "retry" ? (
                 <Button size="xs" variant="outline" onClick={runAction}>
-                  Retry
+                  {t("misc.common.retry")}
                 </Button>
               ) : null}
               <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
-                Dismiss
+                {t("chat.lifecycle.dismiss")}
               </Button>
             </div>
           ) : null}

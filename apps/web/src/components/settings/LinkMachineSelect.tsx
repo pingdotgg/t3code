@@ -1,6 +1,7 @@
 import type { LinkableMachine } from "@t3tools/client-runtime/link-request";
 import { useId } from "react";
 
+import { useT } from "../../hooks/useI18n";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -10,17 +11,18 @@ export const ANOTHER_ADDRESS = "another-address";
 
 /** Whether a machine is linked already, or how this app knows it when not connected to it. */
 export function LinkMachineBadge({ machine }: { readonly machine: LinkableMachine }) {
+  const t = useT();
   if (machine.linked) {
     return (
       <Badge variant="success" size="sm">
-        Linked
+        {t("settings.system.linkMachine.linked")}
       </Badge>
     );
   }
   if (machine.connected) return null;
   return (
     <Badge variant="outline" size="sm">
-      {machine.connectOnly ? "T3 Connect" : "Not connected"}
+      {machine.connectOnly ? "T3 Connect" : t("settings.system.linkMachine.notConnected")}
     </Badge>
   );
 }
@@ -46,11 +48,12 @@ export function LinkMachineSelect({
   readonly onChange: (value: string) => void;
   readonly disabled: boolean;
 }) {
+  const t = useT();
   const labelId = useId();
   return (
     <div className="space-y-1.5">
       <span id={labelId} className="block text-xs font-medium text-foreground">
-        Machine
+        {t("settings.system.linkMachine.label")}
       </span>
       <Select
         value={value}
@@ -62,9 +65,14 @@ export function LinkMachineSelect({
         <SelectTrigger aria-labelledby={labelId}>
           <SelectValue>
             {(selected: string | null) => {
-              if (selected === ANOTHER_ADDRESS) return "Another address…";
+              if (selected === ANOTHER_ADDRESS)
+                return t("settings.system.linkMachine.anotherAddress");
               const machine = machines.find((candidate) => candidate.environmentId === selected);
-              return machine === undefined ? "Choose a machine" : <MachineName machine={machine} />;
+              return machine === undefined ? (
+                t("settings.system.linkMachine.choose")
+              ) : (
+                <MachineName machine={machine} />
+              );
             }}
           </SelectValue>
         </SelectTrigger>
@@ -78,7 +86,7 @@ export function LinkMachineSelect({
             </SelectItem>
           ))}
           <SelectItem value={ANOTHER_ADDRESS} hideIndicator>
-            Another address…
+            {t("settings.system.linkMachine.anotherAddress")}
           </SelectItem>
         </SelectPopup>
       </Select>

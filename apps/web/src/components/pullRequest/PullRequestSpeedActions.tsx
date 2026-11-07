@@ -17,6 +17,7 @@ import {
   usePullRequestDefaultMergeMethodResolver,
 } from "./usePullRequestActions";
 
+import { translateNow } from "~/components/media/translateNow";
 type PullRequestSpeedActionEntry = Pick<
   EnvironmentPullRequestEntry,
   "environmentId" | "projectId" | "host" | "repository" | "number" | "state" | "isDraft"
@@ -68,7 +69,9 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
         (method) => detail.mergeCapabilities[method],
       );
       if (allowed.length === 0)
-        throw new Error("No merge method is available for this repository.");
+        throw new Error(
+          translateNow("review.extra.no.merge.method.is.available.for.this.repository"),
+        );
       return resolvePullRequestMergeMethod(
         allowed,
         null,
@@ -84,7 +87,10 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
     <SpeedModeGroup
       busy={busy}
       pending={actionPending || closing}
-      label={`Quick actions for ${terminology.singular} #${entry.number}`}
+      label={translateNow("review.pr.quickActionsFor", {
+        term: terminology.singular,
+        number: entry.number,
+      })}
     >
       {actions.map((action) => {
         const label = ACTIONS[action].label;
@@ -112,10 +118,10 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
             </TooltipTrigger>
             <TooltipPopup>
               {action === "merge" && entry.stack
-                ? `Open this ${terminology.singular} to merge its stack`
+                ? translateNow("review.pr.openToMergeStack", { term: terminology.singular })
                 : action === "close" && onCloseSweepStart
-                  ? "Close immediately, or drag across rows to close several"
-                  : `${label} immediately`}
+                  ? translateNow("review.extra.close.immediately.or.drag.across.rows.to.close")
+                  : translateNow("review.pr.immediately", { label })}
             </TooltipPopup>
           </Tooltip>
         );
@@ -164,8 +170,28 @@ function SpeedModeGroup({
 }
 
 const ACTIONS = {
-  close: { label: "Close", Icon: PullRequestGlyph.closed },
-  merge: { label: "Merge", Icon: PullRequestGlyph.merged },
-  ready: { label: "Ready for review", Icon: PullRequestGlyph.pullRequest },
-  reopen: { label: "Reopen", Icon: PullRequestGlyph.reopen },
+  close: {
+    get label() {
+      return translateNow("review.extra.close");
+    },
+    Icon: PullRequestGlyph.closed,
+  },
+  merge: {
+    get label() {
+      return translateNow("review.extra.merge");
+    },
+    Icon: PullRequestGlyph.merged,
+  },
+  ready: {
+    get label() {
+      return translateNow("review.extra.ready.for.review");
+    },
+    Icon: PullRequestGlyph.pullRequest,
+  },
+  reopen: {
+    get label() {
+      return translateNow("review.extra.reopen");
+    },
+    Icon: PullRequestGlyph.reopen,
+  },
 } as const;

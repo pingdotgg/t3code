@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
+import { useT } from "../../hooks/useI18n";
 import SideChatPane from "./SideChatPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
@@ -81,6 +82,7 @@ export function RightPanelSurfaceContent(props: {
   readonly sideChatParentPanel: SideChatParentPanel;
 }) {
   const { surface, threadRef, visible, onCloseSurface } = props;
+  const t = useT();
   if (surface === null) return null;
   switch (surface.kind) {
     case "preview":
@@ -123,8 +125,8 @@ export function RightPanelSurfaceContent(props: {
       if (!pullRequest.supported) {
         return (
           <PullRequestsUnavailableState
-            title="Pull requests unavailable"
-            error="Update this environment's T3 Code server to browse pull requests."
+            title={t("chat.pullRequests.unavailable")}
+            error={t("chat.pullRequests.updateServer")}
           />
         );
       }

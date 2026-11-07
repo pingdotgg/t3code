@@ -1,3 +1,4 @@
+import { useT } from "../../hooks/useI18n";
 import { pipe } from "effect/Function";
 import {
   SECRET_REQUEST_DEFAULT_PLACEHOLDER,
@@ -74,6 +75,7 @@ function PendingSecretRequestForm(props: {
   readonly environmentId: EnvironmentId;
   readonly item: SecretRequestItem;
 }) {
+  const t = useT();
   const { item } = props;
   const inputId = useId();
   const errorId = useId();
@@ -205,7 +207,7 @@ function PendingSecretRequestForm(props: {
           )}
         </div>
         <Button type="submit" disabled={submitting || draft.trim().length === 0}>
-          Save securely
+          {t("chat.secret.save")}
         </Button>
       </div>
       {error !== null ? (
@@ -228,7 +230,7 @@ function PendingSecretRequestForm(props: {
           disabled={submitting}
           onClick={() => void send({ type: "decline" })}
         >
-          Decline
+          {t("chat.secret.decline")}
         </Button>
       </div>
     </form>

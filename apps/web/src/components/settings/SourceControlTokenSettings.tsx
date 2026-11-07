@@ -7,6 +7,7 @@ import {
 import { ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useT } from "../../hooks/useI18n";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import {
   readHostCredentialSettings,
@@ -23,6 +24,10 @@ import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 const hasToken = (token: SettingsSecretValue | undefined) =>
   typeof token === "string" ? token.length > 0 : token !== undefined;
 
+/** Placeholders swapped for inline markup after translation. */
+const SLOT_ENV = "\u0001";
+const SLOT_CLI = "\u0002";
+
 export function SourceControlTokenSettings({
   environmentId,
   definition,
@@ -34,6 +39,7 @@ export function SourceControlTokenSettings({
   readonly credentials: SourceControlHostCredentials;
   readonly onSaved: () => void;
 }) {
+  const t = useT();
   const { tokens } = useEnvironmentSettings(environmentId, (settings) =>
     readHostCredentialSettings(settings, definition.kind),
   );
@@ -77,6 +83,14 @@ export function SourceControlTokenSettings({
     }
   };
 
+  const [introA, introB, introC] = t("settings.code.scToken.intro", {
+    envVar: SLOT_ENV,
+    cli: SLOT_CLI,
+    label: definition.label,
+    cliLabel: credentials.cliLabel,
+    access: credentials.tokenAccess,
+  }).split(/[\u0001\u0002]/);
+
   return (
     <form
       className="grid gap-3"
@@ -88,12 +102,11 @@ export function SourceControlTokenSettings({
       {/* Locked while saving: a successful save clears the draft, which would drop edits made mid-request. */}
       <fieldset disabled={saving} className="contents">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          A token saved here is used before{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.tokenEnvVar}</code>{" "}
-          and the{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.cliName}</code> login,
-          so {definition.label} works without the {credentials.cliLabel}. Give it{" "}
-          {credentials.tokenAccess}.{" "}
+          {introA}
+          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.tokenEnvVar}</code>
+          {introB}
+          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.cliName}</code>
+          {introC}{" "}
           {normalizedHost || defaultHost ? (
             <InlineButton
               render={
@@ -104,14 +117,16 @@ export function SourceControlTokenSettings({
                 />
               }
             >
-              Create a token
+              {t("settings.code.scToken.createToken")}
               <ExternalLinkIcon aria-hidden className="size-3" />
             </InlineButton>
           ) : null}
         </p>
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>Host</Label>
+            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>
+              {t("settings.code.scToken.host")}
+            </Label>
             <Input
               id={`${definition.kind}-token-host-${environmentId}`}
               autoComplete="off"
@@ -122,7 +137,9 @@ export function SourceControlTokenSettings({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-${environmentId}`}>Token</Label>
+            <Label htmlFor={`${definition.kind}-token-${environmentId}`}>
+              {t("settings.code.scToken.token")}
+            </Label>
             <SecretSourceInput
               id={`${definition.kind}-token-${environmentId}`}
               size="sm"
@@ -138,8 +155,11 @@ export function SourceControlTokenSettings({
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
             {savedHosts.length === 0
-              ? `No token saved; the server uses ${credentials.tokenEnvVar} or the ${credentials.cliName} login.`
-              : `Saved for ${savedHosts.join(", ")}.`}
+              ? t("settings.code.scToken.noneSaved", {
+                  envVar: credentials.tokenEnvVar,
+                  cli: credentials.cliName,
+                })
+              : t("settings.code.scToken.savedFor", { hosts: savedHosts.join(", ") })}
           </p>
           <div className="flex shrink-0 gap-2">
             {isSaved ? (
@@ -149,7 +169,7 @@ export function SourceControlTokenSettings({
                 disabled={saving}
                 onClick={() => void save(normalizedHost, "")}
               >
-                Remove
+                {t("settings.code.scToken.remove")}
               </Button>
             ) : null}
             <Button
@@ -157,7 +177,7 @@ export function SourceControlTokenSettings({
               size="xs"
               disabled={!normalizedHost || submission === "" || saving}
             >
-              Save
+              {t("settings.code.scToken.save")}
             </Button>
           </div>
         </div>

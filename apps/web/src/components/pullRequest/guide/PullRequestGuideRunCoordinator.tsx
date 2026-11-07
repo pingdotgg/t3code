@@ -15,6 +15,7 @@ import { toastManager } from "../../ui/toast";
 import { readPullRequestListPreferences } from "../pullRequestListPreferences";
 import { useGuideRunStore, type GuideRunWatch } from "./guideRunStore";
 
+import { translateNow } from "~/components/media/translateNow";
 const RUN_POLL_MS = 5_000;
 const UNSEEN_RUN_MS = 60_000;
 
@@ -89,7 +90,10 @@ function watchGuideRun(
     const looking = document.visibilityState === "visible" && document.hasFocus();
     if (looking && isGuideShown(runKey)) return;
 
-    const title = failure === null ? "Review guide ready" : "Review guide failed";
+    const title =
+      failure === null
+        ? translateNow("review.extra.review.guide.ready")
+        : translateNow("review.extra.review.guide.failed");
     const body =
       watch.title ??
       observedPullRequestTitle(registry, watch.environmentId, watch.reference) ??
@@ -129,7 +133,7 @@ function watchGuideRun(
             ),
         },
         actionProps: {
-          children: "Open guide",
+          children: translateNow("review.extra.open.guide"),
           onClick: () => {
             toastManager.close(toastId);
             open();

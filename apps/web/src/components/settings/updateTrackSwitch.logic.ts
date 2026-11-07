@@ -1,3 +1,4 @@
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import type { DesktopBridge, DesktopUpdateChannel, DesktopUpdateState } from "@t3tools/contracts";
 import { acceptsTrackSwitchRelease } from "@t3tools/shared/cliRelease";
 
@@ -14,6 +15,7 @@ export async function prepareLocalTrackSwitch(
     readonly version: string;
     readonly reinstall: boolean;
   },
+  t: TranslateFn = createTranslator("en"),
 ): Promise<
   | { readonly ok: true; readonly local: DesktopUpdateState | null }
   | { readonly ok: false; readonly message: string }
@@ -28,7 +30,7 @@ export async function prepareLocalTrackSwitch(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "The update track did not change.",
+      message: error instanceof Error ? error.message : t("settings.system.track.trackNotChanged"),
     };
   }
   if (!input.reinstall) return { ok: true, local: null };
@@ -44,8 +46,8 @@ export async function prepareLocalTrackSwitch(
     ok: false,
     message:
       found !== null
-        ? `This app found ${found}, which is older than ${input.version}. Try again in a few minutes.`
-        : (local.message ?? `This app found no build of ${input.version} to install.`),
+        ? t("settings.system.track.foundOlder", { found, version: input.version })
+        : (local.message ?? t("settings.system.track.foundNone", { version: input.version })),
   };
 }
 

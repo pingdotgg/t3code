@@ -93,6 +93,7 @@ import {
   terminalContextReference,
 } from "../lib/composerContextRecords";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { collapseExpandedComposerCursor, type ComposerSubmissionIntent } from "../composer-logic";
 import type { ReviewCommentContext } from "../reviewCommentContext";
@@ -106,8 +107,13 @@ import {
   type ProviderInstanceEntry,
 } from "../providerInstances";
 
+import { translateNow } from "./media/translateNow";
+
 type ThreadProjection = EnvironmentThread["projection"];
 type ThreadStructureRow = ThreadStructure["visibleTurnItems"][number];
+
+// Message builders default to English; translated callers pass their `useT()` translator.
+const englishT: TranslateFn = createTranslator("en");
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -117,6 +123,7 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 export function agentControlledBrowserCloseConfirmation(
   surfaces: readonly RightPanelSurface[],
   desktopByTabId: Readonly<Record<string, Pick<DesktopPreviewOverlay, "controller"> | undefined>>,
+  t: TranslateFn = englishT,
 ): string | null {
   const activeBrowserCount = surfaces.filter(
     (surface) =>
@@ -126,14 +133,11 @@ export function agentControlledBrowserCloseConfirmation(
   ).length;
   if (activeBrowserCount === 0) return null;
   if (activeBrowserCount === 1) {
-    return [
-      "Close browser while the agent is using it?",
-      "The agent is actively controlling this browser. Closing it may interrupt the current browser action.",
-    ].join("\n");
+    return [t("app.chatLogic.closeBrowserTitle"), t("app.chatLogic.closeBrowserDesc")].join("\n");
   }
   return [
-    `Close ${activeBrowserCount} browsers while the agent is using them?`,
-    "The agent is actively controlling these browsers. Closing them may interrupt the current browser actions.",
+    t("app.chatLogic.closeBrowsersTitle", { count: activeBrowserCount }),
+    t("app.chatLogic.closeBrowsersDesc"),
   ].join("\n");
 }
 
@@ -453,7 +457,7 @@ export function buildLocalDraftThread(
   return presentThreadShell(draftThread.environmentId, {
     id: threadId,
     projectId: draftThread.projectId,
-    title: "New thread",
+    title: translateNow("appB.sidebar.menu.newThread"),
     providerInstanceId: fallbackModelSelection.instanceId,
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,
@@ -560,26 +564,27 @@ export function getAntigravitySendBlockReason(
     | null
     | undefined,
   model: string,
+  t: TranslateFn = englishT,
 ): string | null {
   if (provider?.driver !== "antigravity") return null;
   if (!provider.installed) {
-    return "Install Antigravity in provider settings before sending.";
+    return t("app.chatLogic.agInstall");
   }
   if (provider.auth.status === "unauthenticated") {
-    return "Sign in to Antigravity in provider settings before sending.";
+    return t("app.chatLogic.agSignIn");
   }
   const slug = model.trim();
-  if (slug.length === 0) return "Choose an Antigravity model before sending.";
+  if (slug.length === 0) return t("app.chatLogic.agChooseModel");
   if (provider.auth.status === "unknown") return null;
   if (provider.models.length === 0) {
-    return "Refresh Antigravity models in provider settings before sending.";
+    return t("app.chatLogic.agRefresh");
   }
   if (
     provider.status === "ready" &&
     slug !== ANTIGRAVITY_DEFAULT_MODEL &&
     !provider.models.some((entry) => entry.slug === slug || entry.aliases?.includes(slug))
   ) {
-    return "That Antigravity model is no longer available. Choose another model.";
+    return t("app.chatLogic.agModelGone");
   }
   return null;
 }
@@ -780,19 +785,25 @@ export function deriveComposerSendState(options: {
 export function buildExpiredTerminalContextToastCopy(
   expiredTerminalContextCount: number,
   variant: "omitted" | "empty",
+  t: TranslateFn = englishT,
 ): { title: string; description: string } {
   const count = Math.max(1, Math.floor(expiredTerminalContextCount));
-  const noun = count === 1 ? "Expired terminal context" : "Expired terminal contexts";
-  const pronoun = count === 1 ? "it" : "them";
+  const one = count === 1;
   if (variant === "empty") {
     return {
-      title: `${noun} won't be sent`,
-      description: `Remove ${pronoun} or re-add ${pronoun} to include terminal output.`,
+      title: t(one ? "app.chatLogic.expiredEmptyTitleOne" : "app.chatLogic.expiredEmptyTitleMany"),
+      description: t(
+        one ? "app.chatLogic.expiredEmptyDescOne" : "app.chatLogic.expiredEmptyDescMany",
+      ),
     };
   }
   return {
-    title: `${noun} omitted from message`,
-    description: `Re-add ${pronoun} if you want that terminal output included.`,
+    title: t(
+      one ? "app.chatLogic.expiredOmittedTitleOne" : "app.chatLogic.expiredOmittedTitleMany",
+    ),
+    description: t(
+      one ? "app.chatLogic.expiredOmittedDescOne" : "app.chatLogic.expiredOmittedDescMany",
+    ),
   };
 }
 
@@ -919,7 +930,9 @@ export function getStartedThreadModelChangeBlockReason(input: {
   currentModelSelection: ModelSelection;
   currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
   nextModelSelection: ModelSelection;
+  t?: TranslateFn;
 }): { title: string; description: string } | null {
+  const t = input.t ?? englishT;
   if (!input.hasStartedSession) {
     return null;
   }
@@ -934,8 +947,8 @@ export function getStartedThreadModelChangeBlockReason(input: {
     return null;
   }
   return {
-    title: "Start a new chat to switch providers",
-    description: "This thread does not support switching providers after it has started.",
+    title: t("app.chatLogic.switchProviderTitle"),
+    description: t("app.chatLogic.switchProviderDesc"),
   };
 }
 
@@ -1280,8 +1293,8 @@ export type LocalThreadErrorEntry = {
   readonly at: number;
 };
 
-export function chatActionErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An error occurred.";
+export function chatActionErrorMessage(error: unknown, t: TranslateFn = englishT): string {
+  return error instanceof Error ? error.message : t("app.branchToolbar.errorOccurred");
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(

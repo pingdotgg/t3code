@@ -1,3 +1,4 @@
+import { translateNow } from "../lib/miscTranslateNow";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   getNewProjectRepository,
@@ -50,8 +51,10 @@ export function useNewProject() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Could not create the ${label} repository`,
-            description: `${errorMessage(squashAtomCommandFailure(result))} Use Publish Repository in the Git menu to try again.`,
+            title: translateNow("misc.hooks.newProject.repoFailed", { label }),
+            description: translateNow("misc.hooks.newProject.repoFailedDescription", {
+              error: errorMessage(squashAtomCommandFailure(result)),
+            }),
           }),
         );
       }
@@ -60,7 +63,7 @@ export function useNewProject() {
     toastManager.add(
       stackedThreadToast({
         type: "success",
-        title: `Published to ${label}`,
+        title: translateNow("misc.hooks.newProject.published", { label }),
         description: result.value.repository.nameWithOwner,
       }),
     );
@@ -81,7 +84,7 @@ export function useNewProject() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not create the project",
+            title: translateNow("misc.hooks.newProject.createFailed"),
             description: errorMessage(squashAtomCommandFailure(result)),
           }),
         );
@@ -93,11 +96,18 @@ export function useNewProject() {
     toastManager.add(
       stackedThreadToast(
         commitError === undefined
-          ? { type: "success", title: `Created ${input.name}`, description: workspaceRoot }
+          ? {
+              type: "success",
+              title: translateNow("misc.hooks.newProject.created", { name: input.name }),
+              description: workspaceRoot,
+            }
           : {
               type: "warning",
-              title: `Created ${input.name} without a first commit`,
-              description: `${commitError} The project is in ${workspaceRoot}.`,
+              title: translateNow("misc.hooks.newProject.createdNoCommit", { name: input.name }),
+              description: translateNow("misc.hooks.newProject.createdNoCommitDescription", {
+                error: commitError,
+                path: workspaceRoot,
+              }),
             },
       ),
     );
@@ -115,8 +125,10 @@ export function useNewProject() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to open project",
-          description: `${errorMessage(error)} It will appear in the sidebar once this client catches up.`,
+          title: translateNow("misc.hooks.newProject.openFailed"),
+          description: translateNow("misc.hooks.newProject.openFailedDescription", {
+            error: errorMessage(error),
+          }),
         }),
       );
       return null;
@@ -126,7 +138,7 @@ export function useNewProject() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to open project",
+          title: translateNow("misc.hooks.newProject.openFailed"),
           description: errorMessage(error),
         }),
       );

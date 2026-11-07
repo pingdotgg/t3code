@@ -1,4 +1,5 @@
 import { isWebhookDedupeTemplate } from "@t3tools/contracts";
+import { createTranslator, type MessageKey, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import {
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -109,15 +110,23 @@ export function toDateTimeLocalValue(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function scheduleDraftErrors(draft: DraftState) {
+export function scheduleDraftErrors(draft: DraftState, t: TranslateFn = createTranslator("en")) {
   if (draft.scheduleMode === "once") {
     const runAt = new Date(draft.runAt);
     if (Number.isNaN(runAt.getTime()))
-      return [{ title: "Invalid run time", description: "Pick a date and time." }];
+      return [
+        {
+          title: t("settings.code.tasks.errRunTime"),
+          description: t("settings.code.tasks.errPickDateTime"),
+        },
+      ];
     // A time skipped by a daylight saving change parses to a different clock time.
     if (toDateTimeLocalValue(runAt) !== draft.runAt)
       return [
-        { title: "Invalid run time", description: "That time does not exist in your time zone." },
+        {
+          title: t("settings.code.tasks.errRunTime"),
+          description: t("settings.code.tasks.errTimeNotExist"),
+        },
       ];
     return [];
   }
@@ -125,46 +134,56 @@ export function scheduleDraftErrors(draft: DraftState) {
   if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
     return [
       {
-        title: "Invalid age limit",
-        description: `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+        title: t("settings.code.tasks.errAgeLimit"),
+        description: t("settings.code.tasks.errAgeLimitDescription", {
+          max: MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
+        }),
       },
     ];
   const errors: Array<{ title: string; description: string }> = [];
   for (const [label, value] of [
-    ["Duplicate request key", draft.replayKey],
-    ["Coalesce key", draft.coalesceKey],
+    [t("settings.code.tasks.duplicateKey"), draft.replayKey],
+    [t("settings.code.tasks.coalesceKey"), draft.coalesceKey],
   ] as const) {
     if (value.trim() && !isWebhookDedupeTemplate(value.trim()))
       errors.push({
-        title: "Invalid webhook settings",
-        description: `${label} must contain a valid request placeholder.`,
+        title: t("settings.code.tasks.errWebhook"),
+        description: t("settings.code.tasks.errPlaceholder", { label }),
       });
   }
   const window = draft.coalesceWindowSeconds.trim();
   if (window && (!Number.isInteger(Number(window)) || Number(window) < 10 || Number(window) > 3600))
     errors.push({
-      title: "Invalid webhook settings",
-      description: "Coalesce window must be whole seconds from 10 to 3600.",
+      title: t("settings.code.tasks.errWebhook"),
+      description: t("settings.code.tasks.errCoalesceWindow"),
     });
   return errors;
 }
 
-export function webhookDeliveryLabel(delivery: {
-  readonly outcome: string;
-  readonly pendingWindow?: boolean | undefined;
-}) {
-  if (delivery.outcome === "accepted") return delivery.pendingWindow ? "Opened window" : "Ran";
-  const labels: Record<string, string> = {
-    dispatch_failed: "Run failed",
-    duplicate: "Duplicate",
-    coalesced: "Coalesced",
-    filtered: "Filtered",
-    rejected_signature: "Bad signature",
-    disabled: "Task paused",
-    rate_limited: "Rate limited",
-    expired: "Too old",
+export function webhookDeliveryLabel(
+  delivery: {
+    readonly outcome: string;
+    readonly pendingWindow?: boolean | undefined;
+  },
+  t: TranslateFn = createTranslator("en"),
+) {
+  if (delivery.outcome === "accepted") {
+    return delivery.pendingWindow
+      ? t("settings.code.tasks.outcomeOpenedWindow")
+      : t("settings.code.tasks.outcomeRan");
+  }
+  const labels: Record<string, MessageKey> = {
+    dispatch_failed: "settings.code.tasks.outcomeRunFailed",
+    duplicate: "settings.code.tasks.outcomeDuplicate",
+    coalesced: "settings.code.tasks.outcomeCoalesced",
+    filtered: "settings.code.tasks.outcomeFiltered",
+    rejected_signature: "settings.code.tasks.outcomeBadSignature",
+    disabled: "settings.code.tasks.outcomePaused",
+    rate_limited: "settings.code.tasks.outcomeRateLimited",
+    expired: "settings.code.tasks.outcomeExpired",
   };
-  return labels[delivery.outcome] ?? delivery.outcome.replaceAll("_", " ");
+  const key = labels[delivery.outcome];
+  return key ? t(key) : delivery.outcome.replaceAll("_", " ");
 }
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {

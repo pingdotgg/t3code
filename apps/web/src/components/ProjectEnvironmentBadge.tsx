@@ -1,5 +1,6 @@
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 
+import { useT } from "~/hooks/useI18n";
 import type { SidebarProjectSnapshot } from "~/sidebarProjectGrouping";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -9,9 +10,13 @@ export function ProjectEnvironmentBadge(props: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
 }) {
+  const t = useT();
   const remoteMembers = props.group.memberProjects
     .filter((member) => member.environmentId !== props.primaryEnvironmentId)
-    .map((member) => ({ ...member, environmentLabel: member.environmentLabel ?? "Remote" }))
+    .map((member) => ({
+      ...member,
+      environmentLabel: member.environmentLabel ?? t("app.projectBadge.remote"),
+    }))
     .sort((a, b) => a.environmentLabel.localeCompare(b.environmentLabel));
   const first = remoteMembers[0];
   if (!first) return null;
@@ -20,7 +25,7 @@ export function ProjectEnvironmentBadge(props: {
     .filter((label, index, all) => all.indexOf(label) === index)
     .join(", ");
   const alsoHere = remoteMembers.length < props.group.memberProjects.length;
-  const description = `${alsoHere ? "Also on" : "On"} ${labels}`;
+  const description = t(alsoHere ? "app.projectBadge.alsoOn" : "app.projectBadge.on", { labels });
   return (
     <Tooltip>
       <TooltipTrigger

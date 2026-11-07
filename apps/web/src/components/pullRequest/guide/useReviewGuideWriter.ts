@@ -11,6 +11,7 @@ import { toastManager } from "../../ui/toast";
 import { readableFailure } from "../pullRequestDetail.logic";
 import { guideRunKey, useGuideRunStore } from "./guideRunStore";
 
+import { translateNow } from "../../media/translateNow";
 export function useReviewGuideWriter({
   environmentId,
   reference,
@@ -51,10 +52,10 @@ export function useReviewGuideWriter({
       useGuideRunStore.getState().settle(guideRunKey(environmentId, reference));
       toastManager.add({
         type: "error",
-        title: "Could not start a review guide",
+        title: translateNow("review.extra.could.not.start.a.review.guide"),
         description: readableFailure(
           squashAtomCommandFailure(result),
-          "Check the review guide model in Settings → Source control.",
+          translateNow("review.extra.check.the.review.guide.model.in.settings.source"),
         ),
       });
     }

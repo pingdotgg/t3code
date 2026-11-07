@@ -1,4 +1,5 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import { translateNow } from "~/components/media/translateNow";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
@@ -1861,7 +1862,7 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: supersededFold.createdAt,
         runId: supersededFold.runId,
         attemptId: supersededFold.attemptId,
-        label: "Superseded attempt",
+        label: translateNow("chat.attempt.superseded"),
         expanded: input.expandedAttemptIds?.has(supersededFold.attemptId) ?? false,
       });
     }

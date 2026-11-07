@@ -23,6 +23,7 @@ import {
   tokenTypeSegments,
 } from "./usageBreakdown";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { useT } from "../../hooks/useI18n";
 
 export interface UsageChartWindow {
   readonly days: readonly string[];
@@ -48,6 +49,7 @@ export function UsageModelDialog({
   readonly onSetPrice: () => void;
   readonly onClose: () => void;
 }) {
+  const t = useT();
   const usage = mergeAnsweredUsage(
     environments,
     (bucket) => bucket.provider === model.provider && bucket.model === model.model,
@@ -58,9 +60,12 @@ export function UsageModelDialog({
   const hitRate = cacheHitRate(model);
   const perMillion = costPerMillionTokens(model);
   const stats = [
-    { label: "Cost", value: costUnknown ? "Unpriced" : formatUsd(model.costUsd) },
-    { label: "Tokens", value: formatTokens(model.totalTokens) },
-    perMillion === null ? null : { label: "Per 1M tokens", value: formatUsd(perMillion) },
+    {
+      label: t("misc.usage.cost"),
+      value: costUnknown ? t("misc.usage.unpriced") : formatUsd(model.costUsd),
+    },
+    { label: t("misc.usage.tokens"), value: formatTokens(model.totalTokens) },
+    perMillion === null ? null : { label: t("misc.usage.per1m"), value: formatUsd(perMillion) },
     hitRate === null ? null : { label: "Cache hit", value: formatPercent(hitRate) },
   ].filter((stat) => stat !== null);
 
@@ -114,19 +119,19 @@ export function UsageModelDialog({
             <div className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
               {costUnknown ? null : (
                 <UsageShareBar
-                  label="Cost by type"
+                  label="misc.usage.costByType"
                   segments={costTypeSegments(usage.categoryCost)}
                   format={formatUsd}
                 />
               )}
               <UsageShareBar
-                label="Tokens by type"
+                label="misc.usage.tokensByType"
                 segments={tokenTypeSegments(model.tokens)}
                 format={formatTokens}
               />
               {usage.speedCost.fast + usage.speedCost.ultrafast > 0 ? (
                 <UsageShareBar
-                  label="Cost by speed"
+                  label="misc.usage.costBySpeed"
                   segments={speedCostSegments(usage.speedCost)}
                   format={formatUsd}
                   aside={<SpeedPremium premiumUsd={usage.speedCost.premium} />}
@@ -140,7 +145,7 @@ export function UsageModelDialog({
             <span className="text-xs text-muted-foreground">
               {formatTokens(model.unpricedTokens)} tokens have no known price
             </span>
-            <Button onClick={onSetPrice}>Set price</Button>
+            <Button onClick={onSetPrice}>{t("misc.usage.setPrice")}</Button>
           </DialogFooter>
         ) : null}
       </DialogPopup>

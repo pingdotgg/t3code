@@ -11,6 +11,7 @@ import { resolveSpeechPresentation } from "~/components/chat/ComposerSpeechButto
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 import { toastManager } from "~/components/ui/toast";
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { useT } from "~/hooks/useI18n";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useDictationShortcut, type DictationKeyHandlers } from "~/speech/useDictationShortcut";
 import { useEnvironmentSpeechInput } from "~/speech/useEnvironmentSpeechInput";
@@ -33,6 +34,7 @@ export function PreviewAnnotationSpeech({
   keybindings: Parameters<typeof useDictationShortcut>[0]["keybindings"];
 }) {
   const navigate = useNavigate();
+  const t = useT();
   const thread = useThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectId = thread?.projectId ?? draftThread?.projectId ?? null;
@@ -95,7 +97,7 @@ export function PreviewAnnotationSpeech({
     available,
     phase: state.phase,
     errorAction: state.errorAction,
-    status: resolveSpeechPresentation(state, null).status,
+    status: resolveSpeechPresentation(state, null, t).status,
     preview: preview ? preview.committed + preview.tentative : null,
     level,
     shortcutLabel,
@@ -115,7 +117,7 @@ export function PreviewAnnotationSpeech({
         current.current.speech.cancel();
         toastManager.add({
           type: "error",
-          title: "Could not update annotation voice input",
+          title: t("voice.chat.annotation.updateFailed"),
           description: error instanceof Error ? error.message : String(error),
         });
       }

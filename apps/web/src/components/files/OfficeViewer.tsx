@@ -17,6 +17,29 @@ import {
 import { FileSurfaceAction, FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
 
+import { translateNow } from "~/components/media/translateNow";
+import { useT } from "~/hooks/useI18n";
+
+const NAVIGATION_COUNT_KEYS = {
+  sheet: ["review.files.countSheet", "review.files.countSheets"],
+  slide: ["review.files.countSlide", "review.files.countSlides"],
+  page: ["review.files.countPage", "review.files.countPages"],
+  chapter: ["review.files.countChapter", "review.files.countChapters"],
+} as const;
+
+const NAVIGATION_PREVIOUS_KEYS = {
+  sheet: "review.files.prevSheet",
+  slide: "review.files.prevSlide",
+  page: "review.files.prevPage",
+  chapter: "review.files.prevChapter",
+} as const;
+
+const NAVIGATION_NEXT_KEYS = {
+  sheet: "review.files.nextSheet",
+  slide: "review.files.nextSlide",
+  page: "review.files.nextPage",
+  chapter: "review.files.nextChapter",
+} as const;
 const DocumentPages = lazy(() => import("./DocumentPages"));
 const NotebookPreview = lazy(() => import("./NotebookPreview"));
 
@@ -25,12 +48,13 @@ type Workbook = Extract<OfficeWorkerResult, { type: "ods" }>;
 const OpenXmlOfficeViewer = lazy(() => import("./OpenXmlOfficeViewer"));
 
 async function readOfficeFile(src: string, signal: AbortSignal) {
+  const t = translateNow;
   const response = await fetch(src, { signal });
-  if (!response.ok) throw new Error("The file could not be loaded. Close it and try again.");
+  if (!response.ok) throw new Error(t("review.extra.the.file.could.not.be.loaded.close.it"));
   if (Number(response.headers.get("content-length")) > OFFICE_PREVIEW_MAX_BYTES)
-    throw new Error("Preview limited to files under 50 MB.");
+    throw new Error(t("review.extra.preview.limited.to.files.under.50.mb"));
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("The file is unavailable.");
+  if (!reader) throw new Error(t("review.extra.the.file.is.unavailable"));
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   let size = 0;
   try {
@@ -38,7 +62,8 @@ async function readOfficeFile(src: string, signal: AbortSignal) {
       const { value, done } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > OFFICE_PREVIEW_MAX_BYTES) throw new Error("Preview limited to files under 50 MB.");
+      if (size > OFFICE_PREVIEW_MAX_BYTES)
+        throw new Error(t("review.extra.preview.limited.to.files.under.50.mb"));
       chunks.push(value);
     }
   } finally {
@@ -68,6 +93,7 @@ function ExtendedOfficeViewer(props: {
   readonly kind: OfficePreviewKind;
   readonly sizeBytes?: number;
 }) {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [sheetPages, setSheetPages] = useState(new Map<string, string[][]>());
   const pendingPages = useRef(new Set<string>());
@@ -87,10 +113,11 @@ function ExtendedOfficeViewer(props: {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the Office fetch, preparation worker, and timeout for this source and release them on cleanup.
   useEffect(() => {
+    const t = translateNow;
     const controller = new AbortController();
     if ((props.sizeBytes ?? 0) > OFFICE_PREVIEW_MAX_BYTES) {
       // oxlint-disable-next-line react/set-state-in-effect -- The file metadata can reject the preview before loading bytes or engines.
-      setError("Preview limited to files under 50 MB.");
+      setError(t("review.extra.preview.limited.to.files.under.50.mb"));
       return;
     }
     const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
@@ -104,11 +131,11 @@ function ExtendedOfficeViewer(props: {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
     timerRef.current = setTimeout(
-      () => fail("This document took too long to preview. Open it in another app."),
+      () => fail(translateNow("review.extra.this.document.took.too.long.to.preview.open")),
       30_000,
     );
     worker.addEventListener("error", () =>
-      fail("Could not load the Office viewer. Close the file and try again."),
+      fail(translateNow("review.extra.could.not.load.the.office.viewer.close.the")),
     );
     worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResult>) => {
       if (controller.signal.aborted) return;
@@ -144,7 +171,11 @@ function ExtendedOfficeViewer(props: {
         }
       })
       .catch((cause: unknown) =>
-        fail(cause instanceof Error ? cause.message : "Could not read this file."),
+        fail(
+          cause instanceof Error
+            ? cause.message
+            : translateNow("review.extra.could.not.read.this.file"),
+        ),
       );
     return () => {
       controller.abort();
@@ -160,9 +191,10 @@ function ExtendedOfficeViewer(props: {
         role="alert"
         className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center"
       >
-        <p className="text-sm font-medium">No preview for this file</p>
+        <p className="text-sm font-medium">{t("review.extra.no.preview.for.this.file")}</p>
         <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-          {error} Save it or open it in another app.
+          {error}
+          {t("review.extra.save.it.or.open.it.in.another.app")}
         </p>
       </div>
     );
@@ -178,14 +210,14 @@ function ExtendedOfficeViewer(props: {
   const documentCount = previewDocument?.pages.length ?? 0;
   const documentDetails =
     navigation === "chapter"
-      ? `Chapter ${page + 1} of ${documentCount}`
-      : `${documentCount} ${navigation}${documentCount === 1 ? "" : "s"}`;
+      ? t("review.files.chapterOf", { page: page + 1, total: documentCount })
+      : t(NAVIGATION_COUNT_KEYS[navigation][documentCount === 1 ? 0 : 1], { count: documentCount });
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {count > 0 ? (
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-xs">
           <FileSurfaceAction
-            label={`Previous ${navigation}`}
+            label={t(NAVIGATION_PREVIOUS_KEYS[navigation])}
             disabled={page === 0}
             onPress={() => selectPage(page - 1)}
           >
@@ -199,7 +231,7 @@ function ExtendedOfficeViewer(props: {
                   if (value !== null) selectPage(value);
                 }}
               >
-                <SelectTrigger aria-label="Sheet" size="xs">
+                <SelectTrigger aria-label={t("review.extra.sheet")} size="xs">
                   <SelectValue>{sheet?.name}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
@@ -219,7 +251,7 @@ function ExtendedOfficeViewer(props: {
                   if (value !== null) selectPage(value);
                 }}
               >
-                <SelectTrigger aria-label="Chapter" size="xs">
+                <SelectTrigger aria-label={t("review.extra.chapter")} size="xs">
                   <SelectValue>{documentPage?.title}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
@@ -233,11 +265,14 @@ function ExtendedOfficeViewer(props: {
             </div>
           ) : (
             <span className="flex-1 text-center tabular-nums" aria-live="polite">
-              {navigation === "slide" ? "Slide" : "Page"} {page + 1} of {count}
+              {t(navigation === "slide" ? "review.files.slideOf" : "review.files.pageOf", {
+                page: page + 1,
+                total: count,
+              })}
             </span>
           )}
           <FileSurfaceAction
-            label={`Next ${navigation}`}
+            label={t(NAVIGATION_NEXT_KEYS[navigation])}
             disabled={page + 1 === count}
             onPress={() => selectPage(page + 1)}
           >
@@ -250,10 +285,14 @@ function ExtendedOfficeViewer(props: {
           className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
           role="status"
         >
-          Sheet {page + 1} of {count} · {sheet.rowCount.toLocaleString()} rows ·{" "}
-          {sheet.columns.toLocaleString()} columns
+          {t("review.files.sheetStatus", {
+            page: page + 1,
+            total: count,
+            rows: sheet.rowCount.toLocaleString(),
+            columns: sheet.columns.toLocaleString(),
+          })}
           {fileSize !== undefined
-            ? ` · ${fileSize === 0 ? "0 bytes" : formatAttachmentSize(fileSize)}`
+            ? ` · ${fileSize === 0 ? t("review.files.zeroBytes") : formatAttachmentSize(fileSize)}`
             : ""}
         </div>
       ) : null}
@@ -261,29 +300,31 @@ function ExtendedOfficeViewer(props: {
         <>
           {props.kind !== "epub" ? (
             <FileSurfaceNotice>
-              Text and images. Layout and embedded objects may differ from the original.
+              {t("review.extra.text.and.images.layout.and.embedded.objects.may")}
             </FileSurfaceNotice>
           ) : null}
           <Suspense fallback={<FileSurfaceLoading />}>
             <DocumentPages
               html={documentPage.html}
               name={`${props.name}: ${documentPage.title}`}
-              details={`${documentDetails}${fileSize !== undefined ? ` · ${fileSize === 0 ? "0 bytes" : formatAttachmentSize(fileSize)}` : ""}`}
+              details={`${documentDetails}${fileSize !== undefined ? ` · ${fileSize === 0 ? t("review.files.zeroBytes") : formatAttachmentSize(fileSize)}` : ""}`}
             />
           </Suspense>
         </>
       ) : sheet ? (
         <>
           <FileSurfaceNotice>
-            Cell values only. Charts, images, and formatting are not shown.
+            {t("review.extra.cell.values.only.charts.images.and.formatting.are")}
             {sheet.truncated
               ? props.kind === "ods"
-                ? " Limited to 500 rows and 50 columns."
-                : " Preview limited to 250,000 rows, 1,024 columns, and bounded cell text."
+                ? t("review.extra.limited.to.500.rows.and.50.columns")
+                : t("review.extra.preview.limited.to.250.000.rows.1.024")
               : ""}
           </FileSurfaceNotice>
           {sheet.rowCount === 0 ? (
-            <p className="p-6 text-xs text-muted-foreground">This sheet is empty.</p>
+            <p className="p-6 text-xs text-muted-foreground">
+              {t("review.extra.this.sheet.is.empty")}
+            </p>
           ) : (
             <VirtualTablePreview
               key={page}

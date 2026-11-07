@@ -31,6 +31,7 @@ import {
 } from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
+import { getUiLocale } from "./hooks/useI18n";
 import { readLocalStorageValue, subscribeLocalStorageKey } from "./hooks/useLocalStorage";
 import { startHostEnvironmentLookup } from "./state/primaryEnvironment";
 import {
@@ -117,6 +118,15 @@ function startClientAppearance(): void {
   apply();
 }
 
+/** Keeps `<html lang>` in step with the UI language setting for accessibility and font shaping. */
+function startDocumentLanguage(): void {
+  const apply = () => {
+    document.documentElement.lang = getUiLocale();
+  };
+  subscribeClientSettings(apply);
+  apply();
+}
+
 function startDocumentTitle(): void {
   appAtomRegistry.subscribe(
     primaryServerConfigAtom,
@@ -180,6 +190,7 @@ export function startAppServices(): AppRouter {
   installDesktopPasteAsText(window.desktopBridge, window);
 
   startClientAppearance();
+  startDocumentLanguage();
   startDocumentTitle();
   startHostEnvironmentLookup();
   startEnvironmentThemeRepaint();

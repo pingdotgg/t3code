@@ -1,3 +1,4 @@
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import type { ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import {
   resolveSelectableProviderInstanceEntry,
@@ -53,13 +54,16 @@ export function resolveContextWindowModelDisplayName(
 export function formatContextWindowCompactionMessage(
   modelDisplayName: string | null | undefined,
   autoCompactThreshold?: number | null,
+  t: TranslateFn = createTranslator("en"),
 ): string {
   if (typeof autoCompactThreshold === "number" && autoCompactThreshold > 0) {
-    return `Compacts automatically at about ${autoCompactThreshold.toLocaleString("en-US")} tokens.`;
+    return t("chat.context.autoAtThreshold", {
+      tokens: autoCompactThreshold.toLocaleString("en-US"),
+    });
   }
   return modelDisplayName
-    ? `Context for ${modelDisplayName} compacts automatically when needed.`
-    : "Context compacts automatically when needed.";
+    ? t("chat.context.autoForModel", { model: modelDisplayName })
+    : t("chat.context.auto");
 }
 
 export function shouldReserveContextWindowMeter(input: {

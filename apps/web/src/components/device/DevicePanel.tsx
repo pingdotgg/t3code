@@ -10,6 +10,7 @@ import { useAtomMount } from "@effect/atom-react";
 import { type ReactNode, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { useT } from "~/hooks/useI18n";
 import {
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -387,6 +388,7 @@ export function DevicePanel(props: {
 }
 
 function DeviceNotice(props: { readonly onDismiss: () => void; readonly children: ReactNode }) {
+  const t = useT();
   return (
     <div
       role="alert"
@@ -402,7 +404,7 @@ function DeviceNotice(props: { readonly onDismiss: () => void; readonly children
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label="Dismiss device error"
+        aria-label={t("device.error.dismiss")}
         onClick={props.onDismiss}
       >
         <X />

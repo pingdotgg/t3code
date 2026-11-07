@@ -8,6 +8,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
+import { translateNow } from "../media/translateNow";
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
   const [errors, setErrors] = useState(new Map<string, string>());
@@ -65,7 +66,9 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
           setErrors((previous) =>
             new Map(previous).set(
               directoryPath,
-              cause instanceof Error ? cause.message : "Unable to load folder.",
+              cause instanceof Error
+                ? cause.message
+                : translateNow("review.extra.unable.to.load.folder"),
             ),
           );
         }

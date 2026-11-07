@@ -7,6 +7,7 @@ import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { FolderGit2Icon, LinkIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { useT } from "~/hooks/useI18n";
 import { sourceControlIcon } from "~/sourceControlPresentation";
 import { ITEM_ICON_CLASS } from "./CommandPalette.logic";
 import { CommandPaletteTitleIcon } from "./CommandPaletteResults";
@@ -80,6 +81,7 @@ export function NewProjectPublishHostPicker(props: {
   readonly value: SourceControlProviderKind;
   readonly onValueChange: (kind: SourceControlProviderKind) => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <span
@@ -101,7 +103,7 @@ export function NewProjectPublishHostPicker(props: {
           if (kind !== null) props.onValueChange(kind);
         }}
       >
-        <SelectTrigger size="xs" variant="ghost" aria-label="Host for the new repository">
+        <SelectTrigger size="xs" variant="ghost" aria-label={t("app.palette.hostAria")}>
           <SelectValue>
             {(kind: SourceControlProviderKind) => sourceControlClients.get(kind).label}
           </SelectValue>
@@ -127,6 +129,7 @@ export function NewProjectSummary(props: {
   readonly projectsRoot: string | null;
   readonly environmentLabel: string | null;
 }) {
+  const t = useT();
   return (
     <div className="p-2 pb-0">
       <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
@@ -135,13 +138,15 @@ export function NewProjectSummary(props: {
         </CommandPaletteTitleIcon>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-foreground text-sm">
-            {props.name.length > 0 ? props.name : "New project"}
+            {props.name.length > 0 ? props.name : t("app.palette.newProject")}
           </span>
           <span className="truncate text-muted-foreground/85 text-xs">
             {props.name.length > 0
-              ? `Creates ${props.pathPreview}`
-              : `Goes in ${props.projectsRoot}`}
-            {props.environmentLabel === null ? null : ` on ${props.environmentLabel}`}
+              ? t("app.palette.creates", { path: props.pathPreview })
+              : t("app.palette.goesIn", { path: props.projectsRoot ?? "" })}
+            {props.environmentLabel === null
+              ? null
+              : t("app.palette.onEnvironment", { name: props.environmentLabel })}
           </span>
         </span>
       </div>
@@ -154,9 +159,12 @@ export function RemoteRepositorySummary(props: {
   readonly title: string;
   readonly description: string;
 }) {
+  const t = useT();
   return (
     <div className="shrink-0 p-2 pb-0">
-      <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Repository</div>
+      <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+        {t("app.palette.repository")}
+      </div>
       <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
         <CommandPaletteTitleIcon>
           {remoteProjectSourceIcon(props.source, ITEM_ICON_CLASS)}

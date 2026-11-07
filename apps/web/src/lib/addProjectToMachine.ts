@@ -1,3 +1,4 @@
+import { translateNow } from "../lib/miscTranslateNow";
 import {
   executeAtomQuery,
   runAtomCommand,
@@ -183,7 +184,10 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         ? null
         : {
             phase: "failed",
-            title: `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${input.target.label}`,
+            title: translateNow(
+              failed.length === 1 ? "misc.hooks.copyFiles.one" : "misc.hooks.copyFiles.other",
+              { count: failed.length, target: input.target.label },
+            ),
             failures: failed,
           },
     );

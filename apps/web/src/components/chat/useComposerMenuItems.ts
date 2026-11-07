@@ -48,6 +48,8 @@ import {
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
 
+import { translateNow } from "../media/translateNow";
+
 const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
@@ -224,7 +226,7 @@ export function useComposerMenuItems({
           type: "slash-command",
           command: "model",
           label: "/model",
-          description: "Switch response model for this thread",
+          description: translateNow("chat.composer.menuSwitchModel"),
         },
         ...(planModeUiEnabled
           ? ([
@@ -233,14 +235,14 @@ export function useComposerMenuItems({
                 type: "slash-command",
                 command: "plan",
                 label: "/plan",
-                description: "Switch this thread into plan mode",
+                description: translateNow("chat.composer.menuPlanMode"),
               },
               {
                 id: "slash:default",
                 type: "slash-command",
                 command: "default",
                 label: "/default",
-                description: "Switch this thread back to normal build mode",
+                description: translateNow("chat.composer.menuBuildMode"),
               },
             ] as const)
           : []),
@@ -269,7 +271,7 @@ export function useComposerMenuItems({
                 type: "slash-command",
                 command: "clear",
                 label: "/clear",
-                description: "Start a fresh session; earlier messages stay visible",
+                description: translateNow("chat.composer.menuFreshSession"),
               },
             ] as const)
           : []),

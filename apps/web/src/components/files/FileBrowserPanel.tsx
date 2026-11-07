@@ -35,6 +35,8 @@ import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
 
+import { translateNow } from "~/components/media/translateNow";
+import { useT } from "~/hooks/useI18n";
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
@@ -54,6 +56,7 @@ function treePath(entry: ProjectEntry): string {
 }
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
+  const t = useT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -62,14 +65,18 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label="Refresh workspace files"
+            aria-label={t("review.extra.refresh.workspace.files")}
             onClick={props.onRefresh}
           />
         }
       >
         <RefreshIcon refreshing={props.isPending} />
       </TooltipTrigger>
-      <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
+      <TooltipPopup>
+        {props.isPending
+          ? translateNow("review.files.refreshing")
+          : t("review.extra.refresh.files")}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -81,6 +88,7 @@ function FileSearchField(props: {
   onValueChange: (value: string) => void;
   value: string;
 }) {
+  const t = useT();
   return (
     <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
       <InputGroupInput
@@ -89,7 +97,7 @@ function FileSearchField(props: {
         size="sm"
         value={props.value}
         aria-label={props.ariaLabel}
-        placeholder="Search files"
+        placeholder={t("review.extra.search.files")}
         data-workspace-focus-default
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
@@ -144,6 +152,7 @@ export default function FileBrowserPanel({
   workspaceMutationId,
   hostFolder = false,
 }: FileBrowserPanelProps) {
+  const t = useT();
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
   const { resolvedTheme } = useTheme();
@@ -195,11 +204,12 @@ export default function FileBrowserPanel({
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
+        const t = translateNow;
         const clicked = await api.contextMenu.show(
           [
             ...fileMenuItems,
-            { id: "copy-mention", label: "Copy mention" },
-            { id: "add-to-chat", label: "Add to chat" },
+            { id: "copy-mention", label: t("review.extra.copy.mention") },
+            { id: "add-to-chat", label: t("review.extra.add.to.chat") },
           ],
           position,
         );
@@ -216,14 +226,15 @@ export default function FileBrowserPanel({
             await writeTextToClipboard(mention);
             toastManager.add({
               type: "success",
-              title: "Mention copied",
+              title: t("review.extra.mention.copied"),
               description: relativePath,
             });
           } catch (error) {
             toastManager.add({
               type: "error",
-              title: "Failed to copy mention",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: t("review.extra.failed.to.copy.mention"),
+              description:
+                error instanceof Error ? error.message : t("review.extra.an.error.occurred"),
             });
           }
           return;
@@ -233,8 +244,8 @@ export default function FileBrowserPanel({
           if (!composer) {
             toastManager.add({
               type: "error",
-              title: "Unable to add to chat",
-              description: "Open a chat for this project and try again.",
+              title: t("review.extra.unable.to.add.to.chat"),
+              description: t("review.extra.open.a.chat.for.this.project.and.try"),
             });
             return;
           }
@@ -242,8 +253,8 @@ export default function FileBrowserPanel({
           if (!inserted) {
             toastManager.add({
               type: "error",
-              title: "Unable to add to chat",
-              description: "The chat isn't ready to accept input right now.",
+              title: t("review.extra.unable.to.add.to.chat"),
+              description: t("review.extra.the.chat.isn.t.ready.to.accept.input"),
             });
           }
         }
@@ -290,7 +301,10 @@ export default function FileBrowserPanel({
       row.kind === "directory" &&
       row.isExpanded &&
       loadingDirectoriesRef.current.has(item.path.replace(/\/$/, ""))
-        ? { icon: "t3-tree-icon-loading", title: "Loading…" }
+        ? {
+            icon: "t3-tree-icon-loading",
+            title: translateNow("review.extra.loading2"),
+          }
         : null,
     search: false,
     onSearchChange: (value) => setQuery(value ?? ""),
@@ -491,7 +505,7 @@ export default function FileBrowserPanel({
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
         <FileSearchField
           name="project-files-search"
-          ariaLabel={`Search ${projectName} files`}
+          ariaLabel={translateNow("review.files.searchFiles", { project: projectName })}
           value={search.value}
           onValueChange={handleSearchValueChange}
           onClose={closeSearch}
@@ -506,8 +520,8 @@ export default function FileBrowserPanel({
                   variant="ghost"
                   aria-label={
                     expandAll || allDirectoriesExpanded
-                      ? "Collapse all folders"
-                      : "Expand all folders"
+                      ? t("review.extra.collapse.all.folders")
+                      : t("review.extra.expand.all.folders")
                   }
                   onClick={toggleAllDirectories}
                 />
@@ -519,7 +533,9 @@ export default function FileBrowserPanel({
               />
             </TooltipTrigger>
             <TooltipPopup>
-              {expandAll || allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+              {expandAll || allDirectoriesExpanded
+                ? t("review.extra.collapse.all.folders")
+                : t("review.extra.expand.all.folders")}
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -530,12 +546,13 @@ export default function FileBrowserPanel({
           onClick={handleRefresh}
           className="p-4 text-left text-xs leading-relaxed text-destructive"
         >
-          {error ?? pathSearch.error} Click to retry.
+          {error ?? pathSearch.error}
+          {t("review.extra.click.to.retry")}
         </button>
       ) : null}
       {query.trim() && pathSearch.truncated && !pathSearch.isPending ? (
         <div className="px-3 py-1 text-xs text-muted-foreground">
-          More matches available. Refine your search.
+          {t("review.extra.more.matches.available.refine.your.search")}
         </div>
       ) : null}
       {(!ready || pathSearch.isPending) && (
@@ -547,13 +564,13 @@ export default function FileBrowserPanel({
               : "px-3 py-1 text-xs text-muted-foreground"
           }
         >
-          Loading files…
+          {t("review.extra.loading.files")}
         </div>
       )}
       {hasNoSearchMatches ? (
         ready && !isPending && !pathSearch.isPending && !error && !pathSearch.error ? (
           <div role="status" className="px-3 py-4 text-xs text-muted-foreground">
-            No matching files.
+            {t("review.extra.no.matching.files")}
           </div>
         ) : null
       ) : (

@@ -28,6 +28,7 @@ import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
 
+import { useT } from "~/hooks/useI18n";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { toastManager } from "../components/ui/toast";
 import {
@@ -142,6 +143,7 @@ export function useVoiceTranscriptionDestination() {
 }
 
 export function useEnvironmentSpeechInput(input: HookInput) {
+  const t = useT();
   const navigate = useNavigate();
   const destination = useVoiceTranscriptionDestination();
   const prepared = destination.prepared;
@@ -321,10 +323,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         current.ownerKey !== options.draft.ownerKey
       )
         return null;
-      if (!target)
-        return Promise.reject(
-          new Error("The draft's environment is unavailable for transcript cleanup."),
-        );
+      if (!target) return Promise.reject(new Error(t("voice.speech.cleanupUnavailable")));
       return runEnvironmentSpeech(
         postProcessEnvironmentTranscript(
           target,
@@ -348,8 +347,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       onPostProcessingError: () =>
         toastManager.add({
           type: "warning",
-          title: "Transcript cleanup failed",
-          description: "The original transcript was added.",
+          title: t("voice.speech.cleanupFailedTitle"),
+          description: t("voice.speech.cleanupFailedDescription"),
         }),
       readDraft,
       commitDraft: (text, selection) => {
@@ -373,7 +372,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [prepared, grantId, cloudProvider, cloudModel]);
+  }, [prepared, grantId, cloudProvider, cloudModel, t]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes the chosen environment's speech status once its connection is available
   useEffect(() => {
@@ -506,7 +505,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       setQueuedStart(null);
       toastManager.add({
         type: "error",
-        title: "Could not start voice input",
+        title: t("voice.speech.startFailed"),
         description: error instanceof Error ? error.message : String(error),
       });
       return;
@@ -520,7 +519,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (!latestStatus.supported) {
       toastManager.add({
         type: "error",
-        title: "Voice input is not available",
+        title: t("voice.speech.unavailable"),
         description: latestStatus.reason,
       });
       return;
@@ -564,14 +563,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         ...current,
         downloading: false,
         step: ready ? 1 : current.step,
-        error: ready ? null : "The model is not ready. Try downloading it again.",
+        error: ready ? null : t("voice.speech.modelNotReady"),
       }));
     } catch {
       if (request !== startRequestRef.current) return;
       setSetup((current) => ({
         ...current,
         downloading: false,
-        error: "Could not download the model. Check this environment's connection and try again.",
+        error: t("voice.speech.modelDownloadFailed"),
       }));
     }
   });

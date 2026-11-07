@@ -41,6 +41,8 @@ import {
   type UsagePriceWriteResult,
 } from "./usagePriceTargets";
 
+import { useT } from "../../hooks/useI18n";
+
 const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
     const settings = get(serverEnvironment.settingsValueAtom(environmentId));
@@ -101,6 +103,7 @@ export function UsagePriceOverrides({
   readonly initialModel?: string | undefined;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const t = useT();
   const environments = useAtomValue(priceTargetsAtom);
   const [selectedIds, setSelectedIds] = useState(initialSelectedEnvironmentIds);
   const selected = environments.filter(
@@ -275,7 +278,7 @@ export function UsagePriceOverrides({
     >
       <DialogPopup className="max-w-4xl">
         <DialogHeader>
-          <DialogTitle>Custom model prices</DialogTitle>
+          <DialogTitle>{t("misc.usage.customPrices")}</DialogTitle>
           <DialogDescription>
             Prices and mappings apply to all past and future usage on the environments you select.
           </DialogDescription>
@@ -331,7 +334,7 @@ export function UsagePriceOverrides({
                 </MenuPopup>
               </Menu>
             </div>
-            <span className="text-xs text-muted-foreground">USD / million tokens</span>
+            <span className="text-xs text-muted-foreground">{t("misc.usage.usdPerMillion")}</span>
           </div>
           {selected.length === 0 ? (
             <p className="text-sm text-muted-foreground">
@@ -342,7 +345,7 @@ export function UsagePriceOverrides({
           ) : (
             <>
               <div className="min-w-0 overflow-hidden rounded-lg border border-border">
-                <Table className="min-w-180 table-fixed" aria-label="Custom model prices">
+                <Table className="min-w-180 table-fixed" aria-label={t("misc.usage.customPrices")}>
                   <colgroup>
                     <col className="w-[22%]" />
                     <col className="w-[18%]" />
@@ -353,8 +356,8 @@ export function UsagePriceOverrides({
                   </colgroup>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Model ID</TableHead>
-                      <TableHead>Map to</TableHead>
+                      <TableHead>{t("misc.usage.modelId")}</TableHead>
+                      <TableHead>{t("misc.usage.mapTo")}</TableHead>
                       {USAGE_PRICE_FIELDS.map((field) => (
                         <TableHead key={field.key}>{field.label}</TableHead>
                       ))}
@@ -362,7 +365,7 @@ export function UsagePriceOverrides({
                         <Button
                           size="icon-xs"
                           variant="ghost"
-                          aria-label="Add model price"
+                          aria-label={t("misc.usage.addModelPrice")}
                           disabled={locked}
                           onClick={() => {
                             const id = `new:${nextRowId.current++}`;
@@ -403,12 +406,12 @@ export function UsagePriceOverrides({
                                       focusRowRef.current = null;
                                     }
                                   }}
-                                  aria-label="New model ID"
+                                  aria-label={t("misc.usage.newModelId")}
                                   aria-invalid={
                                     (row.model.trim() !== "" && errors.has(row.id)) || undefined
                                   }
                                   list="usage-price-models"
-                                  placeholder="Model ID"
+                                  placeholder={t("misc.usage.modelId")}
                                   autoComplete="off"
                                   spellCheck={false}
                                   disabled={locked}

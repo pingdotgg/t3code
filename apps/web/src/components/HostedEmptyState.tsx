@@ -7,6 +7,7 @@ import { type ReactNode, useState } from "react";
 import { APP_DISPLAY_NAME, DESKTOP_DOWNLOAD_URL } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "../env";
+import { useT } from "../hooks/useI18n";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useRelayEnvironmentDiscovery } from "../state/environments";
 import { CommandBlock } from "./CommandBlock";
@@ -19,6 +20,7 @@ import { WorkspacePageHeader } from "./WorkspacePageHeader";
 
 /** Home screen for the hosted app before any computer is added. */
 export function HostedEmptyState() {
+  const t = useT();
   const cloudEnabled = hasCloudPublicConfig();
   const localEnvironmentOff = isLocalEnvironmentDisabled();
 
@@ -36,20 +38,20 @@ export function HostedEmptyState() {
         <Empty className="flex-1">
           <EmptyHeader>
             <EmptyTitle>
-              {localEnvironmentOff ? "This computer is off" : "No computer connected"}
+              {localEnvironmentOff ? t("app.hosted.off") : t("app.hosted.none")}
             </EmptyTitle>
             <EmptyDescription>
               {localEnvironmentOff
-                ? "Turn it back on, or connect a different computer."
+                ? t("app.hosted.turnOn")
                 : cloudEnabled
-                  ? "Your agents run on your computer."
-                  : "Your agents run on your computer. Start T3 Code there first."}
+                  ? t("app.hosted.agentsRun")
+                  : t("app.hosted.agentsRunStart")}
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             {localEnvironmentOff ? (
               <Button render={<Link to="/settings/connections" />} size="sm">
-                Open Environments
+                {t("app.hosted.openEnvironments")}
               </Button>
             ) : (
               <ol className="w-full space-y-4 text-left">
@@ -64,6 +66,7 @@ export function HostedEmptyState() {
 }
 
 function T3ConnectSteps() {
+  const t = useT();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // Adding the first computer unmounts this screen. Wait for all health checks
@@ -79,11 +82,11 @@ function T3ConnectSteps() {
         {isSignedIn ? (
           <p className="flex items-center gap-1.5 text-muted-foreground">
             <CheckIcon className="size-4" />
-            Signed in
+            {t("app.hosted.signedIn")}
           </p>
         ) : (
           <Button size="sm" disabled={!isLoaded} onClick={openAuthPrompt}>
-            Sign in
+            {t("app.hosted.signIn")}
           </Button>
         )}
       </SetupStep>
@@ -106,7 +109,7 @@ function T3ConnectSteps() {
                     return next;
                   }),
               }}
-              empty={<p className="text-xs text-muted-foreground">Waiting for your computer…</p>}
+              empty={<p className="text-xs text-muted-foreground">{t("app.hosted.waiting")}</p>}
             />
           </div>
         ) : null}
@@ -116,6 +119,7 @@ function T3ConnectSteps() {
 }
 
 function PairingSteps() {
+  const t = useT();
   return (
     <>
       <SetupStep number={1}>
@@ -123,7 +127,7 @@ function PairingSteps() {
       </SetupStep>
       <SetupStep number={2}>
         <Button render={<Link to="/settings/connections" />} size="sm">
-          Add pairing link
+          {t("app.hosted.addPairing")}
         </Button>
       </SetupStep>
     </>
@@ -146,9 +150,10 @@ function SetupStep({
 }
 
 function RunOnComputer({ command }: { readonly command: string }) {
+  const t = useT();
   return (
     <>
-      <p>Run on your computer:</p>
+      <p>{t("app.hosted.runOnComputer")}</p>
       <CommandBlock command={command} className="mt-2" />
       <a
         className="mt-2 inline-block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
@@ -156,7 +161,7 @@ function RunOnComputer({ command }: { readonly command: string }) {
         target="_blank"
         rel="noreferrer noopener"
       >
-        Or download the desktop app
+        {t("app.hosted.downloadDesktop")}
       </a>
     </>
   );

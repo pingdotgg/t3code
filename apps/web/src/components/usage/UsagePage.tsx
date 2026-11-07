@@ -1,4 +1,6 @@
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
+import { useT } from "../../hooks/useI18n";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
@@ -175,6 +177,7 @@ function UsageModelDialogHost({
 }
 
 export function UsagePage() {
+  const t = useT();
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
@@ -184,7 +187,7 @@ export function UsagePage() {
     const shortcut = shortcutLabelForCommand(keybindings, option.command, {
       context: { usagePageOpen: true },
     });
-    return shortcut ? `${option.label} (${shortcut})` : option.label;
+    return shortcut ? `${t(option.labelKey)} (${shortcut})` : t(option.labelKey);
   };
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: preferences.windowDays,
@@ -395,7 +398,7 @@ export function UsagePage() {
             tabs so dropping it never moves them. */}
         {showingLimits ? null : (
           <ToggleGroup
-            aria-label="Usage period"
+            aria-label={t("misc.usage.period")}
             variant="segmented"
             value={[String(windowDays)]}
             onValueChange={(next) => {
@@ -405,13 +408,13 @@ export function UsagePage() {
           >
             {WINDOW_OPTIONS.map((option) => (
               <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
-                {option.label}
+                {t(option.labelKey)}
               </Toggle>
             ))}
           </ToggleGroup>
         )}
         <ToggleGroup
-          aria-label="Usage metric"
+          aria-label={t("misc.usage.metric")}
           variant="segmented"
           value={[metric]}
           onValueChange={(next) => {
@@ -421,7 +424,7 @@ export function UsagePage() {
         >
           {METRIC_OPTIONS.map((option) => (
             <Toggle key={option.value} value={option.value} title={shortcutTitle(option)}>
-              {option.label}
+              {t(option.labelKey)}
             </Toggle>
           ))}
         </ToggleGroup>
@@ -440,13 +443,16 @@ export function UsagePage() {
         {showingLimits ? null : (
           <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
             <SelectTrigger
-              aria-label="Usage period"
+              aria-label={t("misc.usage.period")}
               size="compact"
               variant="ghost"
               className="w-auto min-w-0"
             >
               <SelectValue>
-                {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+                {t(
+                  WINDOW_OPTIONS.find((option) => option.days === windowDays)?.labelKey ??
+                    "misc.usage.period.week",
+                )}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -456,7 +462,7 @@ export function UsagePage() {
                   value={String(option.days)}
                   title={shortcutTitle(option)}
                 >
-                  {option.label}
+                  {t(option.labelKey)}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -469,19 +475,22 @@ export function UsagePage() {
           }}
         >
           <SelectTrigger
-            aria-label="Usage metric"
+            aria-label={t("misc.usage.metric")}
             size="compact"
             variant="ghost"
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
+              {t(
+                METRIC_OPTIONS.find((option) => option.value === metric)?.labelKey ??
+                  "misc.usage.metric.cost",
+              )}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {METRIC_OPTIONS.map((option) => (
               <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
-                {option.label}
+                {t(option.labelKey)}
               </SelectItem>
             ))}
           </SelectPopup>
@@ -501,7 +510,7 @@ export function UsagePage() {
   );
 
   return (
-    <AppRouteModal label="Usage">
+    <AppRouteModal label={t("misc.usage.title")}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
           {topbarContent}
@@ -609,6 +618,7 @@ function UsageOverview({
   readonly showChatGptSharing: boolean;
   readonly onSelectModel: (key: string) => void;
 }) {
+  const t = useT();
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
@@ -669,22 +679,23 @@ function UsageOverview({
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span>
                 <span className={figureClass(loadingPartial)}>
-                  {formatCount(merged.sessions)} sessions
+                  {t("misc.usage.sessions", { count: formatCount(merged.sessions) })}
                 </span>
-                {metric === "cost" && " · API estimate"}
+                {metric === "cost" && t("misc.usage.apiEstimate")}
               </span>
               {metric === "cost" && merged.costQuality.unpricedShare > 0 && (
                 <Popover>
                   <PopoverTrigger
                     openOnHover
                     render={<InlineButton tone="muted" />}
-                    aria-label="Unpriced usage details"
+                    aria-label={t("misc.usage.unpricedDetails")}
                   >
                     <InfoIcon className="size-3" aria-hidden />
                   </PopoverTrigger>
                   <PopoverPopup side="top" tooltipStyle>
-                    API estimate excludes {formatPercent(merged.costQuality.unpricedShare)} unpriced
-                    records.
+                    {t("misc.usage.apiEstimateExcludes", {
+                      percent: formatPercent(merged.costQuality.unpricedShare),
+                    })}
                   </PopoverPopup>
                 </Popover>
               )}
@@ -693,7 +704,7 @@ function UsageOverview({
 
           {showChatGptSharing ? (
             <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>ChatGPT shared usage</span>
+              <span>{t("misc.usage.chatgptShared")}</span>
               <ChatGptUsageButton size="xs" />
             </div>
           ) : null}
@@ -782,31 +793,31 @@ function UsageOverview({
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-foreground">Totals</h2>
+        <h2 className="text-sm font-medium text-foreground">{t("misc.usage.totals")}</h2>
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
           <Metric
             loading={loadingPartial}
-            label="Processed tokens"
+            label="misc.usage.processedTokens"
             value={formatTokens(merged.totalTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label="Cached input"
+            label="misc.usage.cachedInput"
             value={formatTokens(merged.cachedInputTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label="Uncached input"
+            label="misc.usage.uncachedInput"
             value={formatTokens(merged.uncachedInputTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label="Output"
+            label="misc.usage.output"
             value={formatTokens(merged.outputTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label="Cache savings"
+            label="misc.usage.cacheSavings"
             value={formatUsd(merged.costQuality.cacheSavingsUsd)}
           />
         </div>
@@ -818,20 +829,20 @@ function UsageOverview({
         >
           {metric === "tokens" ? (
             <UsageShareBar
-              label="Tokens by type"
+              label="misc.usage.tokensByType"
               segments={tokenTypeSegments(merged)}
               format={formatTokens}
             />
           ) : (
             <>
               <UsageShareBar
-                label="Cost by type"
+                label="misc.usage.costByType"
                 segments={costTypeSegments(merged.categoryCost)}
                 format={formatUsd}
               />
               {merged.speedCost.fast + merged.speedCost.ultrafast > 0 ? (
                 <UsageShareBar
-                  label="Cost by speed"
+                  label="misc.usage.costBySpeed"
                   segments={speedCostSegments(merged.speedCost)}
                   format={formatUsd}
                   aside={<SpeedPremium premiumUsd={merged.speedCost.premium} />}
@@ -844,9 +855,9 @@ function UsageOverview({
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
+          <h2 className="text-sm font-medium text-foreground">{t("misc.usage.breakdownTitle")}</h2>
           <ToggleGroup
-            aria-label="Usage breakdown"
+            aria-label={t("misc.usage.breakdown")}
             variant="segmented"
             value={[breakdown]}
             onValueChange={(next) => {
@@ -856,8 +867,8 @@ function UsageOverview({
           >
             {(
               [
-                { value: "model", label: "Model" },
-                { value: "time", label: shownHourly ? "Hour" : "Day" },
+                { value: "model", label: t("misc.usage.model") },
+                { value: "time", label: shownHourly ? t("misc.usage.hour") : t("misc.usage.day") },
               ] as const
             ).map((option) => (
               <Toggle key={option.value} value={option.value}>
@@ -872,17 +883,19 @@ function UsageOverview({
             <thead>
               <tr className="border-b border-border text-right text-xs text-muted-foreground">
                 <th className="py-2 pr-3 pl-2 text-left font-normal">#</th>
-                <th className="w-full py-2 text-left font-normal">Model</th>
-                <th className="py-2 pl-6 font-normal">Cost</th>
-                <th className="hidden py-2 pl-6 font-normal sm:table-cell">Share</th>
-                <th className="py-2 pr-2 pl-6 font-normal">Tokens</th>
+                <th className="w-full py-2 text-left font-normal">{t("misc.usage.model")}</th>
+                <th className="py-2 pl-6 font-normal">{t("misc.usage.cost")}</th>
+                <th className="hidden py-2 pr-2 pl-6 font-normal sm:table-cell">
+                  {t("misc.usage.share")}
+                </th>
+                <th className="py-2 pl-6 font-normal">{t("misc.usage.tokens")}</th>
               </tr>
             </thead>
             <tbody>
               {breakdownModels.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-6 text-center text-muted-foreground">
-                    No activity in this window.
+                    {t("misc.usage.noActivity")}
                   </td>
                 </tr>
               ) : (
@@ -924,7 +937,7 @@ function UsageOverview({
                       </td>
                       <td className={cn("py-2.5 pl-6 text-foreground", rowFigures)}>
                         {isModelCostUnknown(model) ? (
-                          <span className="text-muted-foreground">Unpriced</span>
+                          <span className="text-muted-foreground">{t("misc.usage.unpriced")}</span>
                         ) : (
                           formatUsd(model.costUsd)
                         )}
@@ -945,7 +958,7 @@ function UsageOverview({
           <div
             className="overflow-x-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             role="region"
-            aria-label="Usage breakdown by time"
+            aria-label={t("misc.usage.breakdownByTime")}
             tabIndex={0}
           >
             <table className="w-full text-sm whitespace-nowrap">
@@ -971,7 +984,7 @@ function UsageOverview({
                       colSpan={activeProviders.length + 3}
                       className="py-6 text-center text-muted-foreground"
                     >
-                      No activity in this window.
+                      {t("misc.usage.noActivity")}
                     </td>
                   </tr>
                 ) : (
@@ -1050,13 +1063,14 @@ function Metric({
   value,
   loading,
 }: {
-  readonly label: string;
+  readonly label: MessageKey;
   readonly value: string;
   readonly loading: boolean;
 }) {
+  const t = useT();
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-xs text-muted-foreground">{t(label)}</span>
       <span
         className={cn("text-base font-medium text-foreground tabular-nums", figureClass(loading))}
       >
@@ -1132,6 +1146,7 @@ function UsageEnvironmentFilter({
   readonly contractMismatches: MergedUsage["contractMismatches"];
   readonly onOpenModelPrices: () => void;
 }) {
+  const t = useT();
   const allSelected = selectedEnvironmentIds === null;
   const label = allSelected
     ? "All environments"
@@ -1150,7 +1165,7 @@ function UsageEnvironmentFilter({
           {showUsageStatus && hasIssue ? (
             <CircleAlertIcon
               className="size-3.5 text-warning-foreground"
-              aria-label="Some environments could not report usage"
+              aria-label={t("misc.usage.envReportFailed")}
             />
           ) : (
             <ChevronDownIcon
@@ -1221,12 +1236,12 @@ function UsageEnvironmentFilter({
           );
         })}
         {environments.length === 0 ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground">No environments connected.</p>
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            {t("misc.usage.noEnvironments")}
+          </p>
         ) : null}
         {showUsageStatus && isPartial ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground">
-            Totals are partial while selected environments scan.
-          </p>
+          <p className="px-2 py-2 text-xs text-muted-foreground">{t("misc.usage.totalsPartial")}</p>
         ) : null}
         {showUsageStatus ? (
           <UsageCoverageNotice
@@ -1305,6 +1320,7 @@ function UsageProviderFilter({
 }
 
 function UsageSkeleton() {
+  const t = useT();
   return (
     <>
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
@@ -1338,9 +1354,15 @@ function UsageSkeleton() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-foreground">Totals</h2>
+        <h2 className="text-sm font-medium text-foreground">{t("misc.usage.totals")}</h2>
         <MetricSkeletons
-          labels={["Processed tokens", "Cached input", "Uncached input", "Output", "Cache savings"]}
+          labels={[
+            "misc.usage.processedTokens",
+            "misc.usage.cachedInput",
+            "misc.usage.uncachedInput",
+            "misc.usage.output",
+            "misc.usage.cacheSavings",
+          ]}
         />
       </section>
 
@@ -1354,7 +1376,7 @@ function UsageSkeleton() {
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
+          <h2 className="text-sm font-medium text-foreground">{t("misc.usage.breakdownTitle")}</h2>
           <Skeleton shape="card" className="h-7 w-28" />
         </div>
         <Skeleton className="h-44" />
@@ -1363,12 +1385,13 @@ function UsageSkeleton() {
   );
 }
 
-function MetricSkeletons({ labels }: { readonly labels: readonly string[] }) {
+function MetricSkeletons({ labels }: { readonly labels: readonly MessageKey[] }) {
+  const t = useT();
   return (
     <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
       {labels.map((label) => (
         <div key={label} className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted-foreground">{label}</span>
+          <span className="text-xs text-muted-foreground">{t(label)}</span>
           <Skeleton className="h-6 w-16" />
         </div>
       ))}

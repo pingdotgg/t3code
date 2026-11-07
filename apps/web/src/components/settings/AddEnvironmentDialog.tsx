@@ -65,6 +65,8 @@ import {
   formatDesktopSshConnectionError,
 } from "./ConnectionsSettings.logic";
 
+import { useT } from "../../hooks/useI18n";
+
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
 export function AddEnvironmentDialog({
@@ -82,6 +84,7 @@ export function AddEnvironmentDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly onErrorChange: (error: string | null) => void;
 }) {
+  const t = useT();
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
@@ -214,12 +217,12 @@ export function AddEnvironmentDialog({
         pairingCode: savedBackendPairingCode,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to add backend.";
+      const message = error instanceof Error ? error.message : t("settings.code.addEnv.failed");
       onErrorChange(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not add backend",
+          title: t("settings.code.addEnv.failedTitle"),
           description: message,
         }),
       );
@@ -234,12 +237,12 @@ export function AddEnvironmentDialog({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const message = error instanceof Error ? error.message : "Failed to add backend.";
+        const message = error instanceof Error ? error.message : t("settings.code.addEnv.failed");
         onErrorChange(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not add backend",
+            title: t("settings.code.addEnv.failedTitle"),
             description: message,
           }),
         );
@@ -253,13 +256,13 @@ export function AddEnvironmentDialog({
       routeTarget
         ? {
             type: "success",
-            title: "Route added",
+            title: t("settings.code.addEnv.routeAdded"),
             description: `${routeTarget.label} now has another way to connect.`,
           }
         : {
             type: "success",
-            title: "Backend added",
-            description: "The environment is saved and will reconnect on app startup.",
+            title: t("settings.code.addEnv.backendAdded"),
+            description: t("settings.code.addEnv.backendAddedDesc"),
           },
     );
     setIsAddingSavedBackend(false);
@@ -403,7 +406,9 @@ export function AddEnvironmentDialog({
           />
         </label>
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">Pairing code</span>
+          <span className="mb-1.5 block text-xs font-medium text-foreground">
+            {t("settings.code.addEnv.pairingCode")}
+          </span>
           <Input
             value={savedBackendPairingCode}
             onChange={(event) => setSavedBackendPairingCode(event.target.value)}
@@ -441,14 +446,16 @@ export function AddEnvironmentDialog({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        onErrorChange(error instanceof Error ? error.message : "Could not add the route.");
+        onErrorChange(
+          error instanceof Error ? error.message : t("settings.code.addEnv.routeFailed"),
+        );
       }
       return;
     }
     handleOpenChange(false);
     toastManager.add({
       type: "success",
-      title: "Route added",
+      title: t("settings.code.addEnv.routeAdded"),
       description: `${routeTarget.label} falls back to T3 Connect when its other routes are unreachable.`,
     });
   };
@@ -514,14 +521,16 @@ export function AddEnvironmentDialog({
             <AutocompleteInput
               id="saved-backend-ssh-host"
               onKeyDown={handleSavedBackendSshHostKeyDown}
-              placeholder="Search hosts or type devbox"
+              placeholder={t("settings.code.addEnv.searchHosts")}
               disabled={isAddingSavedBackend}
               spellCheck={false}
             />
             {hasSshHostSuggestionContent ? (
               <AutocompletePopup>
                 {isLoadingDiscoveredSshHosts ? (
-                  <div className="px-3 py-2 text-xs text-muted-foreground">Loading hosts…</div>
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                    {t("settings.code.addEnv.loadingHosts")}
+                  </div>
                 ) : filteredDiscoveredSshHosts.length > 0 ? (
                   <AutocompleteList className="max-h-72">
                     {filteredDiscoveredSshHosts.map((target, index) => {
@@ -612,15 +621,19 @@ export function AddEnvironmentDialog({
           render={
             <DialogTrigger
               render={
-                <Button size="xs" variant="ghost-muted" aria-label="Add environment">
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-label={t("settings.code.addEnv.addEnvironment")}
+                >
                   <PlusIcon className="size-3" />
-                  <span>Add environment</span>
+                  <span>{t("settings.code.addEnv.addEnvironment")}</span>
                 </Button>
               }
             />
           }
         />
-        <TooltipPopup side="top">Add environment</TooltipPopup>
+        <TooltipPopup side="top">{t("settings.code.addEnv.addEnvironment")}</TooltipPopup>
       </Tooltip>
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
         <DialogHeader>
@@ -638,15 +651,15 @@ export function AddEnvironmentDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               {renderConnectionModeCard({
                 mode: "remote",
-                title: "Remote link",
-                description: "Enter a backend host and pairing code.",
+                title: t("settings.code.addEnv.remoteLink"),
+                description: t("settings.code.addEnv.remoteLinkDesc"),
                 icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
               })}
               {desktopBridge
                 ? renderConnectionModeCard({
                     mode: "ssh",
                     title: "SSH",
-                    description: "Use local SSH config, agent, and tunnels for the backend.",
+                    description: t("settings.code.addEnv.sshDesc"),
                     icon: <TerminalIcon aria-hidden className="size-4" />,
                   })
                 : null}

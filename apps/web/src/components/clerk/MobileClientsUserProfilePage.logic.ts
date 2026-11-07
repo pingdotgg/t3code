@@ -1,4 +1,5 @@
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
+import type { MessageKey, TranslateFn } from "@t3tools/client-runtime/i18n";
 
 const mobileClientUpdatedAtFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -6,12 +7,12 @@ const mobileClientUpdatedAtFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 const NOTIFICATION_PREFERENCES = [
-  ["notifyOnApproval", "approvals"],
-  ["notifyOnInput", "input requests"],
-  ["notifyOnCompletion", "completions"],
-  ["notifyOnFailure", "failures"],
+  ["notifyOnApproval", "misc.clerk.mobile.pref.approvals"],
+  ["notifyOnInput", "misc.clerk.mobile.pref.input"],
+  ["notifyOnCompletion", "misc.clerk.mobile.pref.completions"],
+  ["notifyOnFailure", "misc.clerk.mobile.pref.failures"],
 ] as const satisfies ReadonlyArray<
-  readonly [keyof RelayClientDeviceRecord["notifications"], string]
+  readonly [keyof RelayClientDeviceRecord["notifications"], MessageKey]
 >;
 
 export function mobileClientPlatformLabel(device: RelayClientDeviceRecord): string {
@@ -24,22 +25,25 @@ export function mobileClientPlatformLabel(device: RelayClientDeviceRecord): stri
   return `${platform}${device.appVersion ? ` · T3 Code ${device.appVersion}` : ""}`;
 }
 
-export function mobileClientNotificationDetail(device: RelayClientDeviceRecord): string {
+export function mobileClientNotificationDetail(
+  device: RelayClientDeviceRecord,
+  t: TranslateFn,
+): string {
   if (!device.notifications.enabled) {
-    return "Push notifications are disabled on this device.";
+    return t("misc.clerk.mobile.pushDisabled");
   }
 
   const enabledPreferences = NOTIFICATION_PREFERENCES.flatMap(([preference, label]) =>
-    device.notifications[preference] ? [label] : [],
+    device.notifications[preference] ? [t(label)] : [],
   );
   return enabledPreferences.length > 0
-    ? `Alerts enabled for ${enabledPreferences.join(", ")}.`
-    : "Push notifications are enabled, but no alert types are selected.";
+    ? t("misc.clerk.mobile.alertsEnabled", { types: enabledPreferences.join(", ") })
+    : t("misc.clerk.mobile.noAlertTypes");
 }
 
-export function mobileClientUpdatedAtLabel(updatedAt: string): string {
+export function mobileClientUpdatedAtLabel(updatedAt: string, t: TranslateFn): string {
   const date = new Date(updatedAt);
   return Number.isNaN(date.getTime())
-    ? "Update time unavailable"
-    : `Updated ${mobileClientUpdatedAtFormatter.format(date)}`;
+    ? t("misc.clerk.mobile.updateUnavailable")
+    : t("misc.clerk.mobile.updated", { time: mobileClientUpdatedAtFormatter.format(date) });
 }

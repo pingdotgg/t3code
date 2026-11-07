@@ -1,8 +1,10 @@
+import { createTranslator } from "@t3tools/client-runtime/i18n";
 import { sessionHasLegacyPermissions, type EnvironmentId } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
+import { getUiLocale } from "../hooks/useI18n";
 import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
@@ -31,6 +33,7 @@ function showPermissionNotice(
   router: AnyRouter,
   { environmentId, label }: LegacyPermissionEnvironment,
 ) {
+  const t = createTranslator(getUiLocale());
   const key = dismissalKey(environmentId);
   const persistDismissal = () => {
     try {
@@ -42,13 +45,12 @@ function showPermissionNotice(
     toastManager.close(id);
   };
   const id = toastManager.add({
-    title: `Permissions have changed for ${label}`,
-    description:
-      "This connection still uses the old permissions, so some actions may no longer be available. Pair again using a new link with the permissions you need.",
+    title: t("app.permissionNotice.title", { label }),
+    description: t("app.permissionNotice.description"),
     timeout: 0,
     onClose: persistDismissal,
     actionProps: {
-      children: "Open Sharing & access",
+      children: t("app.permissionNotice.open"),
       onClick: () => {
         dismiss();
         void router.navigate({ to: "/settings/access" });
@@ -56,7 +58,7 @@ function showPermissionNotice(
     },
     data: {
       actionLayout: "stacked-end",
-      secondaryActionProps: { children: "Dismiss", onClick: dismiss },
+      secondaryActionProps: { children: t("app.starPrompt.dismiss"), onClick: dismiss },
       secondaryActionVariant: "ghost",
     },
   });

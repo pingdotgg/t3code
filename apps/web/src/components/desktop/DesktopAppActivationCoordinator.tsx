@@ -16,6 +16,7 @@ import { useEnvironmentShellHasSnapshot } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { reportProjectFailure } from "../../hooks/useProjectGroupUpdate";
+import { translateNow } from "../../lib/miscTranslateNow";
 
 export function DesktopAppActivationCoordinator() {
   const primaryEnvironment = usePrimaryEnvironment();
@@ -86,7 +87,9 @@ export function DesktopAppActivationCoordinator() {
           void updateProject({
             environmentId: projectRef.environmentId,
             input: { projectId: projectRef.projectId, archived: false },
-          }).then((result) => reportProjectFailure("Failed to unarchive project", result));
+          }).then((result) =>
+            reportProjectFailure(translateNow("misc.desktop.unarchiveFailed"), result),
+          );
         }
         return openThread(projectRef);
       },

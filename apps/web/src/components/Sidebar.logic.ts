@@ -1,4 +1,5 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import { createTranslator, type MessageKey, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
@@ -616,27 +617,34 @@ export function filterSidebarV2VisibleThreads<
 export function buildBulkTitleRegenerationContextMenuItem(input: {
   supportedCount: number;
   actionableCount: number;
+  t?: TranslateFn;
 }): ContextMenuItem<"regenerate-title"> | null {
+  const t = input.t ?? englishT;
   if (input.supportedCount === 0) return null;
   if (input.actionableCount === 0) {
     return {
       id: "regenerate-title",
-      label: `Regenerating… (${input.supportedCount})`,
+      label: t("appB.sidebar.bulk.regenerating", { count: input.supportedCount }),
       disabled: true,
     };
   }
   return {
     id: "regenerate-title",
-    label: `Regenerate titles (${input.actionableCount})`,
+    label: t("appB.sidebar.bulk.regenerateTitles", { count: input.actionableCount }),
   };
 }
 
 export function buildBulkUnpinContextMenuItem(input: {
   pinnedCount: number;
+  t?: TranslateFn;
 }): ContextMenuItem<"unpin"> | null {
   if (input.pinnedCount === 0) return null;
-  return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
+  const t = input.t ?? englishT;
+  return { id: "unpin", label: t("appB.sidebar.bulk.unpin", { count: input.pinnedCount }) };
 }
+
+/** Menus built outside React fall back to English; React callers pass `useT()`. */
+const englishT: TranslateFn = createTranslator("en");
 
 export interface ThreadStatusPill {
   label:
@@ -653,6 +661,19 @@ export interface ThreadStatusPill {
   dotClass: string;
   pulse: boolean;
 }
+
+/** Message keys for the pill labels; the `label` itself stays the English identity. */
+export const THREAD_STATUS_LABEL_KEYS: Record<ThreadStatusPill["label"], MessageKey> = {
+  Working: "appB.threadStatus.working",
+  Connecting: "appB.threadStatus.connecting",
+  Completed: "appB.threadStatus.completed",
+  Failed: "appB.threadStatus.failed",
+  "Pending Approval": "appB.threadStatus.pendingApproval",
+  "Awaiting Input": "appB.threadStatus.awaitingInput",
+  "Guest Request": "appB.threadStatus.guestRequest",
+  Waiting: "appB.threadStatus.waiting",
+  "Plan Ready": "appB.threadStatus.planReady",
+};
 
 type ThreadStatusInput = Pick<
   SidebarThreadSummary,

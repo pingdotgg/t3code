@@ -33,6 +33,7 @@ vi.mock("react", async (importOriginal) => ({
   useCallback: <A,>(callback: A) => callback,
   useRef: <A,>(current: A) => ({ current }),
   useState: <A,>(initial: A) => [initial, () => {}],
+  useSyncExternalStore: <A,>(_subscribe: unknown, getSnapshot: () => A) => getSnapshot(),
 }));
 vi.mock("../../hooks/useCopyToClipboard", () => ({ writeTextToClipboard: state.copyText }));
 vi.mock("../../localApi", () => ({

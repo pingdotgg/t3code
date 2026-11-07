@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
+import { useT } from "../hooks/useI18n";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useEnvironmentScope } from "../state/session";
 import { Button } from "./ui/button";
@@ -21,6 +22,7 @@ export function KeybindingsConfigWarning({
   configPath: string | null;
   availableEditors: readonly EditorId[];
 }) {
+  const t = useT();
   const canOpenEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const openInEditor = useOpenInPreferredEditor(environmentId, availableEditors);
 
@@ -40,13 +42,14 @@ export function KeybindingsConfigWarning({
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Unable to open keybindings file",
-                description: error instanceof Error ? error.message : "Unknown error opening file.",
+                title: t("app.keybindings.openFailed"),
+                description:
+                  error instanceof Error ? error.message : t("app.keybindings.openUnknownError"),
               }),
             );
           }}
         >
-          Open keybindings.json
+          {t("app.keybindings.openFile")}
         </Button>
       </span>
     </>

@@ -19,6 +19,7 @@ import {
 } from "./pullRequestReviewStore";
 import type { PullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 
+import { translateNow } from "~/components/media/translateNow";
 export function PullRequestGuideTab({
   environmentId,
   reference,
@@ -95,7 +96,7 @@ export function PullRequestGuideTab({
     canWrite ? (
       <Button size={size} variant="outline" disabled={running} onClick={() => void write()}>
         {running ? <Spinner /> : <SparklesIcon aria-hidden className="size-3.5" />}
-        {running ? "Reading the change..." : label}
+        {running ? translateNow("review.extra.reading.the.change") : label}
       </Button>
     ) : null;
 
@@ -111,20 +112,24 @@ export function PullRequestGuideTab({
       <div className="scrollbar-gutter-both flex h-full flex-col items-center justify-center-safe gap-2 overflow-y-auto px-4 py-10 text-center">
         <p className="text-sm font-medium text-foreground">
           {running
-            ? "Writing a review guide"
+            ? translateNow("review.extra.writing.a.review.guide")
             : failure === null
-              ? "No review guide yet"
-              : "Could not write a review guide"}
+              ? translateNow("review.extra.no.review.guide.yet")
+              : translateNow("review.extra.could.not.write.a.review.guide")}
         </p>
         <p className="max-w-md text-xs text-muted-foreground">
           {running
-            ? "An agent is reading the change. A large one takes a few minutes. You can leave; you will be told when it is ready."
+            ? translateNow("review.extra.an.agent.is.reading.the.change.a.large")
             : failure === null
-              ? (query.error ??
-                "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")
-              : FAILURE_HINT}
+              ? (query.error ?? translateNow("review.extra.a.guide.is.a.tour.of.the.change"))
+              : FAILURE_HINT()}
         </p>
-        {writeButton(failure === null ? "Write guide" : "Try again", "sm")}
+        {writeButton(
+          failure === null
+            ? translateNow("review.extra.write.guide")
+            : translateNow("review.extra.try.again"),
+          "sm",
+        )}
         {failure === null || running ? null : <FailureDetails detail={failure} />}
       </div>
     );
@@ -136,12 +141,12 @@ export function PullRequestGuideTab({
         {running ? <Spinner /> : <TriangleAlertIcon />}
         <AlertDescription>
           {running ? (
-            "Rewriting this guide. You will be told when the new one is ready."
+            translateNow("review.extra.rewriting.this.guide.you.will.be.told.when")
           ) : failure === null ? (
-            "Written before the latest push."
+            translateNow("review.extra.written.before.the.latest.push")
           ) : (
             <>
-              {`Could not rewrite this guide. ${FAILURE_HINT}`}
+              {translateNow("review.pr.couldNotRewriteGuide", { hint: FAILURE_HINT() })}
               <FailureDetails detail={failure} />
             </>
           )}
@@ -174,13 +179,14 @@ export function PullRequestGuideTab({
   );
 }
 
-const FAILURE_HINT = "Check the review guide model in Settings → Source control.";
+const FAILURE_HINT = () =>
+  translateNow("review.extra.check.the.review.guide.model.in.settings.source");
 
 function FailureDetails({ detail }: { detail: string }) {
   return (
     <details className="w-full max-w-lg text-xs text-muted-foreground">
       <summary className="cursor-pointer rounded-sm -outline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-        Technical details
+        {translateNow("review.extra.technical.details")}
       </summary>
       <pre className="scrollbar-gutter-both mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 text-left font-mono text-xs">
         {detail}

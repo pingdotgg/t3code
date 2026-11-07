@@ -9,6 +9,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useT } from "../../hooks/useI18n";
 import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { useEnvironment } from "../../state/environments";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
@@ -36,20 +37,21 @@ export function VoiceInputSetup(props: {
   onStartRecording(): void;
 }) {
   const navigate = useNavigate();
+  const t = useT();
   const environment = useEnvironment(props.environmentId);
   const canManage = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
-  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const [microphoneError, setMicrophoneError] = useState(false);
   const refreshMicrophones = useStableCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     setLoadingMicrophones(true);
     try {
       setMicrophones(await listBrowserMicrophones());
-      setMicrophoneError(null);
+      setMicrophoneError(false);
     } catch {
-      setMicrophoneError("Could not list microphones. You can still use the system default.");
+      setMicrophoneError(true);
     }
     setLoadingMicrophones(false);
   });
@@ -66,8 +68,8 @@ export function VoiceInputSetup(props: {
   );
   const selectedMicrophoneLabel = selectedMicrophone
     ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
-      "Selected microphone (Unavailable)")
-    : "System default";
+      t("voice.chat.setup.microphoneUnavailableOption"))
+    : t("voice.chat.setup.systemDefault");
   const status = props.status?.supported ? props.status : null;
   const model = props.model;
   const progress =
@@ -81,10 +83,15 @@ export function VoiceInputSetup(props: {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <WizardPopup>
         <WizardHeader
-          title="Set up voice input"
-          description={`Transcribe speech on ${environment?.label ?? "your transcription environment"} and use voice input across environments.`}
+          title={t("voice.chat.setup.title")}
+          description={t("voice.chat.setup.description", {
+            environment: environment?.label ?? t("voice.chat.setup.environmentFallback"),
+          })}
         >
-          <WizardSteps steps={["Model", "Ready to dictate"]} currentStep={props.step} />
+          <WizardSteps
+            steps={[t("voice.chat.setup.stepModel"), t("voice.chat.setup.stepReady")]}
+            currentStep={props.step}
+          />
         </WizardHeader>
         <WizardPanel>
           {props.step === 0 ? (
@@ -95,24 +102,24 @@ export function VoiceInputSetup(props: {
                     <h3 className="font-medium">{model.name}</h3>
                     {model?.recommended && props.language ? (
                       <span className="text-xs font-medium text-primary">
-                        Recommended for {languageLabel(props.language)}
+                        {t("voice.chat.setup.recommended", {
+                          language: languageLabel(props.language),
+                        })}
                       </span>
                     ) : null}
                   </div>
                   <p className="mt-2 text-muted-foreground">
-                    Download the {Math.round(model.size / 1024 / 1024)} MB model to{" "}
-                    {environment?.label ?? "your transcription environment"}. Microphone audio is
-                    sent there for transcription, as chosen in Voice settings.
+                    {t("voice.chat.setup.downloadInfo", {
+                      size: Math.round(model.size / 1024 / 1024),
+                      environment: environment?.label ?? t("voice.chat.setup.environmentFallback"),
+                    })}
                   </p>
-                  <p className="mt-2 text-muted-foreground">
-                    Silero (1.2 MB), used for silence filtering and pause detection, downloads
-                    alongside the speech model. An installed copy is reused.
-                  </p>
+                  <p className="mt-2 text-muted-foreground">{t("voice.chat.setup.sileroInfo")}</p>
                   {props.downloading ? (
                     <div role="status" className="mt-4 space-y-1 text-muted-foreground">
                       <div
                         role="progressbar"
-                        aria-label="Speech model download progress"
+                        aria-label={t("voice.chat.setup.downloadProgress")}
                         aria-valuemin={0}
                         aria-valuemax={100}
                         aria-valuenow={progress ?? undefined}
@@ -125,17 +132,17 @@ export function VoiceInputSetup(props: {
                       </div>
                       <p className="text-xs">
                         {model?.state === "verifying"
-                          ? "Verifying download…"
+                          ? t("voice.chat.setup.verifying")
                           : progress === null
-                            ? "Starting download…"
-                            : `${progress}% downloaded`}
+                            ? t("voice.chat.setup.starting")
+                            : t("voice.chat.setup.downloaded", { percent: progress })}
                       </p>
                     </div>
                   ) : null}
                 </div>
               ) : !props.error ? (
                 <p role="status" className="text-muted-foreground">
-                  Loading transcription models…
+                  {t("voice.chat.setup.loadingModels")}
                 </p>
               ) : null}
               {props.error ? (
@@ -148,7 +155,7 @@ export function VoiceInputSetup(props: {
             <section className="space-y-4 text-sm">
               <div className="space-y-2">
                 <label className="font-medium" htmlFor="voice-setup-microphone">
-                  Microphone
+                  {t("voice.chat.setup.microphone")}
                 </label>
                 <div className="flex items-center gap-2">
                   <Select
@@ -165,16 +172,18 @@ export function VoiceInputSetup(props: {
                     <SelectTrigger
                       id="voice-setup-microphone"
                       size="sm"
-                      aria-label="Microphone"
+                      aria-label={t("voice.chat.setup.microphone")}
                       className="min-w-0 flex-1"
                     >
                       <SelectValue>{selectedMicrophoneLabel}</SelectValue>
                     </SelectTrigger>
                     <SelectPopup align="end" alignItemWithTrigger={false}>
-                      <SelectItem value="system-default">System default</SelectItem>
+                      <SelectItem value="system-default">
+                        {t("voice.chat.setup.systemDefault")}
+                      </SelectItem>
                       {selectedIsUnavailable ? (
                         <SelectItem value={`device:${selectedMicrophone}`}>
-                          Selected microphone (Unavailable)
+                          {t("voice.chat.setup.microphoneUnavailableOption")}
                         </SelectItem>
                       ) : null}
                       {microphones.map((device) => (
@@ -189,7 +198,7 @@ export function VoiceInputSetup(props: {
                     variant="ghost"
                     size="icon-sm"
                     disabled={loadingMicrophones}
-                    aria-label="Refresh microphones"
+                    aria-label={t("voice.chat.setup.refreshMicrophones")}
                     onClick={() => void refreshMicrophones()}
                   >
                     <RefreshCwIcon className="size-3.5" />
@@ -197,20 +206,16 @@ export function VoiceInputSetup(props: {
                 </div>
                 {selectedIsUnavailable ? (
                   <p className="text-xs text-destructive">
-                    The selected microphone is unavailable. Choose another or use the system
-                    default.
+                    {t("voice.chat.setup.microphoneUnavailable")}
                   </p>
                 ) : null}
                 {microphoneError ? (
                   <p role="alert" className="text-xs text-muted-foreground">
-                    {microphoneError}
+                    {t("voice.chat.setup.microphoneListFailed")}
                   </p>
                 ) : null}
               </div>
-              <p className="text-muted-foreground">
-                Speak and transcribe in multiple languages or translate into English, and get names
-                and technical terms right with the dictionary in Voice settings.
-              </p>
+              <p className="text-muted-foreground">{t("voice.chat.setup.dictationHint")}</p>
             </section>
           )}
         </WizardPanel>
@@ -218,14 +223,14 @@ export function VoiceInputSetup(props: {
           {props.step === 0 ? (
             <>
               <Button variant="outline" onClick={() => openSettings("speech-models")}>
-                {model ? "Choose another model or language" : "Choose a model or language"}
+                {model ? t("voice.chat.setup.chooseModel") : t("voice.chat.setup.chooseModelFirst")}
               </Button>
               {props.onRetryCatalog ? (
-                <Button onClick={props.onRetryCatalog}>Retry loading models</Button>
+                <Button onClick={props.onRetryCatalog}>{t("voice.chat.setup.retryCatalog")}</Button>
               ) : null}
               {props.downloading ? (
                 <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>
-                  Cancel download
+                  {t("voice.chat.setup.cancelDownload")}
                 </Button>
               ) : null}
               {model ? (
@@ -234,21 +239,23 @@ export function VoiceInputSetup(props: {
                   onClick={props.onDownload}
                 >
                   {props.downloading
-                    ? "Downloading…"
+                    ? t("voice.chat.setup.downloading")
                     : props.error
-                      ? "Try again"
+                      ? t("voice.chat.setup.retryDownload")
                       : canManage
-                        ? "Download model"
-                        : "Ask an environment admin to download"}
+                        ? t("voice.chat.setup.downloadModel")
+                        : t("voice.chat.setup.askAdmin")}
                 </Button>
               ) : null}
             </>
           ) : (
             <>
               <Button variant="outline" onClick={() => openSettings("")}>
-                Customize in Voice settings
+                {t("voice.chat.setup.customize")}
               </Button>
-              <Button onClick={props.onStartRecording}>Start dictating</Button>
+              <Button onClick={props.onStartRecording}>
+                {t("voice.chat.setup.startDictating")}
+              </Button>
             </>
           )}
         </WizardFooter>

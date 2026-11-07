@@ -1,3 +1,4 @@
+import { translateNow } from "../lib/miscTranslateNow";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
@@ -22,7 +23,7 @@ const copyTriageCliCommand = () =>
   writeTextToClipboard(TRIAGE_CLI_COMMAND, "command").catch(() =>
     toastManager.add({
       type: "error",
-      title: `Could not copy. Type ${TRIAGE_CLI_COMMAND} instead.`,
+      title: translateNow("misc.hooks.triage.copyFailed", { command: TRIAGE_CLI_COMMAND }),
     }),
   );
 
@@ -47,10 +48,16 @@ export function useStartTriage() {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not start triage",
-        description: `${description} Run ${TRIAGE_CLI_COMMAND} in a terminal on that machine instead.`,
+        title: translateNow("misc.hooks.triage.startFailed"),
+        description: translateNow("misc.hooks.triage.startFailedDescription", {
+          description,
+          command: TRIAGE_CLI_COMMAND,
+        }),
         timeout: 0,
-        actionProps: { children: "Copy command", onClick: () => void copyTriageCliCommand() },
+        actionProps: {
+          children: translateNow("misc.hooks.triage.copyCommand"),
+          onClick: () => void copyTriageCliCommand(),
+        },
         // "Copy command" is the copy that helps here, not the error text.
         data: { hideCopyButton: true },
       }),
@@ -92,7 +99,7 @@ export function useStartTriage() {
     const pendingTimer = setTimeout(() => {
       pendingToastId = toastManager.add({
         type: "loading",
-        title: "Starting triage…",
+        title: translateNow("misc.hooks.triage.starting"),
         timeout: 0,
       });
     }, 400);

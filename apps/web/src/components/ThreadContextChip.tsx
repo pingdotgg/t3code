@@ -3,6 +3,7 @@ import type { ThreadContextRecord } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
 
+import { useT } from "../hooks/useI18n";
 import { useProject, useThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { ProjectFavicon } from "./ProjectFavicon";
@@ -13,6 +14,7 @@ export function ThreadContextChip(props: {
   copyMarkdown?: string;
   unreadable?: boolean;
 }) {
+  const t = useT();
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
   const project = useProject(shell ? scopeProjectRef(environmentId, shell.projectId) : null);
@@ -25,7 +27,7 @@ export function ThreadContextChip(props: {
             kind="thread"
             {...(props.unreadable ? { state: "invalid" as const } : {})}
             render={<Link to="/$environmentId/$threadId" params={{ environmentId, threadId }} />}
-            aria-label={`Thread, ${title}`}
+            aria-label={t("appB.threadChip.aria", { title })}
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >
@@ -40,10 +42,10 @@ export function ThreadContextChip(props: {
       />
       <TooltipPopup side="top">
         {props.unreadable
-          ? "On another machine, so this machine's agent can't read it. Remove it or switch back to send."
+          ? t("appB.threadChip.unreadable")
           : shell
-            ? "Open thread"
-            : "Thread no longer available"}
+            ? t("appB.threadChip.open")
+            : t("appB.threadChip.unavailable")}
       </TooltipPopup>
     </Tooltip>
   );

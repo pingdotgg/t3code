@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 
+import { useT } from "~/hooks/useI18n";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeIntersection } from "~/lib/observeIntersection";
 import { DiffFileHeaderSkeleton } from "../DiffPanelShell";
 
 export function DiffFileLoadingBoundary({ load, count }: { load: () => void; count: number }) {
+  const t = useT();
   const [isNear, setIsNear] = useState(false);
   const loadLatest = useStableCallback(load);
   // A fresh observe redelivers the current intersection, so this ref must keep its identity
@@ -23,7 +25,7 @@ export function DiffFileLoadingBoundary({ load, count }: { load: () => void; cou
   }, [isNear, count, loadLatest]);
 
   return (
-    <div ref={observe} role="status" aria-label="Loading diff…">
+    <div ref={observe} role="status" aria-label={t("review.diffs.loadingDiff")}>
       {Array.from({ length: Math.min(count, 4) }, (_, index) => (
         <div key={index} aria-hidden className="border-b border-border/40">
           <DiffFileHeaderSkeleton titleWidth="medium" />

@@ -10,6 +10,7 @@ import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import { useNavigate } from "@tanstack/react-router";
+import { useT } from "../../hooks/useI18n";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   memo,
@@ -206,6 +207,7 @@ function ModelPickerProviderNotices({
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
   const navigate = useNavigate();
+  const t = useT();
   return (
     <>
       {setupEntries.length > 0 ? (
@@ -213,7 +215,7 @@ function ModelPickerProviderNotices({
           {setupEntries.map((entry) => (
             <div key={entry.instanceId} className="px-1 py-1.5 text-xs leading-snug">
               <p className="line-clamp-3 text-muted-foreground">
-                {getProviderStatusMessage(entry.snapshot)}
+                {getProviderStatusMessage(entry.snapshot, t)}
               </p>
               <InlineButton
                 className="mt-1"
@@ -222,7 +224,9 @@ function ModelPickerProviderNotices({
                   onOpenProviderSetup?.(entry.instanceId);
                 }}
               >
-                {setupEntries.length > 1 ? `Set up ${entry.displayName}` : "Open provider setup"}
+                {setupEntries.length > 1
+                  ? t("chat.provider.setUpNamed", { provider: entry.displayName })
+                  : t("chat.provider.openSetup")}
               </InlineButton>
             </div>
           ))}
@@ -242,7 +246,7 @@ function ModelPickerProviderNotices({
               void navigate({ to: "/settings/providers" });
             }}
           >
-            Provider settings
+            {t("chat.provider.settings")}
           </InlineButton>
         </p>
       ))}
@@ -369,6 +373,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** Closes the list column, inside the popup's fixed height. */
   listFooter?: ReactNode;
 }) {
+  const t = useT();
   const {
     searchInputRef,
     keybindings: providedKeybindings,
@@ -922,7 +927,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           >
             <ComboboxSearchInput
               ref={searchInputRef}
-              placeholder="Search models..."
+              placeholder={t("chat.model.searchPlaceholder")}
               value={searchQuery}
               onChange={(e) => {
                 if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
@@ -1023,7 +1028,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       className="group w-full cursor-pointer"
                     >
                       <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
-                        {legacySection.isExpanded ? "Show less" : "Show more"}
+                        {legacySection.isExpanded
+                          ? t("chat.model.showLess")
+                          : t("chat.model.showMore")}
                       </span>
                     </ComboboxItem>
                   );

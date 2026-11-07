@@ -116,6 +116,8 @@ import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
+import { translateNow } from "~/components/media/translateNow";
+import { useT } from "~/hooks/useI18n";
 function getShortcutContext() {
   return {
     terminalFocus: isTerminalFocused(),
@@ -143,6 +145,7 @@ const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
 export function PullRequestsPage() {
+  const t = useT();
   const search = useSearch({ from: "/_chat/pull-requests" });
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
@@ -1154,7 +1157,7 @@ export function PullRequestsPage() {
         <PullRequestListGhost rows={7} caption="Loading pull requests…" />
       ) : !pullRequestsSupported ? (
         <PullRequestsUnavailableState
-          title="Pull requests unavailable"
+          title={t("review.extra.pull.requests.unavailable")}
           error="Update your T3 Code servers to browse pull requests."
         />
       ) : firstLoad ? (
@@ -1206,9 +1209,12 @@ export function PullRequestsPage() {
 
       {listQuery.error && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
-          <span>{listQuery.error} Showing the last pull requests loaded.</span>
+          <span>
+            {listQuery.error}
+            {t("review.extra.showing.the.last.pull.requests.loaded")}
+          </span>
           <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
-            Retry
+            {t("review.extra.retry")}
           </Button>
         </div>
       ) : null}
@@ -1217,7 +1223,9 @@ export function PullRequestsPage() {
           {loadingMore ? (
             <span className="flex items-center gap-2">
               <Spinner aria-hidden size="sm" />
-              {sentCursors === null ? "Updating pull requests" : "Loading more"}
+              {sentCursors === null
+                ? t("review.extra.updating.pull.requests")
+                : t("review.extra.loading.more")}
             </span>
           ) : canContinue || pageSize < MAX_PAGE_SIZE ? (
             <Button
@@ -1226,10 +1234,10 @@ export function PullRequestsPage() {
               onClick={loadMore}
               disabled={listQuery.isPending || showingCarried}
             >
-              Load more pull requests
+              {t("review.extra.load.more.pull.requests")}
             </Button>
           ) : (
-            <span>Narrow your search to find more pull requests.</span>
+            <span>{t("review.extra.narrow.your.search.to.find.more.pull.requests")}</span>
           )}
         </div>
       ) : null}
@@ -1237,8 +1245,9 @@ export function PullRequestsPage() {
   );
   const hostEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All", Icon: Plug2Icon },
+    { value: "", label: t("review.extra.all"), Icon: Plug2Icon },
     ...hostEntries.map((entry) => {
+      const t = translateNow;
       const summary = hosts.find((host) => host.host === entry.host);
       return {
         value: entry.host,
@@ -1246,12 +1255,14 @@ export function PullRequestsPage() {
         Icon: getSourceControlPresentationForKind(entry.kind).Icon,
         ...(summary === undefined || summary.configured
           ? {}
-          : { unavailable: summary.detail ?? "This host could not be read." }),
+          : {
+              unavailable: summary.detail ?? t("review.extra.this.host.could.not.be.read"),
+            }),
       };
     }),
   ];
   const serverMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All servers", Icon: LayersIcon },
+    { value: "", label: t("review.extra.all.servers"), Icon: LayersIcon },
     ...capableEnvironments.map((environment) => ({
       value: environment.environmentId,
       label: environment.label,
@@ -1260,7 +1271,7 @@ export function PullRequestsPage() {
   ];
   const sortMenu = (
     <PullRequestCompactFilterMenu
-      label="Sort pull requests"
+      label={t("review.extra.sort.pull.requests")}
       triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
       triggerLabel="Sort"
       outlined
@@ -1408,20 +1419,21 @@ export function PullRequestsPage() {
     const { shortLabel, singular } = (
       sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined)
     ).changeRequest;
-    void writeTextToClipboard(url, `${singular} link`).then(
+    void writeTextToClipboard(url, translateNow("review.pr.termLink", { term: singular })).then(
       (didCopy) => {
         if (didCopy)
           toastManager.add({
             type: "success",
-            title: `${shortLabel} link copied`,
+            title: translateNow("review.pr.linkCopied", { label: shortLabel }),
             description: url,
           });
       },
       (error) => {
+        const t = translateNow;
         toastManager.add({
           type: "error",
-          title: `Failed to copy ${shortLabel} link`,
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: translateNow("review.pr.failedCopyLink", { label: shortLabel }),
+          description: error instanceof Error ? error.message : t("review.extra.an.error.occurred"),
         });
       },
     );

@@ -11,12 +11,19 @@ import {
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
+import {
+  createContext,
+  Fragment,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  useContext,
+} from "react";
 
 import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
   usePrimarySettingsAvailable,
 } from "../../hooks/useSettings";
+import { useT } from "../../hooks/useI18n";
 import { cn } from "../../lib/utils";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
@@ -39,6 +46,31 @@ import {
 
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
 const EMPTY_MANAGED_PATHS: readonly string[] = [];
+
+/**
+ * Renders a translated message that wraps parts in `<name>…</name>` markers, so
+ * links and emphasis stay inside one sentence regardless of word order.
+ */
+export function RichMessage({
+  message,
+  tags,
+}: {
+  readonly message: string;
+  readonly tags: Readonly<Record<string, (children: string) => ReactNode>>;
+}) {
+  const parts: ReactNode[] = [];
+  const pattern = /<(\w+)>([\s\S]*?)<\/\1>/g;
+  let cursor = 0;
+  let index = 0;
+  for (let match = pattern.exec(message); match !== null; match = pattern.exec(message)) {
+    if (match.index > cursor) parts.push(message.slice(cursor, match.index));
+    const render = tags[match[1]!];
+    parts.push(<Fragment key={index++}>{render ? render(match[2]!) : match[2]}</Fragment>);
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < message.length) parts.push(message.slice(cursor));
+  return <>{parts}</>;
+}
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -189,12 +221,17 @@ export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
   "min-w-0 max-w-none shrink-0 border-input bg-background font-normal text-foreground shadow-xs/5 hover:bg-accent/50 dark:bg-input/32 [&_svg[data-composer-control-chevron]]:stroke-[1.75] [&_svg[data-composer-control-chevron]]:opacity-70";
 
 export function PolicyTooltip({ children }: { readonly children: string }) {
+  const t = useT();
   return (
     <Tooltip>
       <TooltipTrigger
         delay={200}
         render={
-          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={t("settings.system.layout.policyDetailsAria")}
+          >
             <InfoIcon className="size-3.5" />
           </Button>
         }
@@ -333,6 +370,7 @@ export function SettingsRow({
   managed?: string | undefined;
   children?: ReactNode;
 }) {
+  const t = useT();
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
@@ -381,8 +419,8 @@ export function SettingsRow({
     source === "environment" && context?.scope.environmentIds.length === 1
       ? (context.environments.find(
           (environment) => environment.environmentId === context.scope.environmentIds[0],
-        )?.label ?? "environment")
-      : "environment";
+        )?.label ?? t("settings.system.layout.environmentFallback"))
+      : t("settings.system.layout.environmentFallback");
   const environmentSettingsById = new Map(
     (context?.connectedEnvironments ?? []).flatMap((environment) =>
       environment.serverConfig
@@ -396,8 +434,8 @@ export function SettingsRow({
       scopedKeys.length > 0 ? (
       source === "project" || source === "mixed" ? (
         <SettingResetButton
-          label={typeof title === "string" ? title : "override"}
-          tooltip="Reset to inherited value"
+          label={typeof title === "string" ? title : t("settings.system.layout.overrideLabel")}
+          tooltip={t("settings.system.layout.resetToInherited")}
           onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
         />
       ) : null
@@ -428,24 +466,25 @@ export function SettingsRow({
     managed !== undefined && control
       ? inertControl(managed)
       : managedBy !== undefined && control
-        ? inertControl(`Managed by ${managedBy}.`)
+        ? inertControl(t("settings.system.layout.managedBy", { name: managedBy }))
         : unavailable && control
           ? inertControl(
               !canWriteSettings
-                ? `This connection lacks permission to change settings on ${
-                    context
+                ? t("settings.system.layout.noPermission", {
+                    label: context
                       ? context.connectedEnvironments
                           .filter((target) => !writableIds.has(target.environmentId))
                           .map((target) => target.label)
-                          .join(", ") || "the selected environment"
-                      : (primaryEnvironment?.label ?? "the primary environment")
-                  }.`
+                          .join(", ") || t("settings.system.layout.selectedEnvironment")
+                      : (primaryEnvironment?.label ??
+                        t("settings.system.layout.primaryEnvironment")),
+                  })
                 : context
-                  ? "Reconnect the selected environment to change this setting."
+                  ? t("settings.system.layout.reconnect")
                   : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
             )
           : environmentWide && control
-            ? inertControl("Environment-wide setting. Select an environment to change it.")
+            ? inertControl(t("settings.system.layout.envWide"))
             : control;
   const customized =
     context !== null &&
@@ -459,16 +498,19 @@ export function SettingsRow({
       }),
     );
   const inheritance: { state: SettingInheritanceState; summary: string } = mixed
-    ? { state: "mixed", summary: "Mixed across selected environments" }
+    ? { state: "mixed", summary: t("settings.system.layout.inheritance.mixed") }
     : source === "project"
-      ? { state: "overridden", summary: "Overridden for this project" }
+      ? { state: "overridden", summary: t("settings.system.layout.inheritance.overridden") }
       : source === "t3.json"
-        ? { state: "inherited", summary: "Inherited from the repository's t3.json" }
+        ? { state: "inherited", summary: t("settings.system.layout.inheritance.t3json") }
         : source === "environment" && scopedKeys.length > 0
-          ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
+          ? {
+              state: "inherited",
+              summary: t("settings.system.layout.inheritance.from", { source: inheritedFrom }),
+            }
           : customized
-            ? { state: "environment", summary: "Set on the environment" }
-            : { state: "default", summary: "Built-in default" };
+            ? { state: "environment", summary: t("settings.system.layout.inheritance.environment") }
+            : { state: "default", summary: t("settings.system.layout.inheritance.default") };
   const renderedInheritance =
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
@@ -549,7 +591,7 @@ export function SettingsRow({
 
 export function SettingResetButton({
   label,
-  tooltip = "Reset to default",
+  tooltip,
   disabled = false,
   onClick,
 }: {
@@ -558,6 +600,7 @@ export function SettingResetButton({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const t = useT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -565,7 +608,7 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={t("settings.layout.resetToDefault", { label })}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -576,7 +619,7 @@ export function SettingResetButton({
           </Button>
         }
       />
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
+      <TooltipPopup side="top">{tooltip ?? t("settings.layout.resetToDefaultShort")}</TooltipPopup>
     </Tooltip>
   );
 }

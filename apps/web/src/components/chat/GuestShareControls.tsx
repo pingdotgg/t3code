@@ -40,6 +40,7 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { GuestMessageAttachments } from "./GuestMessageAttachments";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { guestShareDialogThreadAtom } from "./guestShareDialogState";
+import { useT } from "../../hooks/useI18n";
 
 function useThreadGuestShare(threadRef: ScopedThreadRef | null): ThreadGuestShare | null {
   return useQuietThreadProjection(threadRef)?.projection.thread.guestShare ?? null;
@@ -70,6 +71,7 @@ function GuestShareDialog({
   readonly threadRef: ScopedThreadRef;
   readonly onClose: () => void;
 }) {
+  const t = useT();
   const activeShare = useThreadGuestShare(threadRef);
   const canCreate = useAtomValue(
     serverEnvironment.createGuestShare.permissionAtom(threadRef.environmentId),
@@ -121,7 +123,7 @@ function GuestShareDialog({
             <div className="flex items-center gap-2">
               <Input
                 readOnly
-                aria-label="Guest link"
+                aria-label={t("chat.guestLink")}
                 value={state.url}
                 onFocus={(event) => event.currentTarget.select()}
               />

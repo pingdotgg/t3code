@@ -15,6 +15,7 @@ import type { SpeechTranscriptionOptions, SpeechStreamText } from "@t3tools/cont
 import type { CloudSpeechModelId, CloudSpeechProvider } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { translateNow } from "~/components/media/translateNow";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 
@@ -67,7 +68,7 @@ export function createBrowserVoiceInputPlatform(input: {
         if (isVoiceTranscriptionError(cause)) throw cause;
         throw new VoiceTranscriptionError({
           code: "transcription-failed",
-          message: "Voice transcription failed. Check the destination in Settings → Voice.",
+          message: translateNow("voice.speech.transcriptionFailed"),
           cause,
         });
       }

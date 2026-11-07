@@ -6,6 +6,7 @@ import type { Dispatch } from "react";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { selectThreadTerminalUiState } from "../../terminalUiStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useT } from "../../hooks/useI18n";
 import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
@@ -84,6 +85,7 @@ interface ChatTerminalActionsInput {
  * code blocks, which run in a reused or new drawer terminal.
  */
 export function useChatTerminalActions(input: ChatTerminalActionsInput) {
+  const t = useT();
   const {
     environmentId,
     composerRef,
@@ -301,8 +303,8 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not open preview",
-            description: error instanceof Error ? error.message : "An unexpected error occurred.",
+            title: t("chat.preview.openFailed"),
+            description: error instanceof Error ? error.message : t("chat.preview.unexpectedError"),
           }),
         );
       }

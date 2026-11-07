@@ -1,33 +1,37 @@
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import { MICROPHONE_PERMISSION_ERROR } from "@t3tools/client-runtime/voice-input";
 import { useNavigate } from "@tanstack/react-router";
 import { RotateCcwIcon, SettingsIcon, XIcon } from "lucide-react";
 
+import { useT } from "../../hooks/useI18n";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { VoiceInputPill } from "./VoiceInputPill";
 
-const VOICE_ERROR_LABELS: Record<string, string> = {
-  [MICROPHONE_PERMISSION_ERROR]: "Microphone access needed",
-  "Microphone access is required for voice input.": "Microphone access needed",
-  "This draft is no longer available.": "Draft unavailable",
-  "Another voice recording is already active.": "Another recording active",
-  "Voice transcription is not available.": "Voice input unavailable",
-  "Voice transcription is still finishing. Try again shortly.": "Transcription still busy",
-  "Voice transcription is not available for this language.": "Language unsupported",
-  "Could not prepare voice transcription.": "Couldn’t prepare dictation",
-  "Could not start voice recording.": "Couldn’t start recording",
-  "Voice recording was interrupted.": "Recording interrupted",
-  "Could not finish voice recording.": "Couldn’t finish recording",
-  "Could not transcribe this recording.": "Transcription failed",
-  "Voice transcription on this environment failed.": "Transcription failed",
-  "The draft changed while voice input was running. The transcript was not added.": "Draft changed",
-  "No speech was detected.": "No speech detected",
-  "Microphone processing failed.": "Microphone processing failed",
-  "The microphone disconnected.": "Microphone disconnected",
+const VOICE_ERROR_LABELS: Record<string, MessageKey> = {
+  [MICROPHONE_PERMISSION_ERROR]: "voice.chat.error.microphonePermission",
+  "Microphone access is required for voice input.": "voice.chat.error.microphonePermission",
+  "This draft is no longer available.": "voice.chat.error.draftUnavailable",
+  "Another voice recording is already active.": "voice.chat.error.anotherRecording",
+  "Voice transcription is not available.": "voice.chat.error.unavailable",
+  "Voice transcription is still finishing. Try again shortly.":
+    "voice.chat.error.transcriptionBusy",
+  "Voice transcription is not available for this language.": "voice.chat.error.languageUnsupported",
+  "Could not prepare voice transcription.": "voice.chat.error.prepareFailed",
+  "Could not start voice recording.": "voice.chat.error.startFailed",
+  "Voice recording was interrupted.": "voice.chat.error.interrupted",
+  "Could not finish voice recording.": "voice.chat.error.finishFailed",
+  "Could not transcribe this recording.": "voice.chat.error.transcriptionFailed",
+  "Voice transcription on this environment failed.": "voice.chat.error.transcriptionFailed",
+  "The draft changed while voice input was running. The transcript was not added.":
+    "voice.chat.error.draftChanged",
+  "No speech was detected.": "voice.chat.error.noSpeech",
+  "Microphone processing failed.": "voice.chat.error.microphoneProcessing",
+  "The microphone disconnected.": "voice.chat.error.microphoneDisconnected",
 };
 
-function voiceErrorLabel(error: string | null): string {
-  return (error && VOICE_ERROR_LABELS[error]) || "Voice input failed";
+function voiceErrorKey(error: string | null): MessageKey {
+  return (error && VOICE_ERROR_LABELS[error]) || "voice.chat.error.failed";
 }
 
 export function VoiceInputErrorPill(props: {
@@ -39,13 +43,14 @@ export function VoiceInputErrorPill(props: {
   onDismiss(): void;
 }) {
   const navigate = useNavigate();
+  const t = useT();
   const openSettings = props.errorAction === "settings";
   const actionLabel = openSettings
-    ? "Open voice settings"
+    ? t("voice.chat.error.openSettings")
     : props.error === "Could not transcribe this recording." ||
         props.error === "Voice transcription on this environment failed."
-      ? "Retry transcription"
-      : "Record again";
+      ? t("voice.chat.error.retryTranscription")
+      : t("voice.chat.error.recordAgain");
   return (
     <VoiceInputPill>
       <Tooltip>
@@ -55,7 +60,7 @@ export function VoiceInputErrorPill(props: {
               type="button"
               size="icon-sm-pill"
               variant="ghost"
-              aria-label="Dismiss voice input error"
+              aria-label={t("voice.chat.error.dismiss")}
               onPointerDown={(event) => event.preventDefault()}
               onClick={props.onDismiss}
             >
@@ -64,7 +69,7 @@ export function VoiceInputErrorPill(props: {
           }
         />
         <TooltipPopup side="top">
-          Dismiss voice input error
+          {t("voice.chat.error.dismiss")}
           {props.cancelShortcutLabel ? ` (${props.cancelShortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
@@ -74,14 +79,14 @@ export function VoiceInputErrorPill(props: {
             <span
               tabIndex={0}
               role="status"
-              aria-label={props.error ?? "Voice input failed"}
+              aria-label={props.error ?? t("voice.chat.error.failed")}
               className="min-w-0 flex-1 truncate text-sm text-destructive"
             />
           }
         >
-          {voiceErrorLabel(props.error)}
+          {t(voiceErrorKey(props.error))}
         </TooltipTrigger>
-        <TooltipPopup side="top">{props.error ?? "Voice input failed"}</TooltipPopup>
+        <TooltipPopup side="top">{props.error ?? t("voice.chat.error.failed")}</TooltipPopup>
       </Tooltip>
       {props.errorAction ? (
         <Tooltip>

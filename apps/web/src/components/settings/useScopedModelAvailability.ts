@@ -1,5 +1,6 @@
 import type { ProviderInstanceId, UnifiedSettings } from "@t3tools/contracts";
 
+import { useT } from "../../hooks/useI18n";
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
@@ -14,6 +15,7 @@ export function useScopedModelDisabledReason(
   settings: UnifiedSettings,
   entries: readonly ProviderInstanceEntry[],
 ) {
+  const t = useT();
   const { targets } = useSettingsScope();
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
@@ -40,7 +42,10 @@ export function useScopedModelDisabledReason(
         entry.driverKind !== sourceEntry?.driverKind ||
         !options?.some((option) => option.slug === model && !option.isUnavailable)
       ) {
-        return `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
+        return t("settings.providers.scopedModel.unavailable", {
+          environment:
+            environment?.label ?? t("settings.providers.scopedModel.selectedEnvironment"),
+        });
       }
     }
     return null;

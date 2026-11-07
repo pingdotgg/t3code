@@ -8,6 +8,7 @@ import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
+import { useT } from "../../hooks/useI18n";
 import { OpenMediaLink } from "../media/OpenMediaLink";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
@@ -83,6 +84,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   preview,
   onClose,
 }: ExpandedImageDialogProps) {
+  const t = useT();
   const [imageOffset, setImageOffset] = useState(0);
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
@@ -202,7 +204,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             size="icon"
             variant="media-navigation"
             className="left-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Previous media"
+            aria-label={t("chat.media.previous")}
             onClick={() => navigateImage(-1)}
           >
             <ChevronLeftIcon className="size-5" />
@@ -278,7 +280,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             size="icon"
             variant="media-navigation"
             className="right-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Next media"
+            aria-label={t("chat.media.next")}
             onClick={() => navigateImage(1)}
           >
             <ChevronRightIcon className="size-5" />

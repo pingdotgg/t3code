@@ -1,3 +1,4 @@
+import { useT } from "../../hooks/useI18n";
 import type { ProviderDriverKind, ProviderOptionDescriptor } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { ZapIcon } from "lucide-react";
@@ -48,6 +49,7 @@ export function TraitsSpeedIcon({
   speedIcon: "fast" | "ultrafast";
   size?: ComposerControlSize;
 }) {
+  const t = useT();
   return (
     <>
       <ComposerControlIcon
@@ -63,7 +65,7 @@ export function TraitsSpeedIcon({
         )}
       />
       <span className="sr-only">
-        {speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on"}
+        {speedIcon === "ultrafast" ? t("chat.traits.ultrafastModeOn") : t("chat.traits.fastModeOn")}
       </span>
     </>
   );

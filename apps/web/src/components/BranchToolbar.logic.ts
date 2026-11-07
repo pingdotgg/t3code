@@ -5,11 +5,16 @@ import type {
   ProjectId,
   WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
+
+// Label helpers default to English so callers outside the toolbar keep working;
+// translated callers pass their `useT()` translator.
+const englishT: TranslateFn = createTranslator("en");
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
@@ -38,6 +43,7 @@ export function resolveEnvironmentOptionLabel(input: {
   environmentId: EnvironmentId;
   runtimeLabel?: string | null;
   savedLabel?: string | null;
+  t?: TranslateFn;
 }): string {
   const runtimeLabel = normalizeDisplayLabel(input.runtimeLabel);
   const savedLabel = normalizeDisplayLabel(input.savedLabel);
@@ -47,7 +53,7 @@ export function resolveEnvironmentOptionLabel(input: {
       if (!label) return false;
       return !GENERIC_LOCAL_ENVIRONMENT_LABELS.has(label.toLowerCase());
     });
-    return preferredLocalLabel ?? "This device";
+    return preferredLocalLabel ?? (input.t ?? englishT)("app.branchToolbar.thisDevice");
   }
 
   return runtimeLabel ?? savedLabel ?? input.environmentId;
@@ -89,8 +95,8 @@ export function resolveContextStripLabelsCompact(input: {
     : input.neededWidth > input.availableWidth;
 }
 
-export function resolveEnvModeLabel(mode: EnvMode): string {
-  return mode === "worktree" ? "New worktree" : "Current checkout";
+export function resolveEnvModeLabel(mode: EnvMode, t: TranslateFn = englishT): string {
+  return mode === "worktree" ? t("envMode.worktree") : t("envMode.local");
 }
 
 export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
@@ -99,16 +105,24 @@ export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
   none: "Skip",
 };
 
-export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
+export function resolveCurrentWorkspaceLabel(
+  activeWorktreePath: string | null,
+  t: TranslateFn = englishT,
+): string {
+  return activeWorktreePath
+    ? t("app.branchToolbar.currentWorktree")
+    : resolveEnvModeLabel("local", t);
 }
 
 export function resolveLockedWorkspaceLabel(
   activeWorktreePath: string | null,
   effectiveEnvMode: EnvMode,
+  t: TranslateFn = englishT,
 ): string {
-  if (activeWorktreePath) return "Worktree";
-  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
+  if (activeWorktreePath) return t("app.branchToolbar.worktree");
+  return effectiveEnvMode === "worktree"
+    ? resolveEnvModeLabel("worktree", t)
+    : t("app.branchToolbar.localCheckout");
 }
 
 export interface PreviousWorktreeSeed {
@@ -149,8 +163,13 @@ export function resolvePreviousWorktreeSeed(input: {
   return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
 }
 
-export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
-  return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
+export function resolvePreviousWorktreeLabel(
+  seed: PreviousWorktreeSeed,
+  t: TranslateFn = englishT,
+): string {
+  return seed.branch
+    ? t("app.branchToolbar.previousWorktreeBranch", { branch: seed.branch })
+    : t("app.branchToolbar.previousWorktree");
 }
 
 export function resolveEffectiveEnvMode(input: {
@@ -203,7 +222,9 @@ export function resolveBranchTriggerLabel(input: {
   resolvedActiveBranch: string | null;
   resolvedActiveBranchIsRemote: boolean | null;
   startFromOrigin: boolean;
+  t?: TranslateFn;
 }): string {
+  const t = input.t ?? englishT;
   const {
     activeWorktreePath,
     effectiveEnvMode,
@@ -212,13 +233,13 @@ export function resolveBranchTriggerLabel(input: {
     startFromOrigin,
   } = input;
   if (!resolvedActiveBranch) {
-    return "Select ref";
+    return t("app.branchToolbar.selectRef");
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
     // Only the server can determine a local branch's configured remote.
     return startFromOrigin && resolvedActiveBranchIsRemote === false
-      ? `From ${resolvedActiveBranch} (remote)`
-      : `From ${resolvedActiveBranch}`;
+      ? t("app.branchToolbar.fromRemote", { branch: resolvedActiveBranch })
+      : t("app.branchToolbar.from", { branch: resolvedActiveBranch });
   }
   return resolvedActiveBranch;
 }

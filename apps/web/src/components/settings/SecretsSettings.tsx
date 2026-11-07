@@ -2,6 +2,7 @@ import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3t
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useT } from "../../hooks/useI18n";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentSessionState } from "../../state/session";
@@ -35,6 +36,7 @@ const SECRET_PROVIDER_KINDS: Readonly<
 };
 
 export function SecretsSettingsPanel() {
+  const t = useT();
   const { scope, environment } = useSettingsScope();
   const connected = environment?.connection.phase === "connected";
   return (
@@ -42,9 +44,12 @@ export function SecretsSettingsPanel() {
       {connected &&
       environment.serverConfig !== null &&
       environment.serverConfig.secretProviderSettings !== true ? (
-        <SettingsSection {...searchableSetting("secret-providers")}>
+        <SettingsSection
+          {...searchableSetting("secret-providers")}
+          title={t("settings.system.secrets.title")}
+        >
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            Update T3 Code on {environment.label} to manage its secret providers.
+            {t("settings.system.secrets.updateNeeded", { label: environment.label })}
           </p>
         </SettingsSection>
       ) : connected ? (
@@ -54,9 +59,12 @@ export function SecretsSettingsPanel() {
           projectScoped={scope.kind === "project" || scope.kind === "checkout"}
         />
       ) : (
-        <SettingsSection {...searchableSetting("secret-providers")}>
+        <SettingsSection
+          {...searchableSetting("secret-providers")}
+          title={t("settings.system.secrets.title")}
+        >
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            Connect an environment to manage the secret providers its provider variables read from.
+            {t("settings.system.secrets.connectNeeded")}
           </p>
         </SettingsSection>
       )}
@@ -71,6 +79,7 @@ function EnvironmentSecretProviders({
   readonly environment: EnvironmentPresentation;
   readonly projectScoped: boolean;
 }) {
+  const t = useT();
   const environmentId = environment.environmentId;
   const sessionState = useEnvironmentSessionState(environmentId);
   // The server requires the same grant for secret providers as for provider settings.
@@ -99,24 +108,25 @@ function EnvironmentSecretProviders({
     <>
       <SettingsSection
         {...searchableSetting("secret-providers")}
+        title={t("settings.system.secrets.title")}
         headerAction={
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setDialog({ mode: "add" })}>
               <PlusIcon className="size-3" aria-hidden />
-              Add provider
+              {t("settings.system.secrets.addProvider")}
             </Button>
           ) : null
         }
       >
         {projectScoped ? (
           <p className="px-4 pt-3 text-xs text-muted-foreground">
-            Environment-wide setting. Select an environment to change it.
+            {t("settings.system.secrets.envWide")}
           </p>
         ) : null}
         {entries.length === 0 ? (
           <SettingsRow
-            title="No secret providers configured."
-            description="Add a 1Password account, then pick it as the source of a provider variable."
+            title={t("settings.system.secrets.noneTitle")}
+            description={t("settings.system.secrets.noneDescription")}
           />
         ) : (
           entries.map(([id, config]) => {
@@ -142,14 +152,14 @@ function EnvironmentSecretProviders({
                       <span className="shrink-0">{kind.name} ·</span>
                       <RedactedSensitiveText
                         value={classified.account}
-                        ariaLabel="Toggle account visibility"
-                        revealTooltip="Click to reveal account"
-                        hideTooltip="Click to hide account"
+                        ariaLabel={t("settings.system.secrets.toggleAccount")}
+                        revealTooltip={t("settings.system.secrets.revealAccount")}
+                        hideTooltip={t("settings.system.secrets.hideAccount")}
                         className="max-w-full truncate"
                       />
                     </span>
                   ) : (
-                    `Unsupported provider (${config.kind})`
+                    t("settings.system.secrets.unsupported", { kind: config.kind })
                   )
                 }
                 control={
@@ -161,7 +171,7 @@ function EnvironmentSecretProviders({
                           variant="ghost"
                           onClick={() => setDialog({ mode: "edit", id })}
                         >
-                          Edit
+                          {t("settings.system.secrets.edit")}
                         </Button>
                       ) : null}
                       <RemoveSecretProviderButton
@@ -202,20 +212,25 @@ function RemoveSecretProviderButton({
   readonly label: string;
   readonly onConfirm: () => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Remove
+        {t("settings.system.secrets.remove")}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t("settings.system.secrets.removeTitle", { label })}
+            </AlertDialogTitle>
             <SecretProviderUses environmentId={environmentId} id={id} label={label} />
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("settings.system.secrets.cancel")}
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -223,7 +238,7 @@ function RemoveSecretProviderButton({
                 onConfirm();
               }}
             >
-              Remove provider
+              {t("settings.system.secrets.removeProvider")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

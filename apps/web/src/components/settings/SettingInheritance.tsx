@@ -7,8 +7,10 @@ import {
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronRightIcon, LayersIcon } from "lucide-react";
+import { createTranslator, type MessageKey, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import * as Equal from "effect/Equal";
 
+import { useT } from "../../hooks/useI18n";
 import { cn } from "../../lib/utils";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -23,6 +25,8 @@ import type { ProjectOverrideEntry, ScopedSettingsTarget } from "./scopedSetting
 import { isProjectScopedSettingKey } from "./scopedSettings";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
+const EN: TranslateFn = createTranslator("en");
+
 interface InheritanceLayer {
   readonly key: "project" | "environment" | "t3.json" | "built-in";
   readonly label: string;
@@ -31,39 +35,42 @@ interface InheritanceLayer {
   readonly set: boolean;
 }
 
-const WRITING_STYLE_LABELS: Record<string, string> = {
-  repo_conventions: "Repository conventions",
-  conventional_commits: "Conventional Commits",
-  custom: "Custom instructions",
+const WRITING_STYLE_LABELS: Record<string, MessageKey> = {
+  repo_conventions: "settings.system.inh.writing.repo",
+  conventional_commits: "settings.system.inh.writing.conventional",
+  custom: "settings.system.inh.writing.custom",
 };
 
-const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<string, string> = {
-  balanced: "Balanced",
-  performance: "Performance",
-  "battery-saver": "Battery saver",
-  custom: "Advanced",
+const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<string, MessageKey> = {
+  balanced: "settings.system.inh.bg.balanced",
+  performance: "settings.system.inh.bg.performance",
+  "battery-saver": "settings.system.inh.bg.batterySaver",
+  custom: "settings.system.inh.bg.custom",
 };
 
-function formatValue(key: keyof ServerSettings, value: unknown): string {
+function formatValue(key: keyof ServerSettings, value: unknown, t: TranslateFn): string {
   if (value === null || value === undefined) {
     return key === "pullRequestMergeMethod"
-      ? "Last selected"
+      ? t("settings.system.inh.lastSelected")
       : key === "sidebarAutoSettleAfterDays"
-        ? "Never"
+        ? t("settings.system.inh.never")
         : key === "defaultModelSelection"
-          ? "Automatic"
+          ? t("settings.system.inh.automatic")
           : key === "sourceControlWriterModelSelection"
-            ? "Text generation model"
+            ? t("settings.system.inh.textGenModel")
             : key === "reviewGuideModelSelection"
-              ? "Source control writer model"
+              ? t("settings.system.inh.writerModel")
               : key === "defaultThreadEnvMode" || key === "worktreeSubmodules"
-                ? "Inherit"
-                : "Not set";
+                ? t("settings.system.inh.inherit")
+                : t("settings.system.inh.notSet");
   }
-  if (typeof value === "boolean") return value ? "On" : "Off";
+  if (typeof value === "boolean")
+    return value ? t("settings.system.inh.on") : t("settings.system.inh.off");
   if (typeof value === "number") {
     return key === "sidebarAutoSettleAfterDays"
-      ? `${value} ${value === 1 ? "day" : "days"}`
+      ? t(value === 1 ? "settings.system.inh.day" : "settings.system.inh.days", {
+          count: value,
+        })
       : String(value);
   }
   if (typeof value === "string") {
@@ -78,22 +85,31 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
         value as keyof typeof PULL_REQUEST_MERGE_METHOD_LABELS
       ];
     }
-    return value === "" ? "Empty" : value;
+    return value === "" ? t("settings.system.inh.empty") : value;
   }
-  if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? "item" : "items"}`;
+  if (Array.isArray(value))
+    return t(value.length === 1 ? "settings.system.inh.item" : "settings.system.inh.items", {
+      count: value.length,
+    });
   if (typeof value === "object") {
     if (key === "backgroundActivity" && "profile" in value && typeof value.profile === "string") {
-      return BACKGROUND_ACTIVITY_PROFILE_LABELS[value.profile] ?? value.profile;
+      const labelKey = BACKGROUND_ACTIVITY_PROFILE_LABELS[value.profile];
+      return labelKey ? t(labelKey) : value.profile;
     }
     if ("model" in value && typeof value.model === "string") return value.model;
     if ("mode" in value && typeof value.mode === "string") {
-      if (key === "worktreeCleanup") return value.mode === "off" ? "Off" : "Custom";
-      return key === "sourceControlWritingStyle"
-        ? (WRITING_STYLE_LABELS[value.mode] ?? value.mode)
-        : value.mode;
+      if (key === "worktreeCleanup")
+        return value.mode === "off"
+          ? t("settings.system.inh.off")
+          : t("settings.system.inh.custom");
+      if (key === "sourceControlWritingStyle") {
+        const labelKey = WRITING_STYLE_LABELS[value.mode];
+        return labelKey ? t(labelKey) : value.mode;
+      }
+      return value.mode;
     }
   }
-  return "Custom";
+  return t("settings.system.inh.custom");
 }
 
 /** Matches resolveProjectSettings order. */
@@ -101,6 +117,7 @@ export function settingInheritanceLayers(
   target: ScopedSettingsTarget,
   environmentSettings: ServerSettings,
   key: keyof ServerSettings,
+  t: TranslateFn = EN,
 ): readonly InheritanceLayer[] {
   const environmentValue = environmentSettings[key];
   const source = isProjectScopedSettingKey(key) ? target.sources[key] : "environment";
@@ -110,8 +127,11 @@ export function settingInheritanceLayers(
   if (target.projectId !== null && isProjectScopedSettingKey(key)) {
     layers.push({
       key: "project",
-      label: "Project",
-      value: source === "project" ? formatValue(key, target.settings[key]) : "Inherits",
+      label: t("settings.system.inh.project"),
+      value:
+        source === "project"
+          ? formatValue(key, target.settings[key], t)
+          : t("settings.system.inh.inherits"),
       effective: source === "project",
       set: source === "project",
     });
@@ -119,7 +139,9 @@ export function settingInheritanceLayers(
   layers.push({
     key: "environment",
     label: target.label,
-    value: environmentSet ? formatValue(key, environmentValue) : "Inherits",
+    value: environmentSet
+      ? formatValue(key, environmentValue, t)
+      : t("settings.system.inh.inherits"),
     effective: source === "environment" && environmentSet,
     set: environmentSet,
   });
@@ -127,7 +149,10 @@ export function settingInheritanceLayers(
     layers.push({
       key: "t3.json",
       label: "t3.json",
-      value: source === "t3.json" ? formatValue(key, target.settings[key]) : "Inherits",
+      value:
+        source === "t3.json"
+          ? formatValue(key, target.settings[key], t)
+          : t("settings.system.inh.inherits"),
       effective: source === "t3.json",
       set: source === "t3.json",
     });
@@ -138,8 +163,8 @@ export function settingInheritanceLayers(
     : DEFAULT_SERVER_SETTINGS[key];
   layers.push({
     key: "built-in",
-    label: "Default",
-    value: formatValue(key, builtIn),
+    label: t("settings.system.inh.default"),
+    value: formatValue(key, builtIn, t),
     effective: source === "environment" && !environmentSet,
     set: true,
   });
@@ -184,13 +209,19 @@ export function SettingInheritance({
   overridingProjects?: readonly SettingOverridingProject[];
   onClearOverrides?: (entries: readonly ProjectOverrideEntry[]) => void;
 }) {
+  const t = useT();
   const scopeContext = useOptionalSettingsScope();
   const key = keys[0];
   if (!key || targets.length === 0) return null;
   const hasMultipleEnvironments = new Set(targets.map((target) => target.environmentId)).size > 1;
   const overrideSummary =
     overridingProjects.length > 0
-      ? `${summary} · ${overridingProjects.length} project ${overridingProjects.length === 1 ? "override" : "overrides"}`
+      ? t(
+          overridingProjects.length === 1
+            ? "settings.system.inh.projectOverride"
+            : "settings.system.inh.projectOverrides",
+          { summary, count: overridingProjects.length },
+        )
       : summary;
   const chains = targets.flatMap((target) => {
     const environment = environments.find(
@@ -204,7 +235,7 @@ export function SettingInheritance({
     const secondary = [labels.secondary, path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/")]
       .filter(Boolean)
       .join(" · ");
-    const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key);
+    const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key, t);
     const winningLayer = layers.find((layer) => layer.effective);
     return [
       {
@@ -252,7 +283,7 @@ export function SettingInheritance({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`${overrideSummary}. Show where this value comes from`}
+                  aria-label={t("settings.system.inh.showWhere", { summary: overrideSummary })}
                 />
               }
             />
@@ -290,7 +321,9 @@ export function SettingInheritance({
                         layer.effective ? "font-medium text-foreground" : "text-muted-foreground",
                       )}
                     >
-                      {layer.key === "environment" ? "Environment" : layer.label}
+                      {layer.key === "environment"
+                        ? t("settings.system.inh.environment")
+                        : layer.label}
                     </span>
                     <span
                       className={cn(
@@ -343,7 +376,7 @@ export function SettingInheritance({
                           </span>
                           <span className="text-xs text-muted-foreground">
                             {winningLayer?.key === "environment"
-                              ? "Environment"
+                              ? t("settings.system.inh.environment")
                               : winningLayer?.label}
                           </span>
                           <ChevronRightIcon
@@ -377,7 +410,7 @@ export function SettingInheritance({
                     {chain}
                     {hasMultipleEnvironments ? (
                       <p className="px-2 pt-1.5 text-xs text-muted-foreground">
-                        Same on all machines
+                        {t("settings.system.inh.sameOnAll")}
                       </p>
                     ) : null}
                   </>
@@ -396,14 +429,16 @@ export function SettingInheritance({
                             aria-hidden
                             className="size-3 [[data-panel-open]_&]:rotate-90"
                           />
-                          Overridden by
+                          {t("settings.system.inh.overriddenBy")}
                         </CollapsibleTrigger>
                       ) : (
-                        <span>Overridden by</span>
+                        <span>{t("settings.system.inh.overriddenBy")}</span>
                       )}
                       {onClearOverrides ? (
                         <InlineButton onClick={() => onClearOverrides(overriding)}>
-                          Reset {overriding.length === 1 ? "it" : "all"}
+                          {overriding.length === 1
+                            ? t("settings.system.inh.resetIt")
+                            : t("settings.system.inh.resetAll")}
                         </InlineButton>
                       ) : null}
                     </div>
@@ -439,6 +474,7 @@ export function SettingInheritance({
                                     (member) =>
                                       member.target.environmentId === project.environmentId,
                                   )?.overrides[project.projectId]?.[key],
+                                  t,
                                 )
                               : null}
                           </span>

@@ -1,3 +1,4 @@
+import { createTranslator, type MessageKey, type TranslateFn } from "@t3tools/client-runtime/i18n";
 import {
   STATIC_KEYBINDING_COMMANDS,
   type KeybindingCommand,
@@ -26,6 +27,83 @@ const usageCommandOrder = new Map<KeybindingCommand, number>(
 );
 
 const firstUsageCommand = METRIC_OPTIONS[0].command;
+
+// Command names come from contracts; translate them with these keys.
+const COMMAND_SEGMENT_KEYS: Readonly<Record<string, MessageKey>> = {
+  workspace: "settings.providers.keybindings.segment.workspace",
+  sidebar: "settings.providers.keybindings.segment.sidebar",
+  navigation: "settings.providers.keybindings.segment.navigation",
+  terminal: "settings.providers.keybindings.segment.terminal",
+  rightPanel: "settings.providers.keybindings.segment.rightPanel",
+  threadPanel: "settings.providers.keybindings.segment.threadPanel",
+  view: "settings.providers.keybindings.segment.view",
+  pullRequest: "settings.providers.keybindings.segment.pullRequest",
+  diff: "settings.providers.keybindings.segment.diff",
+  preview: "settings.providers.keybindings.segment.preview",
+  commandPalette: "settings.providers.keybindings.segment.commandPalette",
+  filePicker: "settings.providers.keybindings.segment.filePicker",
+  projectSearch: "settings.providers.keybindings.segment.projectSearch",
+  usage: "settings.providers.keybindings.segment.usage",
+  theme: "settings.providers.keybindings.segment.theme",
+  appearance: "settings.providers.keybindings.segment.appearance",
+  themeEditor: "settings.providers.keybindings.segment.themeEditor",
+  composer: "settings.providers.keybindings.segment.composer",
+  chat: "settings.providers.keybindings.segment.chat",
+  editor: "settings.providers.keybindings.segment.editor",
+  modelPicker: "settings.providers.keybindings.segment.modelPicker",
+  thread: "settings.providers.keybindings.segment.thread",
+  script: "settings.providers.keybindings.segment.script",
+  toggle: "settings.providers.keybindings.segment.toggle",
+  split: "settings.providers.keybindings.segment.split",
+  splitVertical: "settings.providers.keybindings.segment.splitVertical",
+  new: "settings.providers.keybindings.segment.new",
+  close: "settings.providers.keybindings.segment.close",
+  back: "settings.providers.keybindings.segment.back",
+  forward: "settings.providers.keybindings.segment.forward",
+  toggleMaximized: "settings.providers.keybindings.segment.toggleMaximized",
+  copyNumber: "settings.providers.keybindings.segment.copyNumber",
+  refresh: "settings.providers.keybindings.segment.refresh",
+  zoomIn: "settings.providers.keybindings.segment.zoomIn",
+  zoomOut: "settings.providers.keybindings.segment.zoomOut",
+  resetZoom: "settings.providers.keybindings.segment.resetZoom",
+  open: "settings.providers.keybindings.segment.open",
+  select: "settings.providers.keybindings.segment.select",
+  cycle: "settings.providers.keybindings.segment.cycle",
+  stash: "settings.providers.keybindings.segment.stash",
+  host: "settings.providers.keybindings.segment.host",
+  cycleHost: "settings.providers.keybindings.segment.cycleHost",
+  effort: "settings.providers.keybindings.segment.effort",
+  increaseEffort: "settings.providers.keybindings.segment.increaseEffort",
+  decreaseEffort: "settings.providers.keybindings.segment.decreaseEffort",
+  mode: "settings.providers.keybindings.segment.mode",
+  branch: "settings.providers.keybindings.segment.branch",
+  newLocal: "settings.providers.keybindings.segment.newLocal",
+  newWithoutProject: "settings.providers.keybindings.segment.newWithoutProject",
+  find: "settings.providers.keybindings.segment.find",
+  openFavorite: "settings.providers.keybindings.segment.openFavorite",
+  cost: "settings.providers.keybindings.segment.cost",
+  tokens: "settings.providers.keybindings.segment.tokens",
+  limits: "settings.providers.keybindings.segment.limits",
+  period: "settings.providers.keybindings.segment.period",
+  day: "settings.providers.keybindings.segment.day",
+  week: "settings.providers.keybindings.segment.week",
+  month: "settings.providers.keybindings.segment.month",
+  quarter: "settings.providers.keybindings.segment.quarter",
+  stop: "settings.providers.keybindings.segment.stop",
+  previous: "settings.providers.keybindings.segment.previous",
+  next: "settings.providers.keybindings.segment.next",
+  settle: "settings.providers.keybindings.segment.settle",
+  pin: "settings.providers.keybindings.segment.pin",
+  undo: "settings.providers.keybindings.segment.undo",
+  jump: "settings.providers.keybindings.segment.jump",
+  previousProvider: "settings.providers.keybindings.segment.previousProvider",
+  nextProvider: "settings.providers.keybindings.segment.nextProvider",
+  previousWorktree: "settings.providers.keybindings.segment.previousWorktree",
+  run: "settings.providers.keybindings.segment.run",
+  reopenClosed: "settings.providers.keybindings.segment.reopenClosed",
+};
+
+const DEFAULT_T = createTranslator("en");
 
 function compareCommands(
   left: KeybindingCommand,
@@ -102,12 +180,16 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
   }
 }
 
-export function whenNodeRemoveLabel(node: KeybindingWhenNode, depth: number): string {
-  if (depth === 0) return "Clear all conditions";
+export function whenNodeRemoveLabel(
+  node: KeybindingWhenNode,
+  depth: number,
+  t: TranslateFn = DEFAULT_T,
+): string {
+  if (depth === 0) return t("settings.providers.keybindings.clearConditions");
   if (node.type === "identifier" || (node.type === "not" && node.node.type === "identifier")) {
-    return "Remove condition";
+    return t("settings.providers.keybindings.removeCondition");
   }
-  return "Remove group and its conditions";
+  return t("settings.providers.keybindings.removeGroup");
 }
 
 function wrapWhenExpression(node: KeybindingWhenNode): string {
@@ -117,6 +199,7 @@ function wrapWhenExpression(node: KeybindingWhenNode): string {
 
 export function parseWhenExpressionDraft(
   expression: string,
+  t: TranslateFn = DEFAULT_T,
 ): { ok: true; value: KeybindingWhenNode | undefined } | { ok: false; message: string } {
   const trimmed = expression.trim();
   if (trimmed.length === 0) return { ok: true, value: undefined };
@@ -125,7 +208,7 @@ export function parseWhenExpressionDraft(
   if (!ast) {
     return {
       ok: false,
-      message: "Use variables with !, &&, ||, and parentheses.",
+      message: t("settings.providers.keybindings.expressionHelp"),
     };
   }
 
@@ -182,6 +265,7 @@ export function keybindingConflictLabels(
   rows: ReadonlyArray<KeybindingRow>,
   input: { readonly rowId: string; readonly key: string; readonly when: string },
   platform = navigator.platform,
+  t: TranslateFn = DEFAULT_T,
 ): ReadonlyArray<string> {
   if (input.key.trim().length === 0) return [];
   const shortcut = parseKeybindingShortcut(input.key);
@@ -195,7 +279,7 @@ export function keybindingConflictLabels(
       shortcutConflictKey(candidate.binding.shortcut, platform) === conflictKey &&
       conflictsWithWhen(candidate.when, input.when)
     ) {
-      conflicts.push(commandLabel(candidate.command));
+      conflicts.push(commandLabel(candidate.command, t));
     }
   }
   return [...new Set(conflicts)].toSorted();
@@ -210,19 +294,42 @@ export interface KeybindingGroup {
 const KEYBINDING_GROUPS = [
   {
     id: "navigation",
-    title: "Navigation",
+    title: "settings.providers.keybindings.group.navigation",
     prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
   },
-  { id: "threads", title: "Threads", prefixes: ["thread", "chat", "pullRequest"] },
-  { id: "composer", title: "Composer", prefixes: ["composer", "modelPicker"] },
-  { id: "terminal", title: "Terminal", prefixes: ["terminal"] },
-  { id: "preview", title: "Preview & diff", prefixes: ["preview", "diff"] },
-  { id: "appearance", title: "Appearance", prefixes: ["theme", "appearance", "themeEditor"] },
-  { id: "scripts", title: "Project scripts", prefixes: ["script"] },
+  {
+    id: "threads",
+    title: "settings.providers.keybindings.group.threads",
+    prefixes: ["thread", "chat", "pullRequest"],
+  },
+  {
+    id: "composer",
+    title: "settings.providers.keybindings.group.composer",
+    prefixes: ["composer", "modelPicker"],
+  },
+  {
+    id: "terminal",
+    title: "settings.providers.keybindings.group.terminal",
+    prefixes: ["terminal"],
+  },
+  {
+    id: "preview",
+    title: "settings.providers.keybindings.group.preview",
+    prefixes: ["preview", "diff"],
+  },
+  {
+    id: "appearance",
+    title: "settings.providers.keybindings.group.appearance",
+    prefixes: ["theme", "appearance", "themeEditor"],
+  },
+  { id: "scripts", title: "settings.providers.keybindings.group.scripts", prefixes: ["script"] },
 ] as const;
-const OTHER_KEYBINDING_GROUP = { id: "other", title: "Other" } as const;
+const OTHER_KEYBINDING_GROUP = {
+  id: "other",
+  title: "settings.providers.keybindings.group.other",
+} as const;
 
-function keybindingGroupFor(command: KeybindingCommand): { id: string; title: string } {
+function keybindingGroupFor(command: KeybindingCommand): { id: string; title: MessageKey } {
   const prefix = String(command).split(".")[0] ?? "";
   return (
     KEYBINDING_GROUPS.find((group) => (group.prefixes as ReadonlyArray<string>).includes(prefix)) ??
@@ -232,6 +339,7 @@ function keybindingGroupFor(command: KeybindingCommand): { id: string; title: st
 
 export function groupKeybindingRows(
   rows: ReadonlyArray<KeybindingRow>,
+  t: TranslateFn = DEFAULT_T,
 ): ReadonlyArray<KeybindingGroup> {
   const rowsByGroup = new Map<string, Array<KeybindingRow>>();
   for (const row of rows) {
@@ -242,7 +350,7 @@ export function groupKeybindingRows(
   }
   return [...KEYBINDING_GROUPS, OTHER_KEYBINDING_GROUP].flatMap((group) => {
     const groupRows = rowsByGroup.get(group.id);
-    return groupRows ? [{ id: group.id, title: group.title, rows: groupRows }] : [];
+    return groupRows ? [{ id: group.id, title: t(group.title), rows: groupRows }] : [];
   });
 }
 
@@ -297,13 +405,14 @@ export function buildKeybindingRows(
 export function filterKeybindingRows(
   rows: ReadonlyArray<KeybindingRow>,
   query: string,
+  t: TranslateFn = DEFAULT_T,
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) return rows;
   return rows.filter((row) => {
     return (
       row.command.toLowerCase().includes(normalizedQuery) ||
-      commandLabel(row.command).toLowerCase().includes(normalizedQuery) ||
+      commandLabel(row.command, t).toLowerCase().includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
       row.when.toLowerCase().includes(normalizedQuery) ||
       row.source.toLowerCase().includes(normalizedQuery)
@@ -359,35 +468,57 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
+  t: TranslateFn = DEFAULT_T,
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
   for (const binding of keybindings) {
     commands.add(binding.command);
   }
-  return [...commands].toSorted((left, right) => compareCommands(left, right, commandLabel));
+  return [...commands].toSorted((left, right) =>
+    compareCommands(left, right, (command) => commandLabel(command, t)),
+  );
 }
 
-export function commandLabel(command: KeybindingCommand): string {
-  if (command === "workspace.focusNext") return "Focus Next Workspace Area";
-  if (command === "workspace.focusPrevious") return "Focus Previous Workspace Area";
-  if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
-  if (command === "composer.sendBackground") return "Composer: Start in Background";
-  if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
-  if (command === "composer.dictation") return "Composer: Start or Finish Dictation";
-  if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
-  if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
-  if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";
+export function commandLabel(command: KeybindingCommand, t: TranslateFn = DEFAULT_T): string {
+  if (command === "workspace.focusNext")
+    return t("settings.providers.keybindings.command.focusNext");
+  if (command === "workspace.focusPrevious")
+    return t("settings.providers.keybindings.command.focusPrevious");
+  if (command === "composer.sendAlternate")
+    return t("settings.providers.keybindings.command.sendAlternate");
+  if (command === "composer.sendBackground")
+    return t("settings.providers.keybindings.command.sendBackground");
+  if (command === "composer.sendAndNewThread")
+    return t("settings.providers.keybindings.command.sendAndNew");
+  if (command === "composer.dictation")
+    return t("settings.providers.keybindings.command.dictation");
+  if (command === "thread.steerQueuedMessage")
+    return t("settings.providers.keybindings.command.steerQueued");
+  if (command === "thread.editQueuedMessage")
+    return t("settings.providers.keybindings.command.editQueued");
+  if (command === "thread.copyReference")
+    return t("settings.providers.keybindings.command.copyReference");
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
-  if (usageMetric) return `Usage: ${usageMetric.label}`;
+  if (usageMetric)
+    return t("settings.providers.keybindings.command.usage", { label: usageMetric.label });
   const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);
-  if (usagePeriod) return `Usage: Period: ${usagePeriod.label}`;
-  if (command === "view.reopenClosed") return "Reopen Closed Tab";
-  if (command === "preview.focusUrl") return "Preview: Focus URL";
+  if (usagePeriod)
+    return t("settings.providers.keybindings.command.usagePeriod", { label: usagePeriod.label });
+  if (command === "view.reopenClosed") return t("settings.providers.keybindings.command.reopen");
+  if (command === "preview.focusUrl") return t("settings.providers.keybindings.command.focusUrl");
   const raw = String(command);
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
-    return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
+    return t("settings.providers.keybindings.command.runScript", {
+      name: titleCaseCommandSegment(raw.slice("script.".length, -".run".length)),
+    });
   }
-  return raw.split(".").map(titleCaseCommandSegment).join(": ");
+  return raw
+    .split(".")
+    .map((segment) => {
+      const key = COMMAND_SEGMENT_KEYS[segment];
+      return key ? t(key) : titleCaseCommandSegment(segment);
+    })
+    .join(t("settings.providers.keybindings.segmentJoin"));
 }
 
 function titleCaseCommandSegment(segment: string): string {

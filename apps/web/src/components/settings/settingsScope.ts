@@ -5,6 +5,7 @@ import type {
   SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
+import { createTranslator, type TranslateFn } from "@t3tools/client-runtime/i18n";
 
 export interface SettingsScopeSearch {
   project?: string | undefined;
@@ -59,6 +60,7 @@ export function resolveSettingsScope(
   search: SettingsScopeSearch,
   groups: readonly SidebarProjectSnapshot[],
   environments: readonly Pick<EnvironmentPresentation, "environmentId" | "label">[],
+  t: TranslateFn = createTranslator("en"),
 ): ResolvedSettingsScope {
   const unavailable = (
     reason: Extract<ResolvedSettingsScope, { kind: "unavailable" }>["reason"],
@@ -66,24 +68,24 @@ export function resolveSettingsScope(
   ): ResolvedSettingsScope => ({
     kind: "unavailable",
     reason,
-    label: "Unavailable selection",
+    label: t("settings.system.scope.unavailable"),
     message,
     members: [],
     environmentIds: [],
   });
 
   if (search.checkout && !search.project) {
-    return unavailable("project-required", "Select a project to choose one of its checkouts.");
+    return unavailable("project-required", t("settings.system.scope.projectRequired"));
   }
 
   const environment = environments.find((candidate) => candidate.environmentId === search.machine);
   if (search.machine && !environment) {
-    return unavailable("environment-missing", "This environment is no longer available.");
+    return unavailable("environment-missing", t("settings.system.scope.environmentMissing"));
   }
 
   if (search.project) {
     const group = groups.find((candidate) => candidate.projectKey === search.project);
-    if (!group) return unavailable("project-missing", "This project is no longer available.");
+    if (!group) return unavailable("project-missing", t("settings.system.scope.projectMissing"));
     const members = group.memberProjects.filter(
       (member) =>
         (search.machine === undefined || member.environmentId === search.machine) &&
@@ -93,8 +95,8 @@ export function resolveSettingsScope(
       return unavailable(
         "checkout-missing",
         search.checkout
-          ? "This checkout is no longer available in the selected project and environment."
-          : "This project has no checkout on this environment.",
+          ? t("settings.system.scope.checkoutMissingSelected")
+          : t("settings.system.scope.checkoutMissingNone"),
       );
     }
     if (search.checkout) {
@@ -105,7 +107,7 @@ export function resolveSettingsScope(
       if (!checkoutEnvironment) {
         return unavailable(
           "environment-missing",
-          "This checkout's environment is no longer available.",
+          t("settings.system.scope.checkoutEnvironmentMissing"),
         );
       }
       const sharesEnvironment = group.memberProjects.some(
@@ -127,7 +129,7 @@ export function resolveSettingsScope(
       kind: "project",
       group,
       environmentId: environment?.environmentId ?? null,
-      label: `${group.displayName} / ${environment?.label ?? "All checkouts"}`,
+      label: `${group.displayName} / ${environment?.label ?? t("settings.system.scope.allCheckouts")}`,
       members,
       environmentIds: [...new Set(members.map((member) => member.environmentId))],
     };
@@ -143,7 +145,7 @@ export function resolveSettingsScope(
   }
   return {
     kind: "all",
-    label: "All environments",
+    label: t("settings.system.scope.allEnvironments"),
     members: [],
     environmentIds: environments.map((candidate) => candidate.environmentId),
   };

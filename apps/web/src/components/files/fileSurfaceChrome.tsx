@@ -7,6 +7,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 
+import { useT } from "~/hooks/useI18n";
 export const FILE_SURFACE_SUBHEADER_CLASS =
   "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent";
 
@@ -114,10 +115,11 @@ export function FileSurfaceNotice(props: { readonly children: ReactNode }) {
 }
 
 export function FileSurfaceLoading(props: { readonly className?: string }) {
+  const t = useT();
   return (
     <div
       role="status"
-      aria-label="Loading file"
+      aria-label={t("review.extra.loading.file")}
       className={cn(
         "flex min-h-0 flex-1 items-center justify-center text-muted-foreground",
         props.className,
@@ -132,6 +134,7 @@ export function FileSurfaceFailure(props: {
   readonly message: string;
   readonly onRetry?: () => void;
 }) {
+  const t = useT();
   return (
     <div
       role="alert"
@@ -144,7 +147,7 @@ export function FileSurfaceFailure(props: {
           onClick={props.onRetry}
           className="rounded-md border border-input px-2.5 py-1 text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
-          Try again
+          {t("review.extra.try.again")}
         </button>
       ) : null}
     </div>

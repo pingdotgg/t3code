@@ -28,7 +28,9 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import type { TranslateFn } from "@t3tools/client-runtime/i18n";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { useT } from "../hooks/useI18n";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
@@ -90,8 +92,8 @@ interface BranchToolbarBranchSelectorProps {
   onComposerFocusRequest?: () => void;
 }
 
-function toBranchActionErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An error occurred.";
+function toBranchActionErrorMessage(error: unknown, t: TranslateFn): string {
+  return error instanceof Error ? error.message : t("app.branchToolbar.errorOccurred");
 }
 
 export function BranchToolbarBranchSelector({
@@ -111,6 +113,7 @@ export function BranchToolbarBranchSelector({
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
+  const t = useT();
   const composerFloatingLayerProps = useComposerMenuProps();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
@@ -319,11 +322,11 @@ export function BranchToolbarBranchSelector({
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const totalBranchCount = branchRefState.data?.totalCount ?? 0;
   const branchStatusText = isInitialBranchesLoadPending
-    ? "Loading refs..."
+    ? t("app.branchSelector.loadingRefs")
     : isFetchingNextPage
-      ? "Loading more refs..."
+      ? t("app.branchSelector.loadingMore")
       : hasNextPage
-        ? `Showing ${refs.length} of ${totalBranchCount} refs`
+        ? t("app.branchSelector.showing", { shown: refs.length, total: totalBranchCount })
         : null;
 
   const copyBranchName = (branchName: string) => {
@@ -332,7 +335,7 @@ export function BranchToolbarBranchSelector({
         if (!didCopy) return;
         toastManager.add({
           type: "success",
-          title: "Branch name copied",
+          title: t("app.branchSelector.nameCopied"),
           description: branchName,
         });
       },
@@ -340,8 +343,8 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to copy branch name",
-            description: toBranchActionErrorMessage(error),
+            title: t("app.branchSelector.copyNameFailed"),
+            description: toBranchActionErrorMessage(error, t),
           }),
         );
       },
@@ -355,7 +358,7 @@ export function BranchToolbarBranchSelector({
     event.preventDefault();
     event.stopPropagation();
     const items: ContextMenuItem<"copy-branch-name">[] = [
-      { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+      { id: "copy-branch-name", label: t("app.branchSelector.copyName"), icon: "copy" },
     ];
     void api.contextMenu.show(items, { x: event.clientX, y: event.clientY }).then((action) => {
       if (action === "copy-branch-name") copyBranchName(branchName);
@@ -370,8 +373,8 @@ export function BranchToolbarBranchSelector({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Action unavailable",
-          description: "This connection cannot change the thread's branch.",
+          title: t("app.branchSelector.actionUnavailable"),
+          description: t("app.branchSelector.cannotChangeBranch"),
         }),
       );
       return;
@@ -437,8 +440,8 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to switch ref.",
-            description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
+            title: t("app.branchSelector.switchFailed"),
+            description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult), t),
           }),
         );
       }
@@ -474,8 +477,11 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to create and switch ref.",
-            description: toBranchActionErrorMessage(squashAtomCommandFailure(createBranchResult)),
+            title: t("app.branchSelector.createFailed"),
+            description: toBranchActionErrorMessage(
+              squashAtomCommandFailure(createBranchResult),
+              t,
+            ),
           }),
         );
       }
@@ -536,6 +542,7 @@ export function BranchToolbarBranchSelector({
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,
     startFromOrigin,
+    t,
   });
 
   const branchPrBranch = resolveBranchToolbarPrBranch({
@@ -600,7 +607,9 @@ export function BranchToolbarBranchSelector({
             <SourceControlIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-col items-start">
               <span className="truncate font-medium">
-                Checkout {sourceControlPresentation.terminology.singular}
+                {t("app.branchSelector.checkout", {
+                  name: sourceControlPresentation.terminology.singular,
+                })}
               </span>
               <span className="truncate text-muted-foreground text-xs">{prReference}</span>
             </span>
@@ -617,7 +626,9 @@ export function BranchToolbarBranchSelector({
           value={itemValue}
           onClick={() => selectPickerItem(itemValue)}
         >
-          <span className="truncate">Create new ref &quot;{newRefName}&quot;</span>
+          <span className="truncate">
+            {t("app.branchSelector.createNew", { name: newRefName })}
+          </span>
         </ComboboxItem>
       );
     }
@@ -748,7 +759,10 @@ export function BranchToolbarBranchSelector({
             status={displayedPrStatus}
             project={activeProject}
             label={panelPrLabel}
-            openAriaLabel={prUrl ?? `Open ${sourceControlPresentation.terminology.singular}`}
+            openAriaLabel={
+              prUrl ??
+              t("app.branchSelector.open", { name: sourceControlPresentation.terminology.singular })
+            }
             onOpen={(event) => openPrLink(event, prUrl)}
             onActed={() => branchStatusQuery.refresh()}
           />

@@ -2,6 +2,7 @@ import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
+import { useT } from "~/hooks/useI18n";
 import { Button } from "~/components/ui/button";
 import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
 
@@ -71,6 +72,7 @@ function SheetPopup({
   side?: "right" | "left" | "top" | "bottom";
   variant?: "default" | "inset";
 }) {
+  const t = useT();
   const transitionStyle =
     transitionDurationMs === undefined
       ? undefined
@@ -113,7 +115,7 @@ function SheetPopup({
           {children}
           {showCloseButton && (
             <SheetPrimitive.Close
-              aria-label="Close"
+              aria-label={t("misc.common.close")}
               className="absolute end-2 top-2"
               render={<Button size="icon" variant="ghost" />}
             >

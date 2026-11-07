@@ -42,10 +42,17 @@ import {
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
+import { translateNow } from "../media/translateNow";
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
-  merge: "Merge",
-  squash: "Squash and merge",
-  rebase: "Rebase and merge",
+  get merge() {
+    return translateNow("review.extra.merge");
+  },
+  get squash() {
+    return translateNow("review.extra.squash.and.merge");
+  },
+  get rebase() {
+    return translateNow("review.extra.rebase.and.merge");
+  },
 };
 
 export function allowsSinglePullRequestMerge(input: {
@@ -243,14 +250,14 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
   // Beside a composer a remark's Fix shares its header with Add to chat.
   return inThisThread
     ? {
-        fixFinding: "Fix",
-        fixCheck: "Fix in this thread",
-        fixFindings: "Fix findings in this thread",
+        fixFinding: translateNow("review.extra.fix.in.this.thread"),
+        fixCheck: translateNow("review.extra.fix.in.this.thread"),
+        fixFindings: translateNow("review.extra.fix.findings.in.this.thread"),
       }
     : {
-        fixFinding: "Fix in a thread",
+        fixFinding: translateNow("review.extra.fix.in.a.thread"),
         fixCheck: "Fix",
-        fixFindings: "Fix findings in a thread",
+        fixFindings: translateNow("review.extra.fix.findings.in.a.thread"),
       };
 }
 
@@ -322,7 +329,7 @@ export function classifyPullRequestChecks(
 }
 
 export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
-  if (checks.length === 0) return "No checks reported";
+  if (checks.length === 0) return translateNow("review.extra.no.checks.reported");
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
@@ -330,13 +337,23 @@ export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck
   const actionRequired = checks.filter((check) => check.status === "action-required").length;
   const passed = checks.filter((check) => check.status === "success").length;
   const parts: string[] = [];
-  if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
-  if (actionRequired > 0) parts.push(`${actionRequired} of ${checks.length} awaiting action`);
+  if (pending > 0)
+    parts.push(translateNow("review.pr.nRunning", { count: pending, total: checks.length }));
+  if (actionRequired > 0)
+    parts.push(
+      translateNow("review.pr.nAwaitingAction", { count: actionRequired, total: checks.length }),
+    );
   if (failed > 0) {
-    parts.push(parts.length > 0 ? `${failed} failed` : `${failed} of ${checks.length} failing`);
+    parts.push(
+      parts.length > 0
+        ? translateNow("review.pr.nFailed", { count: failed })
+        : translateNow("review.pr.nFailing", { count: failed, total: checks.length }),
+    );
   }
   if (parts.length === 0) {
-    return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+    return passed === checks.length
+      ? translateNow("review.extra.all.checks.passed")
+      : translateNow("review.pr.nPassing", { count: passed, total: checks.length });
   }
   return parts.join(" · ");
 }
@@ -707,7 +724,7 @@ export function buildPullRequestTimeline(
       id: "created",
       at: detail.createdAt,
       kind: "opened" as const,
-      title: `opened this ${term}`,
+      title: translateNow("review.pr.openedThis", { term }),
       body: null,
       markdown: false,
       url: null,
@@ -723,7 +740,7 @@ export function buildPullRequestTimeline(
       id: commit.oid,
       at: commit.committedDate,
       kind: "commit" as const,
-      title: `Commit ${commit.oid.slice(0, 7)}`,
+      title: translateNow("review.pr.commitSha", { sha: commit.oid.slice(0, 7) }),
       body: commit.messageHeadline || null,
       markdown: false,
       url: null,
@@ -757,7 +774,7 @@ export function buildPullRequestTimeline(
             id: "merged",
             at: detail.mergedAt,
             kind: "merged" as const,
-            title: `${capitalizeTerm(term)} merged`,
+            title: translateNow("review.pr.termMerged", { term: capitalizeTerm(term) }),
             body: null,
             markdown: false,
             url: null,
@@ -777,7 +794,7 @@ export function buildPullRequestTimeline(
             id: "closed",
             at: detail.closedAt,
             kind: "closed" as const,
-            title: `${capitalizeTerm(term)} closed`,
+            title: translateNow("review.pr.termClosed", { term: capitalizeTerm(term) }),
             body: null,
             markdown: false,
             url: null,
@@ -1326,7 +1343,7 @@ export function checkoutFailureDescription(failure: unknown): string {
     : failure;
   return readableFailure(
     description,
-    "Check that the branch still exists and is not checked out elsewhere, then try again.",
+    translateNow("review.extra.check.that.the.branch.still.exists.and.is"),
   );
 }
 

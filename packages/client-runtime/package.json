@@ -31,6 +31,10 @@
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
     },
+    "./i18n": {
+      "types": "./src/i18n/index.ts",
+      "default": "./src/i18n/index.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"

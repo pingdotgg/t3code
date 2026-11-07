@@ -65,6 +65,8 @@ import {
 } from "./PullRequestMarkdownTextarea";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
+import { translateNow } from "~/components/media/translateNow";
+import { useT } from "~/hooks/useI18n";
 interface ReactionSurface {
   readonly canReact: boolean;
   /** Absent where there is no composer beside the panel to add a remark to. */
@@ -184,6 +186,7 @@ function AddToChatButton({
   reactions: ReactionSurface;
 }) {
   const onAddToChat = reactions.onAddToChat;
+  const t = useT();
   return onAddToChat === undefined ? null : (
     <Tooltip>
       <TooltipTrigger
@@ -192,25 +195,26 @@ function AddToChatButton({
             size="icon-xs"
             variant="ghost-muted"
             className="-mt-1 shrink-0"
-            aria-label="Add to chat"
+            aria-label={t("review.extra.add.to.chat")}
             onClick={() => onAddToChat(comment)}
           />
         }
       >
         <MessageSquarePlusIcon className="size-3" />
       </TooltipTrigger>
-      <TooltipPopup>Add to chat</TooltipPopup>
+      <TooltipPopup>{t("review.extra.add.to.chat")}</TooltipPopup>
     </Tooltip>
   );
 }
 
 function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: string) => void }) {
+  const t = useT();
   return url === null ? null : (
     <Button
       size="icon-xs"
       variant="ghost-muted"
       className="-mr-1 shrink-0"
-      aria-label="Open activity on host"
+      aria-label={t("review.extra.open.activity.on.host")}
       onClick={() => onOpen(url)}
     >
       <ExternalLinkIcon className="size-3" />
@@ -236,6 +240,7 @@ function ConversationCard({
   /** A reply goes with its conversation, from the card that heads it. */
   reply?: boolean;
 }) {
+  const t = useT();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -243,6 +248,7 @@ function ConversationCard({
   });
 
   const save = async (body: string) => {
+    const t = translateNow;
     if (editable === null || saving || editable.kind === "review") return;
     setSaving(true);
     const result = await updateComment({
@@ -251,7 +257,10 @@ function ConversationCard({
     });
     setSaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the comment" });
+      toastManager.add({
+        type: "error",
+        title: t("review.extra.could.not.save.the.comment"),
+      });
       return;
     }
     setEditing(false);
@@ -281,7 +290,10 @@ function ConversationCard({
             </PullRequestMetaLine>
           </div>
           {editable !== null && !editing ? (
-            <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
+            <PullRequestEditButton
+              aria-label={t("review.extra.edit.comment")}
+              onClick={() => setEditing(true)}
+            />
           ) : null}
           {event.body && event.comment && !reply ? (
             <AddToChatButton comment={event.comment} reactions={reactions} />
@@ -308,7 +320,7 @@ function ConversationCard({
             environmentId={reactions.environmentId}
             completionScope={reactions.completionScope}
             threadRef={reactions.threadRef}
-            label="Edit comment"
+            label={t("review.extra.edit.comment")}
             saving={saving}
             onSave={(body) => void save(body)}
             onCancel={() => setEditing(false)}
@@ -427,6 +439,7 @@ function ReviewThreadEvent({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const t = useT();
   const dismissed = pullRequestReviewOutcome(event.reviewState) === "dismissed";
   const [expanded, setExpanded] = useState(!thread.isResolved && !dismissed);
   const replyCount = thread.replies.length + thread.moreReplies;
@@ -452,11 +465,15 @@ function ReviewThreadEvent({
         {thread.isResolved ? (
           <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success-foreground">
             <CircleCheckIcon aria-hidden className="size-3" />
-            Resolved
+            {t("review.extra.resolved")}
           </span>
         ) : null}
-        {dismissed ? <span className="shrink-0 font-medium">Review dismissed</span> : null}
-        {thread.isOutdated ? <span className="shrink-0 font-medium">Outdated</span> : null}
+        {dismissed ? (
+          <span className="shrink-0 font-medium">{t("review.extra.review.dismissed")}</span>
+        ) : null}
+        {thread.isOutdated ? (
+          <span className="shrink-0 font-medium">{t("review.extra.outdated")}</span>
+        ) : null}
         {expanded ? null : (
           <span className="shrink-0">
             · {event.actor?.login ?? "ghost"}
@@ -517,11 +534,12 @@ function CommitEvent({
   event: PullRequestTimelineEvent;
   onOpen: (oid: string) => void;
 }) {
+  const t = useT();
   return (
     <button
       type="button"
       className="group relative mb-5 block w-full cursor-pointer rounded-sm pl-12 text-left outline-none [contain-intrinsic-block-size:48px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      aria-label={`View commit ${event.id}`}
+      aria-label={translateNow("review.pr.viewCommit", { id: event.id })}
       onClick={() => onOpen(event.id)}
     >
       <ActorTimelineMarker
@@ -531,7 +549,7 @@ function CommitEvent({
       <div className="flex min-w-0 items-center gap-2.5 py-1.5">
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-semibold text-foreground transition-colors group-hover:text-primary">
-            {event.body ?? "Untitled commit"}
+            {event.body ?? t("review.extra.untitled.commit")}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-3xs text-muted-foreground">
             <code className="font-mono">{event.id.slice(0, 7)}</code>
@@ -626,7 +644,9 @@ function ReviewVerdictEvent({
                 }
               >
                 {pullRequestReviewOutcomeLabel(outcome)}
-                {stale ? <span className="sr-only">, before the latest commits</span> : null}
+                {stale ? (
+                  <span className="sr-only">{translateNow("review.pr.beforeLatestCommits")}</span>
+                ) : null}
               </TooltipTrigger>
               <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome)}</TooltipPopup>
             </Tooltip>
@@ -695,6 +715,7 @@ export function PullRequestTimelineTab({
   onAddToChat?: (subject: PullRequestChatSubject) => void;
   onRefresh: () => void;
 }) {
+  const t = useT();
   const events = buildPullRequestTimeline(detail);
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
@@ -775,7 +796,7 @@ export function PullRequestTimelineTab({
       <div ref={scrollerRef} className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5">
         <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
           <PullRequestGlyph.pullRequest className="mb-2 size-5" />
-          <p className="text-xs">No activity yet.</p>
+          <p className="text-xs">{t("review.extra.no.activity.yet")}</p>
         </div>
       </div>
     );

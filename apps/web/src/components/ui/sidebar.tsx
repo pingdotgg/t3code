@@ -17,6 +17,7 @@ import {
 } from "~/components/ui/sheet";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
+import { useT } from "~/hooks/useI18n";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import {
   getLocalStorageItem,
@@ -282,6 +283,7 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none";
   resizable?: boolean | SidebarResizableOptions;
 }) {
+  const t = useT();
   const { isMobile, state, openMobile, setOpenMobile, setMobileSheetElement } = useSidebar();
   const offcanvasCollapsed = !isMobile && collapsible === "offcanvas" && state === "collapsed";
 
@@ -327,8 +329,8 @@ function Sidebar({
             }
           >
             <SheetHeader className="sr-only">
-              <SheetTitle>{props["aria-label"] ?? "Sidebar"}</SheetTitle>
-              <SheetDescription>Displays the mobile sidebar.</SheetDescription>
+              <SheetTitle>{props["aria-label"] ?? t("misc.ui.sidebar.title")}</SheetTitle>
+              <SheetDescription>{t("misc.ui.sidebar.mobileDescription")}</SheetDescription>
             </SheetHeader>
             <div
               className={cn(
@@ -399,6 +401,7 @@ function Sidebar({
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+  const t = useT();
   const { toggleSidebar } = useSidebar();
   const isOpen = useSidebarVisibility();
 
@@ -420,7 +423,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       {...props}
     >
       <MorphIcon className="size-4" icon={isOpen ? PanelLeftClose : PanelLeft} />
-      <span className="sr-only">Toggle Sidebar</span>
+      <span className="sr-only">{t("misc.ui.sidebar.toggle")}</span>
     </Button>
   );
 }
@@ -439,13 +442,14 @@ function SidebarRail({
   onPointerUp,
   ...props
 }: React.ComponentProps<"button">) {
+  const t = useT();
   const { open, toggleSidebar, onCollapse } = useSidebar();
   const sidebarInstance = React.use(SidebarInstanceContext);
   const suppressClickRef = React.useRef(false);
   const resolvedResizable = sidebarInstance?.resizable ?? null;
   const canResize = resolvedResizable !== null && open;
-  const railLabel = canResize ? "Resize Sidebar" : "Toggle Sidebar";
-  const railTitle = canResize ? "Drag to resize sidebar" : "Toggle Sidebar";
+  const railLabel = canResize ? t("misc.ui.sidebar.resize") : t("misc.ui.sidebar.toggle");
+  const railTitle = canResize ? t("misc.ui.sidebar.dragToResize") : t("misc.ui.sidebar.toggle");
   const resize = useResizeDrag<HTMLButtonElement>((event) => {
     const options = resolvedResizable;
     if (!options || !open) return null;

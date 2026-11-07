@@ -1,6 +1,7 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
 import { use, useEffect, useRef, useState, type RefObject } from "react";
 
+import { useT } from "~/hooks/useI18n";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { textDirection } from "~/textDirection";
 
@@ -28,6 +29,7 @@ export function AssistantCitationCommentEditor({
   const localInputRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = inputRef ?? localInputRef;
   const { environmentId, projectId } = use(ComposerContextActionsContext);
+  const t = useT();
   const updateComment = (text: string) => {
     setComment(text);
     onDraftChange?.(text);
@@ -81,10 +83,10 @@ export function AssistantCitationCommentEditor({
       <textarea
         ref={textareaRef}
         readOnly={speech.freezesEditor}
-        aria-label="Comment on selected text"
-        aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
+        aria-label={t("chat.citation.commentOnSelectedText")}
+        aria-description={t("chat.citation.commentShortcuts")}
         aria-invalid={commentTooLong || undefined}
-        placeholder="Add an optional comment..."
+        placeholder={t("chat.citation.commentPlaceholder")}
         rows={2}
         dir={textDirection(comment)}
         className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"

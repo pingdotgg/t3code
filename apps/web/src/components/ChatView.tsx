@@ -1,3 +1,4 @@
+import { useT } from "../hooks/useI18n";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -416,6 +417,7 @@ type ChatViewProps =
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
 export default function ChatView(props: ChatViewProps) {
+  const t = useT();
   const {
     environmentId,
     threadId,
@@ -629,8 +631,8 @@ export default function ChatView(props: ChatViewProps) {
     if (!inserted) {
       toastManager.add({
         type: "warning",
-        title: "The composer is not ready",
-        description: "Try citing the selection after the connection or pending input is resolved.",
+        title: t("app.chat.composerNotReady"),
+        description: t("app.chat.composerNotReadyDesc"),
       });
     }
     return inserted;
@@ -711,8 +713,8 @@ export default function ChatView(props: ChatViewProps) {
     setPendingServerThreadStartFromOriginByThreadId,
   ] = useState<Record<string, boolean>>({});
   const legendListRef = useRef<LegendListRef | null>(null);
-  const conversationArea = workspaceAreaProps("conversation", 1, "Conversation");
-  const composerArea = workspaceAreaProps("composer", 2, "Message input");
+  const conversationArea = workspaceAreaProps("conversation", 1, t("app.chat.conversation"));
+  const composerArea = workspaceAreaProps("composer", 2, t("app.chat.messageInput"));
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerTimelineInset, setComposerTimelineInset] = useState(0);
   const composerTimelineInsetRef = useRef(0);
@@ -871,7 +873,7 @@ export default function ChatView(props: ChatViewProps) {
   const sideChatParent = useQuietThreadShell(sideChatParentRef);
   const parentThreadLink = (() => {
     if (sideChatParentRef !== null) {
-      const title = sideChatParent?.title ?? "Parent thread";
+      const title = sideChatParent?.title ?? t("app.chat.parentThread");
       // Embedded, the parent is the view around it.
       if (embedded) return { title, sideChat: true };
       return {
@@ -887,7 +889,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (parentSubagentThreadRef !== null) {
       return {
-        title: parentSubagentThread?.title ?? "Parent thread",
+        title: parentSubagentThread?.title ?? t("app.chat.parentThread"),
         open: (): void => {
           void navigate({
             to: "/$environmentId/$threadId",
@@ -920,7 +922,7 @@ export default function ChatView(props: ChatViewProps) {
       ? null
       : {
           threadId: parentSubagentThreadRef.threadId,
-          title: parentSubagentThread?.title ?? "Parent thread",
+          title: parentSubagentThread?.title ?? t("app.chat.parentThread"),
         };
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
@@ -1478,7 +1480,7 @@ export default function ChatView(props: ChatViewProps) {
   const downloadFileAttachment = async (attachment: ChatFileAttachment) => {
     const connection = readPreparedConnection(environmentId);
     if (!connection) {
-      toastManager.add({ type: "error", title: "The environment is not connected." });
+      toastManager.add({ type: "error", title: t("app.chat.envNotConnected") });
       return;
     }
 
@@ -1496,8 +1498,8 @@ export default function ChatView(props: ChatViewProps) {
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not download " + attachment.name,
-        description: error instanceof Error ? error.message : "The attachment is unavailable.",
+        title: t("app.chat.downloadFailed", { name: attachment.name }),
+        description: error instanceof Error ? error.message : t("app.chat.attachmentUnavailable"),
       });
     }
   };
@@ -1831,7 +1833,7 @@ export default function ChatView(props: ChatViewProps) {
       const error = squashAtomCommandFailure(result);
       setThreadError(
         activeThread.id,
-        error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+        error instanceof Error ? error.message : t("app.chat.interruptFailed"),
       );
     }
   };
@@ -1857,8 +1859,8 @@ export default function ChatView(props: ChatViewProps) {
     if (prompt !== null && !composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
       toastManager.add({
         type: "error",
-        title: "Unable to add to chat",
-        description: "The composer is busy; try again once it is ready.",
+        title: t("app.chat.addFailed"),
+        description: t("app.chat.composerBusy"),
       });
       return;
     }
@@ -2483,12 +2485,12 @@ export default function ChatView(props: ChatViewProps) {
   const compactDisabled = compactThreadUnavailable;
   const compactDisabledReason = compactDisabled
     ? !canOperateThread
-      ? "This connection cannot change threads."
+      ? t("app.chat.cannotChangeThreads")
       : !activeProject
-        ? "Choose a project before compacting"
+        ? t("app.chat.compactChooseProject")
         : !manualCompactionProviderAvailable
-          ? "Compaction is unavailable for this provider"
-          : "Compacting is unavailable right now"
+          ? t("app.chat.compactUnavailableProvider")
+          : t("app.chat.compactUnavailable")
     : null;
   const resumeCompactionTokens =
     activeContextWindow &&
@@ -2810,21 +2812,21 @@ export default function ChatView(props: ChatViewProps) {
   // Main-thread surfaces show this reason; `/side` sent anyway gets it as a toast.
   const sideChatDisabledReason =
     activeThread?.lineage.sideChat === true
-      ? "Side chats cannot start side chats."
+      ? t("app.chat.sideNested")
       : isSubagentThread
-        ? "Subagent threads cannot start side chats."
+        ? t("app.chat.sideSubagent")
         : serverConfig === null
-          ? "Side chats are not ready yet. Try again in a moment."
+          ? t("app.chat.sideNotReady")
           : serverConfig.environment.capabilities.sideChats !== true
-            ? "Update this environment's T3 Code server to use side chats."
+            ? t("app.chat.sideUpdateServer")
             : sideChatsOffered && !isServerThread
-              ? "Side chats start after the first message."
+              ? t("app.chat.sideAfterFirst")
               : sideChat.available &&
                   orchestrationV2WorktreePending(
                     activeThread?.worktreePath ?? null,
                     serverProjection?.runs ?? [],
                   )
-                ? "Available once the thread's worktree is set up."
+                ? t("app.chat.sideWorktree")
                 : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
@@ -2850,7 +2852,7 @@ export default function ChatView(props: ChatViewProps) {
     });
   const onCompactContext = () => {
     if (compactDisabled) return;
-    void sendStandaloneCommand("/compact", "Failed to compact context.");
+    void sendStandaloneCommand("/compact", t("app.chat.compactFailed"));
   };
 
   const {

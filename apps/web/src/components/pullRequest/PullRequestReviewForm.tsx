@@ -23,6 +23,7 @@ import {
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 
+import { translateNow } from "~/components/media/translateNow";
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
   readonly label: string;
@@ -31,20 +32,20 @@ const VERDICTS: ReadonlyArray<{
 }> = [
   {
     value: "comment",
-    label: "Comment",
-    sent: () => "Review submitted",
+    label: translateNow("review.extra.comment"),
+    sent: () => translateNow("review.extra.review.submitted"),
     icon: <MessageSquareIcon className="size-3" />,
   },
   {
     value: "approve",
-    label: "Approve",
+    label: translateNow("review.extra.approve"),
     sent: (term) => `${capitalizeTerm(term)} approved`,
     icon: <CheckIcon className="size-3" />,
   },
   {
     value: "request-changes",
-    label: "Request changes",
-    sent: () => "Changes requested",
+    label: translateNow("review.extra.request.changes"),
+    sent: () => translateNow("review.extra.changes.requested"),
     icon: <XCircleIcon className="size-3" />,
   },
 ];
@@ -123,10 +124,10 @@ export function PullRequestReviewForm({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "The review could not be submitted",
+        title: translateNow("review.extra.the.review.could.not.be.submitted"),
         description: readableFailure(
           squashAtomCommandFailure(result),
-          "The host refused the review. Your draft is still here to try again.",
+          translateNow("review.extra.the.host.refused.the.review.your.draft.is"),
         ),
       });
       return;
@@ -148,10 +149,10 @@ export function PullRequestReviewForm({
       : verdict === "approve" || summary.trim().length > 0 || commentCount > 0;
   const placeholder =
     selectedVerdict === undefined || canSubmit(selectedVerdict.value, "", comments.length)
-      ? "Summarize your review (optional)"
+      ? translateNow("review.extra.summarize.your.review.optional")
       : selectedVerdict.value === "request-changes" && requestChangesSummaryRequired
-        ? "Summarize your review (required to request changes)"
-        : "Summarize your review or add line comments";
+        ? translateNow("review.extra.summarize.your.review.required.to.request.changes")
+        : translateNow("review.extra.summarize.your.review.or.add.line.comments");
 
   return (
     <>
@@ -162,7 +163,7 @@ export function PullRequestReviewForm({
         readOnly={speech.freezesEditor}
         value={body}
         placeholder={placeholder}
-        aria-label="Review summary"
+        aria-label={translateNow("review.extra.review.summary")}
         onValueChange={(next) => setSummary(reviewKey, next)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat) return;
@@ -188,7 +189,11 @@ export function PullRequestReviewForm({
               if (value !== null) setRequestedVerdict(value);
             }}
           >
-            <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
+            <SelectTrigger
+              size="xs"
+              className="w-auto min-w-0"
+              aria-label={translateNow("review.extra.review.verdict")}
+            >
               <span className="flex items-center gap-1.5">
                 {selectedVerdict?.icon}
                 {selectedVerdict?.label}
@@ -219,7 +224,9 @@ export function PullRequestReviewForm({
               speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
           }}
         >
-          {pending ? "Submitting..." : "Submit review"}
+          {pending
+            ? translateNow("review.extra.submitting")
+            : translateNow("review.extra.submit.review")}
         </Button>
       </div>
     </>

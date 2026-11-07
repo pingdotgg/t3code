@@ -3,28 +3,43 @@ import {
   type ManagedPolicySummary,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import { type LucideIcon, LockIcon, PenLineIcon, ShieldOffIcon, SparklesIcon } from "lucide-react";
 
 export const runtimeModeConfig: Record<
   RuntimeMode,
-  { label: string; description: string; icon: LucideIcon }
+  {
+    label: string;
+    description: string;
+    labelKey: MessageKey;
+    descriptionKey: MessageKey;
+    icon: LucideIcon;
+  }
 > = {
   "approval-required": {
+    labelKey: "runtimeMode.approvalRequired.label",
+    descriptionKey: "runtimeMode.approvalRequired.description",
     label: "Supervised",
     description: "Ask before commands and file changes.",
     icon: LockIcon,
   },
   "auto-accept-edits": {
+    labelKey: "runtimeMode.autoAcceptEdits.label",
+    descriptionKey: "runtimeMode.autoAcceptEdits.description",
     label: "Auto-accept edits",
     description: "Auto-approve edits, ask before other actions.",
     icon: PenLineIcon,
   },
   auto: {
+    labelKey: "runtimeMode.auto.label",
+    descriptionKey: "runtimeMode.auto.description",
     label: "Auto",
     description: "Supported providers approve routine actions; others still ask.",
     icon: SparklesIcon,
   },
   "full-access": {
+    labelKey: "runtimeMode.fullAccess.label",
+    descriptionKey: "runtimeMode.fullAccess.description",
     label: "Full access",
     description: "Allow commands and edits without prompts.",
     // An open lock reads like a closed one at small sizes; a crossed shield does not.

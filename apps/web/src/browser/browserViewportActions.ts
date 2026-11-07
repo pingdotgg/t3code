@@ -6,6 +6,7 @@ import { toastManager } from "~/components/ui/toast";
 import { updatePreviewServerSnapshot } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
+import { translateNow } from "../components/media/translateNow";
 
 /** One browser tab as both the server (thread + tab id) and this window's runtime know it. */
 export interface BrowserViewportTarget {
@@ -81,8 +82,8 @@ async function resizeBrowserViewport(
     const error = squashAtomCommandFailure(result);
     toastManager.add({
       type: "error",
-      title: "Unable to resize browser viewport",
-      description: error instanceof Error ? error.message : "An error occurred.",
+      title: translateNow("browser.resizeFailed"),
+      description: error instanceof Error ? error.message : translateNow("browser.errorOccurred"),
     });
     throw error;
   }

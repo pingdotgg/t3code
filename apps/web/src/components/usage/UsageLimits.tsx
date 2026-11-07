@@ -41,12 +41,27 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { useT } from "../../hooks/useI18n";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 
-const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
-  ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
-  on: { label: "On pace with the window", icon: GaugeIcon },
-  under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
+const PACE: Record<LimitPace, { readonly label: MessageKey; readonly icon: typeof GaugeIcon }> = {
+  ahead: { label: "misc.usage.pace.ahead", icon: TrendingUpIcon },
+  on: { label: "misc.usage.pace.on", icon: GaugeIcon },
+  under: { label: "misc.usage.pace.under", icon: TrendingDownIcon },
 };
+
+const USAGE_WINDOW_LABEL_KEYS: Record<string, MessageKey> = {
+  Session: "misc.usage.window.session",
+  Weekly: "misc.usage.window.weekly",
+  Monthly: "misc.usage.window.monthly",
+  Subscription: "misc.usage.window.subscription",
+};
+
+/** Provider window names arrive as English data; translate the known ones. */
+export function usageWindowLabel(label: string, t: (key: MessageKey) => string): string {
+  const key = USAGE_WINDOW_LABEL_KEYS[label];
+  return key === undefined ? label : t(key);
+}
 
 export function barColor(driver: ServerProvider["driver"]): string {
   const presentation = Object.values(PROVIDER_PRESENTATION).find(
@@ -56,6 +71,7 @@ export function barColor(driver: ServerProvider["driver"]): string {
 }
 
 export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
+  const t = useT();
   const Icon = PACE[pace].icon;
   return (
     <Tooltip>
@@ -63,14 +79,14 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
         render={
           <span
             role="img"
-            aria-label={PACE[pace].label}
+            aria-label={t(PACE[pace].label)}
             className="inline-flex text-muted-foreground"
           />
         }
       >
         <Icon className="size-3.5" aria-hidden />
       </TooltipTrigger>
-      <TooltipPopup side="top">{PACE[pace].label}</TooltipPopup>
+      <TooltipPopup side="top">{t(PACE[pace].label)}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -122,6 +138,7 @@ function WindowBar({
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
+  const t = useT();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
@@ -130,8 +147,17 @@ function WindowBar({
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
-  const summary = `${window.label}: ${remaining}% left${
-    timeLeft === null ? "" : `, ${timeLeft}% of the window left`
+  const summary = `${
+    timeLeft === null
+      ? t("misc.usage.remainingSummary", {
+          label: usageWindowLabel(window.label, t),
+          remaining,
+        })
+      : t("misc.usage.remainingSummaryWithWindow", {
+          label: usageWindowLabel(window.label, t),
+          remaining,
+          window: timeLeft,
+        })
   }${resetsIn ? `, ${resetsIn}` : ""}`;
 
   return (
@@ -168,10 +194,12 @@ function WindowBar({
       <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
+            {timeLeft !== null
+              ? t("misc.usage.remainingAndWindow", { remaining, window: timeLeft })
+              : t("misc.usage.percentLeft", { percent: remaining })}
           </span>
           {timeLeft !== null ? (
-            <span className="text-muted-foreground">The line is where even spending would be.</span>
+            <span className="text-muted-foreground">{t("misc.usage.evenPaceLine")}</span>
           ) : null}
           {resetsAt ? (
             <span className="text-muted-foreground">
@@ -198,6 +226,7 @@ export function LimitWindows({
   readonly now: number;
   readonly compact?: boolean;
 }) {
+  const t = useT();
   const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
   return (
     <div
@@ -213,9 +242,11 @@ export function LimitWindows({
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{window.label}</span>
+              <span className="truncate text-muted-foreground">
+                {usageWindowLabel(window.label, t)}
+              </span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
+                {t("misc.usage.percentLeft", { percent: remainingPercent(window) })}
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />
@@ -281,15 +312,13 @@ export function ResetCreditDialog({
   readonly onConfirm: () => void;
   readonly disabled?: boolean;
 }) {
+  const t = useT();
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This redeems one credit on your account and clears the current rate-limit windows. It
-            cannot be undone.
-          </AlertDialogDescription>
+          <AlertDialogTitle>{t("misc.usage.useResetCredit")}</AlertDialogTitle>
+          <AlertDialogDescription>{t("misc.usage.resetCreditDescription")}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>

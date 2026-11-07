@@ -62,8 +62,10 @@ import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon"
 import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { subagentResumedSince } from "./V2LifecycleRow.logic";
+import { useT } from "../../hooks/useI18n";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 
 export type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 
@@ -74,11 +76,12 @@ export function V2LifecycleRow(props: {
   readonly runs: ReadonlyArray<HandoffTimelineRun>;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const t = useT();
   const { item } = props;
   if (item.type === "run_interrupt_result") {
     return (
       <TimelineSystemDivider
-        label="Run interrupted"
+        label={t("chat.timeline.runInterrupted")}
         detail={item.message}
         icon={CircleStopIcon}
         wrapDetail
@@ -170,16 +173,16 @@ export function V2LifecycleRow(props: {
 
 const STATUS_VISUALS: Record<
   OrchestrationV2TurnItem["status"],
-  { dotClass: string; label: string }
+  { dotClass: string; label: MessageKey }
 > = {
-  pending: { dotClass: "bg-info", label: "Queued" },
-  running: { dotClass: "bg-info", label: "Running" },
-  waiting: { dotClass: "bg-info", label: "Waiting" },
-  idle: { dotClass: "bg-muted-foreground/50", label: "Idle · resumable" },
-  completed: { dotClass: "bg-success", label: "Completed" },
-  failed: { dotClass: "bg-destructive", label: "Failed" },
-  cancelled: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
-  interrupted: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
+  pending: { dotClass: "bg-info", label: "chat.lifecycle.queued" },
+  running: { dotClass: "bg-info", label: "chat.lifecycle.running" },
+  waiting: { dotClass: "bg-info", label: "chat.lifecycle.waiting" },
+  idle: { dotClass: "bg-muted-foreground/50", label: "chat.lifecycle.idleResumable" },
+  completed: { dotClass: "bg-success", label: "chat.lifecycle.completed" },
+  failed: { dotClass: "bg-destructive", label: "chat.lifecycle.failed" },
+  cancelled: { dotClass: "bg-muted-foreground/60", label: "chat.lifecycle.stopped" },
+  interrupted: { dotClass: "bg-muted-foreground/60", label: "chat.lifecycle.stopped" },
 };
 
 function subagentStatusVisual(status: OrchestrationV2TurnItem["status"]) {
@@ -416,6 +419,7 @@ function SubagentTimelineLink(props: {
     readonly timestamp: string;
   };
 }) {
+  const t = useT();
   const agent = useAtomValue(
     environmentThreadDetails.threadAtom(props.parentRef),
     (thread) => thread?.projection.subagents.find((agent) => agent.id === props.subagentId) ?? null,
@@ -437,7 +441,7 @@ function SubagentTimelineLink(props: {
         : null;
   const liveStatus = agent?.status ?? props.status;
   const status = props.event ? props.event.status : liveStatus;
-  const statusLabel = props.event?.label ?? subagentStatusVisual(liveStatus).label;
+  const statusLabel = props.event?.label ?? t(subagentStatusVisual(liveStatus).label);
   const result = (agent?.result ?? props.result)?.trim();
   const progress = (agent?.progress ?? props.progress)?.trim();
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);

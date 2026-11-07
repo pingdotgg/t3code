@@ -1,3 +1,4 @@
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import type {
   EnvironmentId,
   ProjectId,
@@ -19,6 +20,7 @@ import { CircleCheckIcon, CircleDotIcon } from "lucide-react";
 import { useId, useState, type Ref } from "react";
 import { flushSync } from "react-dom";
 
+import { useT } from "~/hooks/useI18n";
 import { cn } from "~/lib/utils";
 import { usePullRequestFilterOptions } from "~/state/pullRequests";
 import { useDebouncedValue } from "~/state/queries";
@@ -95,17 +97,18 @@ function useCompletions(
 }
 
 function ReferenceStateIcon({ candidate }: { candidate: PullRequestReferenceCandidate }) {
+  const t = useT();
   const presentation =
     candidate.kind === "change-request"
       ? resolvePullRequestState({ state: candidate.state, isDraft: false })
       : candidate.state === "open"
         ? {
-            label: "Open issue",
+            label: t("voice.chat.composer.openIssue"),
             Icon: CircleDotIcon,
             toneClassName: PULL_REQUEST_STATE_PRESENTATION.open.toneClassName,
           }
         : {
-            label: "Closed issue",
+            label: t("voice.chat.composer.closedIssue"),
             Icon: CircleCheckIcon,
             toneClassName: PULL_REQUEST_STATE_PRESENTATION.merged.toneClassName,
           };
@@ -141,20 +144,22 @@ function CompletionRow({ completion }: { completion: PullRequestCompletion }) {
   );
 }
 
-const EMPTY_STATE = {
+type EmptyStateField = "label" | "pending" | "failed" | "none";
+
+const EMPTY_STATE_KEYS: Record<"mention" | "reference", Record<EmptyStateField, MessageKey>> = {
   mention: {
-    label: "Mention a user",
-    pending: "Searching users...",
-    failed: "Couldn't search users on the host",
-    none: "No matching users",
+    label: "voice.chat.composer.mentionLabel",
+    pending: "voice.chat.composer.mentionPending",
+    failed: "voice.chat.composer.mentionFailed",
+    none: "voice.chat.composer.mentionNone",
   },
   reference: {
-    label: "Reference an issue or change request",
-    pending: "Searching...",
-    failed: "Couldn't search the host",
-    none: "No matching issues or change requests",
+    label: "voice.chat.composer.referenceLabel",
+    pending: "voice.chat.composer.referencePending",
+    failed: "voice.chat.composer.referenceFailed",
+    none: "voice.chat.composer.referenceNone",
   },
-} as const;
+};
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   if (typeof ref === "function") ref(value);
@@ -178,6 +183,7 @@ export function PullRequestMarkdownTextarea({
   readonly completionScope: PullRequestCompletionScope | null;
 }) {
   const listId = useId();
+  const t = useT();
   const [element, setElement] = useState<HTMLTextAreaElement | null>(null);
   const [caret, setCaret] = useState<number | null>(null);
   const [side, setSide] = useState<"top" | "bottom">("bottom");
@@ -299,7 +305,7 @@ export function PullRequestMarkdownTextarea({
             <div
               id={listId}
               role="listbox"
-              aria-label={EMPTY_STATE[trigger?.kind ?? "mention"].label}
+              aria-label={t(EMPTY_STATE_KEYS[trigger?.kind ?? "mention"].label)}
               className="-mx-1.5"
             >
               {candidates.map((completion, index) => (
@@ -325,11 +331,11 @@ export function PullRequestMarkdownTextarea({
             </div>
           ) : (
             <p className="px-1 text-xs text-muted-foreground">
-              {
-                EMPTY_STATE[trigger?.kind ?? "mention"][
+              {t(
+                EMPTY_STATE_KEYS[trigger?.kind ?? "mention"][
                   isPending ? "pending" : failed ? "failed" : "none"
-                ]
-              }
+                ],
+              )}
             </p>
           )}
         </PopoverPopup>

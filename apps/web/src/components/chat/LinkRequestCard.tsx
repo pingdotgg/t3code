@@ -40,6 +40,7 @@ import { Input } from "../ui/input";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 import { WorkLogRow } from "./WorkLog";
+import { useT } from "../../hooks/useI18n";
 
 const accessLabel = (access: AuthMcpClientAccess) => accessConfig[access].label;
 
@@ -205,6 +206,7 @@ function LinkRequestDialog(props: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const t = useT();
   const { item } = props;
   const formId = useId();
   const pickMachine = picksMachine(item);
@@ -401,12 +403,12 @@ function LinkRequestDialog(props: {
                     {canMint ? null : (
                       <label className="block space-y-1.5">
                         <span className="block text-xs font-medium text-foreground">
-                          Pairing code
+                          {t("chat.linkRequest.pairingCode")}
                         </span>
                         <Input
                           value={pairingCode}
                           onChange={(event) => setPairingCode(event.target.value)}
-                          placeholder="Paste the code"
+                          placeholder={t("chat.linkRequest.pasteCode")}
                           disabled={busy}
                           autoComplete="one-time-code"
                           nativeInput

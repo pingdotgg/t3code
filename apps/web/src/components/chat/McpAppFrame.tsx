@@ -24,8 +24,10 @@ import { flushSync } from "react-dom";
 
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 import { APP_VERSION } from "~/branding";
+import { translateNow } from "~/components/media/translateNow";
 import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
+import { useT } from "~/hooks/useI18n";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { isElectron } from "~/env";
@@ -42,7 +44,9 @@ const commandFailure = (result: {
   const error = squashAtomCommandFailure(result);
   return new McpAppHostRefusal({
     message:
-      error instanceof Error && error.message.trim() !== "" ? error.message : "Request failed.",
+      error instanceof Error && error.message.trim() !== ""
+        ? error.message
+        : translateNow("app.voiceExtra.mcp.requestFailed"),
   });
 };
 
@@ -88,6 +92,7 @@ export function McpAppFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { app } = props;
+  const t = useT();
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -254,7 +259,7 @@ export function McpAppFrame(props: {
       flushSync(() => setDisplayMode("inline"));
       const approved = await requestConfirmDialog(message);
       if (approved === undefined) {
-        throw new McpAppHostRefusal({ message: "T3 could not ask for approval here." });
+        throw new McpAppHostRefusal({ message: t("app.voiceExtra.mcp.approvalUnavailable") });
       }
       return approved;
     };
@@ -274,12 +279,17 @@ export function McpAppFrame(props: {
         const info = await readLive().toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable)
-          throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
+          throw new McpAppHostRefusal({ message: t("app.voiceExtra.mcp.toolNotCallable") });
         if (!info.value.readOnly) {
           const approved = await ask(
-            `Allow ${app.server} to run ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
+            t("app.voiceExtra.mcp.allowTool", {
+              server: app.server,
+              tool: info.value.title ?? name,
+              arguments: JSON.stringify(args, null, 2),
+            }),
           );
-          if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
+          if (approved !== true)
+            throw new McpAppHostRefusal({ message: t("app.voiceExtra.mcp.declined") });
         }
         const result = await readLive().callTool({
           environmentId,
@@ -299,16 +309,19 @@ export function McpAppFrame(props: {
       },
       openLink: async (url) => {
         if (document.activeElement !== frameRef.current || !navigator.userActivation?.isActive) {
-          throw new McpAppHostRefusal({ message: "Links open only from a click in the app." });
+          throw new McpAppHostRefusal({ message: t("app.voiceExtra.mcp.linkNeedsClick") });
         }
         window.open(url, "_blank", "noopener,noreferrer");
       },
       sendMessage: async (text) => {
         const send = readLive().props.onSendMessage;
         if (send === undefined)
-          throw new McpAppHostRefusal({ message: "Messages are not available here." });
-        const approved = await ask(`Send this message from ${app.server}?\n${text}`);
-        if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
+          throw new McpAppHostRefusal({ message: t("app.voiceExtra.mcp.messagesUnavailable") });
+        const approved = await ask(
+          t("app.voiceExtra.mcp.sendMessage", { server: app.server, text }),
+        );
+        if (approved !== true)
+          throw new McpAppHostRefusal({ message: t("app.voiceExtra.mcp.declined") });
         await send(text);
       },
       updateModelContext: async (context) => {
@@ -342,8 +355,11 @@ export function McpAppFrame(props: {
       },
       downloadFile: async (files) => {
         const names = files.map((file) => file.name).join(", ");
-        const approved = await ask(`Save ${names} from ${app.server}?`);
-        if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
+        const approved = await ask(
+          t("app.voiceExtra.mcp.saveFiles", { files: names, server: app.server }),
+        );
+        if (approved !== true)
+          throw new McpAppHostRefusal({ message: t("app.voiceExtra.mcp.declined") });
         for (const file of files) {
           let bytes: Uint8Array | undefined;
           let mimeType = file.mimeType ?? "application/octet-stream";
@@ -362,9 +378,13 @@ export function McpAppFrame(props: {
             if (typeof declared === "string") mimeType = declared;
           }
           if (bytes === undefined)
-            throw new McpAppHostRefusal({ message: `${file.name} has no contents.` });
+            throw new McpAppHostRefusal({
+              message: t("app.voiceExtra.mcp.fileEmpty", { file: file.name }),
+            });
           if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
-            throw new McpAppHostRefusal({ message: `${file.name} is too large to save.` });
+            throw new McpAppHostRefusal({
+              message: t("app.voiceExtra.mcp.fileTooLarge", { file: file.name }),
+            });
           }
           saveBlob(new Blob([bytes.slice()], { type: mimeType }), file.name);
         }
@@ -410,7 +430,7 @@ export function McpAppFrame(props: {
   if (closed) {
     return (
       <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-muted-foreground text-xs">
-        <span>The {app.server} app was closed</span>
+        <span>{t("chat.mcp.closed", { server: app.server })}</span>
         <Button
           size="xs"
           variant="ghost"
@@ -420,7 +440,7 @@ export function McpAppFrame(props: {
             setClosed(false);
           }}
         >
-          Show app
+          {t("chat.mcp.show")}
         </Button>
       </div>
     );
@@ -452,7 +472,7 @@ export function McpAppFrame(props: {
           >
             <span className="truncate">{app.server}</span>
             <Button
-              aria-label="Exit full screen"
+              aria-label={t("chat.mcp.exitFullscreen")}
               size="icon-sm"
               variant="ghost"
               onClick={() => setDisplayMode("inline")}
@@ -463,7 +483,7 @@ export function McpAppFrame(props: {
         ) : null}
         {navigatedAway ? (
           <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-            The {app.server} app left its page and was stopped
+            {t("chat.mcp.leftPage", { server: app.server })}
           </p>
         ) : src !== null ? (
           <iframe
@@ -479,7 +499,7 @@ export function McpAppFrame(props: {
           />
         ) : asset._tag === "Failure" ? (
           <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-            Unable to load the {app.server} app
+            {t("app.voiceExtra.mcp.loadFailed", { server: app.server })}
           </p>
         ) : null}
       </div>

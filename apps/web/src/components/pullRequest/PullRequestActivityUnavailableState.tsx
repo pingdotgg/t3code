@@ -4,6 +4,7 @@ import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
 
+import { useT } from "~/hooks/useI18n";
 export function PullRequestActivityUnavailableState({
   error,
   term,
@@ -16,6 +17,7 @@ export function PullRequestActivityUnavailableState({
   onRetry: () => void;
   compact?: boolean;
 }) {
+  const t = useT();
   return (
     <div
       className={cn(
@@ -27,7 +29,7 @@ export function PullRequestActivityUnavailableState({
       <p className="max-w-md text-xs text-muted-foreground">{error}</p>
       <Button size="sm" variant="outline" onClick={onRetry}>
         <RefreshIcon aria-hidden size="sm" />
-        Retry
+        {t("review.extra.retry")}
       </Button>
     </div>
   );

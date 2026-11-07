@@ -1,20 +1,25 @@
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import type { ClientSettings } from "@t3tools/contracts";
 
 // Ids are stored in client settings, so never rename one.
 export const THREAD_DETAILS_ITEMS = [
-  { id: "environment", label: "Environment and worktree", defaultVisible: true },
-  { id: "openIn", label: "Open in editor", defaultVisible: true },
-  { id: "scripts", label: "Project scripts", defaultVisible: true },
-  { id: "branch", label: "Branch and pull request", defaultVisible: true },
-  { id: "gitActions", label: "Git actions", defaultVisible: true },
-  { id: "changes", label: "Changes", defaultVisible: true },
-  { id: "servers", label: "Servers", defaultVisible: true },
-  { id: "automations", label: "Automations", defaultVisible: true },
-  { id: "lineage", label: "Lineage", defaultVisible: true },
-  { id: "sideChats", label: "Side chats", defaultVisible: true },
-  { id: "usage", label: "Usage limits", defaultVisible: false },
-  { id: "context", label: "Context window", defaultVisible: false },
-] as const;
+  { id: "environment", label: "chat.details.environment", defaultVisible: true },
+  { id: "openIn", label: "chat.details.openIn", defaultVisible: true },
+  { id: "scripts", label: "chat.details.scripts", defaultVisible: true },
+  { id: "branch", label: "chat.details.branch", defaultVisible: true },
+  { id: "gitActions", label: "chat.details.gitActions", defaultVisible: true },
+  { id: "changes", label: "chat.details.changes", defaultVisible: true },
+  { id: "servers", label: "chat.details.servers", defaultVisible: true },
+  { id: "automations", label: "chat.details.automations", defaultVisible: true },
+  { id: "lineage", label: "chat.details.lineage", defaultVisible: true },
+  { id: "sideChats", label: "chat.details.sideChats", defaultVisible: true },
+  { id: "usage", label: "chat.details.usage", defaultVisible: false },
+  { id: "context", label: "chat.details.context", defaultVisible: false },
+] as const satisfies readonly {
+  readonly id: string;
+  readonly label: MessageKey;
+  readonly defaultVisible: boolean;
+}[];
 
 export type ThreadDetailsItemId = (typeof THREAD_DETAILS_ITEMS)[number]["id"];
 export type ThreadDetailsVisibility = Readonly<Record<ThreadDetailsItemId, boolean>>;

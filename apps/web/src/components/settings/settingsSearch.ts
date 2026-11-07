@@ -4,6 +4,7 @@ import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/uti
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import {
   sourceControlClients,
   type SourceControlDefinition,
@@ -51,6 +52,7 @@ export type SettingsSearchScope =
 export interface SettingsSearchItem {
   readonly id: string;
   readonly title: string;
+  readonly titleKey?: MessageKey;
   readonly to: SettingsPath;
   readonly targetId?: string;
   readonly searchTerms?: ReadonlyArray<string>;
@@ -108,6 +110,33 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/about": "About",
   "/settings/voice": "Voice",
   "/settings/archived": "Archive",
+};
+
+/** Display labels as message keys; the English strings above stay the search match source. */
+export const SETTINGS_SECTION_LABEL_KEYS: Readonly<Record<SettingsPath, MessageKey>> = {
+  "/settings/diagnostics": "settings.nav.diagnostics",
+  "/settings/projects": "settings.nav.projects",
+  "/settings/general": "settings.nav.general",
+  "/settings/appearance": "settings.nav.appearance",
+  "/settings/chat": "settings.nav.chat",
+  "/settings/diffs": "settings.nav.diffs",
+  "/settings/keybindings": "settings.nav.keybindings",
+  "/settings/snap-shot": "settings.nav.snapShot",
+  "/settings/providers": "settings.nav.providers",
+  "/settings/threads": "settings.nav.threads",
+  "/settings/browser": "settings.nav.browser",
+  "/settings/voice": "settings.nav.voice",
+  "/settings/devices": "settings.nav.devices",
+  "/settings/scheduled-tasks": "settings.nav.scheduledTasks",
+  "/settings/source-control": "settings.nav.sourceControl",
+  "/settings/worktrees": "settings.nav.worktrees",
+  "/settings/connections": "settings.nav.connections",
+  "/settings/access": "settings.nav.access",
+  "/settings/secrets": "settings.nav.secrets",
+  "/settings/maintenance": "settings.nav.maintenance",
+  "/settings/labs": "settings.nav.labs",
+  "/settings/about": "settings.nav.about",
+  "/settings/archived": "settings.nav.archived",
 };
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
@@ -219,6 +248,7 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
 export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "storage-worktree-keep-when",
+    titleKey: "settings.search.items.storage-worktree-keep-when",
     targetId: "storage-worktrees",
     title: "Keep worktrees with local changes",
     to: "/settings/worktrees",
@@ -229,6 +259,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "storage-delete-now",
+    titleKey: "settings.search.items.storage-delete-now",
     title: "Delete now",
     to: "/settings/maintenance",
     scope: "environment-defaults",
@@ -236,6 +267,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "storage-worktrees",
+    titleKey: "settings.search.items.storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/worktrees",
     scope: "project-defaults",
@@ -245,6 +277,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "storage-worktrees-location",
+    titleKey: "settings.search.items.storage-worktrees-location",
     title: "Worktree location",
     to: "/settings/worktrees",
     scope: "environment-defaults",
@@ -252,6 +285,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "storage-artifacts",
+    titleKey: "settings.search.items.storage-artifacts",
     title: "Artifacts and logs",
     to: "/settings/maintenance",
     scope: "environment-defaults",
@@ -261,6 +295,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "project-defaults",
+    titleKey: "settings.search.items.project-defaults",
     title: "Project defaults and overrides",
     to: "/settings/threads",
     scope: "project-defaults",
@@ -268,12 +303,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "project-overview",
+    titleKey: "settings.search.items.project-overview",
     title: "Project overview",
     to: "/settings/projects",
     searchTerms: ["name icon emoji image checkout remove delete"],
   },
   {
     id: "default-model",
+    titleKey: "settings.search.items.default-model",
     title: "Default model",
     to: "/settings/threads",
     scope: "project-defaults",
@@ -281,6 +318,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "fallback-model",
+    titleKey: "settings.search.items.fallback-model",
     title: "Fallback model",
     to: "/settings/threads",
     scope: "environment-defaults",
@@ -289,6 +327,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "default-permissions",
+    titleKey: "settings.search.items.default-permissions",
     title: "Permissions",
     to: "/settings/threads",
     scope: "project-defaults",
@@ -298,6 +337,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "color-scheme",
+    titleKey: "settings.search.items.color-scheme",
     title: "Color scheme",
     to: "/settings/appearance",
     searchTerms: ["appearance light dark system mode"],
@@ -305,6 +345,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "theme",
+    titleKey: "settings.search.items.theme",
     title: "Themes",
     to: "/settings/appearance",
     searchTerms: ["appearance colors palette custom import"],
@@ -326,18 +367,28 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "diff-color-scheme",
+    titleKey: "settings.search.items.diff-color-scheme",
     title: "Diff colors",
     to: "/settings/diffs",
     searchTerms: ["red green blue orange additions deletions changes counts palette colorblind"],
   },
   {
     id: "chat-width",
+    titleKey: "settings.search.items.chat-width",
     title: "Chat width",
     to: "/settings/appearance",
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "ui-language",
+    titleKey: "settings.search.items.ui-language",
+    title: "Language",
+    to: "/settings/appearance",
+    searchTerms: ["language locale translation i18n english chinese 简体中文 语言 界面语言 翻译"],
+  },
+  {
     id: "thread-details-items",
+    titleKey: "settings.search.items.thread-details-items",
     title: "Thread details",
     to: "/settings/appearance",
     searchTerms: [
@@ -346,23 +397,27 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "effort-display",
+    titleKey: "settings.search.items.effort-display",
     title: "Effort display",
     to: "/settings/appearance",
     searchTerms: ["reasoning effort thinking bars graph word label level composer"],
   },
   {
     id: "math-rendering",
+    titleKey: "settings.search.items.math-rendering",
     title: "Render math",
     to: "/settings/appearance",
     searchTerms: ["latex tex katex equations formulas markdown"],
   },
   {
     id: "panel-animations",
+    titleKey: "settings.search.items.panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",
   },
   {
     id: "environment-identification",
+    titleKey: "settings.search.items.environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
     searchTerms: ["dev nightly latest channel artwork pill label hide none"],
@@ -370,36 +425,42 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "interface-font",
+    titleKey: "settings.search.items.interface-font",
     title: "Interface font",
     to: "/settings/appearance",
     searchTerms: ["typography family size system sans"],
   },
   {
     id: "prompt-font",
+    titleKey: "settings.search.items.prompt-font",
     title: "Prompt font",
     to: "/settings/appearance",
     searchTerms: ["typography family size composer input"],
   },
   {
     id: "code-font",
+    titleKey: "settings.search.items.code-font",
     title: "Code font",
     to: "/settings/appearance",
     searchTerms: ["typography family size monospace code blocks diffs file previews"],
   },
   {
     id: "terminal-font",
+    titleKey: "settings.search.items.terminal-font",
     title: "Terminal font",
     to: "/settings/appearance",
     searchTerms: ["typography family size monospace output"],
   },
   {
     id: "separate-fonts",
+    titleKey: "settings.search.items.separate-fonts",
     title: "Separate fonts",
     to: "/settings/appearance",
     searchTerms: ["typography advanced prompt code terminal font family size individually"],
   },
   {
     id: "font-smoothing",
+    titleKey: "settings.search.items.font-smoothing",
     title: "Font smoothing",
     to: "/settings/appearance",
     searchTerms: ["typography text grayscale anti aliasing macos thin"],
@@ -407,29 +468,34 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "word-wrap",
+    titleKey: "settings.search.items.word-wrap",
     title: "Word wrap",
     to: "/settings/appearance",
     searchTerms: ["long lines code blocks diffs file previews"],
   },
   {
     id: "composer-context",
+    titleKey: "settings.search.items.composer-context",
     title: "Composer context",
     to: "/settings/appearance",
   },
   {
     id: "project-grouping",
+    titleKey: "settings.search.items.project-grouping",
     title: "Project grouping",
     to: "/settings/general",
     searchTerms: ["combine matching repositories environments sidebar"],
   },
   {
     id: "project-order",
+    titleKey: "settings.search.items.project-order",
     title: "Project order",
     to: "/settings/general",
     searchTerms: ["sort projects sidebar manual created recent"],
   },
   {
     id: "snooze-options",
+    titleKey: "settings.search.items.snooze-options",
     title: "Snooze options",
     to: "/settings/threads",
     searchTerms: ["snooze presets times later tonight tomorrow next week remind"],
@@ -438,30 +504,35 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "snooze-limited-threads",
+    titleKey: "settings.search.items.snooze-limited-threads",
     title: "Snooze until limits reset",
     to: "/settings/threads",
     searchTerms: ["usage quota rate limit reset wake recover continue"],
   },
   {
     id: "auto-resume-limited-threads",
+    titleKey: "settings.search.items.auto-resume-limited-threads",
     title: "Resume after usage limits",
     to: "/settings/threads",
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
     id: "working-shelf",
+    titleKey: "settings.search.items.working-shelf",
     title: "Working section",
     to: "/settings/general",
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
     id: "boring-sidebar",
+    titleKey: "settings.search.items.boring-sidebar",
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",
     searchTerms: ["beta folders project tree legacy old classic sidebar"],
   },
   {
     id: "boring-sidebar-multiline",
+    titleKey: "settings.search.items.boring-sidebar-multiline",
     title: "Two-line folder rows",
     to: "/settings/labs",
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
@@ -476,6 +547,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "guest-links",
+    titleKey: "settings.search.items.guest-links",
     title: "Guest links",
     to: "/settings/labs",
     scope: "environment",
@@ -483,6 +555,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "linked-environments-beta",
+    titleKey: "settings.search.items.linked-environments-beta",
     title: "Linked environments",
     to: "/settings/labs",
     scope: "environment",
@@ -490,6 +563,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "simlock-hosts",
+    titleKey: "settings.search.items.simlock-hosts",
     title: "Simlock device hosts (alpha)",
     to: "/settings/labs",
     scope: "environment",
@@ -595,6 +669,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "auto-settle-inactive-threads",
+    titleKey: "settings.search.items.auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/threads",
     searchTerms: ["sidebar inactivity days no activity automatically"],
@@ -603,6 +678,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "compact-idle-threads",
+    titleKey: "settings.search.items.compact-idle-threads",
     title: "Compact idle threads",
     to: "/settings/providers",
     scope: "environment-defaults",
@@ -610,6 +686,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "auto-settle-merged-threads",
+    titleKey: "settings.search.items.auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/threads",
     searchTerms: ["pull request merge closed automatically sidebar"],
@@ -618,6 +695,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "keep-threads-with-pull-requests",
+    titleKey: "settings.search.items.keep-threads-with-pull-requests",
     title: "Keep threads with a PR",
     to: "/settings/threads",
     targetId: "auto-settle-inactive-threads",
@@ -627,6 +705,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "days-before-auto-settle",
+    titleKey: "settings.search.items.days-before-auto-settle",
     title: "Days of inactivity before auto-settle",
     to: "/settings/threads",
     targetId: "auto-settle-inactive-threads",
@@ -636,24 +715,28 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "thread-notifications",
+    titleKey: "settings.search.items.thread-notifications",
     title: "Thread notifications",
     to: "/settings/general",
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
     id: "in-app-notifications",
+    titleKey: "settings.search.items.in-app-notifications",
     title: "In-app notifications",
     to: "/settings/general",
     searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
     id: "time-format",
+    titleKey: "settings.search.items.time-format",
     title: "Time format",
     to: "/settings/general",
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
     id: "response-streaming",
+    titleKey: "settings.search.items.response-streaming",
     title: "Response streaming",
     to: "/settings/threads",
     scope: "project-defaults",
@@ -661,54 +744,63 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "hide-whitespace-changes",
+    titleKey: "settings.search.items.hide-whitespace-changes",
     title: "Hide whitespace changes",
     to: "/settings/diffs",
     searchTerms: ["diff ignore spaces edits default"],
   },
   {
     id: "default-diff-file-state",
+    titleKey: "settings.search.items.default-diff-file-state",
     title: "Default diff file state",
     to: "/settings/diffs",
     searchTerms: ["collapsed expanded collapse expand files pull request pr code tab"],
   },
   {
     id: "diff-layout",
+    titleKey: "settings.search.items.diff-layout",
     title: "Diff layout",
     to: "/settings/diffs",
     searchTerms: ["stacked split side by side unified inline view"],
   },
   {
     id: "proactive-panels",
+    titleKey: "settings.search.items.proactive-panels",
     title: "Open pull requests and changes panels proactively",
     to: "/settings/diffs",
     searchTerms: ["proactive automatically open diff pull request pr right panel agent completion"],
   },
   {
     id: "skills-in-slash-menu",
+    titleKey: "settings.search.items.skills-in-slash-menu",
     title: "Show skills in slash menu",
     to: "/settings/chat",
     searchTerms: ["command menu dollar $ slash /"],
   },
   {
     id: "composer-rich-text",
+    titleKey: "settings.search.items.composer-rich-text",
     title: "Rich text composer",
     to: "/settings/chat",
     searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
   },
   {
     id: "send-shortcut",
+    titleKey: "settings.search.items.send-shortcut",
     title: "Send shortcut",
     to: "/settings/chat",
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
   },
   {
     id: "follow-up-behavior",
+    titleKey: "settings.search.items.follow-up-behavior",
     title: "Follow-up behavior",
     to: "/settings/chat",
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
     id: "provider-update-checks",
+    titleKey: "settings.search.items.provider-update-checks",
     title: "Provider update checks",
     to: "/settings/maintenance",
     searchTerms: [
@@ -718,6 +810,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "continue-threads-after-server-update",
+    titleKey: "settings.search.items.continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/maintenance",
     scope: "project-defaults",
@@ -727,6 +820,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "background-activity",
+    titleKey: "settings.search.items.background-activity",
     title: "Background activity",
     to: "/settings/maintenance",
     scope: "environment-defaults",
@@ -736,6 +830,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "new-threads",
+    titleKey: "settings.search.items.new-threads",
     title: "New threads",
     to: "/settings/threads",
     scope: "project-defaults",
@@ -743,6 +838,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "worktree-submodules",
+    titleKey: "settings.search.items.worktree-submodules",
     title: "Submodules",
     to: "/settings/worktrees",
     scope: "project-defaults",
@@ -750,6 +846,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "start-from-origin",
+    titleKey: "settings.search.items.start-from-origin",
     title: "Start from remote",
     to: "/settings/worktrees",
     scope: "project-defaults",
@@ -757,6 +854,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "add-project-starts-in",
+    titleKey: "settings.search.items.add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/threads",
     scope: "environment-defaults",
@@ -771,24 +869,28 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "unpin-confirmation",
+    titleKey: "settings.search.items.unpin-confirmation",
     title: "Unpin confirmation",
     to: "/settings/general",
     searchTerms: ["ask before thread pinned section"],
   },
   {
     id: "archive-confirmation",
+    titleKey: "settings.search.items.archive-confirmation",
     title: "Archive confirmation",
     to: "/settings/general",
     searchTerms: ["ask before thread second click inline action"],
   },
   {
     id: "delete-confirmation",
+    titleKey: "settings.search.items.delete-confirmation",
     title: "Delete confirmation",
     to: "/settings/general",
     searchTerms: ["ask before thread chat history"],
   },
   {
     id: "quit-confirmation",
+    titleKey: "settings.search.items.quit-confirmation",
     title: "Quit shortcut",
     to: "/settings/general",
     searchTerms: ["confirmation desktop app exit direct hold double click press twice"],
@@ -796,6 +898,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "text-generation-model",
+    titleKey: "settings.search.items.text-generation-model",
     title: "Text generation model",
     to: "/settings/threads",
     scope: "project-defaults",
@@ -803,6 +906,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "thread-title-instructions",
+    titleKey: "settings.search.items.thread-title-instructions",
     title: "Thread title instructions",
     to: "/settings/threads",
     scope: "project-defaults",
@@ -810,12 +914,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "app-version",
+    titleKey: "settings.search.items.app-version",
     title: "Version",
     to: "/settings/about",
     searchTerms: ["about check for updates download install upgrade release"],
   },
   {
     id: "update-track",
+    titleKey: "settings.search.items.update-track",
     title: "Update track",
     to: "/settings/about",
     searchTerms: ["release channel stable latest nightly prerelease"],
@@ -823,6 +929,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "cli-command",
+    titleKey: "settings.search.items.cli-command",
     title: "t3 command",
     to: "/settings/about",
     searchTerms: ["cli terminal shell path install command line"],
@@ -830,18 +937,21 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "mobile-app",
+    titleKey: "settings.search.items.mobile-app",
     title: "Mobile app",
     to: "/settings/about",
     searchTerms: ["phone tablet iPhone iPad iOS Android App Store Google Play QR"],
   },
   {
     id: "privacy-policy",
+    titleKey: "settings.search.items.privacy-policy",
     title: "Privacy policy",
     to: "/settings/about",
     searchTerms: ["telemetry analytics usage data tracking legal opt out"],
   },
   {
     id: "telemetry-export",
+    titleKey: "settings.search.items.telemetry-export",
     title: "OpenTelemetry export",
     to: "/settings/diagnostics",
     targetId: "telemetry-export",
@@ -850,29 +960,34 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "diagnostics",
+    titleKey: "settings.search.items.diagnostics",
     title: "Diagnostics",
     to: "/settings/maintenance",
     searchTerms: ["logs traces processes resource history failures spans cpu memory"],
   },
   {
     id: "open-source-licenses",
+    titleKey: "settings.search.items.open-source-licenses",
     title: "Open source licenses",
     to: "/settings/about",
   },
   {
     id: "legacy-plan-mode",
+    titleKey: "settings.search.items.legacy-plan-mode",
     title: "Plan mode (legacy)",
     to: "/settings/labs",
     searchTerms: ["build plan composer old"],
   },
   {
     id: "legacy-context-window-indicator",
+    titleKey: "settings.search.items.legacy-context-window-indicator",
     title: "Context window indicator (legacy)",
     to: "/settings/labs",
     searchTerms: ["composer meter usage tokens circle old"],
   },
   {
     id: "keybindings",
+    titleKey: "settings.search.items.keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",
     searchTerms: ["keyboard shortcuts hotkeys commands bindings json"],
@@ -880,12 +995,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   ...KEYBINDING_SEARCH_ITEMS,
   {
     id: "snap-shot-enabled",
+    titleKey: "settings.search.items.snap-shot-enabled",
     title: "SnapShots",
     searchTerms: ["window capture screenshot"],
     to: "/settings/snap-shot",
   },
   {
     id: "snap-shot-accessibility",
+    titleKey: "settings.search.items.snap-shot-accessibility",
     title: "Include app text",
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
@@ -895,30 +1012,35 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "snap-shot-shortcut",
+    titleKey: "settings.search.items.snap-shot-shortcut",
     title: "Capture shortcut",
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
   },
   {
     id: "snap-shot-sound",
+    titleKey: "settings.search.items.snap-shot-sound",
     title: "Capture sound",
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
   },
   {
     id: "snap-shot-flash",
+    titleKey: "settings.search.items.snap-shot-flash",
     title: "Capture flash",
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
   },
   {
     id: "snap-shot-animations",
+    titleKey: "settings.search.items.snap-shot-animations",
     title: "Capture animations",
     to: "/settings/snap-shot",
     targetId: "snap-shot-enabled",
   },
   {
     id: "providers",
+    titleKey: "settings.search.items.providers",
     title: "Providers",
     to: "/settings/providers",
     searchTerms: [
@@ -927,6 +1049,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "usage-providers",
+    titleKey: "settings.search.items.usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
     searchTerms: [
@@ -936,6 +1059,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "provider-health-check-interval",
+    titleKey: "settings.search.items.provider-health-check-interval",
     title: "Health check interval",
     to: "/settings/providers",
     searchTerms: ["refresh availability versions auth state models background probes seconds off"],
@@ -943,6 +1067,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "agent-browser-access",
+    titleKey: "settings.search.items.agent-browser-access",
     title: "Agent browser access",
     to: "/settings/browser",
     scope: "project-defaults",
@@ -950,6 +1075,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "device-sources",
+    titleKey: "settings.search.items.device-sources",
     title: "Device sources",
     to: "/settings/devices",
     searchTerms: [
@@ -958,6 +1084,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "agent-device-access",
+    titleKey: "settings.search.items.agent-device-access",
     title: "Agents can use devices",
     to: "/settings/devices",
     targetId: "devices",
@@ -965,6 +1092,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "device-hub",
+    titleKey: "settings.search.items.device-hub",
     title: "Use devices",
     to: "/settings/devices",
     targetId: "devices",
@@ -972,6 +1100,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "device-platform-support",
+    titleKey: "settings.search.items.device-platform-support",
     title: "Local simulators",
     to: "/settings/devices",
     targetId: "device-sources",
@@ -979,65 +1108,76 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "browser-profiles",
+    titleKey: "settings.search.items.browser-profiles",
     title: "Browser profiles",
     to: "/settings/browser",
     targetId: "browser",
   },
   {
     id: "browser-default-profile",
+    titleKey: "settings.search.items.browser-default-profile",
     title: "Default browser profile",
     to: "/settings/browser",
     targetId: "browser-profiles",
   },
   {
     id: "browser-default-viewport",
+    titleKey: "settings.search.items.browser-default-viewport",
     title: "Default browser viewport",
     to: "/settings/browser",
     searchTerms: ["preview size width height device desktop mobile rotate"],
   },
   {
     id: "browser-default-zoom",
+    titleKey: "settings.search.items.browser-default-zoom",
     title: "Default browser zoom",
     to: "/settings/browser",
     searchTerms: ["preview page scale tabs percent"],
   },
   {
     id: "browser-default-appearance",
+    titleKey: "settings.search.items.browser-default-appearance",
     title: "Default browser appearance",
     to: "/settings/browser",
     searchTerms: ["preview color scheme light dark system os"],
   },
   {
     id: "browser-recording-frame-rate",
+    titleKey: "settings.search.items.browser-recording-frame-rate",
     title: "Browser recording frame rate",
     to: "/settings/browser",
   },
   {
     id: "browser-recording-key-presses",
+    titleKey: "settings.search.items.browser-recording-key-presses",
     title: "Show key presses in recordings",
     to: "/settings/browser",
     searchTerms: ["browser preview keyboard shortcuts keystrokes overlay capture"],
   },
   {
     id: "browser-recording-mouse-presses",
+    titleKey: "settings.search.items.browser-recording-mouse-presses",
     title: "Show mouse presses in recordings",
     to: "/settings/browser",
     searchTerms: ["browser preview clicks buttons drag overlay capture"],
   },
   {
     id: "browser-link-target",
+    titleKey: "settings.search.items.browser-link-target",
     title: "Open links in",
     to: "/settings/browser",
     searchTerms: ["links default browser in-app browser external open"],
   },
   {
     id: "browser-search-engine",
+    titleKey: "settings.search.items.browser-search-engine",
     title: "Search engine",
     to: "/settings/browser",
     searchTerms: ["address bar duckduckgo google bing brave kagi ecosia custom url"],
   },
   {
     id: "pull-request-links-open-in-app",
+    titleKey: "settings.search.items.pull-request-links-open-in-app",
     title: "Open pull requests in T3 Code",
     to: "/settings/diffs",
     searchTerms: [
@@ -1046,12 +1186,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "browser-auto-show-floating-preview",
+    titleKey: "settings.search.items.browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/browser",
     searchTerms: ["agent opens browser device simulator pop into view hide"],
   },
   {
     id: "automatic-pull",
+    titleKey: "settings.search.items.automatic-pull",
     title: "Automatically pull",
     to: "/settings/source-control",
     scope: "project-defaults",
@@ -1059,6 +1201,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "remove-agent-credits-on-merge",
+    titleKey: "settings.search.items.remove-agent-credits-on-merge",
     title: "Remove agent credits when merging",
     to: "/settings/source-control",
     scope: "project-defaults",
@@ -1068,6 +1211,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "pull-request-merge-method",
+    titleKey: "settings.search.items.pull-request-merge-method",
     title: "Default merge method",
     to: "/settings/source-control",
     scope: "project-defaults",
@@ -1075,6 +1219,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "source-control",
+    titleKey: "settings.search.items.source-control",
     title: "Source control",
     to: "/settings/source-control",
     scope: "environment-defaults",
@@ -1084,6 +1229,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "git-fetch-interval",
+    titleKey: "settings.search.items.git-fetch-interval",
     title: "Git fetch interval",
     to: "/settings/maintenance",
     targetId: "background-activity",
@@ -1095,6 +1241,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "worktree-branch-naming",
+    titleKey: "settings.search.items.worktree-branch-naming",
     title: "Worktree branch naming",
     to: "/settings/worktrees",
     searchTerms: ["static semantic prefix custom prompt instructions feat fix refactor chore"],
@@ -1104,6 +1251,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   ...sourceControlHostSearchItems(sourceControlClients.definitions),
   {
     id: "source-control-writing-style",
+    titleKey: "settings.search.items.source-control-writing-style",
     title: "Source control writing style",
     to: "/settings/source-control",
     searchTerms: [
@@ -1113,6 +1261,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "follow-change-request-templates",
+    titleKey: "settings.search.items.follow-change-request-templates",
     title: "Follow change request templates",
     to: "/settings/source-control",
     searchTerms: ["repository pr pull request description structure"],
@@ -1120,6 +1269,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "source-control-writer-model",
+    titleKey: "settings.search.items.source-control-writer-model",
     title: "Source control writer model",
     to: "/settings/source-control",
     searchTerms: [
@@ -1130,6 +1280,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guides",
+    titleKey: "settings.search.items.review-guides",
     title: "Review guides (beta)",
     to: "/settings/source-control",
     searchTerms: ["pull request pr guided review guide tour beta experimental"],
@@ -1137,6 +1288,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guide-model",
+    titleKey: "settings.search.items.review-guide-model",
     title: "Review guide model",
     to: "/settings/source-control",
     // Hidden until review guides are on, so a search lands on the switch that shows it.
@@ -1147,6 +1299,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guide-instructions",
+    titleKey: "settings.search.items.review-guide-instructions",
     title: "Review guide instructions",
     to: "/settings/source-control",
     targetId: "review-guides",
@@ -1156,12 +1309,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "project-actions",
+    titleKey: "settings.search.items.project-actions",
     title: "Actions",
     to: "/settings/projects",
     searchTerms: ["commands scripts setup run dev server checkout worktree t3.json import"],
   },
   {
     id: "environment-icon",
+    titleKey: "settings.search.items.environment-icon",
     title: "Environment icon",
     to: "/settings/access",
     targetId: "connections-environment",
@@ -1169,6 +1324,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "local-environment",
+    titleKey: "settings.search.items.local-environment",
     title: "Local environment",
     to: "/settings/connections",
     searchTerms: ["turn off on disable enable local server agents remote only restart"],
@@ -1176,6 +1332,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "network-access",
+    titleKey: "settings.search.items.network-access",
     title: "Network access",
     to: "/settings/access",
     targetId: "connections-environment",
@@ -1184,6 +1341,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "tailscale-https",
+    titleKey: "settings.search.items.tailscale-https",
     title: "Tailscale HTTPS",
     to: "/settings/access",
     targetId: "connections-environment",
@@ -1193,6 +1351,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "wsl-backend",
+    titleKey: "settings.search.items.wsl-backend",
     title: "WSL backend",
     to: "/settings/access",
     searchTerms: [
@@ -1205,6 +1364,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "t3-connect",
+    titleKey: "settings.search.items.t3-connect",
     localEnvironmentOnly: true,
     title: "T3 Connect",
     to: "/settings/access",
@@ -1215,6 +1375,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "hold-webhooks-while-offline",
+    titleKey: "settings.search.items.hold-webhooks-while-offline",
     localEnvironmentOnly: true,
     title: "Hold webhooks while offline",
     to: "/settings/access",
@@ -1225,6 +1386,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "publish-agent-activity",
+    titleKey: "settings.search.items.publish-agent-activity",
     localEnvironmentOnly: true,
     title: "Publish agent activity",
     to: "/settings/access",
@@ -1234,6 +1396,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "connections-environment",
+    titleKey: "settings.search.items.connections-environment",
     title: "This machine",
     to: "/settings/access",
     searchTerms: [
@@ -1242,6 +1405,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "linked-environments",
+    titleKey: "settings.search.items.linked-environments",
     peerLinksOnly: true,
     title: "Linked environments",
     to: "/settings/connections",
@@ -1250,12 +1414,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "remote-environments",
+    titleKey: "settings.search.items.remote-environments",
     title: "Environments",
     to: "/settings/connections",
     searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
   },
   {
     id: "load-balancing",
+    titleKey: "settings.search.items.load-balancing",
     title: "Load balancing",
     to: "/settings/connections",
     searchTerms: [
@@ -1264,6 +1430,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "pull-request-routing",
+    titleKey: "settings.search.items.pull-request-routing",
     title: "Pull request sharing",
     to: "/settings/connections",
     searchTerms: [
@@ -1272,6 +1439,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "secret-providers",
+    titleKey: "settings.search.items.secret-providers",
     title: "Secret providers",
     to: "/settings/secrets",
     searchTerms: ["1password vault credentials api key"],
@@ -1279,6 +1447,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "secret-providers-add",
+    titleKey: "settings.search.items.secret-providers-add",
     title: "Add secret provider",
     to: "/settings/secrets",
     targetId: "secret-providers",
@@ -1287,6 +1456,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "archive",
+    titleKey: "settings.search.items.archive",
     title: "Archived threads",
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
@@ -1525,3 +1695,142 @@ export function revealSettingsSearchTarget(targetId: string): void {
     writeLocalStorageValue(TYPOGRAPHY_ADVANCED_STORAGE_KEY, true, false, Schema.Boolean);
   }
 }
+
+export const SETTINGS_SEARCH_TITLE_KEYS = {
+  "storage-worktree-keep-when": "settings.search.items.storage-worktree-keep-when",
+  "storage-delete-now": "settings.search.items.storage-delete-now",
+  "storage-worktrees": "settings.search.items.storage-worktrees",
+  "storage-worktrees-location": "settings.search.items.storage-worktrees-location",
+  "storage-artifacts": "settings.search.items.storage-artifacts",
+  "project-defaults": "settings.search.items.project-defaults",
+  "project-overview": "settings.search.items.project-overview",
+  "default-model": "settings.search.items.default-model",
+  "fallback-model": "settings.search.items.fallback-model",
+  "default-permissions": "settings.search.items.default-permissions",
+  "color-scheme": "settings.search.items.color-scheme",
+  theme: "settings.search.items.theme",
+  "diff-color-scheme": "settings.search.items.diff-color-scheme",
+  "chat-width": "settings.search.items.chat-width",
+  "ui-language": "settings.search.items.ui-language",
+  "thread-details-items": "settings.search.items.thread-details-items",
+  "effort-display": "settings.search.items.effort-display",
+  "math-rendering": "settings.search.items.math-rendering",
+  "panel-animations": "settings.search.items.panel-animations",
+  "environment-identification": "settings.search.items.environment-identification",
+  "interface-font": "settings.search.items.interface-font",
+  "prompt-font": "settings.search.items.prompt-font",
+  "code-font": "settings.search.items.code-font",
+  "terminal-font": "settings.search.items.terminal-font",
+  "separate-fonts": "settings.search.items.separate-fonts",
+  "font-smoothing": "settings.search.items.font-smoothing",
+  "word-wrap": "settings.search.items.word-wrap",
+  "composer-context": "settings.search.items.composer-context",
+  "project-grouping": "settings.search.items.project-grouping",
+  "project-order": "settings.search.items.project-order",
+  "snooze-options": "settings.search.items.snooze-options",
+  "snooze-limited-threads": "settings.search.items.snooze-limited-threads",
+  "auto-resume-limited-threads": "settings.search.items.auto-resume-limited-threads",
+  "working-shelf": "settings.search.items.working-shelf",
+  "boring-sidebar": "settings.search.items.boring-sidebar",
+  "boring-sidebar-multiline": "settings.search.items.boring-sidebar-multiline",
+  "guest-links": "settings.search.items.guest-links",
+  "linked-environments-beta": "settings.search.items.linked-environments-beta",
+  "simlock-hosts": "settings.search.items.simlock-hosts",
+  "auto-settle-inactive-threads": "settings.search.items.auto-settle-inactive-threads",
+  "compact-idle-threads": "settings.search.items.compact-idle-threads",
+  "auto-settle-merged-threads": "settings.search.items.auto-settle-merged-threads",
+  "keep-threads-with-pull-requests": "settings.search.items.keep-threads-with-pull-requests",
+  "days-before-auto-settle": "settings.search.items.days-before-auto-settle",
+  "thread-notifications": "settings.search.items.thread-notifications",
+  "in-app-notifications": "settings.search.items.in-app-notifications",
+  "time-format": "settings.search.items.time-format",
+  "response-streaming": "settings.search.items.response-streaming",
+  "hide-whitespace-changes": "settings.search.items.hide-whitespace-changes",
+  "default-diff-file-state": "settings.search.items.default-diff-file-state",
+  "diff-layout": "settings.search.items.diff-layout",
+  "proactive-panels": "settings.search.items.proactive-panels",
+  "skills-in-slash-menu": "settings.search.items.skills-in-slash-menu",
+  "composer-rich-text": "settings.search.items.composer-rich-text",
+  "send-shortcut": "settings.search.items.send-shortcut",
+  "follow-up-behavior": "settings.search.items.follow-up-behavior",
+  "provider-update-checks": "settings.search.items.provider-update-checks",
+  "continue-threads-after-server-update":
+    "settings.search.items.continue-threads-after-server-update",
+  "background-activity": "settings.search.items.background-activity",
+  "new-threads": "settings.search.items.new-threads",
+  "worktree-submodules": "settings.search.items.worktree-submodules",
+  "start-from-origin": "settings.search.items.start-from-origin",
+  "add-project-starts-in": "settings.search.items.add-project-starts-in",
+  "unpin-confirmation": "settings.search.items.unpin-confirmation",
+  "archive-confirmation": "settings.search.items.archive-confirmation",
+  "delete-confirmation": "settings.search.items.delete-confirmation",
+  "quit-confirmation": "settings.search.items.quit-confirmation",
+  "text-generation-model": "settings.search.items.text-generation-model",
+  "thread-title-instructions": "settings.search.items.thread-title-instructions",
+  "app-version": "settings.search.items.app-version",
+  "update-track": "settings.search.items.update-track",
+  "cli-command": "settings.search.items.cli-command",
+  "mobile-app": "settings.search.items.mobile-app",
+  "privacy-policy": "settings.search.items.privacy-policy",
+  "telemetry-export": "settings.search.items.telemetry-export",
+  diagnostics: "settings.search.items.diagnostics",
+  "open-source-licenses": "settings.search.items.open-source-licenses",
+  "legacy-plan-mode": "settings.search.items.legacy-plan-mode",
+  "legacy-context-window-indicator": "settings.search.items.legacy-context-window-indicator",
+  keybindings: "settings.search.items.keybindings",
+  "snap-shot-enabled": "settings.search.items.snap-shot-enabled",
+  "snap-shot-accessibility": "settings.search.items.snap-shot-accessibility",
+  "snap-shot-shortcut": "settings.search.items.snap-shot-shortcut",
+  "snap-shot-sound": "settings.search.items.snap-shot-sound",
+  "snap-shot-flash": "settings.search.items.snap-shot-flash",
+  "snap-shot-animations": "settings.search.items.snap-shot-animations",
+  providers: "settings.search.items.providers",
+  "usage-providers": "settings.search.items.usage-providers",
+  "provider-health-check-interval": "settings.search.items.provider-health-check-interval",
+  "agent-browser-access": "settings.search.items.agent-browser-access",
+  "device-sources": "settings.search.items.device-sources",
+  "agent-device-access": "settings.search.items.agent-device-access",
+  "device-hub": "settings.search.items.device-hub",
+  "device-platform-support": "settings.search.items.device-platform-support",
+  "browser-profiles": "settings.search.items.browser-profiles",
+  "browser-default-profile": "settings.search.items.browser-default-profile",
+  "browser-default-viewport": "settings.search.items.browser-default-viewport",
+  "browser-default-zoom": "settings.search.items.browser-default-zoom",
+  "browser-default-appearance": "settings.search.items.browser-default-appearance",
+  "browser-recording-frame-rate": "settings.search.items.browser-recording-frame-rate",
+  "browser-recording-key-presses": "settings.search.items.browser-recording-key-presses",
+  "browser-recording-mouse-presses": "settings.search.items.browser-recording-mouse-presses",
+  "browser-link-target": "settings.search.items.browser-link-target",
+  "browser-search-engine": "settings.search.items.browser-search-engine",
+  "pull-request-links-open-in-app": "settings.search.items.pull-request-links-open-in-app",
+  "browser-auto-show-floating-preview": "settings.search.items.browser-auto-show-floating-preview",
+  "automatic-pull": "settings.search.items.automatic-pull",
+  "remove-agent-credits-on-merge": "settings.search.items.remove-agent-credits-on-merge",
+  "pull-request-merge-method": "settings.search.items.pull-request-merge-method",
+  "source-control": "settings.search.items.source-control",
+  "git-fetch-interval": "settings.search.items.git-fetch-interval",
+  "worktree-branch-naming": "settings.search.items.worktree-branch-naming",
+  "source-control-writing-style": "settings.search.items.source-control-writing-style",
+  "follow-change-request-templates": "settings.search.items.follow-change-request-templates",
+  "source-control-writer-model": "settings.search.items.source-control-writer-model",
+  "review-guides": "settings.search.items.review-guides",
+  "review-guide-model": "settings.search.items.review-guide-model",
+  "review-guide-instructions": "settings.search.items.review-guide-instructions",
+  "project-actions": "settings.search.items.project-actions",
+  "environment-icon": "settings.search.items.environment-icon",
+  "local-environment": "settings.search.items.local-environment",
+  "network-access": "settings.search.items.network-access",
+  "tailscale-https": "settings.search.items.tailscale-https",
+  "wsl-backend": "settings.search.items.wsl-backend",
+  "t3-connect": "settings.search.items.t3-connect",
+  "hold-webhooks-while-offline": "settings.search.items.hold-webhooks-while-offline",
+  "publish-agent-activity": "settings.search.items.publish-agent-activity",
+  "connections-environment": "settings.search.items.connections-environment",
+  "linked-environments": "settings.search.items.linked-environments",
+  "remote-environments": "settings.search.items.remote-environments",
+  "load-balancing": "settings.search.items.load-balancing",
+  "pull-request-routing": "settings.search.items.pull-request-routing",
+  "secret-providers": "settings.search.items.secret-providers",
+  "secret-providers-add": "settings.search.items.secret-providers-add",
+  archive: "settings.search.items.archive",
+} as const satisfies Partial<Record<SettingsSearchItemId, MessageKey>>;

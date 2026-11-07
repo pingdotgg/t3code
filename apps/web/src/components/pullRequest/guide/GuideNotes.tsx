@@ -4,6 +4,7 @@ import { cn } from "~/lib/utils";
 
 import { GuideProse } from "./GuideProse";
 
+import { useT } from "~/hooks/useI18n";
 export function GuideNoteMarker({ marker }: { marker: string }) {
   return (
     <span
@@ -22,11 +23,12 @@ export function GuideNotes({
   notes: ReadonlyArray<{ readonly marker: string; readonly note: PullRequestReviewGuideNote }>;
   className?: string;
 }) {
+  const t = useT();
   if (notes.length === 0) return null;
   return (
     <section className={cn("flex min-w-0 flex-col gap-2", className)}>
       <h4 className="flex items-baseline justify-between gap-2 text-xs font-medium text-foreground">
-        Notes on this stop
+        {t("review.extra.notes.on.this.stop")}
         <span className="font-normal text-muted-foreground tabular-nums">
           {notes.length === 1 ? "1 note" : `${notes.length} notes`}
         </span>

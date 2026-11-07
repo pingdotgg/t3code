@@ -1,3 +1,4 @@
+import { useT } from "../../hooks/useI18n";
 import type { ChatComposerProps } from "./ChatComposer";
 import type { PromptUltrathink } from "./TraitsPicker";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -137,6 +138,7 @@ export function ComposerControlsBar(props: {
     modelPickerIconClassName,
     getModelDisabledReason,
   } = props;
+  const t = useT();
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
   const {
     accessDisplay,
@@ -264,7 +266,9 @@ export function ComposerControlsBar(props: {
       className="shrink-0"
     >
       <CircleAlertIcon className="size-4" />
-      {providerSetupInstanceId ? "Open provider settings" : "No provider available"}
+      {providerSetupInstanceId
+        ? t("chat.controls.openProviderSettings")
+        : t("chat.controls.noProvider")}
     </ComposerControl>
   ) : (
     <>

@@ -1,5 +1,6 @@
 import type { PullRequestRef, PullRequestStack, ThreadPullRequestLink } from "@t3tools/contracts";
 
+import { translateNow } from "../media/translateNow";
 /** Saved membership supports navigation, never action head SHAs. */
 export function savedPullRequestStack(
   links: ReadonlyArray<ThreadPullRequestLink>,
@@ -64,9 +65,9 @@ export function pullRequestStackView(
       data === null
         ? null
         : query.error
-          ? "Stack data may be stale. We couldn’t refresh it."
+          ? translateNow("review.extra.stack.data.may.be.stale.we.couldn.t")
           : !query.isSuccess || query.isPending
-            ? "Refreshing stack… Showing saved data."
+            ? translateNow("review.extra.refreshing.stack.showing.saved.data")
             : null,
   };
 }

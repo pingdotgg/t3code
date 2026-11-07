@@ -7,6 +7,8 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { useState } from "react";
 
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
+import { useT } from "../../hooks/useI18n";
 import { environmentCatalog } from "~/connection/catalog";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -16,15 +18,19 @@ import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { searchableSetting } from "./settingsSearch";
 
-const options: ReadonlyArray<{ value: PullRequestRoutingPermission; label: string }> = [
-  { value: "off", label: "Off" },
-  { value: "read", label: "Read PRs" },
-  { value: "read-write", label: "Read and act" },
+const optionKeys: ReadonlyArray<{ value: PullRequestRoutingPermission; label: MessageKey }> = [
+  { value: "off", label: "settings.code.prRouting.off" },
+  { value: "read", label: "settings.code.prRouting.read" },
+  { value: "read-write", label: "settings.code.prRouting.readWrite" },
 ];
 
-const summaryLabels = { "read-write": "read and act", read: "read PRs" } as const;
+const summaryLabels = {
+  "read-write": "settings.code.prRouting.summaryReadWrite",
+  read: "settings.code.prRouting.summaryRead",
+} as const satisfies Record<string, MessageKey>;
 
 function summarizePullRequestRouting(
+  t: ReturnType<typeof useT>,
   entries: ReadonlyArray<{
     readonly label: string;
     readonly permission: PullRequestRoutingPermission;
@@ -34,7 +40,12 @@ function summarizePullRequestRouting(
     const labels = entries.filter((entry) => entry.permission === permission);
     return labels.length === 0
       ? []
-      : [`${labels.map((entry) => entry.label).join(", ")} ${summaryLabels[permission]}`];
+      : [
+          t("settings.code.prRouting.summaryGroup", {
+            names: labels.map((entry) => entry.label).join(", "),
+            permission: t(summaryLabels[permission]),
+          }),
+        ];
   });
   return groups.length === 0 ? null : groups.join(" · ");
 }
@@ -44,6 +55,8 @@ export function PullRequestRoutingSettings({
 }: {
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
+  const t = useT();
+  const options = optionKeys.map(({ value, label }) => ({ value, label: t(label) }));
   const permissions = useAtomValue(environmentCatalog.pullRequestRoutingPermissionsValueAtom);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const update = useAtomCommand(environmentCatalog.setPullRequestRoutingPermission);
@@ -51,24 +64,23 @@ export function PullRequestRoutingSettings({
 
   if (environments.length < 2) return null;
 
-  const { id, title } = searchableSetting("pull-request-routing");
+  const { id } = searchableSetting("pull-request-routing");
   return (
     <FoldedSettingsSection
       id={id}
-      title={title}
+      title={t("settings.code.prRouting.title")}
       summary={
         summarizePullRequestRouting(
+          t,
           environments.map((environment) => ({
             label: environment.label,
             permission: pullRequestRoutingPermissionFor(environment.entry, permissions),
           })),
-        ) ?? "Off"
+        ) ?? t("settings.code.prRouting.off")
       }
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        Machines you trust here can read PR data through each other's source control access. Enable
-        both machines. Read and act may use broader permissions than the machine that owns them.
-        This applies only to this device.
+        {t("settings.code.prRouting.description")}
       </p>
       {environments.map((environment) => (
         <EnvironmentRow
@@ -94,7 +106,7 @@ export function PullRequestRoutingSettings({
                   if (result._tag === "Failure")
                     toastManager.add({
                       type: "error",
-                      title: "Could not save pull request routing permission",
+                      title: t("settings.code.prRouting.saveFailed"),
                     });
                 },
               );
@@ -103,7 +115,7 @@ export function PullRequestRoutingSettings({
             <SelectTrigger
               size="xs"
               className="w-32"
-              aria-label={`${environment.label} pull request routing`}
+              aria-label={t("settings.code.prRouting.aria", { name: environment.label })}
             >
               <SelectValue />
             </SelectTrigger>

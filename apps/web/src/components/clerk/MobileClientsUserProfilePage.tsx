@@ -6,6 +6,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
+import { useT } from "../../hooks/useI18n";
 import {
   mobileClientNotificationDetail,
   mobileClientPlatformLabel,
@@ -26,14 +27,19 @@ function MobileClientStatusBadge({
   readonly enabled: boolean;
   readonly label: string;
 }) {
+  const t = useT();
   return (
     <Badge variant={enabled ? "success" : "outline"}>
-      {label}: {enabled ? "On" : "Off"}
+      {t("misc.clerk.mobile.statusBadge", {
+        label,
+        state: enabled ? t("misc.clerk.mobile.on") : t("misc.clerk.mobile.off"),
+      })}
     </Badge>
   );
 }
 
 function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord }) {
+  const t = useT();
   return (
     <ClerkUserProfileRow icon={<SmartphoneIcon className="size-4" />}>
       <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
@@ -46,26 +52,30 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
           </p>
         </div>
         <p className="shrink-0 text-2xs leading-4 text-muted-foreground/75">
-          {mobileClientUpdatedAtLabel(device.updatedAt)}
+          {mobileClientUpdatedAtLabel(device.updatedAt, t)}
         </p>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
         <MobileClientStatusBadge
           enabled={device.notifications.enabled}
-          label="Push notifications"
+          label={t("misc.clerk.mobile.pushNotifications")}
         />
-        <MobileClientStatusBadge enabled={device.liveActivities.enabled} label="Live Activities" />
+        <MobileClientStatusBadge
+          enabled={device.liveActivities.enabled}
+          label={t("misc.clerk.mobile.liveActivities")}
+        />
       </div>
       <p className="mt-1.5 text-xs leading-4.5 text-muted-foreground/80">
-        {mobileClientNotificationDetail(device)}
+        {mobileClientNotificationDetail(device, t)}
       </p>
     </ClerkUserProfileRow>
   );
 }
 
 function MobileClientsSkeleton() {
+  const t = useT();
   return (
-    <div aria-label="Loading mobile clients" className="divide-y border-t" role="status">
+    <div aria-label={t("misc.clerk.mobile.loading")} className="divide-y border-t" role="status">
       {MOBILE_CLIENT_SKELETON_ROWS.map((row) => (
         <div key={row} className="py-4">
           <div className="flex gap-3">
@@ -86,23 +96,22 @@ function MobileClientsSkeleton() {
 }
 
 function EmptyMobileClients() {
+  const t = useT();
   return (
     <Empty size="compact">
       <EmptyMedia variant="icon">
         <SmartphoneIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No mobile clients</EmptyTitle>
-        <EmptyDescription>
-          Install T3 Code on your phone and sign in to T3 Connect to get push notifications and Live
-          Activities.
-        </EmptyDescription>
+        <EmptyTitle>{t("misc.clerk.mobile.empty.title")}</EmptyTitle>
+        <EmptyDescription>{t("misc.clerk.mobile.empty.description")}</EmptyDescription>
       </EmptyHeader>
     </Empty>
   );
 }
 
 export function MobileClientsUserProfilePage() {
+  const t = useT();
   const devicesState = useManagedRelayDevices();
   const devices = devicesState.data ?? [];
   const isInitialLoad =
@@ -111,8 +120,8 @@ export function MobileClientsUserProfilePage() {
 
   return (
     <ClerkUserProfilePage
-      title="Mobile clients"
-      description="Mobile devices that get notifications from your environments."
+      title={t("misc.clerk.mobile.title")}
+      description={t("misc.clerk.mobile.description")}
       action={
         <ClerkUserProfileRefreshButton
           isPending={devicesState.isPending}
@@ -128,12 +137,12 @@ export function MobileClientsUserProfilePage() {
           >
             <div>
               <p className="font-medium text-destructive-foreground">
-                Could not load mobile clients
+                {t("misc.clerk.mobile.loadFailed")}
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">{devicesState.error}</p>
             </div>
             <Button size="xs" variant="outline" onClick={devicesState.refresh}>
-              Try again
+              {t("misc.common.tryAgain")}
             </Button>
           </div>
         ) : null}
