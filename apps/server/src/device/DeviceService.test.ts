@@ -1986,12 +1986,14 @@ describe("locating a device id across hosts", () => {
   const macMini = { id: "mac-mini", label: "Mac Mini" };
   const listingHost = (
     host: { readonly id: string; readonly label: string },
-    ids: ReadonlyArray<string>,
+    ids: ReadonlyArray<string | { readonly id: string; readonly name: string }>,
   ): DeviceHost.DeviceHost["Service"] => {
-    const devices = ids.map((id) => ({
-      id,
-      name: id,
-      platform: id.startsWith("Pixel") ? ("android" as const) : ("ios" as const),
+    const devices = ids.map((entry) => ({
+      ...(typeof entry === "string" ? { id: entry, name: entry } : entry),
+      platform:
+        typeof entry !== "string" || entry.startsWith("Pixel")
+          ? ("android" as const)
+          : ("ios" as const),
       version: "test",
       booted: true,
       physical: false,
@@ -2101,6 +2103,77 @@ describe("locating a device id across hosts", () => {
         expect(Option.getOrUndefined(onMac)).toMatchObject({ hostId: "mac-mini", id: "Pixel_10" });
       }),
     ),
+  );
+
+  it.effect("finds a running emulator by the AVD name it was opened with", () =>
+    Effect.gen(function* () {
+      // A booted AVD is listed by its adb serial; its AVD name is only its name.
+      const service = yield* DeviceService.makeWithHosts(
+        new Map([
+          [
+            thisMachine.id,
+            listingHost(thisMachine, [{ id: "emulator-5554", name: "Medium_Phone" }]),
+          ],
+        ]),
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      yield* service.list;
+      const located = yield* service.locateDevice({ deviceId: DeviceId.make("Medium_Phone") });
+      expect(Option.getOrUndefined(located)).toMatchObject({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        id: "emulator-5554",
+      });
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+  );
+
+  it.effect("does not guess between two emulators running the same AVD", () =>
+    Effect.gen(function* () {
+      const service = yield* DeviceService.makeWithHosts(
+        new Map([
+          [
+            thisMachine.id,
+            listingHost(thisMachine, [
+              { id: "emulator-5554", name: "Medium_Phone" },
+              { id: "emulator-5556", name: "Medium_Phone" },
+            ]),
+          ],
+          [macMini.id, listingHost(macMini, [{ id: "emulator-5554", name: "Medium_Phone" }])],
+        ]),
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      yield* service.list;
+      const deviceId = DeviceId.make("Medium_Phone");
+      expect(yield* service.locateDevice({ deviceId }).pipe(Effect.flip)).toMatchObject({
+        _tag: "DeviceHostAmbiguousError",
+      });
+      expect(yield* service.locateDevice({ deviceId, hostId: LOCAL_DEVICE_HOST_ID })).toEqual(
+        Option.none(),
+      );
+      expect(
+        Option.getOrUndefined(yield* service.locateDevice({ deviceId, hostId: "mac-mini" })),
+      ).toMatchObject({ hostId: "mac-mini", id: "emulator-5554" });
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+  );
+
+  it.effect("prefers a listed id to another host's emulator running that AVD", () =>
+    Effect.gen(function* () {
+      const service = yield* DeviceService.makeWithHosts(
+        new Map([
+          [
+            thisMachine.id,
+            listingHost(thisMachine, [{ id: "Medium_Phone", name: "Medium_Phone" }]),
+          ],
+          [macMini.id, listingHost(macMini, [{ id: "emulator-5554", name: "Medium_Phone" }])],
+        ]),
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      yield* service.list;
+      const deviceId = DeviceId.make("Medium_Phone");
+      expect(Option.getOrUndefined(yield* service.locateDevice({ deviceId }))).toMatchObject({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        id: "Medium_Phone",
+      });
+      expect(
+        Option.getOrUndefined(yield* service.locateDevice({ deviceId, hostId: "mac-mini" })),
+      ).toMatchObject({ hostId: "mac-mini", id: "emulator-5554" });
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
   );
 
   it.effect("finds nothing for a device id that no host lists", () =>
