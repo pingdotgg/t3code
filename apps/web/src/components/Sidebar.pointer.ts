@@ -61,7 +61,8 @@ export class SidebarPointerSensor {
     const coordinates = { x: event.clientX, y: event.clientY };
     // Desktop may report buttons=0 before pointerup; drop active context drags before cancelling sort.
     if ((event.buttons & 1) === 0) {
-      if (this.phase === "dragging") this.props.options.onDrop?.(coordinates);
+      if (this.phase === "pending") return this.finish(false);
+      this.props.options.onDrop?.(coordinates);
       return this.cancel();
     }
     if (this.phase === "pending") {
