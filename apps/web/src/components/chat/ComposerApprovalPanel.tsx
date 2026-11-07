@@ -1,3 +1,5 @@
+import { cn } from "../../lib/utils";
+import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { ShieldIcon } from "lucide-react";
 import { use, useEffect, useEffectEvent, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -15,12 +17,14 @@ import {
 export function ComposerApprovalPanel({
   approval,
   count,
+  workspaceRoot,
   disabled,
   isResponding,
   onRespond,
 }: {
   approval: PendingApproval;
   count: number;
+  workspaceRoot?: string | undefined;
   disabled: boolean;
   isResponding: boolean;
   onRespond: (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>;
@@ -110,12 +114,19 @@ export function ComposerApprovalPanel({
       />
       <CollapsiblePanel>
         <ComposerRequestCard.Well>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap p-2 font-mono text-meta text-foreground wrap-anywhere">
+          <div
+            className={cn(
+              "max-h-40 overflow-auto whitespace-pre-wrap p-2 text-meta text-muted-foreground wrap-anywhere",
+              approval.requestKind === "command" && "font-mono text-foreground",
+            )}
+          >
             {approval.detail}
-          </pre>
+          </div>
           {approval.files?.map((file) => (
             <div key={file.path} className="flex min-w-0 items-center gap-2 px-2 pb-1 text-meta">
-              <span className="truncate">{file.path}</span>
+              <span className="truncate text-muted-foreground">
+                {formatWorkspaceRelativePath(file.path, workspaceRoot)}
+              </span>
               <span className="text-success-foreground">
                 {file.additions !== undefined ? `+${file.additions}` : null}
               </span>
