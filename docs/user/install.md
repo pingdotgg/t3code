@@ -94,7 +94,7 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
-The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
+The AUR packages support x86_64 and ARM64.
 Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
 in-app updater.
 
