@@ -120,7 +120,6 @@ import {
   toggleFileDiffFoldForViewed,
   type DiffFoldOverride,
 } from "./pullRequestDiff.logic";
-import { PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import {
@@ -1175,20 +1174,31 @@ function PullRequestCodeTab({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        <PullRequestMetaLine>
-          <span className="shrink-0 tabular-nums">
-            {files.length} {files.length === 1 ? "file" : "files"}
-            {nextCursor === null ? "" : "+"}
-          </span>
+        <span className="flex min-w-0 items-center gap-x-2.5 whitespace-nowrap">
+          {filesViewed.enabled && files.length > 0 ? null : (
+            <span className="shrink-0 tabular-nums">
+              {files.length} {files.length === 1 ? "file" : "files"}
+              {nextCursor === null ? "" : "+"}
+            </span>
+          )}
           {hiddenTestFileCount > 0 ? (
-            <Button type="button" size="xs" variant="link" onClick={() => setHideTestFiles(false)}>
-              {hiddenTestFileCount} test {hiddenTestFileCount === 1 ? "file" : "files"} hidden
+            <Button
+              type="button"
+              size="xs"
+              variant="link"
+              className="min-w-0"
+              onClick={() => setHideTestFiles(false)}
+            >
+              <span className="truncate">
+                {hiddenTestFileCount} test {hiddenTestFileCount === 1 ? "file" : "files"} hidden
+              </span>
             </Button>
           ) : null}
           {filesViewed.enabled && files.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
                 {filePaths.filter(isFileViewed).length} / {files.length}
+                {nextCursor === null ? "" : "+"}
               </span>
               <span className="truncate">
                 {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}
@@ -1264,7 +1274,7 @@ function PullRequestCodeTab({
               </TooltipPopup>
             </Tooltip>
           ) : null}
-        </PullRequestMetaLine>
+        </span>
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <DiffViewControls
