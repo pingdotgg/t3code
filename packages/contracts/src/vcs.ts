@@ -19,16 +19,6 @@ export const VcsFreshness = Schema.Struct({
 });
 export type VcsFreshness = typeof VcsFreshness.Type;
 
-export const VcsDriverCapabilities = Schema.Struct({
-  kind: VcsDriverKind,
-  supportsWorktrees: Schema.Boolean,
-  supportsBookmarks: Schema.Boolean,
-  supportsAtomicSnapshot: Schema.Boolean,
-  supportsPushDefaultRemote: Schema.Boolean,
-  ignoreClassifier: Schema.Literals(["native", "git-compatible-fallback"]),
-});
-export type VcsDriverCapabilities = typeof VcsDriverCapabilities.Type;
-
 export const VcsRepositoryIdentity = Schema.Struct({
   kind: VcsDriverKind,
   rootPath: TrimmedNonEmptyString,
