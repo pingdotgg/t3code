@@ -337,7 +337,8 @@ holds the machines this app knows and those on your T3 Connect account. If this
 app is connected to that machine with a session that manages access there, it
 makes the pairing code itself; otherwise paste one from that machine's
 **Settings → Sharing & access**. From a terminal, use
-`t3 environment link <address> --pairing-code <code> --access <mode>`.
+`t3 environment link <address> --pairing-code <code> --access <mode>`, or set
+`T3CODE_PAIRING_CODE` instead of passing `--pairing-code`.
 
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
