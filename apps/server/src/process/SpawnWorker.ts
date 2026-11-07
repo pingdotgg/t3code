@@ -89,7 +89,7 @@ parentPort.on("message", (request) => {
       children.delete(id);
       post({ type: "close", id });
     });
-    child.stdio.forEach((stream, fd) => {
+    child.stdio?.forEach((stream, fd) => {
       if (!stream) return;
       stream.on("error", (error) => post({ type: "stream-error", id, fd, error: serialize(error) }));
       if (fd === 0) return;
