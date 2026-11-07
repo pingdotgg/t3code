@@ -4060,6 +4060,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                       checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                     }),
+                    ...(existing.endedWatch?.readBlocker !== undefined && {
+                      readBlocker: existing.endedWatch.readBlocker,
+                    }),
                     remarksThrough: startedAt,
                     remarkIds: [],
                     wakes: 0,

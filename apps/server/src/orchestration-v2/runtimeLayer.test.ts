@@ -3255,20 +3255,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 
   it.effect.each([
-    { reason: "failed", activityFails: false },
-    { reason: "not-found", activityFails: false },
-    { reason: "failed", activityFails: true },
-    { reason: "not-found", activityFails: true },
-    { reason: "forbidden", activityFails: true },
+    { reason: "failed", activityFails: false, activityFailure: "failed" },
+    { reason: "not-found", activityFails: false, activityFailure: "failed" },
+    { reason: "failed", activityFails: true, activityFailure: "failed" },
+    { reason: "not-found", activityFails: true, activityFailure: "failed" },
+    { reason: "forbidden", activityFails: false, activityFailure: "failed" },
+    { reason: "forbidden", activityFails: true, activityFailure: "failed" },
+    { reason: "unauthenticated", activityFails: false, activityFailure: "failed" },
+    { reason: "failed", activityFails: true, activityFailure: "forbidden" },
+    { reason: "failed", activityFails: true, activityFailure: "unauthenticated" },
   ] as const)(
-    "handles repeated host read failures: $reason (activity fails: $activityFails)",
-    ({ reason, activityFails }) =>
+    "handles repeated host read failures: $reason (activity fails: $activityFails, $activityFailure)",
+    ({ reason, activityFails, activityFailure }) =>
       Effect.gen(function* () {
+        const scenario = `${reason}-${activityFails}-${activityFailure}`;
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const threadId = ThreadId.make(
-          `runtime-pull-request-watch-unreadable-${reason}-${activityFails}`,
-        );
-        const projectId = ProjectId.make(`pr-watch-unreadable-project-${reason}-${activityFails}`);
+        const threadId = ThreadId.make(`runtime-pull-request-watch-unreadable-${scenario}`);
+        const projectId = ProjectId.make(`pr-watch-unreadable-project-${scenario}`);
         yield* seedProject({
           projectId,
           title: "Watch unreadable",
@@ -3280,7 +3283,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           type: "thread.create",
           createdBy: "user",
           creationSource: "web",
-          commandId: CommandId.make(`pr-watch-unreadable-create-${reason}-${activityFails}`),
+          commandId: CommandId.make(`pr-watch-unreadable-create-${scenario}`),
           threadId,
           projectId,
           title: "Watch unreadable",
@@ -3292,7 +3295,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`pr-watch-unreadable-start-${reason}-${activityFails}`),
+          commandId: CommandId.make(`pr-watch-unreadable-start-${scenario}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
@@ -3303,19 +3306,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         let disconnected = false;
         let passed = false;
         let genericFailure = false;
+        let accessChanged = false;
         const activityFailures = yield* Queue.unbounded<void>();
-        const readFailure = (operation: string, failure: "failed" | "not-found" | "forbidden") =>
+        const readFailure = (
+          operation: string,
+          failure: "failed" | "not-found" | "forbidden" | "unauthenticated",
+        ) =>
           new PullRequestOperationError({
             operation,
             detail: "host read failed",
             cause: new PullRequestProviderError({
               provider: SourceControlProviderKind.make("github"),
               operation,
-              reason: failure,
+              reason: accessChanged
+                ? failure === "forbidden"
+                  ? "unauthenticated"
+                  : failure === "unauthenticated"
+                    ? "forbidden"
+                    : failure
+                : failure,
               detail: "host read failed",
             }),
           });
-        const reactor = yield* PullRequestWatchReactor.make.pipe(
+        const makeReactor = PullRequestWatchReactor.make.pipe(
           Effect.provide(
             Layer.mergeAll(
               NodeServices.layer,
@@ -3349,7 +3362,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 activity: () =>
                   disconnected && activityFails
                     ? Queue.offer(activityFailures, undefined).pipe(
-                        Effect.andThen(Effect.fail(readFailure("activity", "failed"))),
+                        Effect.andThen(Effect.fail(readFailure("activity", activityFailure))),
                       )
                     : Effect.succeed({
                         comments: [],
@@ -3362,6 +3375,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             ),
           ),
         );
+        const reactor = yield* makeReactor;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
         const summaries = Effect.map(
@@ -3372,30 +3386,83 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         assert.deepEqual(yield* summaries, []);
         disconnected = true;
         for (let pass = 0; pass < 15; pass += 1) {
-          genericFailure = reason === "failed" && (pass === 0 || (pass >= 2 && pass <= 8));
+          genericFailure =
+            reason === "failed" &&
+            activityFailure === "failed" &&
+            (pass === 0 || (pass >= 2 && pass <= 8));
           yield* TestClock.adjust("2 minutes");
           yield* sweep;
         }
 
         const thread = yield* orchestrator.getThreadShell(threadId);
-        if (reason !== "failed") {
+        if (reason === "not-found") {
           assert.isUndefined(thread?.pullRequests?.[0]?.watch);
           assert.deepEqual(yield* summaries, ["#8: stopped watching, could not read it"]);
           return;
         }
         assert.isDefined(thread?.pullRequests?.[0]?.watch);
-        assert.deepEqual(yield* summaries, []);
+        const blocked = [reason, activityFailure].some(
+          (failure) => failure === "forbidden" || failure === "unauthenticated",
+        );
+        const expected = blocked ? ["#8: host access blocked, watching for recovery"] : [];
+        assert.deepEqual(yield* summaries, expected);
+        if (blocked) {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`pr-watch-blocked-stop-${scenario}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 8,
+            watching: false,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`pr-watch-blocked-resume-${scenario}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 8,
+            watching: true,
+          });
+          const restarted = yield* makeReactor;
+          for (let pass = 0; pass < 10; pass += 1) {
+            yield* TestClock.adjust("2 minutes");
+            yield* restarted.sweep;
+            yield* worker.drain();
+          }
+          assert.deepEqual(yield* summaries, expected);
+          accessChanged = true;
+          for (let pass = 0; pass < 10; pass += 1) {
+            yield* TestClock.adjust("2 minutes");
+            yield* restarted.sweep;
+            yield* worker.drain();
+          }
+          assert.deepEqual(yield* summaries, expected);
+        }
         disconnected = false;
         genericFailure = false;
         passed = true;
         yield* sweep;
-        assert.deepEqual(yield* summaries, ["#8: checks passed"]);
+        assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+        assert.isUndefined(
+          (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.readBlocker,
+        );
         yield* TestClock.adjust("10 minutes");
         yield* sweep;
-        assert.deepEqual(yield* summaries, ["#8: checks passed"]);
+        assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+        if (blocked) {
+          disconnected = true;
+          accessChanged = false;
+          for (let pass = 0; pass < 15; pass += 1) {
+            yield* TestClock.adjust("2 minutes");
+            yield* sweep;
+          }
+          assert.deepEqual(yield* summaries, [...expected, "#8: checks passed", ...expected]);
+        }
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`pr-watch-unreadable-stop-${reason}-${activityFails}`),
+          commandId: CommandId.make(`pr-watch-unreadable-stop-${scenario}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
