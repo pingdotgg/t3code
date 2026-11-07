@@ -76,6 +76,7 @@ import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMuta
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const decodeServerProvider = Schema.decodeSync(ServerProvider);
@@ -1488,6 +1489,167 @@ it.layer(
         [...previousProvider.models],
       );
     });
+
+    it.effect.each(["all", "single", "disabled", "uninstalled", "non-refreshable"] as const)(
+      "%s model refresh preserves cached models and skips ineligible instances",
+      (target) =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("antigravity");
+          const firstId = ProviderInstanceId.make("antigravity_first");
+          const secondId = ProviderInstanceId.make("antigravity_second");
+          const thirdId = ProviderInstanceId.make("antigravity_third");
+          const skippedIds = {
+            disabled: ProviderInstanceId.make("antigravity_disabled"),
+            uninstalled: ProviderInstanceId.make("antigravity_uninstalled"),
+            "non-refreshable": ProviderInstanceId.make("antigravity_static"),
+          };
+          const driverError = new ProviderDriverError({
+            driver,
+            instanceId: firstId,
+            detail: "Model refresh failed.",
+            cause: new Error("native refresh failure"),
+          });
+          const thirdStarted = yield* Deferred.make<void>();
+          const calls = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+          const activeRefreshes = yield* Ref.make(0);
+          const maxRefreshes = yield* Ref.make(0);
+          const model = (slug: string) => ({
+            slug,
+            name: slug,
+            isCustom: false,
+            capabilities: null,
+          });
+          const makeInstance = Effect.fn("Test.makeModelRefreshInstance")(function* (
+            instanceId: ProviderInstanceId,
+            options: { enabled?: boolean; installed?: boolean; refreshable?: boolean } = {},
+          ) {
+            const snapshot = yield* Ref.make<ServerProvider>({
+              instanceId,
+              driver,
+              enabled: options.enabled ?? true,
+              installed: options.installed ?? true,
+              version: "1.1.1",
+              status: "ready",
+              auth: { status: "authenticated" },
+              checkedAt: "2026-10-25T00:00:00.000Z",
+              models: [model("cached-model")],
+              slashCommands: [],
+              skills: [],
+            });
+            return {
+              instanceId,
+              driverKind: driver,
+              continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+              displayName: undefined,
+              enabled: options.enabled ?? true,
+              snapshot: {
+                getSnapshot: Ref.get(snapshot),
+                refresh: Ref.get(snapshot),
+                resolveMaintenance: () =>
+                  Effect.succeed(
+                    makeManualOnlyProviderMaintenanceCapabilities({
+                      provider: driver,
+                      packageName: null,
+                    }),
+                  ),
+                streamChanges: Stream.empty,
+                applyUsageLimits: () => Effect.void,
+              },
+              ...(options.refreshable === false
+                ? {}
+                : {
+                    refreshModels: () =>
+                      Effect.gen(function* () {
+                        yield* Ref.update(calls, (ids) => [...ids, instanceId]);
+                        if (instanceId === firstId) {
+                          return yield* driverError;
+                        }
+                        const active = yield* Ref.updateAndGet(
+                          activeRefreshes,
+                          (count) => count + 1,
+                        );
+                        yield* Ref.update(maxRefreshes, (count) => Math.max(count, active));
+                        yield* instanceId === secondId
+                          ? Deferred.await(thirdStarted)
+                          : Deferred.succeed(thirdStarted, undefined);
+                        yield* Ref.update(snapshot, (provider) => ({
+                          ...provider,
+                          models: [model("refreshed-model")],
+                        }));
+                        yield* Ref.update(activeRefreshes, (count) => count - 1);
+                      }),
+                  }),
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            } satisfies ProviderInstance;
+          });
+          const instances = [
+            yield* makeInstance(firstId),
+            yield* makeInstance(secondId),
+            yield* makeInstance(thirdId),
+            yield* makeInstance(skippedIds.disabled, { enabled: false }),
+            yield* makeInstance(skippedIds.uninstalled, { installed: false }),
+            yield* makeInstance(skippedIds["non-refreshable"], { refreshable: false }),
+          ];
+          const instanceLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+            listInstances: Effect.succeed(instances),
+            getInstance: (id) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          });
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            if (target === "single") {
+              const failure = yield* registry.refreshModels(firstId).pipe(Effect.flip);
+              assert.equal(failure.instanceId, firstId);
+              assert.equal(failure.operation, "refresh-models");
+              assert.equal(failure.detail, driverError.detail);
+              assert.strictEqual(failure.cause, driverError);
+            } else {
+              yield* registry.refreshModels(target === "all" ? undefined : skippedIds[target]);
+            }
+            assert.sameMembers(
+              [...(yield* Ref.get(calls))],
+              target === "all"
+                ? [firstId, secondId, thirdId]
+                : target === "single"
+                  ? [firstId]
+                  : [],
+            );
+            assert.equal(yield* Ref.get(maxRefreshes), target === "all" ? 2 : 0);
+            assert.deepEqual(
+              Object.fromEntries(
+                (yield* registry.getProviders).map((provider) => [
+                  provider.instanceId,
+                  provider.models.map((entry) => entry.slug),
+                ]),
+              ),
+              {
+                [firstId]: ["cached-model"],
+                [secondId]: [target === "all" ? "refreshed-model" : "cached-model"],
+                [thirdId]: [target === "all" ? "refreshed-model" : "cached-model"],
+                [skippedIds.disabled]: ["cached-model"],
+                [skippedIds.uninstalled]: ["cached-model"],
+                [skippedIds["non-refreshable"]]: ["cached-model"],
+              },
+            );
+          }).pipe(
+            Effect.provide(
+              ProviderRegistry.layer.pipe(
+                Layer.provide(instanceLayer),
+                Layer.provide(layerUnusedMutator),
+                Layer.provide(
+                  ServerConfig.layerTest(process.cwd(), {
+                    prefix: "t3-provider-registry-model-refresh-",
+                  }),
+                ),
+              ),
+            ),
+          );
+        }),
+    );
 
     it.effect("invalidates model caches only for an explicit model refresh", () =>
       Effect.gen(function* () {

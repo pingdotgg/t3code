@@ -13,6 +13,7 @@ import {
   TurnItemId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSetupError,
   SourceControlRepositoryError,
   WS_METHODS,
   WsRpcGroup,
@@ -32,12 +33,14 @@ import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { Rpc, RpcGroup, RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
@@ -82,6 +85,7 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
@@ -144,6 +148,10 @@ import {
   WS_RPC_SERVER_OPTIONS,
   withLateConfigDiscovery,
 } from "./ws.ts";
+
+const decodeModelRefreshExit = Schema.decodeUnknownEffect(
+  Schema.toCodecJson(Rpc.exitSchema(WsServerRefreshProvidersRpc)),
+);
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
@@ -1346,6 +1354,151 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     ),
     Effect.scoped,
   ),
+);
+
+it.effect.each(["all", "single"] as const)(
+  "%s model refresh RPC encodes responses without internal causes",
+  (target) =>
+    Effect.gen(function* () {
+      const driver = ProviderDriverKind.make("antigravity");
+      const firstId = ProviderInstanceId.make("antigravity_first");
+      const privateCode = "private-model-refresh-oauth-code";
+      const driverError = new ProviderDriverError({
+        driver,
+        instanceId: firstId,
+        detail: "Model refresh failed.",
+        cause: new Error(`https://oauth.invalid/callback?code=${privateCode}`),
+      });
+      const providers: ReadonlyArray<ServerProvider> = [
+        {
+          instanceId: firstId,
+          driver,
+          enabled: true,
+          installed: true,
+          version: "1.1.1",
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-10-25T00:00:00.000Z",
+          models: [{ slug: "model", name: "Model", isCustom: false, capabilities: null }],
+          slashCommands: [],
+          skills: [],
+        },
+      ];
+      const requests = yield* Queue.unbounded<ProviderInstanceId | undefined>();
+      const registryLayer = Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed(providers),
+        refresh: () => Effect.succeed(providers),
+        refreshInstance: () => Effect.succeed(providers),
+        invalidateModelCaches: () => Effect.void,
+        streamChanges: Stream.empty,
+        refreshModels: (instanceId) =>
+          Queue.offer(requests, instanceId).pipe(
+            Effect.andThen(
+              instanceId === undefined
+                ? Effect.succeed(providers)
+                : Effect.fail(
+                    new ProviderSetupError({
+                      instanceId,
+                      operation: "refresh-models",
+                      detail: driverError.detail,
+                      cause: driverError,
+                    }),
+                  ),
+            ),
+          ),
+      });
+      const responses = yield* Queue.unbounded<RpcMessage.ResponseExitEncoded>();
+      const receive = yield* Deferred.make<Parameters<RpcServer.Protocol["Service"]["run"]>[0]>();
+      const protocol = yield* RpcServer.Protocol.make((write) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(receive, write);
+          const serialization = yield* RpcSerialization.RpcSerialization;
+          return {
+            disconnects: yield* Queue.unbounded<number>(),
+            send: (_clientId, response) =>
+              response._tag === "Exit" ? Queue.offer(responses, response) : Effect.void,
+            end: () => Effect.void,
+            clientIds: Effect.succeed(new Set([0])),
+            initialMessage: Effect.succeedNone,
+            supportsAck: true,
+            supportsTransferables: false,
+            supportsSpanPropagation: false,
+            supportsNotifications: true,
+            codecFor: serialization.codecFor,
+          };
+        }),
+      );
+      const services = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        registryLayer,
+        Layer.mock(UsageLimitSources.UsageLimitSources)({ refresh: Effect.void }),
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      );
+      yield* RpcServer.make(RpcGroup.make(WsServerRefreshProvidersRpc), WS_RPC_SERVER_OPTIONS).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("model-refresh-test"),
+              subject: "model-refresh-test",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
+            { secretReferences: true },
+          ).pipe(Layer.provide(services)),
+        ),
+        Effect.provideService(RpcServer.Protocol, protocol),
+        Effect.forkScoped,
+      );
+      const write = yield* Deferred.await(receive);
+      yield* write(0, {
+        _tag: "Request",
+        id: "refresh-models",
+        tag: WS_METHODS.serverRefreshProviders,
+        payload: { refreshModels: true, ...(target === "single" ? { instanceId: firstId } : {}) },
+        headers: [],
+      });
+      const encoded = yield* Queue.take(responses);
+      assert.equal(yield* Queue.take(requests), target === "single" ? firstId : undefined);
+      assert.notInclude(JSON.stringify(encoded), privateCode);
+      const response = yield* decodeModelRefreshExit(encoded.exit);
+      if (target === "single") {
+        assert.equal(response._tag, "Failure");
+        if (response._tag === "Failure") {
+          const error = Cause.findErrorOption(response.cause).pipe(Option.getOrThrow);
+          assert.equal(error._tag, "ProviderSetupError");
+          if (error._tag === "ProviderSetupError") {
+            assert.equal(error.instanceId, firstId);
+            assert.equal(error.operation, "refresh-models");
+            assert.equal(error.detail, "Model refresh failed.");
+            assert.isUndefined(error.cause);
+          }
+        }
+        return;
+      }
+      assert.equal(response._tag, "Success");
+      if (response._tag === "Success") {
+        assert.deepEqual(response.value, { providers });
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          RpcSerialization.layerJson,
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
 );
 
 it.effect("a publish whose push fails still refreshes the new remote", () =>

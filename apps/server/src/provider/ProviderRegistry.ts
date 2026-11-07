@@ -2,6 +2,7 @@ import {
   defaultInstanceIdForDriver,
   isProviderWorkspaceSnapshotCurrent,
   ProviderDriverKind,
+  ProviderSetupError,
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdateState,
@@ -63,6 +64,10 @@ export class ProviderRegistry extends Context.Service<
     readonly refreshInstance: (
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    readonly refreshModels: (
+      instanceId?: ProviderInstanceId,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderSetupError>;
 
     /** Re-reads secret-backed environments first, so a fixed secret applies without a restart. */
     readonly reloadSecretsAndRefresh: (
@@ -685,6 +690,58 @@ export const layer = Layer.effect(
       return yield* refreshOneSource(instance);
     });
 
+    const refreshModels = Effect.fn("ProviderRegistry.refreshModels")(function* (
+      instanceId?: ProviderInstanceId,
+    ) {
+      yield* syncLiveSourcesAndContinue;
+      const providers = yield* Ref.get(providersRef);
+      const instances = yield* instanceRegistry.listInstances;
+      yield* Effect.forEach(
+        instances,
+        (instance) => {
+          if (
+            !instance.refreshModels ||
+            (instanceId !== undefined && instanceId !== instance.instanceId) ||
+            !providers.some(
+              (provider) =>
+                provider.instanceId === instance.instanceId &&
+                provider.enabled &&
+                provider.installed,
+            )
+          ) {
+            return Effect.void;
+          }
+          const refresh = instance.refreshModels().pipe(
+            Effect.mapError(
+              (error) =>
+                new ProviderSetupError({
+                  instanceId: instance.instanceId,
+                  operation: "refresh-models",
+                  detail: error.detail,
+                  cause: error,
+                }),
+            ),
+            Effect.andThen(
+              refreshInstance(instance.instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+            ),
+            Effect.asVoid,
+          );
+          return instanceId === undefined
+            ? refresh.pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("provider model refresh failed", {
+                    instanceId: instance.instanceId,
+                    detail: error.detail,
+                  }),
+                ),
+              )
+            : refresh;
+        },
+        { concurrency: 2, discard: true },
+      );
+      return yield* Ref.get(providersRef);
+    });
+
     const reloadSecretsAndRefresh = Effect.fn("reloadSecretsAndRefresh")(function* (
       instanceId?: ProviderInstanceId,
     ) {
@@ -1080,6 +1137,7 @@ export const layer = Layer.effect(
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,
+      refreshModels,
       invalidateModelCaches,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
