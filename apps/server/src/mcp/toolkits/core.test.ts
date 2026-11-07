@@ -15,6 +15,7 @@ import {
   RunId,
   ScheduledTaskError,
   ScheduledTask,
+  type ScheduledTaskUpsertInput,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -687,6 +688,12 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const fresh = yield* call("schedule_task", {
+      scheduledTaskId: "task-auto",
+      freshSession: true,
+    });
+    expect(fresh.isError).toBe(false);
+    expect(upserted.at(-1)).toMatchObject({ id: "task-auto", threadMode: "fresh_session" });
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
     expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
@@ -708,9 +715,12 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
                 ],
               }),
             upsert: (input) =>
-              Effect.succeed({
-                task: { ...(scheduledTask(input.id ?? "task-auto", "auto") as object), ...input },
-              } as never),
+              Effect.sync(() => {
+                upserted.push(input);
+                return {
+                  task: { ...(scheduledTask(input.id ?? "task-auto", "auto") as object), ...input },
+                } as never;
+              }),
           }),
         ),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
@@ -723,6 +733,8 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
     ),
   ),
 );
+
+const upserted: Array<ScheduledTaskUpsertInput> = [];
 
 it.effect.each([
   {
