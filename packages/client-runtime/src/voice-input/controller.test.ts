@@ -279,6 +279,31 @@ describe("resolveTranscriptCommit", () => {
     });
   });
 
+  it.each([
+    [
+      "at the start of the selection",
+      { start: 6, end: 11 },
+      "hello [cite]world",
+      "hello [cite]new text",
+    ],
+    [
+      "inside the selection",
+      { start: 6, end: 11 },
+      "hello wo[cite]rld",
+      "hello wo[cite]rld new text",
+    ],
+    ["at the caret", { start: 6, end: 6 }, "hello [cite] world", "hello [cite] new text world"],
+  ])("keeps text inserted %s while recording", (_, selection, current, expected) => {
+    const captured = draft({ text: "hello world", selection });
+    const result = resolveTranscriptCommit(
+      captured,
+      draft({ text: current, selection: { start: 0, end: 0 } }),
+      "new text",
+      "en-US",
+    );
+    expect(result).toMatchObject({ kind: "commit", text: expected });
+  });
+
   it("does not insert into a missing draft or another owner's draft", () => {
     const captured = draft();
     expect(resolveTranscriptCommit(captured, null, "text", "en-US")).toEqual({ kind: "stale" });

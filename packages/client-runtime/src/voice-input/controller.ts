@@ -136,14 +136,21 @@ export function resolveTranscriptCommit(
   ) {
     suffix += 1;
   }
-  const map = (position: number) =>
-    position <= prefix
+  const editEnd = before.length - suffix;
+  const map = (position: number, afterInsertion: boolean) =>
+    position < prefix || (position === prefix && !afterInsertion)
       ? position
-      : position >= before.length - suffix
+      : position >= editEnd
         ? position + text.length - before.length
         : text.length - suffix;
-  const start = map(captured.selection.start);
-  const end = map(captured.selection.end);
+  const mapped = [map(captured.selection.start, true), map(captured.selection.end, false)] as const;
+  // Replace the selection only while it still holds what was selected; never incoming edits.
+  const keepsSelection =
+    mapped[0] <= mapped[1] &&
+    text.slice(mapped[0], mapped[1]) ===
+      before.slice(captured.selection.start, captured.selection.end);
+  const end = keepsSelection ? mapped[1] : Math.max(mapped[0], mapped[1]);
+  const start = keepsSelection ? mapped[0] : end;
   const isEmptySelection = start === end;
   const language = locale.split(/[-_]/)[0]!.toLowerCase();
   let insertion = replacement;
