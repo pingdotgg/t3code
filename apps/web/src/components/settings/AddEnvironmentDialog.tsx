@@ -39,7 +39,6 @@ import {
 } from "../ui/dialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { AnimatedHeight } from "../AnimatedHeight";
 import { environmentCatalog } from "~/connection/catalog";
@@ -588,9 +587,9 @@ export function AddEnvironmentDialog({
           </label>
         </div>
         {error || discoveredSshHostsError ? (
-          <Alert variant="error">
-            <AlertDescription>{error ?? discoveredSshHostsError}</AlertDescription>
-          </Alert>
+          <p role="alert" className="text-xs text-destructive">
+            {error ?? discoveredSshHostsError}
+          </p>
         ) : null}
         <Button
           variant="outline"
