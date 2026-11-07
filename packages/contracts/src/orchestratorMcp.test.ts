@@ -4,10 +4,12 @@ import * as Schema from "effect/Schema";
 import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpThreadListInput,
 } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
+const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
 
 describe("orchestrator MCP contracts", () => {
   it("decodes cross-provider delegated task requests and durable results", () => {
@@ -65,5 +67,20 @@ describe("orchestrator MCP contracts", () => {
         pendingApproval: { ...pendingApproval, kind: "user_input" },
       }),
     ).toThrow();
+  });
+
+  it("decodes pull request list filters and rejects an empty pullRequest identity", () => {
+    expect(
+      decodeThreadListInput({
+        allProjects: true,
+        pullRequestStates: ["open"],
+        pullRequest: { number: 22889, repository: "acme/app" },
+      }),
+    ).toMatchObject({
+      allProjects: true,
+      pullRequestStates: ["open"],
+      pullRequest: { number: 22889, repository: "acme/app" },
+    });
+    expect(() => decodeThreadListInput({ pullRequest: { repository: "acme/app" } })).toThrow();
   });
 });
