@@ -13,6 +13,7 @@ import {
   type OrchestrationV2LinkOrigin,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2RunLaunchEvidence,
   type ProviderDriverKind,
   type ProviderInteractionMode,
   ProjectId,
@@ -23,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -66,6 +68,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
+      readonly requireFreshOrigin?: boolean | undefined;
     };
 
 export interface ThreadLaunchInitialMessage {
@@ -314,6 +317,10 @@ const make = Effect.gen(function* () {
     let setupTerminalId: string | null = null;
     let workspaceRecorded = false;
     let runReleased = false;
+    const requireFreshOrigin =
+      input.workspaceStrategy.type === "worktree" &&
+      input.workspaceStrategy.requireFreshOrigin === true;
+    let fetchedBase: { commitSha: string; remoteRefName: string; fetchedAt: string } | null = null;
     // Stop background renames before forgetting worktrees; completed renames record them again.
     let branchRename: Fiber.Fiber<unknown> | null = null;
     if (input.workspaceStrategy.type === "worktree") {
@@ -397,8 +404,9 @@ const make = Effect.gen(function* () {
         }
         let startRef = input.workspaceStrategy.baseRef;
         let baseRefName = input.workspaceStrategy.baseRef;
-        const remote =
-          input.workspaceStrategy.startFromOrigin === true
+        const remote = requireFreshOrigin
+          ? { remoteName: "origin", branchName: input.workspaceStrategy.baseRef }
+          : input.workspaceStrategy.startFromOrigin === true
             ? yield* git
                 .resolveWorktreeBaseRemote({
                   cwd: project.workspaceRoot,
@@ -417,9 +425,18 @@ const make = Effect.gen(function* () {
             })
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
           if (remoteBase !== null) {
+            fetchedBase = { ...remoteBase, fetchedAt: DateTime.formatIso(yield* DateTime.now) };
             startRef = remoteBase.commitSha;
             baseRefName = `refs/remotes/${remoteBase.remoteRefName}`;
           }
+          if (requireFreshOrigin && remoteBase === null)
+            return yield* mapError(
+              input,
+              "provision-worktree",
+              threadId,
+            )(
+              "The requested origin branch could not be fetched; a local fallback cannot be verified.",
+            );
         }
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
         if (
@@ -625,14 +642,14 @@ const make = Effect.gen(function* () {
               status: completion.exitCode === 0 ? "done" : "failed",
               detail: `exited with ${completion.exitCode ?? "no exit code"}`,
             });
-            if (completion.exitCode !== 0 && !setup.async)
+            if (completion.exitCode !== 0 && (!setup.async || requireFreshOrigin))
               return yield* mapError(
                 input,
                 "run-setup-script",
                 threadId,
               )(`Setup script exited with ${completion.exitCode ?? "no exit code"}.`);
           });
-          if (setup.async) {
+          if (setup.async && !requireFreshOrigin) {
             awaitAsyncSetup = awaitCompletion.pipe(
               Effect.catchCause((cause) =>
                 setupTracker.stage(threadId, "setup-script", {
@@ -645,6 +662,12 @@ const make = Effect.gen(function* () {
             yield* awaitCompletion;
           }
         } else {
+          if (requireFreshOrigin)
+            return yield* mapError(
+              input,
+              "run-setup-script",
+              threadId,
+            )("Setup completion is unavailable for a verified checkout.");
           yield* setupTracker.stageStatus(threadId, "setup-script", "done");
         }
       } else {
@@ -653,6 +676,37 @@ const make = Effect.gen(function* () {
       yield* setupTracker.markUncancellable(threadId);
       yield* setupTracker.stageStatus(threadId, "agent", "running");
       if (runId !== null) {
+        if (requireFreshOrigin && fetchedBase !== null && worktreePath !== null) {
+          const inspected = yield* git
+            .inspectCheckout(worktreePath)
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+          if (!inspected.clean || inspected.commitSha !== fetchedBase.commitSha)
+            return yield* mapError(
+              input,
+              "provision-worktree",
+              threadId,
+            )("The prepared checkout is dirty or no longer matches the fetched origin commit.");
+          const workspace: Pick<
+            OrchestrationV2RunLaunchEvidence,
+            "recordedAt" | "fetchedAt" | "worktreePath" | "originRef" | "commitSha" | "treeSha"
+          > = {
+            recordedAt: DateTime.formatIso(yield* DateTime.now),
+            fetchedAt: fetchedBase.fetchedAt,
+            worktreePath,
+            originRef: `refs/remotes/${fetchedBase.remoteRefName}`,
+            commitSha: inspected.commitSha,
+            treeSha: inspected.treeSha,
+          };
+          yield* threads
+            .dispatch({
+              type: "prepared-run.record-workspace",
+              commandId: CommandId.make(`${input.commandId}:workspace-evidence`),
+              threadId,
+              runId,
+              workspace,
+            })
+            .pipe(Effect.mapError(mapError(input, "release-run", threadId)));
+        }
         yield* threads
           .dispatch({
             type: "prepared-run.release",
@@ -1130,6 +1184,19 @@ const make = Effect.gen(function* () {
       messageIds: [run.userMessageId],
     });
     const message = messages.find((candidate) => candidate.id === run.userMessageId);
+    if (
+      workspacePreparation.type === "worktree" &&
+      workspacePreparation.requireFreshOrigin === true &&
+      thread.worktreePath !== null
+    )
+      return yield* new ThreadLaunchError({
+        commandId: input.commandId,
+        projectId: thread.projectId,
+        threadId: input.threadId,
+        operation: "provision-worktree",
+        cause:
+          "A verified origin launch requires a new worktree; an existing checkout cannot be reused.",
+      });
     const reuse =
       workspacePreparation.type === "worktree" &&
       thread.worktreePath !== null &&

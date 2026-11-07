@@ -588,6 +588,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "message.dispatch":
     case "notification.delivery.accept":
     case "prepared-run.release":
+    case "prepared-run.record-workspace":
     case "prepared-run.progress":
     case "prepared-run.fail":
     case "prepared-run.retry":
@@ -10257,7 +10258,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
 
   const loadProjectionForCommand = <K extends ProjectionRecordField>(
-    command: OrchestrationV2Command,
+    command: OrchestrationV2ServerCommand,
     fields: ReadonlyArray<K>,
     filter?: ProjectionRecordFilter,
   ) =>
@@ -10372,6 +10373,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const resolvedRuntimePolicy = yield* runtimePolicy
         .resolve({ thread: projection.thread, modelSelection: state.run.modelSelection })
         .pipe(mapDispatchError(command));
+      if (
+        state.run.workspacePreparation?.type === "worktree" &&
+        state.run.workspacePreparation.requireFreshOrigin === true &&
+        (state.run.launchEvidence === undefined ||
+          state.run.launchEvidence.worktreePath !== projection.thread.worktreePath ||
+          !modelSelectionsEqual(state.run.launchEvidence.modelSelection, state.run.modelSelection))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "A verified origin run cannot start without matching server-recorded launch evidence.",
+        });
+      }
       const checkpointScope = yield* checkpointService
         .prepareRootRunScope({
           threadId: command.threadId,
@@ -10438,6 +10453,54 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     },
   );
+
+  const dispatchPreparedRunRecordWorkspace = Effect.fn(
+    "Orchestrator.dispatchPreparedRunRecordWorkspace",
+  )(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "prepared-run.record-workspace" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* loadProjectionForCommand(command, ["runs", "messages"]);
+    const run = projection.runs.find((candidate) => candidate.id === command.runId);
+    const message = projection.messages.find((candidate) => candidate.id === run?.userMessageId);
+    if (
+      run?.status !== "preparing" ||
+      run.launchEvidence !== undefined ||
+      message === undefined ||
+      run.workspacePreparation?.type !== "worktree" ||
+      run.workspacePreparation.requireFreshOrigin !== true ||
+      projection.thread.worktreePath !== command.workspace.worktreePath
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Only a preparing run with a verified new worktree can record launch evidence.",
+      });
+    }
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "run.updated",
+      threadId: command.threadId,
+      runId: run.id,
+      ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: yield* DateTime.now,
+      payload: {
+        ...run,
+        launchEvidence: {
+          ...command.workspace,
+          userMessageId: run.userMessageId,
+          taskPrompt: message.text,
+          modelSelection: run.modelSelection,
+        },
+      },
+    });
+  });
 
   const dispatchPreparedRunFail = Effect.fn("Orchestrator.dispatchPreparedRunFail")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "prepared-run.fail" }>,
@@ -13552,6 +13615,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "prepared-run.release":
         yield* dispatchPreparedRunRelease(command, events, effects);
+        break;
+      case "prepared-run.record-workspace":
+        yield* dispatchPreparedRunRecordWorkspace(command, events);
         break;
       case "prepared-run.progress":
         yield* dispatchPreparedRunProgress(command, events);

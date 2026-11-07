@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
+  type OrchestrationV2RunLaunchEvidence,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
@@ -718,6 +719,51 @@ export const layer: Layer.Layer<
       }
       const resolvedRuntimePolicy = resolvedPolicy.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
+      let verifiedProviderStart: OrchestrationV2RunLaunchEvidence["providerStart"];
+      if (
+        run.workspacePreparation?.type === "worktree" &&
+        run.workspacePreparation.requireFreshOrigin === true &&
+        attempt.reason === "initial"
+      ) {
+        const evidence = run.launchEvidence;
+        const cwd = resolvedRuntimePolicy.cwd;
+        const inspected =
+          evidence !== undefined &&
+          cwd === evidence.worktreePath &&
+          modelSelectionsEqual(evidence.modelSelection, run.modelSelection)
+            ? yield* gitWorkflow.inspectCheckout(cwd).pipe(Effect.result)
+            : null;
+        if (inspected?._tag === "Failure" && input.willRetry === true) {
+          return yield* inspected.failure;
+        }
+        if (
+          evidence === undefined ||
+          inspected === null ||
+          inspected._tag === "Failure" ||
+          !inspected.success.clean ||
+          inspected.success.commitSha !== evidence.commitSha ||
+          inspected.success.treeSha !== evidence.treeSha
+        ) {
+          yield* settleStartFailure({
+            signal: "verified-checkout-mismatch",
+            title: "Verified checkout changed before execution",
+            error:
+              inspected?._tag === "Failure"
+                ? inspected.failure
+                : new ProviderTurnStartError({
+                    runId: run.id,
+                    cause: "The prepared checkout identity changed before provider execution.",
+                  }),
+            message:
+              "The execution checkout no longer matches its recorded origin commit and tree.",
+          });
+          return;
+        }
+        verifiedProviderStart = {
+          attemptId: attempt.id,
+          verifiedAt: DateTime.formatIso(yield* DateTime.now),
+        };
+      }
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
@@ -1444,6 +1490,11 @@ export const layer: Layer.Layer<
       };
       const runningRun: OrchestrationV2Run = {
         ...run,
+        ...(run.launchEvidence !== undefined && verifiedProviderStart !== undefined
+          ? {
+              launchEvidence: { ...run.launchEvidence, providerStart: verifiedProviderStart },
+            }
+          : {}),
         status: "running",
         startedAt: now,
       };

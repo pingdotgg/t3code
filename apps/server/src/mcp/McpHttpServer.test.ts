@@ -590,7 +590,7 @@ it.effect.each(["limit", "runLimit", "maxCharsPerItem"])(
 
 it("keeps cross-tool routing out of the delegate_task description", () => {
   const description = OrchestratorToolkit.tools.delegate_task.description ?? "";
-  expect(description).toContain("Start one child agent with only `task`");
+  expect(description).toContain("Start child with task only");
   // Review rounds, follow-ups, and polling are routed in the system text.
   expect(description).not.toContain("t3_thread_send");
   expect(description).not.toContain("Do not poll");

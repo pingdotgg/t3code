@@ -38,6 +38,9 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
+  OrchestrationV2RunLaunchEvidence,
+  OrchestrationV2RunAttempt,
+  OrchestrationV2ProviderTurn,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
@@ -96,7 +99,7 @@ export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.T
 export const OrchestratorMcpTarget = Schema.Struct({
   providerInstanceId: Schema.optional(
     ProviderInstanceId.annotate({
-      description: "Provider instance id from `orchestrator_capabilities`.",
+      description: "Instance id from orchestrator_capabilities.",
     }),
   ),
   driverKind: Schema.optional(
@@ -107,20 +110,17 @@ export const OrchestratorMcpTarget = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   options: Schema.optional(
     OrchestratorMcpTargetOptions.annotate({
-      description:
-        "Options from `orchestrator_capabilities`, such as {effort:'max'}. Given values override inherited. [] or {} clears.",
+      description: "Catalog options, e.g. {effort:'max'}. Override inherited; []/{} clears.",
     }),
   ),
   environmentId: Schema.optional(
     EnvironmentId.annotate({
-      description:
-        "Linked environment to run in. Provider and model default to yours; others come from `orchestrator_capabilities` with this `environmentId`.",
+      description: "Linked environment. Inherit provider/model; discover others there.",
     }),
   ),
   projectId: Schema.optional(
     ProjectId.annotate({
-      description:
-        "With `environmentId`: its project to run in. Default: the one with this project's repository.",
+      description: "With environmentId: target project. Default: matching repository.",
     }),
   ),
 });
@@ -173,23 +173,25 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out.",
+        "Default shared: parent checkout. worktree: separate parent-commit checkout; no uncommitted edits.",
     }),
   ),
+  worktreeBaseBranch: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "Local worktree: fetch origin branch; verify clean before execution.",
+  }),
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
-      description:
-        "Default 'async'. 'wait' only if this turn needs the result. A question or approval ends the wait.",
+      description: "Default async. wait only when needed this turn; ends on question/approval.",
     }),
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
-    description: "Mode 'wait' only. Default 10 min. A timeout does not cancel the child.",
+    description: "wait only: default 10 min; timeout leaves child running.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(
     OrchestratorMcpRuntimeMode.annotate({
       description:
-        "Omit unless the user asks for a supervised child. Narrow modes pause for human approval, not read-only. Above yours is rejected.",
+        "Omit unless supervised child requested. Narrow modes need human approval, not read-only. Cannot exceed yours.",
     }),
   ),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
@@ -237,11 +239,50 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description: "True only on the timed-out wait call. The child keeps running.",
   }),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
+  executionEvidence: Schema.optional(
+    Schema.Struct({
+      version: Schema.Literal(1),
+      environmentId: EnvironmentId,
+      parentThreadId: ThreadId,
+      parentRunId: RunId,
+      projectId: ProjectId,
+      providerDriver: ProviderDriverKind,
+      taskId: NodeId,
+      childThreadId: ThreadId,
+      runId: RunId,
+      launch: OrchestrationV2RunLaunchEvidence,
+      attempts: Schema.Array(
+        Schema.Struct({
+          ...OrchestrationV2RunAttempt.fields,
+          startedAt: Schema.NullOr(IsoDateTime),
+          completedAt: Schema.NullOr(IsoDateTime),
+        }),
+      ),
+      providerTurns: Schema.Array(
+        Schema.Struct({
+          ...OrchestrationV2ProviderTurn.fields,
+          startedAt: Schema.NullOr(IsoDateTime),
+          completedAt: Schema.NullOr(IsoDateTime),
+        }),
+      ),
+      resultMessageId: Schema.NullOr(MessageId),
+      resultTurnItemId: Schema.NullOr(TurnItemId),
+      status: OrchestratorMcpTerminalDelegatedTaskStatus,
+      startedAt: IsoDateTime,
+      completedAt: IsoDateTime,
+      result: Schema.String,
+      sha256: Schema.String,
+    }),
+  ),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 
 export const OrchestratorMcpTaskStatusInput = Schema.Struct({
   taskId: NodeId,
+  includeExecutionEvidence: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Settled local leaf + verified origin checkout only; missing facts fail. SHA-256: integrity, not attestation/success.",
+  }),
 });
 export type OrchestratorMcpTaskStatusInput = typeof OrchestratorMcpTaskStatusInput.Type;
 

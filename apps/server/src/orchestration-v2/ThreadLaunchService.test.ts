@@ -61,6 +61,8 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitManager from "../git/GitManager.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -1056,12 +1058,35 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect.each(["stable", "upstream/release"])(
-  "launches from %s with the fetched commit and remote PR base",
-  (baseRef) =>
+it.effect.each([
+  {
+    baseRef: "stable",
+    remoteName: "upstream",
+    remoteBranch: "release",
+    verify: false,
+    mutation: "none",
+  },
+  {
+    baseRef: "upstream/release",
+    remoteName: "upstream",
+    remoteBranch: "release",
+    verify: false,
+    mutation: "none",
+  },
+  ...["none", "dirty", "head"].map((mutation) => ({
+    baseRef: "main",
+    remoteName: "origin",
+    remoteBranch: "main",
+    verify: true,
+    mutation,
+  })),
+])(
+  "launches from $baseRef with verified=$verify and setup=$mutation",
+  ({ baseRef, remoteName, remoteBranch, verify, mutation }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const git = yield* GitVcsDriver.GitVcsDriver;
+      const workflow = yield* GitWorkflow.GitWorkflowService;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-remote-base-" });
       const cwd = `${directory}/repo`;
       const remote = `${directory}/remote.git`;
@@ -1075,15 +1100,14 @@ it.effect.each(["stable", "upstream/release"])(
       yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
       const localHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
       yield* command(cwd, ["init", "--bare", remote]);
-      yield* command(cwd, ["remote", "add", "upstream", remote]);
-      yield* command(cwd, ["push", "-u", "upstream", "stable:release"]);
+      yield* command(cwd, ["remote", "add", remoteName, remote]);
+      yield* command(cwd, ["push", "-u", remoteName, `stable:${remoteBranch}`]);
       yield* command(cwd, ["commit", "--allow-empty", "-m", "remote advance"]);
-      yield* command(cwd, ["push", "upstream", "stable:release"]);
+      yield* command(cwd, ["push", remoteName, `stable:${remoteBranch}`]);
       const remoteHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
       yield* command(cwd, ["reset", "--hard", localHead]);
-      yield* command(cwd, ["update-ref", "-d", "refs/remotes/upstream/release"]);
+      yield* command(cwd, ["update-ref", "-d", `refs/remotes/${remoteName}/${remoteBranch}`]);
 
-      const setupStarted = yield* Deferred.make<void>();
       const harness = makeHarness({
         hasCommit: ({ refName }) =>
           command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
@@ -1091,6 +1115,7 @@ it.effect.each(["stable", "upstream/release"])(
             Effect.orElseSucceed(() => false),
           ),
         git: {
+          inspectCheckout: workflow.inspectCheckout,
           resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
           hasRefNamed: () => Effect.succeed(false),
         },
@@ -1098,18 +1123,22 @@ it.effect.each(["stable", "upstream/release"])(
         createWorktree: (input, options) =>
           git.createWorktree({ ...input, cwd, path: worktreePath }, options),
         runSetup: () =>
-          Deferred.succeed(setupStarted, undefined).pipe(
-            Effect.as({ status: "no-script" as const }),
-          ),
+          Effect.gen(function* () {
+            if (mutation === "dirty")
+              yield* fs.writeFileString(`${worktreePath}/untracked.txt`, "setup edit");
+            if (mutation === "head")
+              yield* command(worktreePath, ["commit", "--allow-empty", "-m", "setup advance"]);
+            return { status: "no-script" as const };
+          }).pipe(Effect.orDie),
       });
       yield* Effect.gen(function* () {
         const launches = yield* ThreadLaunch.ThreadLaunchService;
-        const threads = yield* ThreadManagement.ThreadManagementService;
         const workspace = {
           type: "worktree" as const,
           baseRef,
           branch: "feature",
           startFromOrigin: true,
+          requireFreshOrigin: verify,
         };
         yield* launches.checkWorktreeBase({ projectId, workspaceStrategy: workspace });
         const launched = yield* launches.launch(
@@ -1117,10 +1146,31 @@ it.effect.each(["stable", "upstream/release"])(
             command: "command:launch:remote-base",
             thread: "thread:launch:remote-base",
             workspace,
+            message: "Inspect the prepared checkout.",
           }),
         );
-        yield* Deferred.await(setupStarted);
-        const projection = yield* threads.getThreadProjection(launched.threadId);
+        const projection = yield* preparationSettled(launched.threadId);
+        const run = projection.runs[0]!;
+        if (verify && mutation !== "none") {
+          assert.equal(run.status, "failed");
+          assert.isUndefined(run.launchEvidence);
+          return;
+        }
+        assert.equal(run.status, "starting");
+        if (verify) {
+          const { recordedAt, fetchedAt, ...evidence } = run.launchEvidence!;
+          assert.match(recordedAt, /^\d{4}-\d{2}-\d{2}T/);
+          assert.isTrue(fetchedAt <= recordedAt);
+          assert.deepEqual(evidence, {
+            worktreePath,
+            originRef: `refs/remotes/${remoteName}/${remoteBranch}`,
+            commitSha: remoteHead,
+            treeSha: (yield* command(worktreePath, ["rev-parse", "HEAD^{tree}"])).stdout.trim(),
+            userMessageId: run.userMessageId,
+            taskPrompt: "Inspect the prepared checkout.",
+            modelSelection,
+          });
+        } else assert.isUndefined(run.launchEvidence);
         assert.equal(projection.thread.worktreePath, worktreePath);
         assert.equal(
           (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
@@ -1137,7 +1187,14 @@ it.effect.each(["stable", "upstream/release"])(
       }).pipe(Effect.provide(harness.layer));
     }).pipe(
       Effect.provide(
-        GitVcsDriver.layer.pipe(
+        GitWorkflow.layer.pipe(
+          Layer.provide(
+            Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+              resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+            }),
+          ),
+          Layer.provide(Layer.mock(GitManager.GitManager)({})),
+          Layer.provideMerge(GitVcsDriver.layer),
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-remote-git-" })),
           Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
@@ -1165,6 +1222,31 @@ it.effect("fetches the origin base from the remote it already resolved", () => {
       refName: "main",
       remote: { remoteName: "origin", branchName: "main" },
     });
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("refuses a verified origin checkout when the fetched branch is missing", () => {
+  const harness = makeHarness({ fetchWorktreeBaseCommit: () => Effect.succeed(null) });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const workspace = {
+      type: "worktree" as const,
+      baseRef: "main",
+      startFromOrigin: true,
+      requireFreshOrigin: true,
+    };
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:verified-missing",
+        thread: "thread:launch:verified-missing",
+        message: "Inspect a fresh checkout.",
+        workspace,
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "failed");
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+    assert.equal(harness.runSetup.mock.calls.length, 0);
   }).pipe(Effect.provide(harness.layer));
 });
 

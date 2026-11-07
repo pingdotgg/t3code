@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -11,6 +12,7 @@ import {
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   type OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpTarget,
+  OrchestratorMcpDelegateTaskResult,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
@@ -21,6 +23,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunId,
+  RunAttemptId,
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
@@ -29,6 +32,7 @@ import {
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -72,6 +76,7 @@ import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
+const decodeTaskResult = Schema.decodeEffect(OrchestratorMcpDelegateTaskResult);
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -352,6 +357,29 @@ describe("OrchestratorMcpService", () => {
       const taskId = NodeId.make("node:mcp-next-task");
       let finished = false;
       let pendingRequest = false;
+      let recordedLaunch = true;
+      let extraRun = false;
+      let recordedProvider = true;
+      let scenario = "normal";
+      const now = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
+      const selection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "test-model",
+        options: [{ id: "effort", value: "high" }],
+      };
+      const attemptId = RunAttemptId.make("attempt:child");
+      const launchEvidence = {
+        providerStart: { attemptId, verifiedAt: DateTime.formatIso(now) },
+        recordedAt: DateTime.formatIso(now),
+        fetchedAt: DateTime.formatIso(now),
+        worktreePath: "/repo/worktree",
+        originRef: "refs/remotes/origin/main",
+        commitSha: "a".repeat(40),
+        treeSha: "b".repeat(40),
+        taskPrompt: "Inspect the checkout.",
+        userMessageId: MessageId.make("message:child-task"),
+        modelSelection: selection,
+      };
       const parentProjection = () =>
         ({
           thread: { id: parentThreadId },
@@ -362,11 +390,17 @@ describe("OrchestratorMcpService", () => {
               id: taskId,
               threadId: parentThreadId,
               origin: "app_owned",
+              runId: RunId.make("run:parent"),
+              prompt: launchEvidence.taskPrompt,
               childThreadId,
               driver: "codex",
               model: "gpt-5.6-terra",
               status: finished ? "completed" : "running",
-              result: finished ? "done" : null,
+              result: finished
+                ? scenario === "synthetic-result"
+                  ? "Child task completed without an assistant result."
+                  : "done"
+                : null,
               completionDelivery: { state: "pending" },
             },
           ],
@@ -376,25 +410,156 @@ describe("OrchestratorMcpService", () => {
         ordinal: 1,
         status: finished ? ("completed" as const) : ("running" as const),
         delegatedTaskId: taskId,
+        userMessageId:
+          scenario === "changed-message"
+            ? MessageId.make("message:replacement")
+            : launchEvidence.userMessageId,
+        modelSelection: selection,
+        providerInstanceId: selection.instanceId,
+        activeAttemptId: attemptId,
+        startedAt: now,
+        completedAt: finished ? now : null,
+        ...(recordedLaunch
+          ? {
+              launchEvidence:
+                scenario === "local-only" || scenario === "missing-verification"
+                  ? { ...launchEvidence, providerStart: undefined }
+                  : launchEvidence,
+            }
+          : {}),
       });
       const childProjection = () =>
         ({
-          thread: { id: childThreadId, title: "Child task" },
-          runs: [childRun()],
+          thread: {
+            projectId: ProjectId.make("project:example"),
+            id: childThreadId,
+            title: "Child task",
+            modelSelection: { ...selection, model: "later-thread-selection" },
+          },
+          runs: extraRun
+            ? [childRun(), { ...childRun(), id: RunId.make("run:later"), ordinal: 2 }]
+            : [childRun()],
+          attempts: [
+            {
+              id: attemptId,
+              runId: childRun().id,
+              attemptOrdinal: 1,
+              rootNodeId: NodeId.make("node:child-root"),
+              providerInstanceId: selection.instanceId,
+              providerThreadId: ProviderThreadId.make("provider-thread:child"),
+              providerTurnId: ProviderTurnId.make("provider-turn:child"),
+              reason: "initial",
+              status: finished ? "completed" : "running",
+              startedAt: now,
+              completedAt: finished ? now : null,
+            },
+          ],
+          providerTurns:
+            scenario === "local-only" || scenario === "missing-turn"
+              ? []
+              : [
+                  {
+                    id: ProviderTurnId.make("provider-turn:child"),
+                    providerThreadId: ProviderThreadId.make("provider-thread:child"),
+                    runAttemptId: attemptId,
+                    nodeId: NodeId.make("node:child-root"),
+                    nativeTurnRef:
+                      scenario === "missing-native-ref"
+                        ? null
+                        : {
+                            driver: ProviderDriverKind.make("codex"),
+                            nativeId: scenario === "missing-native-id" ? null : "native-turn:child",
+                            strength: "strong",
+                          },
+                    ordinal: 1,
+                    status: "completed",
+                    startedAt: now,
+                    completedAt: now,
+                  },
+                ],
           contextTransfers: [],
-          messages: [],
-          subagents: [],
-          providerThreads: [],
-          runtimeRequests: pendingRequest ? [{ status: "pending" }] : [],
+          messages: [
+            {
+              id: launchEvidence.userMessageId,
+              runId: childRun().id,
+              role: "user",
+              text: launchEvidence.taskPrompt,
+            },
+            ...(scenario === "steered"
+              ? [
+                  {
+                    id: MessageId.make("message:steer"),
+                    runId: childRun().id,
+                    role: "user",
+                    text: "Additional instruction",
+                  },
+                ]
+              : []),
+            ...(finished && scenario !== "synthetic-result"
+              ? [
+                  {
+                    id: MessageId.make("message:child-result"),
+                    runId: childRun().id,
+                    role: "assistant",
+                    text: "done",
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                ]
+              : []),
+          ],
+          subagents: scenario === "descendant" ? [{ status: "completed" }] : [],
+          providerThreads: recordedProvider
+            ? [
+                {
+                  id: ProviderThreadId.make("provider-thread:child"),
+                  driver: ProviderDriverKind.make("codex"),
+                  providerInstanceId: selection.instanceId,
+                  pendingBackgroundTasks:
+                    scenario === "background-command"
+                      ? [{ kind: "command", taskId: "command:background" }]
+                      : [],
+                },
+              ]
+            : [],
+          runtimeRequests: [
+            ...(pendingRequest ? [{ status: "pending" }] : []),
+            ...(scenario === "resolved-user-input"
+              ? [{ kind: "user_input", status: "resolved", answers: { approach: ["Revise it"] } }]
+              : []),
+            ...(scenario === "resolved-command-approval"
+              ? [{ kind: "command", status: "resolved", decision: "accept" }]
+              : []),
+            ...(scenario === "resolved-file-change-approval"
+              ? [{ kind: "file-change", status: "resolved", decision: "decline" }]
+              : []),
+          ],
           nodes: [],
-          turnItems: [],
+          turnItems:
+            scenario === "active-item"
+              ? [
+                  {
+                    id: "item:active-command",
+                    runId: childRun().id,
+                    type: "command_execution",
+                    status: "running",
+                  },
+                ]
+              : [],
         }) as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: (threadId) =>
-            Effect.succeed(threadId === parentThreadId ? parentProjection() : childProjection()),
+          getThreadRecords: (threadId, _collections, filter) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection()
+                : {
+                    ...childProjection(),
+                    ...(filter?.omitSettledSubagents ? { subagents: [] } : {}),
+                  },
+            ),
           getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
           getProjectThreadRecords: () => Effect.succeed(childProjection()),
           waitForThread: () =>
@@ -448,10 +613,70 @@ describe("OrchestratorMcpService", () => {
         const completed = yield* service.taskStatus(scope, taskId);
         assert.equal(completed.status, "completed");
         assert.notProperty(completed, "next");
+        assert.notProperty(completed, "executionEvidence");
+        const exported = yield* service.taskStatus(scope, taskId, true);
+        assert.deepEqual(yield* decodeTaskResult(exported), exported);
+        const { sha256, ...payload } = exported.executionEvidence!;
+        const digester = yield* Digest.Digest;
+        const digest = yield* digester.digest(
+          Digest.sha256,
+          new TextEncoder().encode(stableStringify(payload)),
+        );
+        assert.equal(
+          sha256,
+          Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+        );
+        assert.equal(payload.launch.modelSelection.model, "test-model");
+        assert.deepEqual(payload.launch.modelSelection.options, selection.options);
+        assert.equal(payload.result, "done");
+        assert.equal(payload.parentRunId, "run:parent");
+        assert.equal(payload.runId, childRun().id);
+        for (const failureCase of [
+          "missing-launch",
+          "pending-request",
+          "resolved-user-input",
+          "resolved-command-approval",
+          "resolved-file-change-approval",
+          "continuation",
+          "missing-provider",
+          "local-only",
+          "changed-message",
+          "background-command",
+          "descendant",
+          "missing-verification",
+          "missing-turn",
+          "missing-native-ref",
+          "missing-native-id",
+          "synthetic-result",
+          "active-item",
+          "steered",
+        ] as const) {
+          scenario = failureCase;
+          recordedLaunch = failureCase !== "missing-launch";
+          pendingRequest = failureCase === "pending-request";
+          extraRun = failureCase === "continuation";
+          recordedProvider = failureCase !== "missing-provider";
+          if (
+            failureCase === "resolved-user-input" ||
+            failureCase === "resolved-command-approval" ||
+            failureCase === "resolved-file-change-approval"
+          ) {
+            const answered = yield* service.taskStatus(scope, taskId);
+            assert.equal(answered.status, "completed");
+            assert.notProperty(answered, "executionEvidence");
+          }
+          const error = yield* service.taskStatus(scope, taskId, true).pipe(Effect.flip);
+          assert.equal(error.code, "invalid_request");
+        }
+        scenario = "normal";
+        recordedLaunch = true;
+        pendingRequest = false;
+        extraRun = false;
+        recordedProvider = true;
         const waited = yield* service.waitForThread(scope, { threadId: childThreadId });
         assert.equal(waited.status, "completed");
         assert.notProperty(waited, "next");
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provideMerge(layerDependencies))));
     }),
   );
 
@@ -1833,109 +2058,146 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
-  it.effect("driver-only delegation skips an instance the project turned off", () =>
-    Effect.gen(function* () {
-      const altInstanceId = ProviderInstanceId.make("codex-alt");
-      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
-      const task = {
-        id: taskId,
-        threadId: parentThreadId,
-        runId: parentRunId,
-        parentNodeId,
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: ProviderDriverKind.make("codex"),
-        providerInstanceId: altInstanceId,
-        providerThreadId: null,
-        childThreadId,
-        nativeTaskRef: null,
-        prompt: "Summarize the diff.",
-        title: null,
-        model: "gpt-5.4",
-        status: "running",
-        result: null,
-        startedAt: null,
-        completedAt: null,
-      };
-      let delegated = false;
-      const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
-        NodeCrypto.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
-          getThreadRecords: (threadId) =>
-            Effect.succeed(
-              threadId === parentThreadId
-                ? parentProjection(delegated ? [task] : [])
-                : childProjection,
-            ),
-          isProviderInstanceEnabledForProject: ({ instanceId }) =>
-            Effect.succeed(instanceId !== codexInstanceId),
-          assertProviderInstanceEnabled: ({ projectId, instanceId }) =>
-            instanceId === codexInstanceId
-              ? Effect.fail(
-                  new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
-                    projectId,
-                    instanceId,
-                  }),
-                )
-              : Effect.void,
-          dispatch: (command) =>
-            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
-              Effect.andThen(
-                Effect.sync(() => {
-                  delegated = true;
-                }),
-              ),
-              Effect.as({
-                sequence: 1,
-                storedEvents: [
-                  {
-                    sequence: 1,
-                    commandId: null,
-                    event: { type: "subagent.updated", payload: task },
-                  },
-                ],
-              } as never),
-            ),
-        }),
-        providerRegistryLayer([
-          providerSnapshot({
-            instanceId: codexInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            model: "gpt-5.4",
-          }),
-          providerSnapshot({
-            instanceId: altInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            model: "gpt-5.4",
-          }),
-        ]),
-        adapterRegistryLayer([codexInstanceId, altInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        ServerSettings.layerTest(),
-      );
-
-      yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const result = yield* service.delegateTask(scope, {
-          task: "Summarize the diff.",
-          target: { driverKind: ProviderDriverKind.make("codex") },
-          mode: "async",
-          clientRequestId: "delegate-driver-skip-disabled-1",
-        });
-        assert.equal(result.status, "running");
-        const commands = yield* Ref.get(dispatched);
-        assert.equal(commands.length, 1);
-        const request = commands[0] as {
-          modelSelection: { instanceId: string; model: string };
+  it.effect.each([false, true])(
+    "driver-only delegation skips a disabled instance with fresh origin=%s",
+    (freshOrigin) =>
+      Effect.gen(function* () {
+        const altInstanceId = ProviderInstanceId.make("codex-alt");
+        const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: altInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Summarize the diff.",
+          title: null,
+          model: "gpt-5.4",
+          status: "running",
+          result: null,
+          startedAt: null,
+          completedAt: null,
         };
-        assert.equal(request.modelSelection.instanceId, altInstanceId);
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
-    }),
+        let delegated = false;
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(delegated ? [task] : [])
+                  : childProjection,
+              ),
+            isProviderInstanceEnabledForProject: ({ instanceId }) =>
+              Effect.succeed(instanceId !== codexInstanceId),
+            assertProviderInstanceEnabled: ({ projectId, instanceId }) =>
+              instanceId === codexInstanceId
+                ? Effect.fail(
+                    new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+                      projectId,
+                      instanceId,
+                    }),
+                  )
+                : Effect.void,
+            dispatch: (command) =>
+              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    delegated = true;
+                  }),
+                ),
+                Effect.as({
+                  sequence: 1,
+                  storedEvents: [
+                    {
+                      sequence: 1,
+                      commandId: null,
+                      event: { type: "subagent.updated", payload: task },
+                    },
+                  ],
+                } as never),
+              ),
+          }),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            providerSnapshot({
+              instanceId: altInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId, altInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeedSome({
+                id: projectId,
+                title: "Example",
+                workspaceRoot: "/repo",
+                repositoryIdentity: null,
+                faviconPath: null,
+                defaultModelSelection: null,
+                defaultThreadEnvMode: null,
+                scripts: [],
+                pinnedAt: null,
+                archivedAt: null,
+                deletedAt: null,
+                createdAt: "2026-10-01T00:00:00.000Z",
+                updatedAt: "2026-10-01T00:00:00.000Z",
+              }),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ServerSettings.layerTest(),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const result = yield* service.delegateTask(scope, {
+            task: "Summarize the diff.",
+            ...(freshOrigin ? { isolation: "worktree" as const, worktreeBaseBranch: "main" } : {}),
+            target: { driverKind: ProviderDriverKind.make("codex") },
+            mode: "async",
+            clientRequestId: "delegate-driver-skip-disabled-1",
+          });
+          assert.equal(result.status, "running");
+          const commands = yield* Ref.get(dispatched);
+          assert.equal(commands.length, 1);
+          const request = commands[0] as {
+            modelSelection: { instanceId: string; model: string };
+            workspaceStrategy?: {
+              type: string;
+              baseRef: string;
+              startFromOrigin: boolean;
+              requireFreshOrigin: boolean;
+            };
+          };
+          assert.equal(request.modelSelection.instanceId, altInstanceId);
+          assert.deepEqual(
+            request.workspaceStrategy,
+            freshOrigin
+              ? {
+                  type: "worktree",
+                  baseRef: "main",
+                  startFromOrigin: true,
+                  requireFreshOrigin: true,
+                }
+              : undefined,
+          );
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      }),
   );
 
   it.effect(

@@ -1244,9 +1244,51 @@ const addOrphanedRecoveryCandidate = Effect.fn("addOrphanedRecoveryCandidate")(f
 const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const threadId = yield* addRolledBackRecoveryCandidate("restart-cancelled-work-stale-update");
-  const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+  let memory = yield* store.getThreadProjection(threadId);
+  const run = memory.runs[0]!;
   const now = yield* DateTime.now;
   const work = [{ kind: "subagent" as const, label: "Background subagent test" }];
+  const launch = {
+    recordedAt: DateTime.formatIso(now),
+    fetchedAt: DateTime.formatIso(now),
+    worktreePath: "/repo/worktree",
+    originRef: "refs/remotes/origin/main",
+    commitSha: "a".repeat(40),
+    treeSha: "b".repeat(40),
+    taskPrompt: "Inspect source",
+    userMessageId: run.userMessageId,
+    modelSelection: run.modelSelection,
+  };
+  const verifiedLaunch = {
+    ...launch,
+    providerStart: {
+      attemptId: RunAttemptId.make("attempt:verified"),
+      verifiedAt: DateTime.formatIso(now),
+    },
+  };
+  for (const [index, payload] of [
+    { ...run, launchEvidence: verifiedLaunch },
+    { ...run, launchEvidence: launch },
+    run,
+  ].entries()) {
+    const event = {
+      id: EventId.make(`event:launch-evidence-stale:${index}`),
+      type: "run.updated" as const,
+      threadId,
+      runId: run.id,
+      providerInstanceId,
+      occurredAt: now,
+      payload,
+    };
+    yield* store.apply(event);
+    memory = ProjectionStore.applyToProjection(memory, event);
+    assert.deepEqual(memory.runs[0]?.launchEvidence, verifiedLaunch);
+    assert.deepEqual(
+      (yield* store.getThreadProjection(threadId)).runs[0]?.launchEvidence,
+      verifiedLaunch,
+    );
+  }
+
   yield* store.apply({
     id: EventId.make("event:restart-cancelled-work-stale-update:recorded"),
     type: "run.background-work-cancelled",

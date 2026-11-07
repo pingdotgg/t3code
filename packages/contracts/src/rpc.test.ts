@@ -14,6 +14,25 @@ describe("WebSocket RPC contracts", () => {
     expect(
       Exit.isFailure(
         decode({
+          type: "prepared-run.record-workspace",
+          commandId: "forged-workspace-evidence",
+          threadId: "thread-1",
+          runId: "run-1",
+          workspace: {
+            recordedAt: "2026-10-01T00:00:00.000Z",
+            fetchedAt: "2026-10-01T00:00:00.000Z",
+            worktreePath: "/repo/worktree",
+            originRef: "refs/remotes/origin/main",
+            commitSha: "a".repeat(40),
+            treeSha: "b".repeat(40),
+          },
+        }),
+      ),
+    ).toBe(true);
+
+    expect(
+      Exit.isFailure(
+        decode({
           type: "checkpoint.rollback.fail",
           commandId: "forged-rollback-failure",
           threadId: "thread-1",

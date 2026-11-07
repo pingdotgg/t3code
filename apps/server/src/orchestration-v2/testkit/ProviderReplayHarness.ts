@@ -201,6 +201,7 @@ export function runOrchestratorV2ProviderReplayScenario<
       MigrationError | PlatformError.PlatformError | SqlError
     >;
     readonly runEffectWorker?: boolean;
+    readonly realGit?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
@@ -244,6 +245,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
     readonly runEffectWorker?: boolean;
+    readonly realGit?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
@@ -278,6 +280,7 @@ export function layerWithRegistry<Error>(
       MigrationError | PlatformError.PlatformError | SqlError
     >;
     readonly runEffectWorker?: boolean;
+    readonly realGit?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
@@ -541,7 +544,14 @@ export function layerWithRegistry<Error>(
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
   ).pipe(
-    Layer.provide(ProviderTurnStartServiceTestkit.layer),
+    Layer.provide(
+      options.realGit === true
+        ? Layer.merge(
+            ProviderTurnStartServiceTestkit.layer,
+            ProviderTurnStartServiceTestkit.layerRealGit.pipe(Layer.orDie),
+          )
+        : ProviderTurnStartServiceTestkit.layer,
+    ),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
