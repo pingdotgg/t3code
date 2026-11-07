@@ -1042,7 +1042,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   const openNewSurfaceMenu = useEffectEvent((event: KeyboardEvent) => {
     if (event.isComposing) return false;
-    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) {
+    // Palette/menu synthesize an untrusted keydown; the closing palette popup
+    // still matches LAUNCHER_SHORTCUT_BLOCKING_LAYERS until React unmounts it.
+    if (
+      event.isTrusted &&
+      !addSurfaceMenuOpen &&
+      document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)
+    ) {
       return false;
     }
     event.preventDefault();

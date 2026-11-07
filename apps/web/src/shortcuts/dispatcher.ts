@@ -78,14 +78,18 @@ function runScope(scope: CommandScope, event: KeyboardEvent): boolean {
     { context: { ...readFocusContext(event), ...options.context?.(event) } },
   );
   if (command === null) return false;
-  // Only a scope that registered this command claims the chord; execution goes
-  // through the shared registry so keys/palette/menu share one handler stack.
-  if (commands[command] === undefined) return false;
+  // Only a scope that registered this command claims the chord. Run that scope's
+  // handler directly — executeCommand walks every registration newest-first and
+  // would let another scope's handler steal a chord this scope resolved.
+  const handler = commands[command];
+  if (handler === undefined) return false;
   if (isInsideConfirmation(event.target)) {
     event.preventDefault();
     return true;
   }
-  return executeCommand(command, { source: "keybinding", event });
+  const handled = handler(event) !== false;
+  // A declining handler that still consumed the key (preventDefault) ends the walk.
+  return handled || event.defaultPrevented;
 }
 
 function runScopes(scopes: readonly CommandScope[], event: KeyboardEvent): boolean {

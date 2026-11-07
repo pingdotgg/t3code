@@ -1440,7 +1440,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return mapping;
   })();
 
-  const navigateToThread = (threadRef: ScopedThreadRef) => {
+  const navigateToThread = useStableCallback((threadRef: ScopedThreadRef) => {
     if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
       clearSelection();
     }
@@ -1452,7 +1452,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
     });
-  };
+  });
 
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
     const dropId = queuePendingFileDrop({ threadRef, files });

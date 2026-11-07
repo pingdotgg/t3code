@@ -158,9 +158,9 @@ export function ReopenClosedViewShortcut() {
     return registerCommands(
       {
         "view.reopenClosed": (event) => {
-          if (isCommandPaletteOpen() || useClosedViewStore.getState().entries.length === 0) {
-            return false;
-          }
+          // Palette open guard stays on `when` (keys only); the popup is still in the
+          // DOM when palette `run` fires after setOpen(false).
+          if (useClosedViewStore.getState().entries.length === 0) return false;
           event.preventDefault();
           event.stopPropagation();
           if (!event.repeat) enqueueReopen();

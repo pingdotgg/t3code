@@ -99,6 +99,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
+import { restorePreviewFocusUrlFromPalette } from "../lib/previewFocusFromPalette";
 import {
   queueTerminalToggleFromPalette,
   restoreTerminalToggleFromPalette,
@@ -370,6 +371,7 @@ function CommandPaletteDialog(props: {
       finalFocus={() => {
         if (restoreWorkspaceFocusFromPalette()) return false;
         if (restoreTerminalToggleFromPalette()) return false;
+        if (restorePreviewFocusUrlFromPalette()) return false;
         const returnFocus = getCommandPaletteReturnFocus();
         if (returnFocus === false) return false;
         const composer = composerHandleRef?.current;
@@ -1758,8 +1760,13 @@ function OpenCommandPaletteDialog(props: {
   for (const item of [changeThemeItem, changeAppearanceItem, themeEditorItem]) {
     if (item.shortcutCommand) coveredCommands.add(item.shortcutCommand);
   }
+  // /pull-requests has no thread route target; panel state is keyed by PULL_REQUESTS_PANEL_REF.
   const routeThreadRef =
-    paletteRouteTarget?.kind === "server" ? paletteRouteTarget.threadRef : null;
+    pathname === "/pull-requests"
+      ? referenceThreadRef
+      : paletteRouteTarget?.kind === "server"
+        ? paletteRouteTarget.threadRef
+        : null;
   actionItems.push(
     ...buildRegistryPaletteActions({
       context: readCommandContext({ threadRef: routeThreadRef, pathname }),

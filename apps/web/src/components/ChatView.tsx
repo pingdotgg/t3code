@@ -187,7 +187,7 @@ import { cn } from "~/lib/utils";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
-import { projectScriptIdFromCommand } from "~/projectScripts";
+import { commandForProjectScript, projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
 import {
@@ -1889,7 +1889,7 @@ export default function ChatView(props: ChatViewProps) {
     panelTerminalIds,
     canReuseTerminal,
     gitCwd,
-    registerTerminalToggleMenuAction: !embedded,
+    registerTerminalToggleMenuAction: !embedded && !backgroundThread,
     setTerminalUiLaunchContext,
     setThreadError,
   });
@@ -2682,12 +2682,19 @@ export default function ChatView(props: ChatViewProps) {
     }
   });
 
+  const scriptTitles = Object.fromEntries(
+    activeProjectScripts.flatMap((script) => {
+      const command = commandForProjectScript(script.id);
+      return command ? ([[command, script.name]] as const) : [];
+    }),
+  );
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
     composerElement: composerOverlayElement,
     keybindings,
     scriptKeybindings,
+    scriptTitles,
     getShortcutContext,
     threadFindActive: isThreadFindActive,
     composerRef,

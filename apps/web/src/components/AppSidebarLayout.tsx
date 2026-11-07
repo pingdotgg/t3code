@@ -246,7 +246,10 @@ function registerThreadUndoCommands(
   const unregister = registerCommands(
     {
       "thread.undo": (event) => {
-        if (isCommandPaletteOpen() || isModelPickerOpen()) return false;
+        // `when` skips palette/menu; keep the sidebar gate here so those sources
+        // cannot undo without the notice. Palette-open must not live here — the
+        // popup is still mounted when palette `run` fires after setOpen(false).
+        if (!threadSidebarShown() || isModelPickerOpen()) return false;
         if (!undoLatestThreadAction()) return false;
         heldUndoKey = event.code;
         event.preventDefault();
@@ -255,7 +258,7 @@ function registerThreadUndoCommands(
     },
     {
       capture: true,
-      when: threadSidebarShown,
+      when: () => threadSidebarShown() && !isCommandPaletteOpen(),
       context: undoShortcutContext,
       onKeyDown: (event) => {
         // Cancel a held key's repeats so they cannot fall through to the

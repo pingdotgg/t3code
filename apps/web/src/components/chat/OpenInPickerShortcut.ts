@@ -66,11 +66,9 @@ export function useOpenFavoriteEditorShortcut({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the open-favorite fallback into the shared command while enabled
   useEffect(() => {
-    if (!enabled || remote.mode === "remote-unavailable") {
-      openFavoriteEditorFallback = null;
-      return;
-    }
-    openFavoriteEditorFallback = () => {
+    // Disabled/background ChatViews must not clear another view's published fallback.
+    if (!enabled || remote.mode === "remote-unavailable") return;
+    const fallback = () => {
       if (!openInCwd || !preferredEditor) return false;
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
       if (remote.mode === "remote-links") {
@@ -96,8 +94,9 @@ export function useOpenFavoriteEditorShortcut({
       });
       return true;
     };
+    openFavoriteEditorFallback = fallback;
     return () => {
-      openFavoriteEditorFallback = null;
+      if (openFavoriteEditorFallback === fallback) openFavoriteEditorFallback = null;
     };
   }, [enabled, environmentId, openInCwd, openInEditorMutation, preferredEditor, remote]);
 }

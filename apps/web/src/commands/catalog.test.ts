@@ -20,8 +20,14 @@ describe("command catalog", () => {
     }
   });
 
-  it("hides only the command palette toggle from the palette", () => {
+  it("hides palette-toggle and composer-focus-only actions from the palette", () => {
     const hidden = allStaticCommandContributions().filter((entry) => entry.palette === false);
-    expect(hidden.map((entry) => entry.id)).toEqual(["commandPalette.toggle"]);
+    expect(hidden.map((entry) => entry.id)).toEqual([
+      "commandPalette.toggle",
+      "composer.sendAlternate",
+      "composer.sendBackground",
+      "composer.sendAndNewThread",
+      "thread.editQueuedMessage",
+    ]);
   });
 });

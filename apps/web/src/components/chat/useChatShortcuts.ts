@@ -45,6 +45,8 @@ interface ChatShortcutsInput {
   readonly commands: ChatShortcutCommands;
   /** Handles commands not in `commands`, such as project scripts. */
   readonly fallback: (command: KeybindingCommand) => ChatShortcutHandler | undefined;
+  /** Palette titles for dynamic script commands (`script.<id>.run` → script name). */
+  readonly scriptTitles?: Partial<Record<KeybindingCommand, string>>;
 }
 
 /**
@@ -128,21 +130,27 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context: input.getShortcutContext(event.target),
     });
     if (!command) return;
-    if (executeCommand(command, { source: "keybinding", event })) {
+    // Embedded chats do not publish to the registry; never hit the parent's handlers.
+    if (embedded) {
+      const run = composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command];
+      if (!run || run({ event, terminalFocusOwner: null }) === false) return;
       event.preventDefault();
       event.stopPropagation();
       return;
     }
-    // Embedded chats do not publish to the registry; run composer chords locally.
-    const run = composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command];
-    if (!run || run({ event, terminalFocusOwner: null }) === false) return;
-    event.preventDefault();
-    event.stopPropagation();
+    if (executeCommand(command, { source: "keybinding", event })) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   });
 
   const commandIdsKey = Object.keys(input.commands).toSorted().join("\0");
   const scriptCommandIdsKey = input.scriptKeybindings
     .map((binding) => binding.command)
+    .toSorted()
+    .join("\0");
+  const scriptTitlesKey = Object.entries(input.scriptTitles ?? {})
+    .map(([command, title]) => `${command}=${title}`)
     .toSorted()
     .join("\0");
 
@@ -162,9 +170,30 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       ...(Object.keys(composerCommands) as KeybindingCommand[]),
       ...scriptCommandIds,
     ]);
-    const disposers = [...ids].map((command) =>
-      registerCommand(command, (context) => runRegistered(command, context)),
-    );
+    const scriptTitles = Object.fromEntries(
+      scriptTitlesKey.length === 0
+        ? []
+        : scriptTitlesKey.split("\0").map((entry) => {
+            const separator = entry.indexOf("=");
+            return [entry.slice(0, separator), entry.slice(separator + 1)] as const;
+          }),
+    ) as Partial<Record<KeybindingCommand, string>>;
+    const disposers = [...ids].map((command) => {
+      const scriptTitle = scriptTitles[command];
+      return registerCommand(
+        command,
+        (context) => runRegistered(command, context),
+        scriptTitle
+          ? {
+              contribution: {
+                title: `Run Script: ${scriptTitle}`,
+                category: "Project scripts",
+                searchTerms: [scriptTitle, String(command), "script", "run"],
+              },
+            }
+          : undefined,
+      );
+    });
     return () => {
       for (const dispose of disposers) dispose();
     };
@@ -173,6 +202,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     input.enabled,
     commandIdsKey,
     scriptCommandIdsKey,
+    scriptTitlesKey,
     input.composerRef,
     input.branchToolbarRef,
   ]);

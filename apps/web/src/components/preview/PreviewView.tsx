@@ -884,7 +884,8 @@ export function PreviewView({
     const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
     // Newest while visible so desktop-forwarded menu actions share executeCommand with keys.
     const disposeCommands = registerCommands({
-      "preview.focusUrl": () => {
+      "preview.focusUrl": (event) => {
+        event.preventDefault();
         onPreviewAction("focus-url");
       },
     });

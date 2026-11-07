@@ -84,15 +84,17 @@ const WHEN_OVERRIDES: Partial<Record<KeybindingCommand, string>> = {
   "modelPicker.jump.7": "modelPickerOpen",
   "modelPicker.jump.8": "modelPickerOpen",
   "modelPicker.jump.9": "modelPickerOpen",
-  "composer.sendAlternate": "composerFocus",
-  "composer.sendBackground": "composerFocus",
-  "composer.sendAndNewThread": "composerFocus",
-  "thread.editQueuedMessage": "composerFocus",
 };
 
 const PALETTE_HIDDEN = new Set<KeybindingCommand>([
   // Opening the palette from inside the palette is noise; Esc / the chord still work.
   "commandPalette.toggle",
+  // These need a focused composer; the palette steals focus, so the rows would always
+  // be disabled (composerFocus is never true while the palette input is focused).
+  "composer.sendAlternate",
+  "composer.sendBackground",
+  "composer.sendAndNewThread",
+  "thread.editQueuedMessage",
 ]);
 
 function titleCaseSegment(segment: string): string {

@@ -12,6 +12,7 @@ import type { ReactNode } from "react";
 
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "../components/CommandPalette.logic";
 import type { ShortcutMatchContext } from "../keybindings";
+import { queuePreviewFocusUrlFromPalette } from "../lib/previewFocusFromPalette";
 import { queueTerminalToggleFromPalette } from "../lib/terminalToggleFromPalette";
 import { queueWorkspaceFocusFromPalette } from "../lib/workspaceFocus";
 import { executeCommand, listPaletteCommands } from "./registry";
@@ -59,6 +60,10 @@ export function buildRegistryPaletteActions(input: {
         }
         if (command.id === "workspace.focusPrevious") {
           queueWorkspaceFocusFromPalette(-1);
+          return;
+        }
+        if (command.id === "preview.focusUrl") {
+          queuePreviewFocusUrlFromPalette();
           return;
         }
         executeCommand(command.id, { source: "palette" });
