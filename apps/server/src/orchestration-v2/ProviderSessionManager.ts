@@ -1769,29 +1769,8 @@ export const layerWithOptions = (
                   return [{ pending: latest.idleThreadUnloads.get(threadId) }, updated] as const;
                 });
                 if (claimed === undefined) return;
-                const archived = yield* archiveProviderThread({ entry, threadId, providerThread });
-                if (!archived) {
-                  const unloadThread = entry.exposedRuntime.unloadThread;
-                  const latest = (yield* Ref.get(sessions)).get(key);
-                  if (
-                    unloadThread === undefined ||
-                    latest?.runtime !== entry.runtime ||
-                    latest.idleThreadUnloads.get(threadId) !== claimed.pending ||
-                    hasBusyTurn(latest, providerThread.id)
-                  )
-                    return;
-                  yield* unloadThread({ providerThread }).pipe(
-                    Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("orchestration-v2.driver-session.idle-unload-failed", {
-                        providerSessionId,
-                        threadId,
-                        providerThreadId: providerThread.id,
-                        cause,
-                      }),
-                    ),
-                  );
-                }
+                // A failed archive keeps the idle unload tracked; the cleared cache only forces a resume.
+                if (!(yield* archiveProviderThread({ entry, threadId, providerThread }))) return;
                 yield* Ref.update(sessions, (current) => {
                   const latest = current.get(key);
                   if (

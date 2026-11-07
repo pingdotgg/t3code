@@ -5434,70 +5434,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  const INTERRUPT_PENDING_CHILD_NATIVE_THREAD = "native-codex-interrupt-pending-child-thread";
-  const INTERRUPT_RESUMED_ROOT_TURN = "native-codex-interrupt-resumed-root-turn";
-  const INTERRUPT_RESUMED_CHILD_TURN = "native-codex-interrupt-resumed-child-turn";
-  const INTERRUPT_RESUME_PROMPT = "Continue the stopped child.";
-  // Notifications run in order, so the model update fences everything before it.
-  const pendingChildFence = (model: string): CodexReplay.CodexAppServerReplayEntry => ({
-    type: "emit_inbound",
-    frame: {
-      method: "thread/settings/updated",
-      params: {
-        threadId: INTERRUPT_PENDING_CHILD_NATIVE_THREAD,
-        threadSettings: {
-          model,
-          effort: "low",
-          serviceTier: null,
-          modelProvider: "openai",
-          cwd: "/workspace",
-          approvalPolicy: "never",
-          approvalsReviewer: "auto_review",
-          collaborationMode: { mode: "default", settings: { model } },
-          sandboxPolicy: { type: "dangerFullAccess" },
-        },
-      },
-    },
-  });
-  const childSpawnIndex = interruptSubagentCommandTranscript.entries.findIndex(
-    (entry) =>
-      entry.type === "emit_inbound" && entry.label === "item/completed/subAgentActivity-started",
-  );
   const interruptSubagentTurnAfterStopTranscript = makeCodexReplayTranscript({
     scenario: "codex-interrupt-subagent-turn-after-stop",
     entries: [
-      ...interruptSubagentCommandTranscript.entries.slice(0, childSpawnIndex + 1),
-      {
-        type: "emit_inbound",
-        label: "item/completed/collab-spawn-pending-child",
-        frame: {
-          method: "item/completed",
-          params: {
-            item: {
-              type: "collabAgentToolCall",
-              id: "call-codex-interrupt-pending-child",
-              tool: "spawnAgent",
-              status: "completed",
-              senderThreadId: INTERRUPT_NATIVE_THREAD,
-              receiverThreadIds: [INTERRUPT_PENDING_CHILD_NATIVE_THREAD],
-              agentsStates: {
-                [INTERRUPT_PENDING_CHILD_NATIVE_THREAD]: { status: "pendingInit", message: null },
-              },
-            },
-            threadId: INTERRUPT_NATIVE_THREAD,
-            turnId: INTERRUPT_NATIVE_TURN,
-            completedAtMs: 1782622441200,
-          },
-        },
-      },
-      ...interruptSubagentCommandTranscript.entries.slice(childSpawnIndex + 1, -1),
+      ...interruptSubagentCommandTranscript.entries.slice(0, -1),
       {
         type: "emit_inbound",
         label: "turn/started/child-after-stop",
         frame: {
           method: "turn/started",
           params: {
-            threadId: INTERRUPT_PENDING_CHILD_NATIVE_THREAD,
+            threadId: INTERRUPT_CHILD_NATIVE_THREAD,
             turn: makeCodexReplayTurn({
               id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
               status: "inProgress",
@@ -5512,19 +5459,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           id: 7,
           method: "turn/interrupt",
           params: {
-            threadId: INTERRUPT_PENDING_CHILD_NATIVE_THREAD,
+            threadId: INTERRUPT_CHILD_NATIVE_THREAD,
             turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
           },
         },
       },
-      pendingChildFence("gpt-fence-interrupt-requested"),
       {
         type: "emit_inbound",
         label: "turn/interrupt/child-after-stop",
-        afterMs: 4_000,
         frame: { id: 7, result: {} },
       },
-      pendingChildFence("gpt-fence-interrupt-acked"),
       {
         type: "emit_inbound",
         label: "thread/goal/updated/root",
@@ -5543,82 +5487,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               createdAt: 1782622440,
               updatedAt: 1782622450,
             },
-          },
-        },
-      },
-      {
-        type: "emit_inbound",
-        label: "turn/completed/child-after-stop",
-        afterMs: 4_000,
-        frame: {
-          method: "turn/completed",
-          params: {
-            threadId: INTERRUPT_PENDING_CHILD_NATIVE_THREAD,
-            turn: makeCodexReplayTurn({
-              id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
-              status: "interrupted",
-            }),
-          },
-        },
-      },
-      pendingChildFence("gpt-fence-late-turn-completed"),
-      ...codexReplayPreamble({
-        nativeThreadId: INTERRUPT_NATIVE_THREAD,
-        nativeTurnId: INTERRUPT_RESUMED_ROOT_TURN,
-        prompt: INTERRUPT_RESUME_PROMPT,
-      })
-        .slice(-3)
-        .map((entry) =>
-          entry.type !== "runtime_exit" &&
-          typeof entry.frame === "object" &&
-          entry.frame !== null &&
-          "id" in entry.frame
-            ? { ...entry, frame: { ...entry.frame, id: 8 } }
-            : entry,
-        ),
-      {
-        type: "emit_inbound",
-        frame: {
-          method: "turn/started",
-          params: {
-            threadId: INTERRUPT_PENDING_CHILD_NATIVE_THREAD,
-            turn: makeCodexReplayTurn({ id: INTERRUPT_RESUMED_CHILD_TURN, status: "inProgress" }),
-          },
-        },
-      },
-      pendingChildFence("gpt-fence-child-resumed"),
-      {
-        type: "emit_inbound",
-        frame: {
-          method: "turn/completed",
-          params: {
-            threadId: INTERRUPT_PENDING_CHILD_NATIVE_THREAD,
-            turn: makeCodexReplayTurn({
-              id: INTERRUPT_LATE_CHILD_NATIVE_TURN,
-              status: "interrupted",
-            }),
-          },
-        },
-      },
-      pendingChildFence("gpt-fence-old-completion"),
-      {
-        type: "emit_inbound",
-        afterMs: 1_000,
-        frame: {
-          method: "turn/completed",
-          params: {
-            threadId: INTERRUPT_PENDING_CHILD_NATIVE_THREAD,
-            turn: makeCodexReplayTurn({ id: INTERRUPT_RESUMED_CHILD_TURN, status: "completed" }),
-          },
-        },
-      },
-      {
-        type: "emit_inbound",
-        frame: {
-          method: "turn/completed",
-          params: {
-            threadId: INTERRUPT_NATIVE_THREAD,
-            turn: makeCodexReplayTurn({ id: INTERRUPT_RESUMED_ROOT_TURN, status: "completed" }),
           },
         },
       },
@@ -5668,26 +5536,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           });
           yield* harness.awaitTerminal(1);
 
-          const pendingChildUpdates = () =>
-            harness
-              .subagentUpdates()
-              .filter(
-                (event) =>
-                  event.subagent.nativeTaskRef?.nativeId ===
-                  `call-codex-interrupt-pending-child:${INTERRUPT_PENDING_CHILD_NATIVE_THREAD}`,
-              );
-          const fenced = (model: string) =>
-            harness.until(() =>
-              pendingChildUpdates().some((event) => event.subagent.model === model),
-            );
-          yield* fenced("gpt-fence-interrupt-requested");
-          assert.equal(pendingChildUpdates().at(-1)?.subagent.status, "pending");
-          assert.isTrue(yield* harness.hasPendingBackgroundWork);
-
           // The TestClock never reaches the interrupt's timeout, so this arrives only
           // if the reader is free to read the interrupt response and the frame after it.
-          yield* TestClock.adjust("4 seconds");
-          yield* fenced("gpt-fence-interrupt-acked");
           yield* harness.until(() =>
             harness.events.some(
               (event) =>
@@ -5695,14 +5545,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 event.providerThread.goal?.status === "paused",
             ),
           );
-          assert.equal(pendingChildUpdates().at(-1)?.subagent.status, "pending");
-          assert.isTrue(yield* harness.hasPendingBackgroundWork);
-
-          yield* TestClock.adjust("4 seconds");
-          yield* fenced("gpt-fence-late-turn-completed");
-          assert.equal(pendingChildUpdates().at(-1)?.subagent.status, "interrupted");
-          assert.isFalse(yield* harness.hasPendingBackgroundWork);
-          assert.lengthOf(harness.continuationRequests, 0);
           assert.isFalse(
             harness.events.some(
               (event) =>
@@ -5710,29 +5552,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 event.providerTurn.nativeTurnRef?.nativeId === INTERRUPT_LATE_CHILD_NATIVE_TURN,
             ),
           );
-          yield* harness.runtime.startTurn({
-            ...makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-codex-interrupt-resumed"),
-              text: INTERRUPT_RESUME_PROMPT,
-            }),
-            runOrdinal: 2,
-            providerTurnOrdinal: 2,
-          });
-          yield* fenced("gpt-fence-child-resumed");
-          assert.equal(pendingChildUpdates().at(-1)?.subagent.status, "running");
-          assert.isNull(pendingChildUpdates().at(-1)?.subagent.completedAt);
-          assert.isTrue(yield* harness.hasPendingBackgroundWork);
-          yield* fenced("gpt-fence-old-completion");
-          assert.equal(pendingChildUpdates().at(-1)?.subagent.status, "running");
-          assert.isTrue(yield* harness.hasPendingBackgroundWork);
-          yield* TestClock.adjust("1 second");
-          yield* harness.awaitTerminal(2);
-          assert.equal(pendingChildUpdates().at(-1)?.subagent.status, "completed");
-          assert.isFalse(yield* harness.hasPendingBackgroundWork);
-          assert.lengthOf(harness.continuationRequests, 0);
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -7695,10 +7514,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
         yield* TestClock.adjust("30 seconds");
         yield* fenced("gpt-fence-child-settled");
-        assert.include(harness.continuationRequests[0]?.detail, "CHILD_DONE");
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "pending");
         assert.isTrue(yield* ownsRunningWork);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
         yield* TestClock.adjust("30 seconds");
         yield* fenced("gpt-fence-grandchild-running");
@@ -7707,7 +7524,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* TestClock.adjust("30 seconds");
         yield* fenced("gpt-fence-grandchild-settled");
         assert.isFalse(yield* ownsRunningWork);
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

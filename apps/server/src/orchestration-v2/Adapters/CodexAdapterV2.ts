@@ -2670,9 +2670,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             let ancestor: ActiveCodexTurnContext | undefined = subagent.parentContext;
             while (ancestor !== undefined) {
               if (terminalizedNativeTurns.has(ancestor.nativeTurnId)) {
-                yield* Ref.update(terminalizedNonCompletedNativeTurns, (current) =>
-                  new Set(current).add(turn.nativeTurnId),
-                );
                 const nativeThreadId = yield* getNativeThreadId(subagent.providerThread);
                 // Fork requests off the notification reader so it can read their responses.
                 yield* client
@@ -2750,9 +2747,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               subagent,
               status: "running",
               startedAt: turn.startedAt,
-              ...(providerTurnOrdinal > 1 || subagent.nativeTurnIds.size > 1
-                ? { reopen: true, result: null }
-                : {}),
+              ...(providerTurnOrdinal > 1 ? { reopen: true, result: null } : {}),
             });
             const now = yield* DateTime.now;
             yield* emitProviderEvent({
@@ -6572,20 +6567,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
-              // A child turn rejected after Stop has no context; its own completion settles the task.
-              const subagent = (yield* Ref.get(subagentThreads)).get(payload.threadId);
-              if (
-                subagent !== undefined &&
-                isOrchestrationV2WorkActive(subagent.task.status) &&
-                Array.from(subagent.nativeTurnIds).at(-1) === payload.turn.id &&
-                (yield* Ref.get(terminalizedNonCompletedNativeTurns)).has(payload.turn.id)
-              ) {
-                yield* emitSubagentTaskUpdate({
-                  subagent,
-                  status: "interrupted",
-                  completedAt: codexTimestamp(payload.turn.completedAt),
-                });
-              }
               return;
             }
             const nativeStatus = mapCodexTurnStatus(payload.turn.status);
@@ -7084,7 +7065,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (state.running.size > 0 || state.saved.size > 0) return true;
             }
             for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
-              if (isOrchestrationV2WorkActive(subagent.task.status)) {
+              if (subagent.task.status === "running") {
                 return true;
               }
             }
