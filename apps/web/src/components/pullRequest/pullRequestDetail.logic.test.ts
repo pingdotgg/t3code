@@ -42,7 +42,7 @@ import {
   isStackedPullRequestBase,
   loadingPullRequestCheckoutCommand,
   pullRequestPanelContext,
-  threadPullRequestPanelTarget,
+  threadPullRequestPanelTargets,
   latestPullRequestReviewOutcomes,
   newestPullRequestCommitAt,
   mergePullRequestThreadComments,
@@ -1456,7 +1456,7 @@ describe("pull request panel context beside a thread", () => {
     expect(pullRequestPanelContext({ projectId: null }, surface(3))).toBe("page");
   });
 
-  describe("the Pull request entry's target", () => {
+  describe("the Pull requests entry's targets", () => {
     const legacy = (number: number) => ({
       projectId: ProjectId.make("proj-a"),
       repository: "pingdotgg/t3code",
@@ -1466,33 +1466,56 @@ describe("pull request panel context beside a thread", () => {
 
     it("opens a linked pull request the legacy field never named, ahead of the branch PR", () => {
       expect(
-        threadPullRequestPanelTarget({
+        threadPullRequestPanelTargets({
           projectId: "proj-a",
           pullRequests: [link(15046, { source: "agent" })],
           linkedPullRequest: null,
           branchPullRequest: legacy(30),
         }),
-      ).toEqual({ ...legacy(15046), host: "github.com" });
+      ).toEqual([{ ...legacy(15046), host: "github.com" }]);
+    });
+
+    it("opens every visible link, including unsynced and cross-repository PRs", () => {
+      expect(
+        threadPullRequestPanelTargets({
+          projectId: "proj-a",
+          pullRequests: [
+            link(1),
+            link(2, { repository: "other/repo", url: "https://github.com/other/repo/pull/2" }),
+            link(3, { source: "stack-dismissed" }),
+          ],
+          branchPullRequest: legacy(30),
+        }),
+      ).toEqual([
+        { ...legacy(1), host: "github.com" },
+        {
+          projectId: "proj-a",
+          host: "github.com",
+          repository: "other/repo",
+          number: 2,
+          url: "https://github.com/other/repo/pull/2",
+        },
+      ]);
     });
 
     it("reuses the legacy reference only for the same pull request on the same host", () => {
       const linkedPullRequest = legacy(15046);
       const onHost = (host: string) =>
-        threadPullRequestPanelTarget({
+        threadPullRequestPanelTargets({
           projectId: "proj-a",
           pullRequests: [link(15046, { host, url: `https://${host}/pingdotgg/t3code/pull/15046` })],
           linkedPullRequest,
         });
-      expect(onHost("github.com")).toBe(linkedPullRequest);
-      expect(onHost("github.example.com")).toMatchObject({ host: "github.example.com" });
+      expect(onHost("github.com")).toEqual([linkedPullRequest]);
+      expect(onHost("github.example.com")).toMatchObject([{ host: "github.example.com" }]);
     });
 
     // regression: #15061 Pull request panel entry ignored the branch PR
     it("falls back to the branch pull request when the thread holds no link", () => {
       expect(
-        threadPullRequestPanelTarget({ projectId: "proj-a", branchPullRequest: legacy(3) }),
-      ).toEqual(legacy(3));
-      expect(threadPullRequestPanelTarget({ projectId: "proj-a", pullRequests: [] })).toBeNull();
+        threadPullRequestPanelTargets({ projectId: "proj-a", branchPullRequest: legacy(3) }),
+      ).toEqual([legacy(3)]);
+      expect(threadPullRequestPanelTargets({ projectId: "proj-a", pullRequests: [] })).toEqual([]);
     });
   });
 });
