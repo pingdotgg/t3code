@@ -501,8 +501,12 @@ describe("cached PR diff stats", () => {
 
   it("formats the matched pull request total, marking incomplete pages", () => {
     expect(formatPullRequestMatchedCount(0, false)).toBe("0");
+    expect(formatPullRequestMatchedCount(0, true)).toBe("0+");
     expect(formatPullRequestMatchedCount(1, false)).toBe("1");
     expect(formatPullRequestMatchedCount(12, true)).toBe("12+");
+    expect(pullRequestMatchedCountAccessibilityLabel(0, true)).toBe(
+      "At least 0 matching pull requests",
+    );
     expect(pullRequestMatchedCountAccessibilityLabel(1, false)).toBe("1 matching pull request");
     expect(pullRequestMatchedCountAccessibilityLabel(12, true)).toBe(
       "At least 12 matching pull requests",

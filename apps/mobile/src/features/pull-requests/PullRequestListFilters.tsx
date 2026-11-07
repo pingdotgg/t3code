@@ -3,8 +3,10 @@ import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Platform, ScrollView } from "react-native";
+import { Chip } from "../../components/ui/Chip";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
@@ -362,6 +364,7 @@ export function PullRequestListFilters(props: {
   readonly matchedIncomplete?: boolean;
 }) {
   const { count, more, reset, select, author, selectedLabelCount } = props.filters;
+  const { themeAppearance } = useAppearancePreferences();
   const matchedCount = props.matchedCount;
   const matchedIncomplete = props.matchedIncomplete === true;
   const matchedLabel =
@@ -371,16 +374,17 @@ export function PullRequestListFilters(props: {
       ? null
       : pullRequestMatchedCountAccessibilityLabel(matchedCount, matchedIncomplete);
   // Matched total replaces the old "Filters" label next to the icon; active filters
-  // still light the chip. Icon-only while the first page is loading.
-  const filtersLabel = matchedLabel ?? (count ? String(count) : "");
+  // still light the chip. Icon-only while the first page is loading — never flash the
+  // active-filter count in the same slot.
+  const filtersLabel = matchedLabel ?? "";
   const filtersAccessibility =
     matchedAccessibility == null
       ? count
-        ? `Filters, ${count} active`
+        ? `More filters, ${count} active`
         : "More filters"
       : count
-        ? `${matchedAccessibility}, ${count} filters active`
-        : matchedAccessibility;
+        ? `More filters, ${matchedAccessibility}, ${count} active`
+        : `More filters, ${matchedAccessibility}`;
   const rowStyle =
     props.sidebar && Platform.OS === "android"
       ? { ...ROW_STYLE, paddingHorizontal: 20 }
@@ -394,7 +398,16 @@ export function PullRequestListFilters(props: {
       // (8dp row margin + 12dp padding).
       contentContainerStyle={rowStyle}
     >
-      {Platform.OS === "android" ? null : (
+      {Platform.OS === "android" ? (
+        matchedLabel ? (
+          <Chip
+            label={matchedLabel}
+            glass
+            colorScheme={themeAppearance}
+            accessibilityLabel={matchedAccessibility ?? matchedLabel}
+          />
+        ) : null
+      ) : (
         <ListFilterMenu
           label={filtersLabel}
           icon

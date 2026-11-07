@@ -326,7 +326,8 @@ export function PullRequestsScreen(
               sidebar={sidebar}
               filters={filters}
               matchedCount={result.isPending && entries.length === 0 ? null : entries.length}
-              matchedIncomplete={result.hasMore && entries.length > 0}
+              // hasMore means later pages may still match, even when this page is empty.
+              matchedIncomplete={result.hasMore}
             />
             {result.data?.errors.length ? (
               <View key={JSON.stringify(targets)}>
