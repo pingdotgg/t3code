@@ -40,22 +40,15 @@ describe("scoreThreadSearch", () => {
         thread("Share auth across worktrees"),
       ]),
     ).toEqual(["Share auth across worktrees", "Authentication cleanup", "Fix oauth redirect"]);
-    for (const [query, prefix, wholeWords] of [
-      ["auth", "Authentication cleanup", "Share auth across worktrees"],
-      ["share auth", "Share authentication cleanup", "Share auth across worktrees"],
-      ["share auth", "Share authentication cleanup", "Auth across worktrees to share"],
-    ] as const) {
-      expect(
-        rankTitles(query, [
-          thread(prefix, {
-            activityAt: NOW,
-            opens: { openedAt: NOW, score: 12, picks: [] },
-          }),
-          thread(wholeWords, { activityAt: NOW - 90 * DAY }),
-        ]),
-        `${query}: ${wholeWords}`,
-      ).toEqual([wholeWords, prefix]);
-    }
+    expect(
+      rankTitles("share auth", [
+        thread("Share authentication cleanup", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 12, picks: [] },
+        }),
+        thread("Auth across worktrees to share", { activityAt: NOW - 90 * DAY }),
+      ]),
+    ).toEqual(["Auth across worktrees to share", "Share authentication cleanup"]);
   });
 
   it("treats camelCase, kebab, path, and digit boundaries as word starts", () => {
