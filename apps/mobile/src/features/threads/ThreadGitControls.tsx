@@ -158,7 +158,7 @@ export function threadGitControlsContentKey(props: ThreadGitControlsMenuKeyInput
     props.projectScripts
       .map(
         (script) =>
-          `${script.id}\t${script.name}\t${script.command}\t${script.icon}\t${script.stopOnSettle ? "1" : "0"}`,
+          `${script.id}\t${script.name}\t${script.command}\t${script.icon}\t${script.stopOnSettle ? "1" : "0"}\t${script.runOnWorktreeCreate ? "1" : "0"}\t${script.runOnSettle ? "1" : "0"}`,
       )
       .join("\0"),
     props.terminalSessions
