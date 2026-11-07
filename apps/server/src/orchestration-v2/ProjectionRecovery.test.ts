@@ -13,6 +13,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunAttemptId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -1225,7 +1226,13 @@ it.effect("reads the run that owns a background roster, not a queued or resumed 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("wakes the run whose subagent lost its shell, past a wake cut before it started", () =>
+it.effect.each([
+  ["a wake cut before it started", { status: "starting", startedAt: null }],
+  [
+    "a prompt the provider never accepted",
+    { status: "running", activeAttemptId: RunAttemptId.make("attempt:unaccepted") },
+  ],
+] as const)("wakes the run whose subagent lost its shell, past %s", ([, later]) =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
@@ -1255,11 +1262,11 @@ it.effect("wakes the run whose subagent lost its shell, past a wake cut before i
       },
     });
     const settledRun = yield* createRun(threadId, "completed", { providerThreadId });
-    yield* createRun(threadId, "starting", {
+    yield* createRun(threadId, later.status, {
       ordinal: 2,
       providerThreadId,
-      startedAt: null,
       completedAt: null,
+      ...later,
     });
     yield* projections.apply({
       id: EventId.make(`event:${threadId}:roster`),

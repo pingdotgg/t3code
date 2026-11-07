@@ -11,7 +11,12 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
+import type {
+  ProjectionRecordField,
+  ProjectionRecordFilter,
+  ProjectionRecords,
+  ProjectionRuntimeRecoveryState,
+} from "./ProjectionStore.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
@@ -36,7 +41,7 @@ const CONTINUE_PROMPT =
 const MAX_CONTINUATION_CHAIN = 3;
 const CONTINUATION_LOOP_WINDOW_MS = 5 * 60 * 1_000;
 
-function restartContinuationBlocked(
+export function restartContinuationBlocked(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
     "thread" | "runtimeRequests" | "providerTurns" | "turnItems"
@@ -83,6 +88,52 @@ function restartContinuationBlocked(
           DateTime.Equivalence(item.completedAt, source.completedAt))),
   );
 }
+
+/** A Stop from the user, or from the parent that delegated the task, that a restart cut short. */
+export const restartStopRequested = Effect.fn("RestartContinuation.restartStopRequested")(
+  function* <E>(
+    getThreadRecords: <K extends ProjectionRecordField>(
+      threadId: ThreadId,
+      fields: ReadonlyArray<K>,
+      filter: ProjectionRecordFilter,
+    ) => Effect.Effect<ProjectionRecords<K>, E>,
+    thread: Pick<ProjectionRuntimeRecoveryState["thread"], "id" | "lineage" | "forkedFrom">,
+    source: Pick<OrchestrationV2Run, "id" | "delegatedTaskId">,
+  ) {
+    const { turnItems } = yield* getThreadRecords(thread.id, ["turnItems"], {
+      turnItemRunIds: [source.id],
+      turnItemTypes: ["run_interrupt_request"],
+    });
+    if (turnItems.some((item) => item.runId === source.id && item.type === "run_interrupt_request"))
+      return true;
+    const { lineage, forkedFrom } = thread;
+    const taskId =
+      source.delegatedTaskId ?? (forkedFrom?.type === "node" ? forkedFrom.nodeId : undefined);
+    if (
+      lineage.relationshipToParent !== "subagent" ||
+      lineage.parentThreadId === null ||
+      taskId === undefined
+    )
+      return false;
+    const task = (yield* getThreadRecords(lineage.parentThreadId, ["subagents"], {
+      subagentIds: [taskId],
+    })).subagents.find((candidate) => candidate.id === taskId);
+    // A settled task no longer owns later work in its thread.
+    if (
+      task === undefined ||
+      task.runId === null ||
+      task.result !== null ||
+      !isOrchestrationV2WorkActive(task.status)
+    )
+      return false;
+    return (
+      (yield* getThreadRecords(lineage.parentThreadId, ["turnItems"], {
+        turnItemTypes: ["run_interrupt_request"],
+        turnItemRunIds: [task.runId],
+      })).turnItems.length > 0
+    );
+  },
+);
 
 /** App-owned delegations continue in their own threads and report back. */
 function hasOpenAwaitedWork(
@@ -246,50 +297,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       });
       return;
     }
-    const sourceRecords = yield* threads.getThreadRecords(
-      input.threadId,
-      ["messages", "turnItems"],
-      {
-        messageIds: [source.userMessageId],
-        turnItemRunIds: [source.id],
-        turnItemTypes: ["run_interrupt_request"],
-      },
-    );
-    if (
-      sourceRecords.turnItems.some(
-        (item) => item.runId === source.id && item.type === "run_interrupt_request",
-      )
-    )
-      return;
-    // A parent's Stop reaches its open delegated tasks through an effect a restart can cut short.
-    const { lineage, forkedFrom } = projection.thread;
-    const taskId =
-      source.delegatedTaskId ?? (forkedFrom?.type === "node" ? forkedFrom.nodeId : undefined);
-    if (
-      lineage.relationshipToParent === "subagent" &&
-      lineage.parentThreadId !== null &&
-      taskId !== undefined
-    ) {
-      const task = (yield* threads.getThreadRecords(lineage.parentThreadId, ["subagents"], {
-        subagentIds: [taskId],
-      })).subagents.find((candidate) => candidate.id === taskId);
-      // A settled task no longer owns later work in its thread.
-      const parentRunId =
-        task !== undefined && task.result === null && isOrchestrationV2WorkActive(task.status)
-          ? task.runId
-          : null;
-      if (
-        parentRunId !== null &&
-        (yield* threads.getThreadRecords(lineage.parentThreadId, ["turnItems"], {
-          turnItemTypes: ["run_interrupt_request"],
-          turnItemRunIds: [parentRunId],
-        })).turnItems.length > 0
-      )
-        return;
-    }
-    const sourceMessage = sourceRecords.messages.find(
-      (message) => message.id === source.userMessageId,
-    );
+    if (yield* restartStopRequested(threads.getThreadRecords, projection.thread, source)) return;
+    const sourceMessage = (yield* threads.getThreadRecords(input.threadId, ["messages"], {
+      messageIds: [source.userMessageId],
+    })).messages.find((message) => message.id === source.userMessageId);
     if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage)) return;
     const note = restartContinuationNote(
       source,

@@ -78,6 +78,14 @@ never wake it. Its continuation prompt is the note of what will not report back.
 unmarked shell or monitor does not wake a settled run: most are dev servers and their
 watchdogs that nobody waits on, so that note waits for the next user message.
 
+A run is marked running before its provider accepts the prompt, so recovery treats a run
+without a provider turn as never started. A user's prompt the provider never received
+joins the held queue. With restart continuation on, a delegated, agent-sent, or scheduled
+prompt has nobody to review it, so recovery starts it again under the same run. The resend
+skips every thread and Stop that a continuation skips, and gives up after three tries so a
+start that crashes the server cannot loop. A crash after the provider received the prompt
+but before its turn was recorded can repeat that prompt.
+
 Recovery retires effects tied to the lost process and records continuation intent
 in the durable outbox. That intent survives another restart before provider startup.
 Continuation effects wait for activation; a slow provider must not delay the server's
