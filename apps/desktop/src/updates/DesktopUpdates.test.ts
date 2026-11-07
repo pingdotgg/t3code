@@ -42,6 +42,33 @@ describe("DesktopUpdates", () => {
     }),
   );
 
+  it.effect("turns updates off only when the macOS app runs from a read-only volume", () =>
+    Effect.gen(function* () {
+      const darwinUpdates = (bundleWriteError: "EROFS" | "EACCES") => {
+        const harness = makeHarness({ platform: "darwin", bundleWriteError });
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            yield* TestClock.adjust(Duration.minutes(1));
+            yield* flushCallbacks;
+            return { state: yield* updates.getState, checks: harness.checkCount() };
+          }),
+        ).pipe(Effect.provide(harness.layer));
+      };
+
+      const readOnly = yield* darwinUpdates("EROFS");
+      assert.equal(readOnly.state.status, "disabled");
+      assert.isString(readOnly.state.message);
+      assert.equal(readOnly.checks, 0);
+
+      // ShipIt can ask for authorization over a bundle the user cannot write, so that still updates.
+      const notWritable = yield* darwinUpdates("EACCES");
+      assert.notEqual(notWritable.state.status, "disabled");
+      assert.equal(notWritable.checks, 1);
+    }),
+  );
+
   it.effect("keeps the disabled reason available after configuration and channel changes", () => {
     const harness = makeHarness({ env: { T3CODE_DISABLE_AUTO_UPDATE: "true" } });
     const reason = "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
