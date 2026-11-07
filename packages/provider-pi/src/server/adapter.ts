@@ -414,6 +414,8 @@ interface PiPromptSend {
 interface PiThreadState {
   providerThread: OrchestrationV2ProviderThread;
   activeTurn: ActivePiTurn | null;
+  /** Highest item ordinal handed out in this thread; bands continue past overflow. */
+  lastItemOrdinal: number;
 }
 
 interface PiWake {
@@ -1690,6 +1692,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const turn = state.activeTurn;
         if (turn === null) return;
         state.activeTurn = null;
+        // An overflowing turn continued past its band; the thread high-water mark
+        // moves up so the next turn's band base never reuses ordinals.
+        state.lastItemOrdinal = Math.max(state.lastItemOrdinal, turn.nextItemOrdinal - 1);
         const interrupted = turn.interrupted || turn.nativeAborted;
         const completedAt = yield* DateTime.now;
         yield* completeOpenStreamItems(turn);
@@ -2526,7 +2531,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 createdAt,
                 updatedAt: createdAt,
               };
-        threadState = { providerThread, activeTurn: null };
+        threadState = { providerThread, activeTurn: null, lastItemOrdinal: 0 };
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
           Effect.orElseSucceed(() => undefined),
         );
@@ -2747,7 +2752,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               providerTurn,
               startedAt,
               itemOrdinals: new Map(),
-              nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
+              nextItemOrdinal: Math.max(
+                state.lastItemOrdinal,
+                turnInput.providerTurnOrdinal * 100 + 1,
+              ),
               messageOrdinal: 0,
               streamItems: new Map(),
               toolArgs: new Map(),

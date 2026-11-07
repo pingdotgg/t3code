@@ -281,6 +281,8 @@ interface ThreadState {
   publishedBackgroundWork?: boolean;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
+  /** Highest item ordinal handed out in this thread; bands continue past overflow. */
+  lastItemOrdinal: number;
   model: ModelRef | undefined;
   /** Locally ended but possibly live; consume its next execution end without settling a new turn. */
   unsettled: boolean;
@@ -756,6 +758,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       providerThread,
       providerTurns: new Map(),
       active: undefined,
+      lastItemOrdinal: 0,
       model: undefined,
       unsettled: false,
       unsettledStarted: false,
@@ -1553,6 +1556,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const turn = state.active;
       if (turn === undefined) return;
       state.active = undefined;
+      // An overflowing turn continued past its band; the thread high-water mark
+      // moves up so the next turn's band base never reuses ordinals.
+      state.lastItemOrdinal = Math.max(state.lastItemOrdinal, turn.nextOrdinal - 1);
       for (const inboxID of turn.steers) state.strandedSteers.add(inboxID);
       for (const entry of pending.values()) {
         const background = callsAbove(entry.sessionId).some((call) => call.background);
@@ -3178,6 +3184,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         completedAt: null,
       };
       const turn = makeTurn(turnInput, providerTurn, { scope: "", awaitingStart });
+      // An overflowing earlier turn continued past its band; start past the
+      // thread high-water mark so the fresh band never reuses ordinals.
+      turn.nextOrdinal = Math.max(turn.nextOrdinal, state.lastItemOrdinal + 1);
       if (streamFailure !== undefined) {
         return yield* new ProviderAdapter.ProviderAdapterEventStreamError({
           driver,

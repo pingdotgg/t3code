@@ -2,7 +2,7 @@ import * as NodeURL from "node:url";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
   ChatFileAttachment,
@@ -5031,6 +5031,93 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.lengthOf(offers, 1);
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
+  describe("opencode2 ordinal band overflow", () => {
+    it.effect("keeps turn item ordinals unique across the 100-item band boundary", () =>
+      Effect.gen(function* () {
+        const toolPair = (from: number, to: number) =>
+          Array.from({ length: to - from + 1 }, (_, index) => {
+            const id = `call-ordinal-${from + index}`;
+            return [
+              event("session.tool.input.started", {
+                sessionID: SESSION,
+                assistantMessageID: "msg_assistant",
+                id,
+                name: "read",
+              }),
+              event("session.tool.called", {
+                sessionID: SESSION,
+                assistantMessageID: "msg_assistant",
+                id,
+                input: { path: `file-${from + index}.txt` },
+                executed: false,
+              }),
+            ];
+          }).flat();
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          ...toolPair(1, 300),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          ...toolPair(301, 303),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        let terminalsSeen = 0;
+        const collector = yield* Stream.runForEach(
+          runtime.events.pipe(
+            Stream.tap((event) =>
+              Effect.sync(() => {
+                events.push(event);
+                if (event.type === "turn.terminal") terminalsSeen += 1;
+              }),
+            ),
+            Stream.takeUntil(() => terminalsSeen >= 2),
+          ),
+          () => Effect.void,
+        ).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        yield* Stream.runHead(
+          runtime.events.pipe(Stream.filter((event) => event.type === "turn.terminal")),
+        );
+        yield* runtime.startTurn({
+          ...turnInput(thread),
+          runId: RunId.make("run:opencode2-adapter:overflow"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt:opencode2-adapter:overflow"),
+        });
+        yield* Stream.runHead(
+          runtime.events.pipe(Stream.filter((event) => event.type === "turn.terminal")),
+        );
+        yield* Fiber.interrupt(collector);
+        // The live event stream coalesces rapid updates; dedupe by item id so
+        // ordinal uniqueness is asserted over distinct items.
+        const ordinalsById = new Map(
+          events.flatMap((event) =>
+            event.type === "turn_item.updated"
+              ? [[String(event.turnItem.id), event.turnItem.ordinal] as const]
+              : [],
+          ),
+        );
+        expect(ordinalsById.size).toBe(303);
+        const counts = new Map<number, number>();
+        for (const ordinal of ordinalsById.values()) {
+          counts.set(ordinal, (counts.get(ordinal) ?? 0) + 1);
+        }
+        const duplicated = [...counts.entries()].filter(([, count]) => count > 1);
+        // @effect-diagnostics-next-line globalConsoleInEffect:off -- probe
+        console.log(
+          "[probe] allocated ordinals:",
+          JSON.stringify((globalThis as { __acpOrd?: number[] }).__acpOrd),
+        );
+        expect(duplicated).toEqual([]);
+      }),
+    );
+  });
 });
 
 const providerTurnId = Effect.gen(function* () {

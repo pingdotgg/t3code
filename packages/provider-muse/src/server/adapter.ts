@@ -331,6 +331,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let nativeSessionId: string | undefined;
       let thread: OrchestrationV2ProviderThread | undefined;
       let active: ActiveTurn | undefined;
+      let lastItemOrdinal = 0;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
       let latestSubscriptionUsage: MuseSubscriptionUsage | undefined;
       const agentEndedAt = new Map<string, DateTime.Utc>();
@@ -987,6 +988,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             : {}),
         });
         yield* updateSession(disposition === "broken" ? "error" : "ready", detail ?? null);
+        // An overflowing turn continued past its band; the high-water mark moves
+        // up so the next turn's band base never reuses ordinals.
+        lastItemOrdinal = Math.max(lastItemOrdinal, turn.nextOrdinal - 1);
         active = undefined;
         if (status === "failed") {
           const usageLimited =
@@ -2037,7 +2041,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           dirty: new Set(),
           settledRequests: new Set(),
           done: yield* Deferred.make<void>(),
-          nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
+          nextOrdinal: Math.max(lastItemOrdinal, turnInput.providerTurnOrdinal * 100 + 1),
           flushScheduled: false,
           interruptRequested: false,
           compact,
