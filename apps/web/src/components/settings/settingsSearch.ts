@@ -68,6 +68,7 @@ export interface SettingsSearchItem {
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
+  readonly spellcheckAvailableOnly?: boolean;
   readonly peerLinksOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
@@ -84,6 +85,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasSpellcheckLanguages?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -700,6 +702,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Send shortcut",
     to: "/settings/chat",
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
+  },
+  {
+    id: "spellcheck-languages",
+    title: "Spellcheck languages",
+    to: "/settings/chat",
+    searchTerms: ["spelling dictionary dictionaries language red underline typo composer"],
+    desktopOnly: true,
+    spellcheckAvailableOnly: true,
   },
   {
     id: "follow-up-behavior",
@@ -1453,7 +1463,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.spellcheckAvailableOnly || availability.hasSpellcheckLanguages === true),
   );
 }
 

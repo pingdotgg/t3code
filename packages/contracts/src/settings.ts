@@ -372,6 +372,12 @@ export const VoiceTranscriptionDestination = Schema.Struct({
 });
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
+export const MAX_SPELLCHECK_LANGUAGES = 32;
+export const SpellcheckLanguages = Schema.Array(TrimmedNonEmptyString).check(
+  Schema.isMaxLength(MAX_SPELLCHECK_LANGUAGES),
+);
+export type SpellcheckLanguages = typeof SpellcheckLanguages.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -493,6 +499,8 @@ export const ClientSettingsSchema = Schema.Struct({
   sendShortcut: Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("enter")),
   ),
+  // Desktop spellchecker dictionary codes (e.g. "fr-FR"). Empty follows the operating system.
+  spellcheckLanguages: SpellcheckLanguages.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   followUpBehavior: Schema.Literals(["queue", "steer"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("steer")),
   ),
@@ -1878,6 +1886,7 @@ export const ClientSettingsPatch = Schema.Struct({
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
+  spellcheckLanguages: Schema.optionalKey(SpellcheckLanguages),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),

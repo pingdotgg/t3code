@@ -16,6 +16,7 @@ import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
 } from "./settingsSearch";
+import { readAvailableSpellcheckLanguages } from "./SpellcheckLanguagesPicker";
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
   const { environments } = useEnvironments();
@@ -69,5 +70,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasThreadAutoSettlement,
     managedTunnelActive,
     hasPeerLinkHost,
+    hasSpellcheckLanguages: readAvailableSpellcheckLanguages().length > 0,
   });
 }
