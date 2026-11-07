@@ -101,6 +101,26 @@ const virtualInterface = (address: string, mac = "02:42:ac:11:00:01") => [
 ];
 
 describe("resolveBoundEndpoints", () => {
+  it("advertises Mac wake addresses only for physical LAN interfaces with unicast MACs", () => {
+    const resolve = (mac: string) =>
+      resolveBoundEndpoints({
+        platform: "darwin",
+        host: "0.0.0.0",
+        port: 3773,
+        interfaces: { ...INTERFACES, en0: [{ ...INTERFACES.en0![0]!, mac }] },
+      });
+    expect(resolve("aa:bb:cc:dd:ee:ff")).toEqual([
+      {
+        kind: "lan",
+        httpBaseUrl: "http://192.168.1.10:3773/",
+        wakeMacAddress: "aa:bb:cc:dd:ee:ff",
+      },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+    ]);
+    for (const mac of ["00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "invalid"]) {
+      expect(resolve(mac)[0]).not.toHaveProperty("wakeMacAddress");
+    }
+  });
   it("lists every external IPv4 address for a wildcard bind, tagging the tailnet one", () => {
     expect(
       resolveBoundEndpoints({

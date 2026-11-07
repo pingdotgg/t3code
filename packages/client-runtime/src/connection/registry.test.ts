@@ -20,6 +20,7 @@ import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -2252,6 +2253,85 @@ describe("EnvironmentRegistry routes", () => {
           Effect.scoped,
         );
       }),
+  );
+
+  it.effect("sends an explicit wake even when a sleeping host still appears connected", () =>
+    Effect.gen(function* () {
+      const sent = yield* Ref.make(0);
+      const harness = yield* makeHarness(
+        [LAN_TARGET],
+        [new BearerConnectionProfile({ ...LAN_PROFILE, wakeMacAddress: "aa:bb:cc:dd:ee:ff" })],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          LAN_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        expect(yield* Ref.get(sent)).toBe(0);
+        yield* registry.retryNow(LAN_TARGET.environmentId, { wake: true });
+        expect(yield* Ref.get(sent)).toBe(1);
+      }).pipe(
+        Effect.provide(harness.layer),
+        Effect.provideService(ClientCapabilities.NetworkWake, {
+          send: () => Ref.update(sent, (count) => count + 1),
+        }),
+        Effect.scoped,
+      );
+    }),
+  );
+
+  it.effect(
+    "wakes saved LAN hosts only for explicit retries and rate limits repeated requests",
+    () =>
+      Effect.gen(function* () {
+        const sent = yield* Ref.make<
+          ReadonlyArray<ReadonlyArray<{ readonly address: string; readonly macAddress: string }>>
+        >([]);
+        const harness = yield* makeHarness(
+          [LAN_TARGET],
+          [new BearerConnectionProfile({ ...LAN_PROFILE, wakeMacAddress: "aa:bb:cc:dd:ee:ff" })],
+          [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+          {
+            prepareError: new ConnectionBlockedError({
+              reason: "authentication",
+              detail: "offline fixture",
+            }),
+          },
+        );
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.start;
+          yield* awaitConnectionState(
+            registry,
+            LAN_TARGET.environmentId,
+            (state) => state.phase === "blocked",
+          );
+          yield* registry.retryNow(LAN_TARGET.environmentId);
+          expect(yield* Ref.get(sent)).toEqual([]);
+          yield* registry.retryNow(LAN_TARGET.environmentId, { wake: true });
+          yield* registry.retryNow(LAN_TARGET.environmentId, { wake: true });
+          expect(yield* Ref.get(sent)).toEqual([
+            [{ address: "192.168.1.10", macAddress: "aa:bb:cc:dd:ee:ff" }],
+          ]);
+          yield* TestClock.adjust("15 seconds");
+          yield* registry.retryNow(LAN_TARGET.environmentId, { wake: true });
+          expect(yield* Ref.get(sent)).toHaveLength(2);
+          yield* registry.setEnabled(LAN_TARGET.environmentId, false);
+          yield* TestClock.adjust("15 seconds");
+          yield* registry.retryNow(LAN_TARGET.environmentId, { wake: true });
+          expect(yield* Ref.get(sent)).toHaveLength(2);
+        }).pipe(
+          Effect.provide(harness.layer),
+          Effect.provideService(ClientCapabilities.NetworkWake, {
+            send: (targets) => Ref.update(sent, (current) => [...current, targets]),
+          }),
+          Effect.scoped,
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("loads saved routes grouped by environment, in saved order", () =>

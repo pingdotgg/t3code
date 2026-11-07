@@ -10,6 +10,10 @@ public final class T3NativeControlsModule: Module {
   private var filePresentation: T3NativeFilePresentation?
 
   public func definition() -> ModuleDefinition {
+    AsyncFunction("wakeOnLan") { (address: String, macAddress: String) in
+      try T3NetworkWake.send(address: address, macAddress: macAddress)
+    }
+
     Events("videoPlaybackChange")
     Constants {
       if #available(iOS 26.0, *) {

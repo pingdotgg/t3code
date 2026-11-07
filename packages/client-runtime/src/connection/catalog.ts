@@ -1,4 +1,8 @@
-import { DesktopSshEnvironmentTargetSchema, EnvironmentId } from "@t3tools/contracts";
+import {
+  DesktopSshEnvironmentTargetSchema,
+  EnvironmentId,
+  WakeMacAddress,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -20,6 +24,7 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
   "BearerConnectionProfile",
   {
     ...ConnectionProfileBase,
+    wakeMacAddress: Schema.optionalKey(WakeMacAddress),
     httpBaseUrl: Schema.String,
     wsBaseUrl: Schema.String,
     learned: Schema.optionalKey(Schema.Literal(true)),

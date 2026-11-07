@@ -6,7 +6,11 @@ import assetLinks from "../web/public/.well-known/assetlinks.json";
 
 // Keep config parsing independent of local env files and build credentials.
 vi.mock("../../scripts/lib/public-config.ts", () => ({
-  loadRepoEnv: () => ({ APP_VARIANT: process.env.APP_VARIANT }),
+  loadRepoEnv: () => ({
+    APP_VARIANT: process.env.APP_VARIANT,
+    T3CODE_IOS_PERSONAL_TEAM: process.env.T3CODE_IOS_PERSONAL_TEAM,
+    T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID: process.env.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID,
+  }),
 }));
 
 afterEach(() => {
@@ -31,6 +35,7 @@ it.each([
   ["preview", "com.t3tools.t3code.preview"],
   ["production", "com.t3tools.t3code"],
 ])("keeps the iOS and Android identifiers for APP_VARIANT=%j", async (value, identifier) => {
+  vi.stubEnv("T3CODE_IOS_PERSONAL_TEAM", "0");
   const config = await loadConfig(value);
   expect(config.ios?.bundleIdentifier).toBe(identifier);
   expect(config.android?.package).toBe(identifier);
@@ -45,3 +50,18 @@ it.each([
   ]);
   expect(assetLinks.map((link) => link.target.package_name)).toContain(identifier);
 });
+
+it.each(["development", "preview", "production"])(
+  "omits the multicast entitlement only for Personal Team %s builds",
+  async (variant) => {
+    vi.stubEnv("T3CODE_IOS_PERSONAL_TEAM", "0");
+    expect(
+      (await loadConfig(variant)).ios?.entitlements?.["com.apple.developer.networking.multicast"],
+    ).toBe(true);
+    vi.stubEnv("T3CODE_IOS_PERSONAL_TEAM", "1");
+    vi.stubEnv("T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID", "com.example.t3code");
+    expect((await loadConfig(variant)).ios?.entitlements).not.toHaveProperty(
+      "com.apple.developer.networking.multicast",
+    );
+  },
+);
