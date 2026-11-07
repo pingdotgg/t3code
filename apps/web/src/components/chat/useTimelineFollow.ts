@@ -322,7 +322,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     pageScrollControllerRef.current?.releaseActiveKey();
   };
   const onComposerPageScrollReleaseStable = useStableCallback(onComposerPageScrollRelease);
-  const scrollToEnd = (animated: boolean = false) => {
+  /** `holdAfter` stops following once the end is reached, so later output does not move the view. */
+  const scrollToEnd = (animated: boolean = false, { holdAfter = false } = {}) => {
     // Stops a running position restore; follow itself is re-armed below.
     viewportRef.current?.navigate({ releasesFollow: false });
     followStore.dispatch(visit, { type: "followEnd" });
@@ -338,13 +339,23 @@ export function useTimelineFollow(input: TimelineFollowInput) {
         list.scrollToEnd?.({
           animated: animated && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
         }),
-      ).then(() =>
-        settleListScroll(
-          list,
-          measuredEndOffset,
-          () => readCurrentFollow().mode !== "following" || legendListRef.current !== list,
-        ),
-      );
+      )
+        .then(() =>
+          settleListScroll(
+            list,
+            measuredEndOffset,
+            () => readCurrentFollow().mode !== "following" || legendListRef.current !== list,
+          ),
+        )
+        .then(() => {
+          if (
+            holdAfter &&
+            legendListRef.current === list &&
+            readCurrentFollow().mode === "following"
+          ) {
+            releaseFollowForNavigation();
+          }
+        });
     });
   };
   const scrollToEndStable = useStableCallback(scrollToEnd);
