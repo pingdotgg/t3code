@@ -1397,6 +1397,22 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         // Child approvals use their own run IDs and can outlive turns; bypass turn routing.
         if (params.subagentOrigin !== undefined && method.startsWith("approval/"))
           return yield* handleRequestEvent(method, params, undefined);
+        // Runless requests outlive their turn, so their settlement does too.
+        const settled =
+          method === "approval/resolved"
+            ? params.approvalId
+            : method === "userInput/settled"
+              ? params.userInputId
+              : undefined;
+        if (
+          settled !== undefined &&
+          [...pending.values()].some(
+            (entry) =>
+              entry.request.providerTurnId === null &&
+              entry.request.nativeRequestRef?.nativeId === settled,
+          )
+        )
+          return yield* handleRequestEvent(method, params, undefined);
         if (
           method === "turn/started" &&
           typeof params.turnId === "string" &&

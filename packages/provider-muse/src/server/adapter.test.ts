@@ -1765,6 +1765,37 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("settles a request shown during compaction after the compaction is stopped", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHeldWakeHarness(fake);
+      fake.queueResponse("session/compact", runActive());
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
+      yield* fake.takeCall("session/compact");
+      const running = yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.status === "running",
+      );
+      yield* fake.emit("turn/started", { turnId: "wake-2" });
+      yield* fake.emit("approval/requested", approval("wake-2"));
+      const shown = yield* harness.takeEvent(
+        "runtime_request.updated",
+        (event) => event.runtimeRequest.status === "pending",
+      );
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: running.providerTurn.id,
+      });
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "interrupted");
+      yield* fake.emit("approval/resolved", { approvalId: "approval-1", turnId: "wake-2" });
+      const resolved = yield* harness.takeEvent(
+        "runtime_request.updated",
+        (event) => event.runtimeRequest.status === "resolved",
+      );
+      assert.strictEqual(resolved.runtimeRequest.id, shown.runtimeRequest.id);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect.each(["before compaction", "during admission"] as const)(
     "keeps a Muse wake that started $0 when stopping a waiting compaction",
     (wakeStarted) =>
