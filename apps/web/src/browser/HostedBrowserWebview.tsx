@@ -195,7 +195,7 @@ export function HostedBrowserWebview(props: {
     };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
-    webview.addEventListener("did-finish-load", markDocumentShown);
+    webview.addEventListener("dom-ready", markDocumentShown);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
     register();
@@ -204,7 +204,7 @@ export function HostedBrowserWebview(props: {
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
-      webview.removeEventListener("did-finish-load", markDocumentShown);
+      webview.removeEventListener("dom-ready", markDocumentShown);
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
     };
