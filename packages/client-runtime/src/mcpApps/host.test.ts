@@ -130,6 +130,51 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 2)?.result).toEqual({ content: [] });
   });
 
+  it("delivers results whose stored image blocks lost their bytes, which the MCP Apps SDK rejects", async () => {
+    const { host, sent } = setup({
+      callTool: async () => ({
+        content: [
+          { type: "text", text: "rendered" },
+          { type: "image", mimeType: "image/png", sizeBytes: 300 },
+          { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+        ],
+        structuredContent: { rendered: true },
+      }),
+    });
+    initialize(host);
+    host.setToolCall({
+      arguments: {},
+      result: {
+        content: [
+          { type: "text", text: "Chart ready" },
+          { type: "image", source: { type: "base64", media_type: "image/png", sizeBytes: 300 } },
+          { type: "text", text: "[Image: source: /tmp/chart.png]" },
+        ],
+        structuredContent: { chart: "sales" },
+      },
+    });
+    host.receive({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "render" } });
+    await flush();
+
+    const notified = sent.find((m) => m.method === "ui/notifications/tool-result")?.params as {
+      content: ReadonlyArray<unknown>;
+      structuredContent: unknown;
+    };
+    expect(notified.structuredContent).toEqual({ chart: "sales" });
+    expect(notified.content).toContainEqual({ type: "text", text: "Chart ready" });
+    expect(notified.content).not.toContainEqual(expect.objectContaining({ type: "image" }));
+
+    const answered = sent.find((m) => m.id === 2)?.result as {
+      content: ReadonlyArray<unknown>;
+      structuredContent: unknown;
+    };
+    expect(answered.structuredContent).toEqual({ rendered: true });
+    expect(answered.content).toEqual([
+      { type: "text", text: "rendered" },
+      { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+    ]);
+  });
+
   it("sends a later result for a call that had none, without repeating its input", () => {
     const { host, sent } = setup();
     initialize(host);
