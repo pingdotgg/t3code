@@ -14,8 +14,11 @@ export function projectThreadContentPresentation(input: {
   readonly detailError: string | null;
   readonly detailDeleted: boolean;
   readonly connectionState: EnvironmentConnectionPhase;
+  readonly hasPendingCreation?: boolean;
 }): ThreadContentPresentation {
-  if (input.hasDetail) {
+  // The local prompt remains usable before creation reaches the server. A real
+  // synchronization failure still needs the unavailable state or a cached-detail notice.
+  if (input.hasDetail || (input.hasPendingCreation && input.detailError === null)) {
     return { kind: "ready" };
   }
   if (input.detailDeleted) {

@@ -4,10 +4,11 @@ export type ThreadSyncPhase = "loading" | "syncing";
 
 export function resolveThreadSyncPhase(input: {
   readonly detailExists: boolean;
+  readonly detailError?: string | null;
   readonly shellExists: boolean;
   readonly status: EnvironmentThreadStatus;
 }): ThreadSyncPhase | null {
-  if (!input.shellExists) {
+  if (!input.shellExists || input.detailError != null) {
     return null;
   }
 
