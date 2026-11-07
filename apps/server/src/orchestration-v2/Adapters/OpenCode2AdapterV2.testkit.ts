@@ -78,6 +78,10 @@ const operationOf = (
     };
   }
   if (method === "GET" && path === "/api/skill") return { type: "skill.list", input: query };
+  const shell = /^\/api\/shell\/([^/]+)$/.exec(path);
+  if (method === "GET" && shell !== null) {
+    return { type: "shell.get", input: { id: shell[1], ...query } };
+  }
   if (session !== null) {
     const [, sessionID, rest = ""] = session;
     // The client sends absent optional fields as `null`; recordings omit them.
@@ -104,6 +108,7 @@ const operationOf = (
       return { type: "session.revert.commit", input };
     }
     if (method === "DELETE" && rest === "/revert") return { type: "session.revert.clear", input };
+    if (method === "GET" && rest === "/inbox") return { type: "session.inbox.list", input };
     const inbox = /^\/inbox\/([^/]+)$/.exec(rest);
     if (method === "DELETE" && inbox !== null) {
       const inboxID = decodeURIComponent(inbox[1] ?? "");
