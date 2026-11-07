@@ -692,6 +692,16 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
         Queue.offer(closedIdle, input).pipe(Effect.andThen(options.onCloseIdle?.() ?? Effect.void)),
     }),
     Layer.mock(DeviceService.DeviceService)({
+      sessionsForThread: (threadId) =>
+        Effect.succeed([
+          {
+            threadId,
+            hostId: "local",
+            deviceId: "emulator-5554",
+            platform: "android" as const,
+            openedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ]),
       close: (input) =>
         Ref.update(deviceCloses, (closes) => [...closes, input]).pipe(
           Effect.andThen(options.deviceCloseError ?? Effect.void),
@@ -1594,6 +1604,10 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(settled));
           yield* fixture.publishEvent(settledEvent(marker));
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.deviceCloses)).filter((close) => close.threadId === settled.id),
+            [],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

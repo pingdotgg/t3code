@@ -604,13 +604,17 @@ export const make = Effect.gen(function* () {
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
-      yield* devices
-        .close({ threadId })
-        .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("releasing a settled thread's devices failed", { threadId, error }),
-          ),
-        );
+      if ((yield* projections.getThread(threadId)).settledOverride !== "settled") return;
+      // close takes the device lifecycle lock, which a starting host holds; skip it without sessions.
+      if ((yield* devices.sessionsForThread(threadId)).length > 0) {
+        yield* devices
+          .close({ threadId })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("releasing a settled thread's devices failed", { threadId, error }),
+            ),
+          );
+      }
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
       // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
