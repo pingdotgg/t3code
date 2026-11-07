@@ -475,6 +475,31 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  // regression: #32554 the downloaded copy of the applied build stayed in the updater cache
+  it.effect("removes the updater's pending download once an install applied", () => {
+    const harness = makeHarness({
+      installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+      appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
+    });
+    const updaterCacheDir = `${harness.homeDirectory}/Library/Caches/t3code-updater`;
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        assert.deepInclude(
+          harness.removedPaths,
+          { path: `${updaterCacheDir}/pending`, recursive: true },
+          "the applied build's pending download was not removed",
+        );
+        assert.notInclude(
+          harness.removedPaths.map((removed) => removed.path),
+          `${updaterCacheDir}/update.zip`,
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("drops the update restart marker when an install is interrupted", () =>
     Effect.gen(function* () {
       const stopping = yield* Deferred.make<void>();
