@@ -44,6 +44,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly resourcesPath: string;
     readonly homeDirectory: string;
     readonly appDataDirectory: string;
+    readonly appCacheDirectory: string;
     readonly baseDir: string;
     readonly stateDir: string;
     readonly desktopSettingsPath: string;
@@ -156,6 +157,15 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : input.platform === "darwin"
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
+  // Mirrors electron-updater's getAppCacheDir, the base of its download cache.
+  const appCacheDirectory =
+    input.platform === "win32"
+      ? Option.getOrElse(config.localAppDataDirectory, () =>
+          path.join(homeDirectory, "AppData", "Local"),
+        )
+      : input.platform === "darwin"
+        ? path.join(homeDirectory, "Library", "Caches")
+        : Option.getOrElse(config.xdgCacheHome, () => path.join(homeDirectory, ".cache"));
   const baseDir = resolveDesktopBaseDir({
     homeDirectory,
     joinPath: path.join,
@@ -196,6 +206,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     resourcesPath,
     homeDirectory,
     appDataDirectory,
+    appCacheDirectory,
     baseDir,
     stateDir,
     desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),

@@ -441,6 +441,7 @@ describe("DesktopUpdates", () => {
   it.effect("flags an install that did not apply and keeps the flag through checks", () => {
     const harness = makeHarness({
       installRecord: JSON.stringify({ fromVersion: "1.2.3", targetVersion: "1.2.4" }),
+      appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
     });
 
     return Effect.scoped(
@@ -449,6 +450,10 @@ describe("DesktopUpdates", () => {
         yield* updates.configure;
         assert.equal((yield* updates.getState).notAppliedVersion, "1.2.4");
         assert.isDefined(harness.previousInstallRecord());
+        assert.notInclude(
+          harness.removedPaths.map((removed) => removed.path),
+          `${harness.homeDirectory}/Library/Caches/t3code-updater/pending`,
+        );
 
         harness.emit("update-available", { version: "1.2.4" });
         yield* flushCallbacks;

@@ -682,9 +682,37 @@ export const make = Effect.gen(function* () {
     .remove(installRecordPath, { force: true })
     .pipe(Effect.ignore);
 
+  // update.zip stays: electron-updater diffs the next download against it.
+  const removeAppliedUpdateDownload = Ref.get(appUpdateYmlConfigRef).pipe(
+    Effect.map(Option.flatMap((config) => Option.fromNullishOr(config.updaterCacheDirName))),
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: (updaterCacheDirName) =>
+          fileSystem
+            .remove(
+              environment.path.join(environment.appCacheDirectory, updaterCacheDirName, "pending"),
+              { recursive: true, force: true },
+            )
+            .pipe(
+              Effect.catch((error) =>
+                logUpdaterWarning("Could not remove the applied update's download.", {
+                  errorTag: error._tag,
+                }),
+              ),
+            ),
+      }),
+    ),
+  );
+
   const readNotAppliedInstallVersion = fileSystem.readFileString(installRecordPath).pipe(
     Effect.flatMap(decodeInstallRecord),
     Effect.option,
+    Effect.tap((record) =>
+      Option.isSome(record) && record.value.targetVersion === environment.appVersion
+        ? removeAppliedUpdateDownload
+        : Effect.void,
+    ),
     Effect.map((record) =>
       Option.flatMap(record, (value) =>
         Option.fromNullishOr(resolveNotAppliedInstallVersion(value, environment.appVersion)),
