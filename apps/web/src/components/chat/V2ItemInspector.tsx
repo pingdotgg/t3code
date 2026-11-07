@@ -281,9 +281,6 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "file_change" ? (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-dim-foreground">
-              {formatWorkspaceRelativePath(item.fileName, props.workspaceRoot)}
-            </span>
             {item.additions !== undefined || item.deletions !== undefined ? (
               <span>
                 <span className="text-diff-addition-foreground">
