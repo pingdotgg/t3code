@@ -2639,6 +2639,7 @@ describe("ClaudeAdapterV2 native fork", () => {
           prefix: "t3-claude-v2-side-chat-goal-",
         });
         const prompts: Array<{ readonly session: string | undefined; readonly text: string }> = [];
+        let goalClearUuid: string | undefined;
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -2667,6 +2668,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                               .join("");
                       prompts.push({ session, text });
                       if (!text.startsWith("/goal clear")) return;
+                      goalClearUuid = message.uuid;
                       // Claude Code answers /goal clear locally, without a model turn.
                       yield* Queue.offer(messages, {
                         type: "result",
@@ -2757,6 +2759,9 @@ describe("ClaudeAdapterV2 native fork", () => {
             text: "do we support feature X? Check README.md.",
           },
         ]);
+        // Rewinding the side chat to its start resumes here; an earlier cursor restores the goal.
+        assert.isDefined(goalClearUuid);
+        assert.strictEqual(sideChat.nativeMetadata?.forkHeadMessageId, goalClearUuid);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

@@ -11775,12 +11775,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return found && !unreadable ? ("empty" as const) : ("missing" as const);
         });
 
-        // Claude Code answers `/goal clear` locally, without a model turn.
+        // Claude Code answers `/goal clear` locally, without a model turn. Returns the command's
+        // uuid: resuming at it keeps the goal cleared, resuming before it restores the goal.
         const clearForkedGoal = Effect.fn("ClaudeAdapterV2.clearForkedGoal")(
           function* (
             forkInput: ProviderAdapter.ProviderAdapterV2ForkThreadInput,
             nativeId: string,
           ) {
+            const launchArgSettings = yield* readClaudeLaunchArgSettings({
+              settings: adapterOptions.settings,
+              cwd: input.runtimePolicy.cwd,
+              fileSystem,
+              path,
+            });
             const query = yield* Effect.acquireRelease(
               queryRunner.open({
                 threadId: forkInput.targetThreadId,
@@ -11792,12 +11799,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   resume: true,
                   cwd: input.runtimePolicy.cwd,
                   settings: adapterOptions.settings,
+                  ...(launchArgSettings === undefined
+                    ? {}
+                    : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
                   environment: adapterOptions.environment,
+                  tools: [],
                 }),
               }),
               (query) => query.close.pipe(Effect.ignore),
             );
-            yield* query.offer(makeClaudeUserMessage({ text: "/goal clear" }));
+            const uuid = yield* random.uuidV4().pipe(Effect.filterOrFail(isClaudePromptUuid));
+            yield* query.offer(makeClaudeUserMessage({ text: "/goal clear", uuid }));
             const result = yield* query.messages.pipe(
               Stream.filter((message) => message.type === "result"),
               Stream.runHead,
@@ -11805,6 +11817,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (Option.isNone(result) || result.value.is_error) {
               return yield* Effect.fail(result);
             }
+            return uuid;
           },
           Effect.scoped,
           // The side chat still works with the goal; its turns just run into the goal's Stop hook.
@@ -11814,7 +11827,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Effect.logWarning("orchestration-v2.claude-side-chat-goal-clear-failed", {
                   threadId: forkInput.targetThreadId,
                   cause,
-                }),
+                }).pipe(Effect.as(undefined)),
               ),
             ),
         );
@@ -12323,9 +12336,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return updated;
               });
               // A side chat keeps the parent's goal in its forked transcript, and the goal's Stop hook would block its turns.
-              if (forkInput.sideChat === true && forkInput.sourceProviderThread.goal != null) {
-                yield* clearForkedGoal(forkInput, forked.sessionId);
-              }
+              const goalClearedAt =
+                forkInput.sideChat === true && forkInput.sourceProviderThread.goal != null
+                  ? yield* clearForkedGoal(forkInput, forked.sessionId)
+                  : undefined;
+              const headMessageId = goalClearedAt ?? forked.headMessageId;
               const now = yield* DateTime.now;
               // Native forks retain document/image history. Inherit full current
               // usage even at an earlier fork point; this is conservative.
@@ -12344,13 +12359,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     ? {}
                     : { providerTurnId: forkInput.providerTurnId }),
                 },
-                ...(forked.headMessageId === undefined && claudeAttachmentBudget === undefined
+                ...(headMessageId === undefined && claudeAttachmentBudget === undefined
                   ? {}
                   : {
                       nativeMetadata: {
-                        ...(forked.headMessageId === undefined
+                        ...(headMessageId === undefined
                           ? {}
-                          : { forkHeadMessageId: forked.headMessageId }),
+                          : { forkHeadMessageId: headMessageId }),
                         ...(claudeAttachmentBudget === undefined ? {} : { claudeAttachmentBudget }),
                       },
                     }),
