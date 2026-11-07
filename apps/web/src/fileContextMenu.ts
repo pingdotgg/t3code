@@ -1,5 +1,6 @@
 import {
   EDITORS,
+  isTerminalEditor,
   type ContextMenuItem,
   type EditorId,
   type EnvironmentId,
@@ -14,6 +15,7 @@ import { readLocalApi } from "./localApi";
 import { serverEnvironment } from "./state/server";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
+import { canOpenTerminalEditor, openInTerminalEditor } from "./terminalEditorHost";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { toastManager } from "./components/ui/toast";
 import { useAtomValue } from "@effect/atom-react";
@@ -102,7 +104,10 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
         : undefined,
     canOpenDefault: availableEditors.includes("file-manager"),
-    editorIds: availableEditors,
+    editorIds: availableEditors.filter(
+      (id) =>
+        !isTerminalEditor(id) || (environmentId !== null && canOpenTerminalEditor(environmentId)),
+    ),
   };
 
   const activate = async (
@@ -118,6 +123,12 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
         ? ("file-manager" as const)
         : (action.slice("editor:".length) as EditorId);
     if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
+    if (
+      isTerminalEditor(editor) &&
+      (await openInTerminalEditor(environmentId, editor, absolutePath))
+    ) {
+      return;
+    }
 
     const result = await openInEditor({
       environmentId,

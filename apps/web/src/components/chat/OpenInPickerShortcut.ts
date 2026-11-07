@@ -1,5 +1,6 @@
 import {
   buildRemoteOpenUrl,
+  isTerminalEditor,
   type EditorId,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
@@ -10,10 +11,12 @@ import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
 import { announce } from "../../lib/announce";
-import { openRemoteEditorUrl, useRemoteCapableEditors, useRemoteOpenState } from "../../remoteOpen";
+import { openRemoteEditorUrl, useRemoteOpenState } from "../../remoteOpen";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { openInTerminalEditor } from "../../terminalEditorHost";
+import { useOpenInEditors } from "./useOpenInEditors";
 
 /** Marks an OpenInPicker's primary button as the target of `editor.openFavorite`. */
 export const OPEN_FAVORITE_EDITOR_ATTRIBUTE = "data-open-favorite-editor";
@@ -55,15 +58,14 @@ export function useOpenFavoriteEditorShortcut({
 }) {
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
-  const remoteCapableEditors = useRemoteCapableEditors();
   // Matches the picker: remote editors run on the viewing machine.
   const [preferredEditor] = usePreferredEditor(
-    remote.mode === "local-exec" ? availableEditors : remoteCapableEditors,
+    useOpenInEditors(environmentId, availableEditors, remote.mode),
   );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled
   useEffect(() => {
-    if (!enabled || remote.mode === "remote-unavailable") return;
+    if (!enabled) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (
         event.repeat ||
@@ -73,8 +75,17 @@ export function useOpenFavoriteEditorShortcut({
         return;
       if (!openInCwd || !preferredEditor) return;
 
-      event.preventDefault();
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
+      if (isTerminalEditor(preferredEditor)) {
+        event.preventDefault();
+        void openInTerminalEditor(environmentId, preferredEditor, openInCwd).then((opened) => {
+          if (opened) announce(`Opened in ${label}`);
+        });
+        return;
+      }
+      if (remote.mode === "remote-unavailable") return;
+
+      event.preventDefault();
       if (remote.mode === "remote-links") {
         const url = buildRemoteOpenUrl({
           editor: preferredEditor,

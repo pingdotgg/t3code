@@ -1,5 +1,6 @@
 import * as NodePath from "@effect/platform-node/NodePath";
 import {
+  EDITOR_TARGET_WITH_POSITION_PATTERN,
   EDITORS,
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -65,7 +66,6 @@ interface TargetPathAndPosition {
 
 // cmd shims reparse %* after escaping is gone; newlines and quotes can expose shell operators.
 const WINDOWS_SHIM_UNSAFE_ARG_PATTERN = /[\u0000-\u001f\u007f"]/;
-const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
 const POWERSHELL_ARGUMENTS_PREFIX = [
   "-NoProfile",
   "-NonInteractive",
@@ -123,7 +123,7 @@ const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(()
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
 function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAndPosition> {
-  const match = TARGET_WITH_POSITION_PATTERN.exec(target);
+  const match = EDITOR_TARGET_WITH_POSITION_PATTERN.exec(target);
   if (!match?.[1] || !match[2]) {
     return Option.none();
   }
@@ -136,8 +136,9 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 }
 
 function resolveCommandEditorArgs(
-  editor: (typeof EDITORS)[number],
+  editor: Exclude<(typeof EDITORS)[number], { launchStyle: "terminal" }>,
   target: string,
+  isDirectory: boolean,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
@@ -158,6 +159,16 @@ function resolveCommandEditorArgs(
             onSome: (value) => ["--column", String(Math.max(0, Number(value) - 1))],
           }),
           path,
+        ],
+      });
+    case "neovim":
+      return Option.match(parsedTarget, {
+        // Neovim keeps the launcher's cwd when opening a folder, which misroots project search.
+        onNone: () => (isDirectory ? ["--chdir", target, target] : [target]),
+        onSome: ({ path, line, column }) => [
+          path,
+          "--",
+          `+call cursor(${line},${Option.getOrElse(column, () => "1")})`,
         ],
       });
   }
@@ -405,6 +416,9 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
+    // Clients type terminal editors into a POSIX shell; Windows shells quote differently.
+    if (editor.launchStyle === "terminal" && platform === "win32") continue;
+
     if (editor.commands === null) {
       if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
         available.push(editor.id);
@@ -475,6 +489,11 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
   }
 
+  // Clients run these in the thread's terminal; a detached spawn has no TTY.
+  if (editorDef.launchStyle === "terminal") {
+    return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+  }
+
   if (editorDef.commands) {
     const { command, baseArgs } = Option.getOrElse(
       yield* resolveEditorCommand(editorDef, env),
@@ -483,11 +502,18 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
         baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
       }),
     );
+    const fs = yield* FileSystem.FileSystem;
+    const isDirectory =
+      editorDef.launchStyle === "neovim" &&
+      (yield* fs.stat(input.cwd).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ));
     return {
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory)],
     };
   }
 
