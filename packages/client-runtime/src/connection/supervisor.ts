@@ -1059,20 +1059,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   }, Effect.ensuring(clearLease));
 
   const waitForRetrySignal = Effect.fnUntraced(function* (delayMs: number) {
-    // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - the sleep is the retry delay (false), not a timeout around the signal loop
+    // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - the sleep is the retry delay, not a timeout around the signal loop
     return yield* Effect.raceFirst(
-      Effect.sleep(delayMs).pipe(Effect.as(false)),
+      Effect.sleep(delayMs).pipe(Effect.as(undefined)),
       Effect.gen(function* () {
         for (;;) {
           const next = yield* Queue.take(signals);
           switch (next._tag) {
             case "Wakeup":
-              return ConnectionWakeups.resetsRetryBackoff(next.reason);
+              return next.reason;
             case "ConnectRequested":
             case "DisconnectRequested":
             case "RetryRequested":
             case "NetworkChanged":
-              return false;
+              return undefined;
             case "BetterRouteAvailable":
               break;
           }
@@ -1083,9 +1083,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   const waitForSignal = Queue.take(signals).pipe(
     Effect.repeat({ while: (next) => next._tag === "BetterRouteAvailable" }),
-    Effect.map(
-      (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
-    ),
+    Effect.map((next) => (next._tag === "Wakeup" ? next.reason : undefined)),
   );
 
   const run = Effect.fnUntraced(function* () {
@@ -1097,6 +1095,22 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       failureCount = 0;
       pendingRetry = Option.none();
     };
+    let lastForegroundResetAt = Number.NEGATIVE_INFINITY;
+    // Returning to the app still ends the wait, but restarts the ladder at most
+    // once per cap window. A window can become visible many times a minute,
+    // which would otherwise keep an unreachable host on the shortest delays.
+    // A network change can make the host reachable, so it always resets.
+    const resetRetryLadderAfterWakeup = Effect.fnUntraced(function* (
+      reason: ConnectionWakeups.ConnectionWakeup | undefined,
+    ) {
+      if (reason === undefined || !ConnectionWakeups.resetsRetryBackoff(reason)) return;
+      if (reason !== "network-changed") {
+        const now = yield* Clock.currentTimeMillis;
+        if (now - lastForegroundResetAt < RETRY_MAX_DELAY_MS) return;
+        lastForegroundResetAt = now;
+      }
+      resetRetryLadder();
+    });
     let replacing = false;
 
     for (;;) {
@@ -1117,10 +1131,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (currentIntent.network === "offline" && !replacing) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
-        const applicationActivated = yield* waitForSignal;
-        if (applicationActivated) {
-          resetRetryLadder();
-        }
+        yield* resetRetryLadderAfterWakeup(yield* waitForSignal);
         continue;
       }
 
@@ -1167,10 +1178,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           lastFailure: error,
           retryAt: null,
         });
-        const applicationActivated = yield* waitForSignal;
-        if (applicationActivated) {
-          resetRetryLadder();
-        }
+        yield* resetRetryLadderAfterWakeup(yield* waitForSignal);
         continue;
       }
 
@@ -1204,10 +1212,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         lastFailure: latestFailure,
         retryAt: (yield* Clock.currentTimeMillis) + delayMs,
       });
-      const applicationActivated = yield* waitForRetrySignal(delayMs);
-      if (applicationActivated) {
-        resetRetryLadder();
-      }
+      yield* resetRetryLadderAfterWakeup(yield* waitForRetrySignal(delayMs));
     }
   });
 
