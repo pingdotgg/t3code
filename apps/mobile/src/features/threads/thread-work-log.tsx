@@ -1349,6 +1349,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly summary: string;
   readonly summaryKind: ToolGroupSummaryKind;
   readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request" | "brain";
+  readonly notificationIcon?: ThreadFeedActivity["icon"] | undefined;
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
@@ -1362,9 +1363,18 @@ export function ThreadWorkGroupToggle(props: {
   const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
   const icon =
     props.summaryToolIcon ??
-    (props.toolSurface
-      ? workRowSymbolName(props.toolSurface)
-      : toolGroupSummarySymbolName(props.summaryKind));
+    (props.notificationIcon
+      ? workRowSymbolName(props.notificationIcon)
+      : props.toolSurface
+        ? workRowSymbolName(props.toolSurface)
+        : toolGroupSummarySymbolName(props.summaryKind));
+  const hiddenNoun = props.notificationIcon
+    ? props.hiddenCount === 1
+      ? "notification"
+      : "notifications"
+    : props.hiddenCount === 1
+      ? "tool call"
+      : "tool calls";
 
   return (
     <WorkLogBlock layout="group-header">
@@ -1394,7 +1404,7 @@ export function ThreadWorkGroupToggle(props: {
             accessibilityRole="button"
             accessibilityState={{ expanded: props.expanded }}
             accessibilityLabel={accessibilityLabel}
-            accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} ${props.hiddenCount} tool ${props.hiddenCount === 1 ? "call" : "calls"}.`}
+            accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} ${props.hiddenCount} ${hiddenNoun}.`}
             onPress={() => {
               void Haptics.selectionAsync();
               props.onToggle();
