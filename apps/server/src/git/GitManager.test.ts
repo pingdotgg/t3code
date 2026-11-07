@@ -1122,6 +1122,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(gitCommands.map((args) => args.split(" ", 1)[0]).toSorted()).toEqual([
         "config",
         "config",
+        "config",
+        "config",
         "for-each-ref",
         "for-each-ref",
       ]);
@@ -1152,6 +1154,62 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* TestClock.adjust("5 minutes");
       expect((yield* lookup)?.number).toBe(2);
     }),
+  );
+
+  it.effect(
+    "branch PR lookup keeps fork heads when a local branch aliases the default branch",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const upstreamDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:contributor/codething-mvp.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "upstream",
+          "git@github.com:pingdotgg/codething-mvp.git",
+          upstreamDir,
+        );
+        yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "review-main", "--track", "origin/main"]);
+
+        const { manager } = yield* makeManager({
+          providerScenario: {
+            prListSequence: [
+              [
+                {
+                  number: 223,
+                  title: "Fork default branch alias",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/223",
+                  baseRefName: "main",
+                  headRefName: "main",
+                  state: "open",
+                  isCrossRepository: true,
+                  headRepositoryNameWithOwner: "contributor/codething-mvp",
+                  headRepositoryOwnerLogin: "contributor",
+                },
+              ],
+            ],
+          },
+        });
+
+        const pullRequest = yield* manager.branchPullRequest({
+          cwd: repoDir,
+          branch: "review-main",
+        });
+
+        expect(pullRequest?.number).toBe(223);
+      }),
   );
 
   it.effect("branch PR lookup uses a saved tracked branch without changing checkout", () =>
@@ -3372,6 +3430,106 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           ),
         ).toBe(true);
       }),
+  );
+
+  it.effect("creates a fork PR when GitHub resolves a separate base remote", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const upstreamDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:contributor/codething-mvp.git",
+        originDir,
+      );
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "upstream",
+        "git@github.com:pingdotgg/codething-mvp.git",
+        upstreamDir,
+      );
+      yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/fork-pr"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "fork-pr.txt"), "fork PR\n");
+      yield* runGit(repoDir, ["add", "fork-pr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Fork PR"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/fork-pr"]);
+
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: { prListSequence: [[], []] },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(
+        created(providerCalls).some(
+          (call) =>
+            call.baseRefName === "main" && call.headSelector === "contributor:feature/fork-pr",
+        ),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("uses the Provider-selected target remote over a stale GitHub mark", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const upstreamDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:contributor/codething-mvp.git",
+        originDir,
+      );
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "upstream",
+        "git@github.com:pingdotgg/codething-mvp.git",
+        upstreamDir,
+      );
+      yield* runGit(repoDir, ["config", "remote.origin.gh-resolved", "base"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/provider-target"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "provider-target.txt"), "provider target\n");
+      yield* runGit(repoDir, ["add", "provider-target.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Provider target"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/provider-target"]);
+
+      const { service, calls } = createFakeSourceControlProvider({
+        prListSequence: [[], []],
+      });
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          createsChangeRequestsIn: ({ repository }) =>
+            Effect.succeed(repository === "pingdotgg/codething-mvp"),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(
+        created(calls).some(
+          (call) =>
+            call.baseRefName === "main" &&
+            call.headSelector === "contributor:feature/provider-target",
+        ),
+      ).toBe(true);
+    }),
   );
 
   it.effect("pushes existing commits without committing dirty worktree changes", () =>
