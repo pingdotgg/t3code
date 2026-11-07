@@ -34,7 +34,12 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           setError(null);
           const result = await respond({
             environmentId: entry.thread.environmentId,
-            input: { threadId: entry.thread.threadId, requestId, decision },
+            input: {
+              creationSource: "mobile",
+              threadId: entry.thread.threadId,
+              requestId,
+              decision,
+            },
           });
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             const failure = squashAtomCommandFailure(result);

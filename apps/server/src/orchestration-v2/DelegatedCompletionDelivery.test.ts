@@ -2655,6 +2655,16 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           (run) => run.userMessageId === MessageId.make(`async-answer:${requestId}`),
         );
         assert.isDefined(answerRun?.delegatedTaskId);
+        const answeredChild = yield* orchestrator.getThreadProjection(child.childThreadId);
+        assert.notProperty(
+          answeredChild.runtimeRequests.find((request) => request.id === requestId),
+          "responseProvenance",
+        );
+        assert.equal(
+          answeredChild.messages.find((message) => message.id === answerRun?.userMessageId)
+            ?.createdBy,
+          "system",
+        );
         const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
           (task) => task.id === answerRun?.delegatedTaskId,
         );

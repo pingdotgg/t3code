@@ -14,6 +14,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -74,6 +75,38 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+});
+
+it("stamps question responses from the server instead of trusting supplied actor fields", () => {
+  const command = {
+    type: "runtime-request.respond" as const,
+    commandId: CommandId.make("respond:provenance"),
+    threadId: ThreadId.make("thread:provenance"),
+    requestId: RuntimeRequestId.make("question:provenance"),
+    answers: { format: "TOML" },
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+  };
+  expect(
+    ThreadManagementService.withCreationProvenance(command, {
+      createdBy: "agent",
+      creationSource: "mcp",
+    }),
+  ).toMatchObject({ createdBy: "agent", creationSource: "mcp" });
+  expect(
+    ThreadManagementService.withCreationProvenance(command, {
+      createdBy: "user",
+      creationSource: "mobile",
+    }),
+  ).toMatchObject({ createdBy: "user", creationSource: "mobile" });
+  for (const creationSource of ["mcp", "provider", "server"] as const) {
+    expect(
+      ThreadManagementService.withCreationProvenance(command, {
+        createdBy: "user",
+        creationSource,
+      }),
+    ).toMatchObject({ createdBy: "user", creationSource: "web" });
+  }
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(

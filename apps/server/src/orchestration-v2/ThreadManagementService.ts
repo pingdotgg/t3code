@@ -84,6 +84,15 @@ export function withCreationProvenance(
       const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
       return { ...rest, ...provenance };
     }
+    case "runtime-request.respond":
+      return {
+        ...command,
+        ...provenance,
+        creationSource:
+          provenance.createdBy === "user" && provenance.creationSource !== "mobile"
+            ? "web"
+            : provenance.creationSource,
+      };
     case "message.dispatch":
     case "thread.fork":
     case "thread.merge_back":

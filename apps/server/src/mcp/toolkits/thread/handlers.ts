@@ -254,6 +254,8 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         const result = yield* threads
           .dispatch({
             type: "runtime-request.respond",
+            createdBy: "agent",
+            creationSource: "mcp",
             threadId: projection.thread.id,
             commandId: yield* newCommandId(),
             requestId,

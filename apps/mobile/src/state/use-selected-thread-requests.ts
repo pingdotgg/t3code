@@ -310,6 +310,7 @@ export function useSelectedThreadRequests() {
     const result = await respondToApproval({
       environmentId: selectedThreadShell.environmentId,
       input: {
+        creationSource: "mobile",
         threadId: selectedThreadShell.id,
         requestId,
         decision,
@@ -381,6 +382,7 @@ export function useSelectedThreadRequests() {
     const result = await respondToUserInput({
       environmentId: selectedThreadShell.environmentId,
       input: {
+        creationSource: "mobile",
         threadId: selectedThreadShell.id,
         requestId: activePendingUserInput.requestId,
         answers: activePendingUserInputAnswers,

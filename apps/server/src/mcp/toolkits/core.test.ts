@@ -19,6 +19,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -137,84 +138,106 @@ it.effect("checks capability through the production registration", () =>
   ),
 );
 
-it.effect("an answered question reports already answered instead of not found", () => {
-  const shell = McpToolAccessTestkit.liveThreadShell(threadId);
-  const requestId = RuntimeRequestId.make("answered-question");
-  const projection = McpToolAccessTestkit.idleThreadProjection(shell);
-  return Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    const respond = (id: string) =>
-      server
-        .callTool({
-          name: "t3_pending_request",
-          arguments: { action: "respond", requestId: id, answers: { size: "large" } },
-        })
-        .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-          Effect.provideService(McpSchema.McpServerClient, client),
-        );
-    expect(declaredFailure(yield* respond(requestId))).toMatchObject({
-      code: "invalid_request",
-      message: "The user-input request was already answered.",
-    });
-    expect(declaredFailure(yield* respond("missing-question"))).toMatchObject({
-      code: "invalid_request",
-      message: "The pending user-input request was not found.",
-    });
-  }).pipe(
-    Effect.provide(
-      layerThreadToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(NodeCrypto.layer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: () => Effect.succeed(shell),
-            getProjectThreadRecords: () =>
-              Effect.succeed({
-                ...projection,
-                runtimeRequests: [
-                  {
-                    id: requestId,
-                    nodeId: NodeId.make("root"),
-                    providerTurnId: null,
-                    nativeRequestRef: null,
-                    kind: "user_input",
-                    status: "resolved",
-                    responseCapability: { type: "message" },
-                    createdAt: shell.createdAt,
-                    resolvedAt: shell.updatedAt,
-                    answers: { size: "large" },
-                  },
-                ],
-                turnItems: [
-                  {
-                    id: TurnItemId.make("answered-question-item"),
-                    threadId,
-                    runId: null,
-                    nodeId: null,
-                    providerThreadId: null,
-                    providerTurnId: null,
-                    nativeItemRef: null,
-                    parentItemId: null,
-                    ordinal: 0,
-                    status: "completed",
-                    title: null,
-                    startedAt: shell.createdAt,
-                    completedAt: shell.updatedAt,
-                    updatedAt: shell.updatedAt,
-                    type: "user_input_request",
-                    requestId,
-                    questions: [],
-                  },
-                ],
-              }),
-            dispatch: () => Effect.die("an answered question must not dispatch again"),
-          }),
+it.effect.each(["pending", "resolved"] as const)(
+  "handles a $0 question with MCP response provenance",
+  (status) => {
+    const dispatched: Array<OrchestrationV2ServerCommand> = [];
+    const shell = McpToolAccessTestkit.liveThreadShell(threadId);
+    const requestId = RuntimeRequestId.make("answered-question");
+    const projection = McpToolAccessTestkit.idleThreadProjection(shell);
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const respond = (id: string) =>
+        server
+          .callTool({
+            name: "t3_pending_request",
+            arguments: { action: "respond", requestId: id, answers: { size: "large" } },
+          })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+      if (status === "resolved") {
+        expect(declaredFailure(yield* respond(requestId))).toMatchObject({
+          code: "invalid_request",
+          message: "The user-input request was already answered.",
+        });
+        expect(dispatched).toEqual([]);
+      } else {
+        expect((yield* respond(requestId)).isError).not.toBe(true);
+        expect(dispatched).toMatchObject([
+          {
+            type: "runtime-request.respond",
+            createdBy: "agent",
+            creationSource: "mcp",
+            requestId,
+            answers: { size: "large" },
+          },
+        ]);
+      }
+      expect(declaredFailure(yield* respond("missing-question"))).toMatchObject({
+        code: "invalid_request",
+        message: "The pending user-input request was not found.",
+      });
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkit.pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: () => Effect.succeed(shell),
+              getProjectThreadRecords: () =>
+                Effect.succeed({
+                  ...projection,
+                  runtimeRequests: [
+                    {
+                      id: requestId,
+                      nodeId: NodeId.make("root"),
+                      providerTurnId: null,
+                      nativeRequestRef: null,
+                      kind: "user_input",
+                      status,
+                      responseCapability: { type: "message" },
+                      createdAt: shell.createdAt,
+                      resolvedAt: status === "resolved" ? shell.updatedAt : null,
+                      answers: { size: "large" },
+                    },
+                  ],
+                  turnItems: [
+                    {
+                      id: TurnItemId.make("answered-question-item"),
+                      threadId,
+                      runId: null,
+                      nodeId: null,
+                      providerThreadId: null,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 0,
+                      status: "completed",
+                      title: null,
+                      startedAt: shell.createdAt,
+                      completedAt: shell.updatedAt,
+                      updatedAt: shell.updatedAt,
+                      type: "user_input_request",
+                      requestId,
+                      questions: [],
+                    },
+                  ],
+                }),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatched.push(command);
+                  return { sequence: 1, storedEvents: [] };
+                }),
+            }),
+          ),
         ),
       ),
-    ),
-  );
-});
+    );
+  },
+);
 
 it("bounds public command rejections and redacts internal dispatch causes", () => {
   const command = { commandId: CommandId.make("mcp-core-command"), commandType: "thread.settle" };

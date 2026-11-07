@@ -1596,7 +1596,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       }),
   );
 
-  it.effect("answers an async question after its provider exits and commits the answer once", () =>
+  it.effect.each([
+    { createdBy: "agent", creationSource: "mcp" },
+    { createdBy: "user", creationSource: "web" },
+    { createdBy: "user", creationSource: "mobile" },
+    undefined,
+  ] as const)("answers an async question with its actual responder: %o", (responseProvenance) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -1695,6 +1700,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         threadId,
         requestId,
         answers: { color: "  Blue  ", sizes: ["Small", "Large"], note: "" },
+        ...responseProvenance,
       };
       const accepted = yield* orchestrator.dispatch(command);
       const repeated = yield* orchestrator.dispatch(command);
@@ -1721,6 +1727,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       assert.equal(answered.messages.length, 1);
       assert.equal(answered.messages[0]?.text, "Which color?\nBlue\n\nWhich sizes?\nSmall, Large");
       assert.equal(answered.messages[0]?.role, "user");
+      if (responseProvenance === undefined) {
+        assert.notProperty(answered.runtimeRequests[0], "responseProvenance");
+      } else {
+        assert.deepInclude(answered.runtimeRequests[0], { responseProvenance });
+      }
+      assert.deepInclude(
+        answered.messages[0],
+        responseProvenance ?? {
+          createdBy: "system",
+          creationSource: "server",
+        },
+      );
       assert.equal(answered.runs.length, 1);
       assert.deepEqual(
         (yield* outbox.listByCommandId(command.commandId)).map((effect) => effect.request.type),
@@ -1735,7 +1753,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         .pipe(Effect.result);
       assert.equal(duplicate._tag, "Failure");
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).messages.length, 1);
-    }),
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("reports an answer that never reaches its provider without reopening it", () =>
