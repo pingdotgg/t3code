@@ -1,9 +1,6 @@
 import { useState } from "react";
 
-// NVDA reads a polite region's leftover text again when focus returns from a
-// dialog, so an announcement is cleared once it has had time to be spoken.
-// Clearing doesn't cut off speech that already started.
-const CLEAR_AFTER_MS = 7_000;
+import { CLEAR_SPOKEN_AFTER_MS } from "../lib/announce";
 
 /**
  * A polite live region written straight to the DOM, so speaking never
@@ -30,7 +27,7 @@ export function createLiveRegion() {
     // Screen readers ignore a write that leaves the text unchanged, so a repeat
     // gets a trailing non-breaking space to count as new.
     region.textContent = region.textContent === text ? `${text}\u00A0` : text;
-    clearTimer = setTimeout(clear, CLEAR_AFTER_MS);
+    clearTimer = setTimeout(clear, CLEAR_SPOKEN_AFTER_MS);
   };
 
   const attach = (node: HTMLElement | null) => {
