@@ -983,6 +983,11 @@ it.effect.each([1, 3])(
             );
             if (value < count) yield* TestClock.adjust("2 seconds");
           }
+          yield* service.upsert(
+            yield* webhookTaskInput({
+              prompt: "Updated instructions: {{body.value}} {{headers.version}} {{query.version}}",
+            }),
+          );
           const owner = (yield* service.listWebhookDeliveries({
             id: task.id,
             acceptAnyOutcome: true,
@@ -1011,6 +1016,7 @@ it.effect.each([1, 3])(
             (launched.initialMessage!.text.match(new RegExp(`>${count}<`, "g")) ?? []).length,
             3,
           );
+          assert.include(launched.initialMessage!.text, "Updated instructions:");
           yield* workers.get("webhook-coalescing")!;
           assert.equal(yield* Queue.size(launches), 0);
           const outcomes = (yield* service.listWebhookDeliveries({
@@ -1024,6 +1030,7 @@ it.effect.each([1, 3])(
           })).delivery;
           assert.isFalse(afterDispatch.pendingWindow);
           assert.equal(afterDispatch.body, beforeDispatch.body);
+          assert.equal(afterDispatch.renderedPrompt, launched.initialMessage!.text);
           assert.include(afterDispatch.renderedPrompt!, `>${count}<`);
           assert.equal(outcomes.filter((o) => o === "accepted").length, 1);
           assert.equal(outcomes.filter((o) => o === "coalesced").length, count - 1);
@@ -1543,6 +1550,56 @@ it.effect("keeps replay keys when dispatch succeeds but completion bookkeeping f
     }),
   ),
 );
+
+it.effect("a running coalesced retry keeps its first prompt and replay claim after edits", () => {
+  const workers = new Map<string, Effect.Effect<void>>();
+  return withService(
+    ({ service, sql, launches }) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          yield* webhookTaskInput({
+            prompt: "Original instructions.",
+            schedule: {
+              type: "webhook",
+              dedupe: {
+                replayKey: "{{body}}",
+                coalesceKey: "{{body}}",
+                coalesceWindowSeconds: 10,
+              },
+            },
+          }),
+        );
+        yield* service.triggerWebhook(requestFor(task));
+        yield* service.upsert(yield* webhookTaskInput({ prompt: "First dispatch instructions." }));
+        yield* sql`CREATE TRIGGER fail_completion BEFORE UPDATE ON scheduled_tasks
+          WHEN NEW.last_run_status = 'succeeded' BEGIN SELECT RAISE(FAIL, 'completion unavailable'); END`;
+        yield* TestClock.adjust("10 seconds");
+        yield* drainPendingDispatch(workers);
+        assert.equal(
+          (yield* Queue.take(launches)).initialMessage?.text,
+          "First dispatch instructions.",
+        );
+        const { deliveries } = yield* service.listWebhookDeliveries({ id: task.id });
+        const deliveryId = deliveries[0]!.id;
+        for (const prompt of ["Later instructions.", "x".repeat(120_001)]) {
+          yield* service.upsert(yield* webhookTaskInput({ prompt }));
+          yield* drainPendingDispatch(workers);
+          const { delivery } = yield* service.getWebhookDelivery({ id: task.id, deliveryId });
+          assert.equal(delivery.renderedPrompt, "First dispatch instructions.");
+          assert.equal(delivery.error, "The run started, but completion could not be recorded.");
+          assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_replay_keys`).length, 1);
+        }
+        yield* sql`DROP TRIGGER fail_completion`;
+        yield* drainPendingDispatch(workers);
+        const retry = yield* service.triggerWebhook(requestFor(task));
+        assert.equal(retry._tag === "accepted" && retry.outcome, "duplicate");
+        assert.equal(yield* Queue.size(launches), 0);
+        assert.equal((yield* service.list()).tasks[0]!.runCount, 1);
+        assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`).length, 0);
+      }),
+    { workers, completedLaunches: new Set<string>() },
+  );
+});
 
 it.effect.each([119_000, 120_000])(
   "bounds coalesced prompt logs and checks trimmed length for %i body characters",

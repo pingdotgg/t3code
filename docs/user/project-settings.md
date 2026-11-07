@@ -148,7 +148,9 @@ To suppress repeated deliveries, set a **Duplicate request key** template, such 
 To combine a burst, set a **Coalesce key**, such as `{{body.id}}`, and a window
 of 10–3600 seconds (120 by default). One run uses the latest body, headers,
 and query when the window from the first delivery closes; later requests
-do not extend it. Pending windows survive a server restart. Keys must contain
+do not extend it. The run uses the task's prompt at its first dispatch.
+A retry keeps that prompt.
+Pending windows survive a server restart. Keys must contain
 request placeholders; if any placeholder is missing, or the render is empty,
 that key's rule is skipped. Clear the templates to turn dedupe off.
 
