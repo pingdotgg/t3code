@@ -581,6 +581,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                         throw cause;
                       }
                     }
+                    await callbackChain;
                   },
                   catch: (cause) => runnerError(cause, "run.cancel"),
                 }),
