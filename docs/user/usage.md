@@ -21,7 +21,8 @@ Text generation (thread titles, commit messages, PR text, branch names and revie
 the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
-databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
+databases, including T3-managed profiles. A subagent recorded only in a transcript, with no
+conversation database of its own, is missing from the Antigravity totals. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
 
 Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
