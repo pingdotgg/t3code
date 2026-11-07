@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
@@ -26,9 +27,11 @@ import {
   planScopedSettingsPatch,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  selectScopedSettingsEnvironments,
   type ProjectOverrideEntry,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
+import { resolveSettingsScope } from "./settingsScope";
 
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
@@ -103,6 +106,27 @@ export function useUpdateScopedSettings() {
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
   return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
     run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
+}
+
+/** Ignores the settings URL scope: writes every connected environment, reads the primary one. */
+export function useAllEnvironmentsSettings() {
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const scope = resolveSettingsScope({}, [], environments);
+  const { environment } = selectScopedSettingsEnvironments(
+    scope,
+    environments,
+    primaryEnvironmentId,
+  );
+  const settings = useMergedSettings(
+    environment?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+  );
+  const run = useRunScopedPlan();
+  return {
+    settings,
+    updateSettings: (patch: ScopedSettingsPatch) =>
+      run(planScopedSettingsPatch(scope, environments, patch)),
+  };
 }
 
 export function useClearScopedSettings() {

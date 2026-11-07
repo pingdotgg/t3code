@@ -51,6 +51,7 @@ import {
   useTheme,
 } from "../../hooks/useTheme";
 import {
+  useAllEnvironmentsSettings,
   useScopedSettings,
   useScopedSettingsMixed,
   useUpdateScopedSettings,
@@ -431,8 +432,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     clearThemeHalves,
     themeHalves,
   } = useTheme();
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
+  const { settings, updateSettings } = useAllEnvironmentsSettings();
 
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
