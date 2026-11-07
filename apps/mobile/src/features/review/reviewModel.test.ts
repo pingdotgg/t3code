@@ -24,6 +24,11 @@ describe("resolveReviewSelectedSectionId", () => {
 
   it("shows Changes before anything is picked, not the first section", () => {
     expect(resolveReviewSelectedSectionId([turn, changes], null)).toBe("git:branch-range");
+    const childChanges = { ...changes, id: "git:branch-range:packages/auth" };
+    expect(resolveReviewSelectedSectionId([turn, childChanges], null)).toBe(childChanges.id);
+    expect(
+      resolveReviewSelectedSectionId([turn, childChanges], "git:branch-range:packages/ui"),
+    ).toBe(childChanges.id);
   });
 
   it("shows the default while the picked section loads and returns to the pick once it does", () => {

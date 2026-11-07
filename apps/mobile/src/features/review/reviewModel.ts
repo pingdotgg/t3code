@@ -515,6 +515,7 @@ export function reviewTurnDiffsBySectionId(
 }
 
 export function buildReviewSectionItems(input: {
+  readonly repositoryPath?: string;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
@@ -540,7 +541,7 @@ export function buildReviewSectionItems(input: {
         section.kind !== "commit",
     )
     .map<ReviewSectionItem>((section) => ({
-      id: `git:${section.kind}`,
+      id: `git:${section.kind}${input.repositoryPath ? ":" + input.repositoryPath : ""}`,
       kind: section.kind,
       title: section.title,
       subtitle: gitSubtitle(section),
@@ -550,12 +551,12 @@ export function buildReviewSectionItems(input: {
       truncated: section.truncated,
       isLoading: false,
     }));
-  const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
+  const hasChangesItem = gitItems.some((item) => item.kind === "branch-range");
   const visibleGitItems =
     input.loadingGitSections && !hasChangesItem
       ? [
           {
-            id: CHANGES_SECTION_ID,
+            id: CHANGES_SECTION_ID + (input.repositoryPath ? ":" + input.repositoryPath : ""),
             kind: "branch-range",
             title: CHANGES_TITLE,
             subtitle: null,
@@ -572,7 +573,7 @@ export function buildReviewSectionItems(input: {
 export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {
-  return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
+  return (sections.find((section) => section.kind === "branch-range") ?? sections[0])?.id ?? null;
 }
 
 /**

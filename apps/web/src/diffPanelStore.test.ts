@@ -10,10 +10,43 @@ import {
 } from "./diffPanelStore";
 
 describe("diffPanelStore", () => {
+  it("resets repository-specific refs and commits when changing repositories", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const other = { ...ref, environmentId: EnvironmentId.make("remote") };
+    const key = scopedThreadKey(ref);
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(ref, "parent-only-branch");
+    store.selectCommit(ref, "parent-commit");
+    store.selectRepository(ref, "/project/auth");
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({
+      kind: "branch",
+      baseRef: null,
+    });
+    expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBe("/project/auth");
+    expect(
+      useDiffPanelStore.getState().repositoryCwdByThreadKey[scopedThreadKey(other)],
+    ).toBeUndefined();
+    store.selectGitScope(ref, "unstaged");
+    store.selectRepository(ref, "/project/ui");
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({ kind: "unstaged" });
+    store.selectBranchBaseRef(ref, "child-only-branch");
+    store.selectRepository(ref, null);
+    store.selectCommit(ref, "linked-parent-commit", true);
+    expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBeUndefined();
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({
+      kind: "commit",
+      sha: "linked-parent-commit",
+      baseRef: null,
+    });
+    store.selectRepository(ref, "/project/auth");
+    store.removeThread(ref);
+    expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBeUndefined();
+  });
   beforeEach(() => {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      repositoryCwdByThreadKey: {},
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
   });

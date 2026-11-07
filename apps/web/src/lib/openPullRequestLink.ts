@@ -188,6 +188,7 @@ export function useOpenChangeRequestLink(
                 useRightPanelStore.getState().byThreadKey,
                 resolvedThreadRef,
               ) === "diff";
+            useDiffPanelStore.getState().selectRepository(resolvedThreadRef, null);
             useDiffPanelStore.getState().selectCommit(resolvedThreadRef, commit.sha, !diffOpen);
             useRightPanelStore.getState().open(resolvedThreadRef, "diff");
             return;

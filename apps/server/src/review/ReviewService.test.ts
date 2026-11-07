@@ -109,6 +109,12 @@ describe("ReviewService", () => {
         return yield* review.getDiffPreview({ cwd: outsideRoot }).pipe(Effect.flip);
       }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, detectCalls })));
 
+      const repositoryError = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getRepositories({ cwd: outsideRoot }).pipe(Effect.flip);
+      }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, detectCalls })));
+      assert.strictEqual(repositoryError._tag, "VcsRepositoryDetectionError");
+      assert.strictEqual(repositoryError.operation, "ReviewService.getRepositories");
       assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
       assert.strictEqual(error.operation, "ReviewService.getDiffPreview");
       assert.match(

@@ -2218,6 +2218,85 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("lists initialized repositories and keeps each review inside its repository", () =>
+      withGitFileProtocol(
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const upstream = yield* makeTmpDir();
+          const nested = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* initRepoWithCommit(upstream);
+          yield* initRepoWithCommit(nested);
+          yield* git(upstream, ["submodule", "add", nested, "vendor/schema"]);
+          yield* git(upstream, ["commit", "-am", "Add schema"]);
+          yield* git(cwd, ["submodule", "add", upstream, "packages/auth service"]);
+          yield* git(cwd, ["submodule", "add", nested, "uninitialized"]);
+          yield* git(cwd, ["commit", "-am", "Add modules"]);
+          yield* git(cwd, ["submodule", "update", "--init", "--recursive"]);
+          yield* git(cwd, ["submodule", "deinit", "-f", "--", "uninitialized"]);
+          const child = NodePath.join(cwd, "packages/auth service");
+          yield* writeTextFile(child, "committed.txt", "child commit\n");
+          yield* git(child, ["add", "committed.txt"]);
+          yield* git(child, ["commit", "-m", "Child change"]);
+          yield* git(child, ["checkout", "-b", "feature/auth"]);
+          yield* writeTextFile(child, "README.md", "# changed auth\n");
+          yield* writeTextFile(cwd, "README.md", "# changed parent\n");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const repos = yield* driver.getReviewRepositories({ cwd });
+          assert.deepStrictEqual(
+            repos.repositories.map(({ path, branch }) => ({ path, branch })),
+            [
+              { path: "", branch: initialBranch },
+              { path: "packages/auth service", branch: "feature/auth" },
+              { path: "packages/auth service/vendor/schema", branch: null },
+            ],
+          );
+          assert.isFalse(repos.truncated);
+          const commits = yield* driver.getReviewBranchCommits({ cwd: child, baseRef: "HEAD~1" });
+          assert.equal(commits.commits.length, 1);
+          assert.equal(commits.commits[0]!.subject, "Child change");
+          const committed = (yield* driver.getReviewDiffPreview({
+            cwd: child,
+            commitSha: commits.commits[0]!.sha,
+          })).sources[0]!;
+          assert.deepStrictEqual(
+            committed.files?.map((file) => file.path),
+            ["committed.txt"],
+          );
+          assert.include(committed.diff, "+child commit");
+          const parent = (yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" }))
+            .sources[0]!;
+          assert.include(parent.diff, "Subproject commit");
+          assert.notInclude(parent.diff, "changed auth");
+          const auth = (yield* driver.getReviewDiffPreview({
+            cwd: child,
+            sourceKind: "working-tree",
+          })).sources[0]!;
+          assert.include(auth.diff, "+# changed auth");
+          assert.notInclude(auth.diff, "changed parent");
+          assert.deepStrictEqual(
+            auth.files?.map((file) => file.path),
+            ["README.md"],
+          );
+          const file = yield* driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(child),
+          );
+          assert.equal(file.newContents, "# changed auth\n");
+          // A hostile manifest must not turn discovery into an arbitrary filesystem scan.
+          yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.escape.path", upstream]);
+          yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.parent.path", ".."]);
+          if (symlinksSupported) {
+            const fs = yield* FileSystem.FileSystem;
+            yield* fs.symlink(upstream, NodePath.join(cwd, "escape-link"));
+            yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.link.path", "escape-link"]);
+          }
+          assert.deepStrictEqual(
+            (yield* driver.getReviewRepositories({ cwd })).repositories,
+            repos.repositories,
+          );
+        }),
+      ),
+    );
     it.effect("diffs a root commit against the empty tree but rejects a shallow boundary", () =>
       Effect.gen(function* () {
         const upstream = yield* makeTmpDir();
@@ -3026,507 +3105,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.include(dirty.diff, "b/staged.txt");
         assert.include(dirty.diff, "b/untracked.txt");
       }),
-    );
-
-    it.effect("reviews files recursively inside submodules without changing their indexes", () =>
-      withGitFileProtocol(
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const inner = yield* makeTmpDir();
-          const nested = yield* makeTmpDir();
-          const { initialBranch } = yield* initRepoWithCommit(cwd);
-          yield* initRepoWithCommit(inner);
-          yield* initRepoWithCommit(nested);
-          yield* writeTextFile(inner, "before.ts", "export const unchanged = true;\n");
-          yield* git(inner, ["submodule", "add", nested, "nested"]);
-          yield* git(inner, ["add", "before.ts"]);
-          yield* git(inner, ["commit", "-am", "add nested module"]);
-          const modulePath = "modules/space repo";
-          yield* git(cwd, ["submodule", "add", inner, modulePath]);
-          yield* git(cwd, ["submodule", "add", inner, "modules/clean repo"]);
-          yield* git(cwd, ["commit", "-am", "add module"]);
-          yield* git(cwd, ["checkout", "-b", "feature/submodule-review"]);
-          const path = yield* Path.Path;
-          const moduleCwd = path.join(cwd, modulePath);
-          yield* git(moduleCwd, ["submodule", "update", "--init", "--recursive"]);
-          yield* git(moduleCwd, ["config", "user.name", "Test"]);
-          yield* git(moduleCwd, ["config", "user.email", "test@test.com"]);
-          yield* git(moduleCwd, ["mv", "before.ts", "renamed λ.ts"]);
-          yield* writeTextFile(moduleCwd, "README.md", "# committed in module\n");
-          yield* git(moduleCwd, ["commit", "-am", "change module file"]);
-          yield* writeTextFile(moduleCwd, "staged.txt", "staged\n");
-          yield* git(moduleCwd, ["add", "staged.txt"]);
-          yield* writeTextFile(moduleCwd, "untracked.txt", "untracked\n");
-          yield* writeTextFile(moduleCwd, "nested/README.md", "# nested dirty\n");
-          yield* git(cwd, ["config", "diff.ignoreSubmodules", "all"]);
-          yield* git(cwd, ["config", `submodule.${modulePath}.ignore`, "all"]);
-          const indexBefore = yield* git(moduleCwd, ["diff", "--cached"]);
-          const commands: { cwd: string | undefined; args: ReadonlyArray<string> }[] = [];
-          const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const driver = yield* makeGitVcsDriverCore().pipe(
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              ChildProcessSpawner.make((command) => {
-                if (ChildProcess.isStandardCommand(command))
-                  commands.push({ cwd: command.options.cwd, args: command.args.map(String) });
-                return realSpawner.spawn(command);
-              }),
-            ),
-          );
-          for (const metadataOnly of [true, false]) {
-            const preview = yield* driver.getReviewDiffPreview({
-              cwd,
-              baseRef: initialBranch,
-              metadataOnly,
-            });
-            const changes = preview.sources.find((source) => source.kind === "branch-range")!;
-            const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
-            assert.equal(
-              status.branchChanges?.insertions,
-              changes.files!.reduce((n, file) => n + file.additions, 0),
-            );
-            assert.equal(
-              status.branchChanges?.deletions,
-              changes.files!.reduce((n, file) => n + file.deletions, 0),
-            );
-            for (const source of preview.sources) {
-              assert.deepStrictEqual(
-                source.files?.map((file) => file.path).toSorted(),
-                [
-                  `${modulePath}/README.md`,
-                  `${modulePath}/nested/README.md`,
-                  `${modulePath}/renamed λ.ts`,
-                  `${modulePath}/staged.txt`,
-                  `${modulePath}/untracked.txt`,
-                ].toSorted(),
-              );
-              for (const file of source.files ?? []) {
-                const start = commands.length;
-                const scoped = yield* driver.getReviewDiffPreview({
-                  cwd,
-                  baseRef: initialBranch,
-                  file: { ...file, sourceKind: source.kind },
-                });
-                const patch = scoped.sources.find((candidate) => candidate.kind === source.kind)!;
-                assert.deepStrictEqual(patch.files, [file]);
-                assert.isFalse(
-                  commands.slice(start).some((command) => command.args.includes("status")),
-                );
-                if (file.previousPath) {
-                  assert.equal(file.previousPath, `${modulePath}/before.ts`);
-                  assert.include(patch.diff, `rename from ${file.previousPath}\n`);
-                  assert.include(patch.diff, `rename to ${file.path}\n`);
-                } else assert.include(patch.diff, `b/${file.path}`);
-              }
-            }
-          }
-          assert.isFalse(
-            commands.some(
-              (command) => command.cwd?.includes("clean repo") && command.args.includes("diff"),
-            ),
-          );
-          const projectDirectories = [cwd, path.join(cwd, "modules")];
-          if (symlinksSupported) {
-            const alias = path.join(yield* makeTmpDir(), "alias");
-            yield* (yield* FileSystem.FileSystem).symlink(cwd, alias);
-            projectDirectories.push(alias);
-          }
-          for (const projectCwd of projectDirectories) {
-            assert.deepStrictEqual(
-              yield* driver.getReviewDiffFileContents(
-                makeReviewDiffFileContentsInput(projectCwd, {
-                  oldPath: `${modulePath}/README.md`,
-                  newPath: `${modulePath}/README.md`,
-                }),
-              ),
-              { oldContents: "# test\n", newContents: "# committed in module\n" },
-            );
-          }
-          assert.equal(yield* git(moduleCwd, ["diff", "--cached"]), indexBefore);
-          assert.equal(yield* git(cwd, ["diff", "--cached"]), "");
-          yield* git(cwd, ["add", modulePath]);
-          yield* git(cwd, ["commit", "-m", "advance module pin"]);
-          const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
-          const committed = yield* driver.getReviewDiffPreview({ cwd, commitSha });
-          assert.deepStrictEqual(
-            committed.sources[0]?.files?.map((file) => file.path),
-            [`${modulePath}/README.md`, `${modulePath}/renamed λ.ts`],
-          );
-          assert.include(committed.sources[0]!.diff, `rename from ${modulePath}/before.ts\n`);
-          assert.include(committed.sources[0]!.diff, `rename to ${modulePath}/renamed λ.ts\n`);
-          assert.notInclude(committed.sources[0]!.diff, "nested dirty");
-          const fileSystem = yield* FileSystem.FileSystem;
-          const manifest = path.join(cwd, ".gitmodules");
-          const originalManifest = yield* fileSystem.readFileString(manifest);
-          yield* fileSystem.remove(manifest);
-          const noManifest = yield* driver.getReviewDiffPreview({
-            cwd,
-            sourceKind: "working-tree",
-            metadataOnly: true,
-          });
-          assert.isTrue(
-            noManifest.sources[0]!.files!.some(
-              (file) => file.path === `${modulePath}/untracked.txt`,
-            ),
-          );
-          yield* fileSystem.writeFileString(manifest, originalManifest);
-          yield* fileSystem.rename(manifest, `${manifest}.saved`);
-          const renamedManifest = yield* driver.getReviewDiffPreview({
-            cwd,
-            sourceKind: "working-tree",
-            metadataOnly: true,
-          });
-          assert.isTrue(
-            renamedManifest.sources[0]!.files!.some(
-              (file) => file.path === `${modulePath}/untracked.txt`,
-            ),
-          );
-          yield* fileSystem.rename(`${manifest}.saved`, manifest);
-          yield* writeTextFile(inner, "README.md", "# not fetched locally\n");
-          yield* git(inner, ["commit", "-am", "advance upstream only"]);
-          const missingSha = yield* git(inner, ["rev-parse", "HEAD"]);
-          yield* git(cwd, ["update-index", "--cacheinfo", `160000,${missingSha},${modulePath}`]);
-          yield* git(cwd, ["commit", "-m", "record an unfetched module commit"]);
-          const missingCommit = yield* git(cwd, ["rev-parse", "HEAD"]);
-          for (const metadataOnly of [true, false]) {
-            const fallback = yield* driver.getReviewDiffPreview({
-              cwd,
-              commitSha: missingCommit,
-              metadataOnly,
-            });
-            assert.deepStrictEqual(
-              fallback.sources[0]!.files!.map((file) => file.path),
-              [modulePath],
-            );
-            if (!metadataOnly) assert.include(fallback.sources[0]!.diff, "Subproject commit");
-            const pointer = yield* driver.getReviewDiffPreview({
-              cwd,
-              commitSha: missingCommit,
-              file: { path: modulePath, previousPath: null, sourceKind: "commit" },
-            });
-            assert.deepStrictEqual(pointer.sources[0]!.files, fallback.sources[0]!.files);
-            assert.include(pointer.sources[0]!.diff, "Subproject commit");
-          }
-        }),
-      ),
-    );
-
-    it.effect("keeps parent changes when a submodule exceeds the untracked file cap", () =>
-      withGitFileProtocol(
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const inner = yield* makeTmpDir();
-          const { initialBranch } = yield* initRepoWithCommit(cwd);
-          yield* initRepoWithCommit(inner);
-          yield* git(cwd, ["submodule", "add", inner, "mod"]);
-          yield* git(cwd, ["commit", "-am", "add module"]);
-          yield* writeTextFile(cwd, "README.md", "# parent edit\n");
-          yield* Effect.forEach(
-            Array.from({ length: 5_001 }, (_, index) => `mod/build/${index}.txt`),
-            (file) => writeTextFile(cwd, file, "untracked\n"),
-            { concurrency: 32, discard: true },
-          );
-          const commands: ReadonlyArray<string>[] = [];
-          const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const driver = yield* makeGitVcsDriverCore().pipe(
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              ChildProcessSpawner.make((command) => {
-                if (ChildProcess.isStandardCommand(command))
-                  commands.push(command.args.map(String));
-                return realSpawner.spawn(command);
-              }),
-            ),
-          );
-          for (const metadataOnly of [true, false]) {
-            const preview = yield* driver.getReviewDiffPreview({
-              cwd,
-              sourceKind: "working-tree",
-              metadataOnly,
-            });
-            const source = preview.sources[0]!;
-            assert.deepStrictEqual(
-              source.files?.map((file) => file.path),
-              ["README.md", "mod"],
-            );
-            assert.isTrue(source.truncated);
-            if (!metadataOnly) {
-              assert.include(source.diff, "+# parent edit");
-              assert.include(source.diff, "Subproject commit");
-            }
-            const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
-            assert.equal(
-              status.branchChanges?.insertions,
-              source.files!.reduce((n, f) => n + f.additions, 0),
-            );
-            assert.equal(
-              status.branchChanges?.deletions,
-              source.files!.reduce((n, f) => n + f.deletions, 0),
-            );
-          }
-          for (const [key, value] of [
-            ["diff.ignoreSubmodules", "dirty"],
-            ["submodule.mod.ignore", "all"],
-          ] as const) {
-            yield* git(cwd, ["config", key, value]);
-            const pointer = yield* driver.getReviewDiffPreview({
-              cwd,
-              file: { path: "mod", previousPath: null, sourceKind: "working-tree" },
-            });
-            assert.deepStrictEqual(
-              pointer.sources[0]!.files?.map((file) => file.path),
-              ["mod"],
-            );
-            assert.include(pointer.sources[0]!.diff, "Subproject commit");
-            yield* git(cwd, ["config", "--unset", key]);
-          }
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          yield* fileSystem.rename(path.join(cwd, "mod/build"), path.join(cwd, "build"));
-          yield* writeTextFile(cwd, "mod/README.md", "# module edit\n");
-          for (const sourceKind of ["working-tree", "branch-range"] as const) {
-            const preview = yield* driver.getReviewDiffPreview({
-              cwd,
-              baseRef: initialBranch,
-              sourceKind,
-              metadataOnly: true,
-            });
-            const source = preview.sources[0]!;
-            assert.isUndefined(source.files);
-            assert.isTrue(source.truncated);
-            assert.include(source.diff, "+# parent edit");
-            assert.include(source.diff, "diff --git a/mod/README.md");
-            assert.include(source.diff, "+# module edit");
-          }
-          const start = commands.length;
-          const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
-          assert.isUndefined(status.branchChanges);
-          assert.isFalse(commands.slice(start).some((args) => args.includes("diff")));
-        }),
-      ),
-    );
-
-    it.effect("keeps pointer diffs for added submodules and undeclared embedded repositories", () =>
-      withGitFileProtocol(
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const inner = yield* makeTmpDir();
-          const { initialBranch } = yield* initRepoWithCommit(cwd);
-          yield* initRepoWithCommit(inner);
-          const modulePath = "mod[ules]";
-          yield* writeTextFile(cwd, `${modulePath}/x.txt`, "x\n");
-          yield* writeTextFile(cwd, `${modulePath}/y.txt`, "y\n");
-          yield* writeTextFile(
-            cwd,
-            "outside.txt",
-            Array.from({ length: 20 }, (_, i) => `line ${i}\n`).join(""),
-          );
-          yield* git(cwd, ["add", "."]);
-          yield* git(cwd, ["commit", "-m", "track vendored files"]);
-          yield* git(cwd, ["checkout", "-b", "feature/add-module"]);
-          yield* git(cwd, ["rm", "-r", modulePath]);
-          yield* git(cwd, ["submodule", "add", inner, modulePath]);
-          yield* git(cwd, ["commit", "-am", "add module"]);
-          const moduleCwd = (yield* Path.Path).join(cwd, modulePath);
-          const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
-          const manifest = yield* git(cwd, ["show", "HEAD:.gitmodules"]);
-          const commands: { cwd: string | undefined; args: ReadonlyArray<string> }[] = [];
-          const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const driver = yield* makeGitVcsDriverCore().pipe(
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              ChildProcessSpawner.make((command) => {
-                if (ChildProcess.isStandardCommand(command))
-                  commands.push({ cwd: command.options.cwd, args: command.args.map(String) });
-                return realSpawner.spawn(command);
-              }),
-            ),
-          );
-          const assertPatchPaths = (source: ReviewDiffPreviewResult["sources"][number]) => {
-            const paths = source.files!.map((file) => file.path);
-            assert.equal(new Set(paths).size, paths.length);
-            assert.deepStrictEqual(
-              Array.from(
-                source.diff.matchAll(/^diff --git a\/.+ b\/(.+)$/gm),
-                (match) => match[1]!,
-              ).toSorted(),
-              paths.toSorted(),
-            );
-          };
-          for (const input of [
-            { baseRef: initialBranch, sourceKind: "branch-range" },
-            { commitSha },
-          ] as const) {
-            const preview = yield* driver.getReviewDiffPreview({ cwd, ...input });
-            const source = preview.sources.find(
-              (source) => source.kind === ("commitSha" in input ? "commit" : "branch-range"),
-            )!;
-            assert.deepStrictEqual(
-              source.files?.map((file) => file.path).toSorted(),
-              [".gitmodules", modulePath, `${modulePath}/x.txt`, `${modulePath}/y.txt`].toSorted(),
-            );
-            assertPatchPaths(source);
-            assert.include(source.diff, "Subproject commit");
-            const metadata = yield* driver.getReviewDiffPreview({
-              cwd,
-              ...input,
-              metadataOnly: true,
-            });
-            assert.deepStrictEqual(
-              metadata.sources.find((item) => item.kind === source.kind)!.files,
-              source.files,
-            );
-            for (const file of source.files!) {
-              const scoped = yield* driver.getReviewDiffPreview({
-                cwd,
-                ...input,
-                file: { ...file, sourceKind: source.kind },
-              });
-              const patch = scoped.sources.find((item) => item.kind === source.kind)!;
-              assert.deepStrictEqual(patch.files, [file]);
-              assertPatchPaths(patch);
-            }
-          }
-          const native = (yield* git(cwd, ["diff", "--numstat", initialBranch])).split("\n").reduce(
-            (sum, line) => {
-              const [added, removed] = line.split("\t");
-              return {
-                insertions: sum.insertions + Number(added),
-                deletions: sum.deletions + Number(removed),
-              };
-            },
-            { insertions: 0, deletions: 0 },
-          );
-          assert.deepStrictEqual(native, { insertions: 4, deletions: 2 });
-          const totals = (yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true }))
-            .branchChanges;
-          assert.equal(totals?.insertions, native.insertions);
-          assert.equal(totals?.deletions, native.deletions);
-          assert.isFalse(
-            commands.some((command) => command.cwd === moduleCwd && command.args.includes("diff")),
-          );
-          yield* git(cwd, ["rm", ".gitmodules"]);
-          yield* git(cwd, ["commit", "-m", "leave an embedded gitlink"]);
-          yield* writeTextFile(moduleCwd, "README.md", "# embedded edit\n");
-          const embedded = yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" });
-          assert.deepStrictEqual(
-            embedded.sources[0]!.files?.map((file) => file.path),
-            [modulePath],
-          );
-          assert.include(embedded.sources[0]!.diff, "-dirty");
-          yield* writeTextFile(moduleCwd, "README.md", "# test\n");
-          yield* writeTextFile(cwd, ".gitmodules", `${manifest}\n`);
-          yield* git(cwd, ["add", ".gitmodules"]);
-          yield* git(cwd, ["commit", "-m", "restore submodule declaration"]);
-          yield* git(cwd, ["rm", "-f", modulePath]);
-          yield* writeTextFile(cwd, ".gitmodules", "");
-          yield* writeTextFile(cwd, `${modulePath}/replacement.txt`, "replacement\n");
-          yield* git(cwd, ["mv", "outside.txt", `${modulePath}/moved.txt`]);
-          for (const staged of [false, true]) {
-            if (staged) yield* git(cwd, ["add", modulePath]);
-            const preview = yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" });
-            const source = preview.sources[0]!;
-            assert.deepStrictEqual(
-              source.files?.map((file) => file.path).toSorted(),
-              [
-                ".gitmodules",
-                modulePath,
-                `${modulePath}/moved.txt`,
-                `${modulePath}/replacement.txt`,
-                "outside.txt",
-              ].toSorted(),
-            );
-            assertPatchPaths(source);
-            const metadata = yield* driver.getReviewDiffPreview({
-              cwd,
-              sourceKind: "working-tree",
-              metadataOnly: true,
-            });
-            assert.deepStrictEqual(metadata.sources[0]!.files, source.files);
-            for (const file of source.files!) {
-              const scoped = yield* driver.getReviewDiffPreview({
-                cwd,
-                file: { ...file, sourceKind: "working-tree" },
-              });
-              assert.deepStrictEqual(scoped.sources[0]!.files, [file]);
-              assertPatchPaths(scoped.sources[0]!);
-            }
-          }
-        }),
-      ),
-    );
-
-    it.effect(
-      "reviews a small commit in a parent tree whose complete listing exceeds the metadata cap",
-      () =>
-        withGitFileProtocol(
-          Effect.gen(function* () {
-            const cwd = yield* makeTmpDir();
-            const child = yield* makeTmpDir();
-            yield* initRepoWithCommit(cwd);
-            yield* initRepoWithCommit(child);
-            yield* git(cwd, ["submodule", "add", child, "mod"]);
-            yield* git(cwd, ["commit", "-am", "add module"]);
-            const driver = yield* GitVcsDriver.GitVcsDriver;
-            const original = yield* git(cwd, ["rev-parse", "HEAD"]);
-            const blob = (yield* driver.execute({
-              operation: "test.blob",
-              cwd,
-              args: ["hash-object", "-w", "--stdin"],
-              stdin: "",
-            })).stdout.trim();
-            const env = { GIT_INDEX_FILE: (yield* Path.Path).join(yield* makeTmpDir(), "index") };
-            yield* git(cwd, ["read-tree", "HEAD"], env);
-            const directory = `d/${"x".repeat(180)}`;
-            const info = Array.from(
-              { length: 70_000 },
-              (_, index) => `100644 ${blob}\t${directory}/${String(index).padStart(6, "0")}.txt\n`,
-            ).join("");
-            yield* driver.execute({
-              operation: "test.largeIndex",
-              cwd,
-              args: ["update-index", "--index-info"],
-              env,
-              stdin: info,
-            });
-            const tree = yield* git(cwd, ["write-tree"], env);
-            const big = yield* git(cwd, ["commit-tree", tree, "-p", original, "-m", "large tree"]);
-            yield* git(
-              cwd,
-              ["update-index", "--add", "--cacheinfo", `100644,${blob},small.txt`],
-              env,
-            );
-            const nextTree = yield* git(cwd, ["write-tree"], env);
-            const small = yield* git(cwd, [
-              "commit-tree",
-              nextTree,
-              "-p",
-              big,
-              "-m",
-              "small change",
-            ]);
-            const preview = yield* driver.getReviewDiffPreview({
-              cwd,
-              commitSha: small,
-              metadataOnly: true,
-            });
-            assert.deepStrictEqual(
-              preview.sources[0]!.files!.map((file) => file.path),
-              ["small.txt"],
-            );
-            const contents = yield* driver.getReviewDiffFileContents(
-              makeReviewDiffFileContentsInput(cwd, {
-                sourceKind: "commit",
-                changeType: "new",
-                baseRef: original,
-                headRef: big,
-                oldPath: `${directory}/000000.txt`,
-                newPath: `${directory}/000000.txt`,
-              }),
-            );
-            assert.deepStrictEqual(contents, { oldContents: "", newContents: "" });
-          }),
-        ),
     );
 
     it.effect("loads full file contents for working-tree diff expansion", () =>

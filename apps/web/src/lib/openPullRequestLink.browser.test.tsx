@@ -138,23 +138,32 @@ it.each(["system", "app"] as const)(
   },
 );
 
-it("opens an available commit in the closed Diff pane without the pane resetting it", async () => {
-  setup();
-  const sha = "a".repeat(40);
-  state.preview.mockResolvedValue(
-    AsyncResult.success({ sources: [{ kind: "commit", headRef: sha }] }),
-  );
-  await using screen = await render(
-    <AppAtomRegistryProvider>
-      <CommitLink />
-    </AppAtomRegistryProvider>,
-  );
-  await screen.getByRole("link", { name: "Commit" }).click();
-  await vi.waitFor(() =>
-    expect(useDiffPanelStore.getState().byThreadKey).toEqual({
-      [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: null },
-    }),
-  );
-  // ChatView resets a pane opened without an explicit request to Changes unless this is set.
-  expect(useDiffPanelStore.getState().consumeKeepSelectionOnOpen(threadRef)).toBe(true);
-});
+it.each([false, true])(
+  "opens a linked parent commit from a child repository with diffOpen=%j",
+  async (diffOpen) => {
+    setup();
+    useDiffPanelStore.getState().selectRepository(threadRef, "/repo/auth");
+    useDiffPanelStore.getState().selectBranchBaseRef(threadRef, "child-only-branch");
+    if (diffOpen) useRightPanelStore.getState().open(threadRef, "diff");
+    const sha = "a".repeat(40);
+    state.preview.mockResolvedValue(
+      AsyncResult.success({ sources: [{ kind: "commit", headRef: sha }] }),
+    );
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <CommitLink />
+      </AppAtomRegistryProvider>,
+    );
+    await screen.getByRole("link", { name: "Commit" }).click();
+    await vi.waitFor(() =>
+      expect(useDiffPanelStore.getState().byThreadKey).toEqual({
+        [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: null },
+      }),
+    );
+    // ChatView resets a pane opened without an explicit request to Changes unless this is set.
+    expect(useDiffPanelStore.getState().consumeKeepSelectionOnOpen(threadRef)).toBe(!diffOpen);
+    expect(
+      useDiffPanelStore.getState().repositoryCwdByThreadKey[scopedThreadKey(threadRef)],
+    ).toBeUndefined();
+  },
+);

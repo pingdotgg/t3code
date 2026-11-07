@@ -1,6 +1,6 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { ReviewRepositoriesResult, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -63,6 +63,9 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 
 function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
+    readonly repositories: ReviewRepositoriesResult["repositories"];
+    readonly selectedRepository: ReviewRepositoriesResult["repositories"][number] | undefined;
+    readonly onSelectRepository: (cwd: string) => void;
     readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
     readonly showSectionToolbar: boolean;
     readonly showChangedFilesToggle: boolean;
@@ -104,6 +107,21 @@ function ReviewHeader(
           : undefined
       }
       menus={[
+        ...(props.repositories.length > 1
+          ? [
+              {
+                title: "Select repository",
+                icon: "folder" as const,
+                items: props.repositories.map((repo) => ({
+                  id: repo.cwd,
+                  title: repo.name + ": " + (repo.branch ?? "HEAD"),
+                  subtitle: repo.path || "Workspace repository",
+                  selected: repo.cwd === props.selectedRepository?.cwd,
+                  onPress: () => props.onSelectRepository(repo.cwd),
+                })),
+              },
+            ]
+          : []),
         ...(presentation.gitMenu ? [presentation.gitMenu] : []),
         ...(props.showSectionToolbar
           ? [
@@ -388,6 +406,11 @@ export function ReviewSheet(props: ReviewSheetProps) {
     refreshSelectedSection,
     selectSection,
     isSelectedSectionPending,
+    repositories,
+    selectedRepository,
+    selectRepository,
+    reviewCwd,
+    repositoryPath,
   } = useReviewSections({
     enabled: isEnvironmentReady,
     environmentId,
@@ -409,7 +432,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
   } = useReviewDiffData({
     threadKey: reviewCache.threadKey,
     environmentId,
-    cwd: selectedThreadCwd,
+    cwd: reviewCwd,
+    repositoryPath,
     selectedSection,
     draftMessage,
     draftContext,
@@ -452,6 +476,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     environmentId,
     threadId,
     selectedSection,
+    repositoryPath,
     nativeReviewDiffData,
   });
   const nativeBridge = useNativeReviewDiffBridge({
@@ -555,6 +580,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
     });
   };
   const androidHeaderSubtitle = [
+    selectedRepository
+      ? selectedRepository.name + ": " + (selectedRepository.branch ?? "HEAD")
+      : null,
     selectedSection?.title,
     headerDiffSummary.additions,
     headerDiffSummary.deletions,
@@ -598,6 +626,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
     return <>{children}</>;
   })();
   const headerSubtitle = [
+    selectedRepository
+      ? selectedRepository.name + ": " + (selectedRepository.branch ?? "HEAD")
+      : null,
     headerDiffSummary.additions,
     headerDiffSummary.deletions,
     pendingReviewCommentCount > 0
@@ -622,7 +653,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
         title={headerTitleText}
         subtitle={headerSubtitle}
         androidSubtitle={androidHeaderSubtitle}
-        selectedThreadCwd={selectedThreadCwd}
+        selectedThreadCwd={repositoryPath ? null : selectedThreadCwd}
+        repositories={repositories}
+        selectedRepository={selectedRepository}
+        onSelectRepository={selectRepository}
         sectionMenu={sectionMenu}
         selectedSection={selectedSection}
         showSectionToolbar={showSectionToolbar}

@@ -20,22 +20,17 @@ commit links follow your **Open links in** setting; on web, when that opens a ne
 shows an **Open link** button. Command/Ctrl+Click always opens the link in your browser. Commit links follow the **Open pull requests in T3 Code**
 setting in **Settings → Diffs**.
 
-## Review submodule changes
+## Review a submodule
 
-Changes and Uncommitted include files inside initialized submodules, including nested submodules.
-Paths include the submodule directory, so files with the same name in different repositories stay
-distinct. Comparisons use the submodule commit recorded by the parent repository at the selected
-base. Commit reviews compare the recorded submodule commits without including local edits.
-Review includes declared submodules even when Git's submodule ignore settings hide them from summaries.
-This override applies to direct submodules. If a nested submodule is hidden by its parent's own ignore
-settings, unset those settings in that parent submodule to review it.
+The Diff pane starts with the thread's repository. Its changes include submodule commit
+pointers, as in Git. Use the repository picker to review an initialized submodule, including
+nested submodules, without opening another project. Each entry shows its repository name and
+branch. Detached checkouts show HEAD; repository paths distinguish matching names.
 
-Initialize submodules and fetch their recorded commits to review their file contents. When those
-are unavailable, or a comparison adds or removes a submodule, it shows the submodule commit pointer.
-If a submodule has too many untracked files to list, the review shows its pointer instead of its files.
-Files in the parent and other submodules remain available. Turn diffs, checkpoint restore,
-staging, and committing still operate on the thread's repository. Commit submodule changes inside each
-submodule before recording the updated pointer in the parent.
+Changes, Uncommitted, commit lists and comparison branches use the selected repository.
+Switching repositories resets the comparison branch to Automatic. File paths are relative to
+the selected repository. Turn diffs still show the thread's checkpoints and do not capture
+uncommitted contents inside submodules. Initialize a submodule with Git before selecting it.
 
 ## Connect an account
 

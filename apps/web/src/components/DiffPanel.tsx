@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
@@ -256,10 +257,56 @@ export default function DiffPanel({
         }
       : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot = activeThread?.worktreePath
-    ? undefined
-    : activeProject?.repositoryIdentity?.rootPath;
+  const storedDiffSelection = useDiffPanelStore((state) =>
+    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
+  );
+  const workspaceCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  const [repositoryQuery, setRepositoryQuery] = useState("");
+  const requestedRepositoryCwd = useDiffPanelStore((state) =>
+    routeThreadRef ? state.repositoryCwdByThreadKey[scopedThreadKey(routeThreadRef)] : undefined,
+  );
+  const repositoriesQuery = useEnvironmentQuery(
+    canReadFiles && activeThread && workspaceCwd
+      ? reviewEnvironment.repositories({
+          environmentId: activeThread.environmentId,
+          input: { cwd: workspaceCwd },
+        })
+      : null,
+  );
+  const repositories = repositoriesQuery.data?.repositories ?? [];
+  const selectedRepository =
+    repositories.find((repo) => repo.cwd === requestedRepositoryCwd) ?? repositories[0];
+  const isRepositoryDiff =
+    storedDiffSelection.kind === "branch" ||
+    storedDiffSelection.kind === "unstaged" ||
+    storedDiffSelection.kind === "commit";
+  const repositoryMissing =
+    !!requestedRepositoryCwd &&
+    repositoriesQuery.data !== null &&
+    !repositories.some((repo) => repo.cwd === requestedRepositoryCwd);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears a persisted child repository and its refs after that repository disappears
+  useEffect(() => {
+    if (repositoryMissing && routeThreadRef && repositories[0])
+      useDiffPanelStore.getState().selectRepository(routeThreadRef, repositories[0].cwd);
+  }, [repositoryMissing, routeThreadRef, repositories]);
+  const diffSelection =
+    repositoryMissing && isRepositoryDiff
+      ? { kind: "branch" as const, baseRef: null }
+      : storedDiffSelection;
+  const activeCwd = isRepositoryDiff
+    ? requestedRepositoryCwd && repositoriesQuery.isPending && !repositoriesQuery.data
+      ? undefined
+      : (selectedRepository?.cwd ?? workspaceCwd)
+    : workspaceCwd;
+  const isChildRepository = isRepositoryDiff && !!selectedRepository?.path;
+  const repositoryLabel = selectedRepository
+    ? selectedRepository.name + ": " + (selectedRepository.branch ?? "HEAD")
+    : "Repository";
+  const activeRepositoryRoot = isChildRepository
+    ? activeCwd
+    : activeThread?.worktreePath
+      ? undefined
+      : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -277,9 +324,7 @@ export default function DiffPanel({
         })
       : null,
   );
-  const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
-  );
+
   const rememberedBaseRef = useDiffPanelStore((state) =>
     selectThreadBranchBaseRef(state, routeThreadRef),
   );
@@ -344,7 +389,7 @@ export default function DiffPanel({
         ? `commit:${selectedCommitSha}`
         : selectedGitScope;
   const collapseScopeKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
+    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${isRepositoryDiff ? activeCwd : ""}:${reviewSectionId}`
     : null;
   const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
   const selectedCheckpointRange =
@@ -404,7 +449,7 @@ export default function DiffPanel({
           environmentId: activeThread.environmentId,
           input: {
             cwd: activeCwd,
-            ...(rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
+            ...(!repositoryMissing && rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
           },
         })
       : null,
@@ -452,7 +497,10 @@ export default function DiffPanel({
   const headerCommitSha = selectedRunId === null ? selectedCommitSha : null;
   const selectedCommitUrl =
     headerCommitSha !== null
-      ? projectCommitUrl(activeProject?.repositoryIdentity, headerCommitSha)
+      ? projectCommitUrl(
+          isChildRepository ? null : activeProject?.repositoryIdentity,
+          headerCommitSha,
+        )
       : null;
   const openLink = useOpenLink(routeThreadRef);
   // A SHA link goes to the code host; it must not route back into this pane's commit selection.
@@ -816,7 +864,71 @@ export default function DiffPanel({
 
   const headerRow = (
     <>
-      <div className="@container/diff-refs flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
+      <div className="@container/diff-refs flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag] @max-[42rem]/diff-panel:basis-full @max-[42rem]/diff-panel:flex-wrap">
+        {isGitSelection && repositories.length > 1 && (
+          <Combobox
+            items={repositories.map((repo) => repo.cwd)}
+            filteredItems={repositories
+              .filter((repo) =>
+                (repo.name + " " + repo.path + " " + (repo.branch ?? "HEAD"))
+                  .toLowerCase()
+                  .includes(repositoryQuery.toLowerCase()),
+              )
+              .map((repo) => repo.cwd)}
+            value={selectedRepository?.cwd ?? null}
+            onOpenChange={(open) => {
+              if (open) repositoriesQuery.refresh();
+              else setRepositoryQuery("");
+            }}
+            onValueChange={(cwd) => {
+              if (!routeThreadRef || !cwd || !repositories.some((repo) => repo.cwd === cwd)) return;
+              useDiffPanelStore.getState().selectRepository(routeThreadRef, cwd);
+              setOpenCommitMenu(null);
+              setBaseRefQuery("");
+            }}
+          >
+            <ComboboxTrigger
+              render={<Button size="xs" variant="secondary" className="max-w-56 min-w-0" />}
+              aria-label={"Repository: " + repositoryLabel}
+            >
+              <span className="truncate">{repositoryLabel}</span>
+              <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+            </ComboboxTrigger>
+            <ComboboxPopup className="w-80">
+              <ComboboxSearchInput
+                placeholder="Find repository..."
+                value={repositoryQuery}
+                onChange={(event) => setRepositoryQuery(event.target.value)}
+              />
+              <ComboboxEmpty>No matching repository.</ComboboxEmpty>
+              <ComboboxList>
+                {(cwd) => {
+                  const repo = repositories.find((repo) => repo.cwd === cwd)!;
+                  return (
+                    <ComboboxItem key={cwd} value={cwd}>
+                      <span className="min-w-0">
+                        <span className="block truncate">
+                          {repo.name}: {repo.branch ?? "HEAD"}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {repo.path || "Workspace repository"}
+                        </span>
+                      </span>
+                    </ComboboxItem>
+                  );
+                }}
+              </ComboboxList>
+              {repositoriesQuery.data?.truncated && (
+                <p className="px-3 py-2 text-xs text-muted-foreground">
+                  Repository discovery reached its limit.
+                </p>
+              )}
+              {repositoriesQuery.error && (
+                <p className="px-3 py-2 text-xs text-destructive">{repositoriesQuery.error}</p>
+              )}
+            </ComboboxPopup>
+          </Combobox>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button size="xs" variant="secondary" />}
@@ -903,7 +1015,7 @@ export default function DiffPanel({
                 >
                   {branchCommits?.commits.map((commit) => {
                     const commitUrl = projectCommitUrl(
-                      activeProject?.repositoryIdentity,
+                      isChildRepository ? null : activeProject?.repositoryIdentity,
                       commit.sha,
                     );
                     return (
@@ -1433,7 +1545,12 @@ export default function DiffPanel({
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}
                     renderCodeViewFooter={renderLoadingBoundary}
-                    sectionId={reviewSectionId}
+                    filePathPrefix={isChildRepository ? selectedRepository?.path : undefined}
+                    sectionId={
+                      isChildRepository
+                        ? selectedRepository?.path + ":" + reviewSectionId
+                        : reviewSectionId
+                    }
                     sectionTitle={reviewSectionTitle}
                     composerDraftTarget={composerDraftTarget}
                     renderHeaderFilenameSuffix={(fileDiff) => {

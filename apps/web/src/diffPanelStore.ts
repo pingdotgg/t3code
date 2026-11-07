@@ -25,6 +25,8 @@ const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
+  repositoryCwdByThreadKey: Record<string, string>;
+  selectRepository: (ref: ScopedThreadRef, cwd: string | null) => void;
   /** A link that selected a commit before opening the closed pane; opening keeps that selection. */
   keepSelectionOnOpenThreadKey: string | null;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
@@ -57,6 +59,30 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     (set, get) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      repositoryCwdByThreadKey: {},
+      selectRepository: (ref, cwd) =>
+        set((state) => {
+          const key = scopedThreadKey(ref);
+          return {
+            repositoryCwdByThreadKey:
+              cwd === null
+                ? Object.fromEntries(
+                    Object.entries(state.repositoryCwdByThreadKey).filter(
+                      ([entry]) => entry !== key,
+                    ),
+                  )
+                : { ...state.repositoryCwdByThreadKey, [key]: cwd },
+            byThreadKey: {
+              ...state.byThreadKey,
+              [key]:
+                state.byThreadKey[key]?.kind === "unstaged"
+                  ? { kind: "unstaged" }
+                  : { kind: "branch", baseRef: null },
+            },
+            branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [key]: null },
+            keepSelectionOnOpenThreadKey: null,
+          };
+        }),
       keepSelectionOnOpenThreadKey: null,
       selectGitScope: (ref, scope) =>
         set((state) => {
@@ -157,13 +183,19 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
-          if (!(threadKey in state.byThreadKey) && !(threadKey in state.branchBaseRefByThreadKey)) {
+          if (
+            !(threadKey in state.byThreadKey) &&
+            !(threadKey in state.branchBaseRefByThreadKey) &&
+            !(threadKey in state.repositoryCwdByThreadKey)
+          ) {
             return state;
           }
           const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
           const { [threadKey]: _removedBaseRef, ...branchBaseRefByThreadKey } =
             state.branchBaseRefByThreadKey;
-          return { byThreadKey, branchBaseRefByThreadKey };
+          const { [threadKey]: _removedRepository, ...repositoryCwdByThreadKey } =
+            state.repositoryCwdByThreadKey;
+          return { byThreadKey, branchBaseRefByThreadKey, repositoryCwdByThreadKey };
         }),
     }),
     {
@@ -175,6 +207,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       partialize: (state) => ({
         byThreadKey: state.byThreadKey,
         branchBaseRefByThreadKey: state.branchBaseRefByThreadKey,
+        repositoryCwdByThreadKey: state.repositoryCwdByThreadKey,
       }),
     },
   ),

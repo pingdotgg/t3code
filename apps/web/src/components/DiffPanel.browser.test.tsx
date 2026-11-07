@@ -7,6 +7,7 @@ import {
   ThreadId,
   type ClientSettings,
   type ReviewBranchCommitsResult,
+  type ReviewRepositoriesResult,
   type ReviewDiffPreviewResult,
   type ReviewDiffPreviewSource,
   type ScopedThreadRef,
@@ -34,6 +35,7 @@ const state = vi.hoisted(() => ({
   status: null as unknown as ResultAtom<VcsStatusResult>,
   localRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   remoteRefs: null as unknown as ResultAtom<VcsListRefsResult>,
+  repositories: null as unknown as ResultAtom<ReviewRepositoriesResult>,
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
 }));
 
@@ -44,6 +46,7 @@ vi.mock("~/state/review", () => ({
   reviewEnvironment: {
     diffPreview: ({ input }: { input: { baseRef?: string } }) =>
       state.previews.get(input.baseRef ?? null)!,
+    repositories: () => state.repositories,
     branchCommits: () => state.commits,
     diffFilePatch: () => state.patch,
     diffFileContents: {},
@@ -121,6 +124,7 @@ function setup(failedBaseRef: string | null) {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      repositoryCwdByThreadKey: {},
       keepSelectionOnOpenThreadKey: null,
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
@@ -146,6 +150,7 @@ function setup(failedBaseRef: string | null) {
   state.previews.set(null, Atom.make(AsyncResult.success(preview())));
   state.previews.set("main", Atom.make(AsyncResult.success(preview())));
   state.previews.set(failedBaseRef, Atom.make(AsyncResult.fail(new Error(errorMessage))));
+  state.repositories = Atom.make(AsyncResult.success({ repositories: [], truncated: false }));
   state.config = Atom.make(null);
   state.status = Atom.make(
     AsyncResult.success({

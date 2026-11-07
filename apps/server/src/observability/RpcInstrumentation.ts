@@ -193,6 +193,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.vcsCreateRef]: "vcs",
   [WS_METHODS.vcsSwitchRef]: "vcs",
   [WS_METHODS.vcsInit]: "vcs",
+  [WS_METHODS.reviewGetRepositories]: "review",
   [WS_METHODS.reviewGetBranchCommits]: "review",
   [WS_METHODS.reviewGetDiffPreview]: "review",
   [WS_METHODS.reviewGetDiffFileContents]: "review",
