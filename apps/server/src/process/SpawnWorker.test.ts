@@ -104,7 +104,7 @@ describe("SpawnWorker", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.live("kills running commands, including process trees and on scope interruption", () =>
+  it.live("kills running commands, detached or not, and on scope interruption", () =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       for (const detached of [true, false]) {

@@ -6,6 +6,7 @@ import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 // Windows runs CreateProcess synchronously on the calling thread, and antivirus or a busy disk can
 // hold it for seconds. Workers own the children, so only the worker waits.
@@ -114,7 +115,11 @@ parentPort.on("message", (request) => {
         post({ type: "written", id, fd: request.fd, error: { message: "write after end", code: "EPIPE" } });
         return;
       }
-      stream.write(request.data, (error) => post({ type: "written", id, fd: request.fd, error: error ? serialize(error) : undefined }));
+      try {
+        stream.write(request.data, (error) => post({ type: "written", id, fd: request.fd, error: error ? serialize(error) : undefined }));
+      } catch (error) {
+        post({ type: "written", id, fd: request.fd, error: serialize(error) });
+      }
       return;
     case "end":
       if (!stream || stream.destroyed || stream.writableFinished) post({ type: "finished", id, fd: request.fd });
@@ -125,7 +130,9 @@ parentPort.on("message", (request) => {
       else stream?.resume();
       return;
     case "kill":
-      child.kill(request.signal);
+      try {
+        child.kill(request.signal);
+      } catch {}
       return;
   }
 });
@@ -181,6 +188,10 @@ class WorkerChild
       _encoding: BufferEncoding,
       callback: (error?: Error | null) => void,
     ) => {
+      if (this.worker.closed) {
+        callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+        return;
+      }
       const pending = this.#writes.get(fd) ?? [];
       pending.push(callback);
       this.#writes.set(fd, pending);
@@ -252,11 +263,12 @@ class WorkerChild
     this.emit("exit", code, signal);
   }
 
-  /** The worker is gone, so no further output or acknowledgement can arrive. */
+  /** The worker is gone: end output so readers finish, and let the exit report the kill. */
   abandon(): void {
+    // Not destroy(error): Effect leaves an unread stderr's pipe without an error listener.
     for (const stream of this.stdio) {
-      stream?.on("error", () => {});
-      stream?.destroy();
+      if (stream && "push" in stream && !stream.readableEnded) stream.push(null);
+      else if (stream && !("push" in stream)) stream.destroy();
     }
   }
 }
@@ -350,6 +362,7 @@ class SpawnWorker {
         child.exit(message.code, message.signal);
         break;
       case "close":
+        child.emit("close", child.exitCode, child.signalCode);
         this.release(child);
         break;
     }
@@ -374,12 +387,8 @@ class SpawnWorker {
         child.emit("error", error);
         continue;
       }
-      // The worker owned the only handle; best-effort so a crash leaves no orphans.
-      if (child.pid !== undefined) {
-        try {
-          process.kill(child.pid, "SIGKILL");
-        } catch {}
-      }
+      // The worker owned the only handle, so end the whole tree before reporting the exit.
+      if (child.pid !== undefined) this.pool.killTree(child.pid);
       child.exit(null, "SIGKILL");
       child.abandon();
     }
@@ -396,7 +405,12 @@ class SpawnWorker {
 
 class SpawnWorkerPool {
   readonly workers = new Set<SpawnWorker>();
+  readonly platform: NodeJS.Platform;
   #nextId = 0;
+
+  constructor(platform: NodeJS.Platform) {
+    this.platform = platform;
+  }
 
   readonly spawn = (
     command: string,
@@ -414,6 +428,19 @@ class SpawnWorkerPool {
           ));
     return worker.spawn(++this.#nextId, command, args, options);
   };
+
+  killTree(pid: number): void {
+    if (this.platform === "win32") {
+      this.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      }).on("error", () => {});
+      return;
+    }
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
 
   #add(): SpawnWorker {
     const worker = new SpawnWorker(this);
@@ -435,8 +462,12 @@ class SpawnWorkerPool {
 }
 
 export const layer = Layer.unwrap(
-  Effect.acquireRelease(
-    Effect.sync(() => new SpawnWorkerPool()),
-    (pool) => Effect.sync(() => pool.close()),
-  ).pipe(Effect.map((pool) => NodeChildProcessSpawner.layerWithSpawn(pool.spawn))),
+  Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    const pool = yield* Effect.acquireRelease(
+      Effect.sync(() => new SpawnWorkerPool(platform)),
+      (pool) => Effect.sync(() => pool.close()),
+    );
+    return NodeChildProcessSpawner.layerWithSpawn(pool.spawn);
+  }),
 );
