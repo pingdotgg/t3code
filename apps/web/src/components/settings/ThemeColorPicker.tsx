@@ -62,6 +62,10 @@ function themeRgbToHex(value: string): string | null {
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
+function isShortHexColor(value: string): boolean {
+  return /^#[0-9a-f]{3,4}$/i.test(value.trim());
+}
+
 function themeRgbValue(hex: string) {
   return themeHexToRgb(hex).join(", ");
 }
@@ -340,6 +344,10 @@ export const ThemeColorField = memo(function ThemeColorField({
   const editorValue = value.trim().toLowerCase().startsWith("oklch(")
     ? (themeColorToHex(value) ?? value)
     : value;
+  // While focused the input shows the typed text, not the committed value: a guided palette
+  // rewrites the committed color, and echoing that mid-edit would replace the user's keystrokes.
+  const [hexDraft, setHexDraft] = useState<string | null>(null);
+  const hexText = hexDraft ?? editorValue;
 
   return (
     <div
@@ -375,17 +383,29 @@ export const ThemeColorField = memo(function ThemeColorField({
           value={swatchValue}
         />
         <Input
-          aria-invalid={!isColorValue}
+          aria-invalid={!isThemeColor(hexText)}
           aria-label={`${label} hex value`}
           className="w-28 shrink-0"
           font="mono"
           id={`${role}-hex`}
           nativeInput
-          onChange={(event) => onChange(role, event.currentTarget.value)}
-          onFocus={() => onSelect?.(role)}
+          onBlur={() => {
+            if (hexDraft !== null && isShortHexColor(hexDraft)) onChange(role, hexDraft);
+            setHexDraft(null);
+          }}
+          onChange={(event) => {
+            const nextValue = event.currentTarget.value;
+            setHexDraft(nextValue);
+            // Shorthand is usually a longer hex mid-deletion, so commit it on blur instead.
+            if (!isShortHexColor(nextValue)) onChange(role, nextValue);
+          }}
+          onFocus={() => {
+            setHexDraft(editorValue);
+            onSelect?.(role);
+          }}
           onPointerDown={() => onSelect?.(role)}
           size="compact"
-          value={editorValue}
+          value={hexText}
         />
       </div>
     </div>

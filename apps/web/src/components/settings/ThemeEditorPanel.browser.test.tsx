@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import type { ReactNode } from "react";
+
 import { act, render } from "../../../test/render";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
 
@@ -45,7 +47,7 @@ function pointerAt(target: HTMLElement, type: string, xFraction: number) {
   );
 }
 
-async function renderPanel() {
+async function renderPanel(appContent?: ReactNode) {
   await page.viewport(1280, 900);
   const stack = new AsyncDisposableStack();
   // Synthetic pointer ids are not active pointers, so the browser would reject capture.
@@ -56,14 +58,17 @@ async function renderPanel() {
   stack.defer(() => style.remove());
   const screen = stack.use(
     await render(
-      <ThemeEditorPanel
-        open
-        onOpenChange={() => {}}
-        onSaved={() => true}
-        editingTheme={null}
-        initialAppearance="dark"
-        restoreTheme={() => {}}
-      />,
+      <>
+        {appContent}
+        <ThemeEditorPanel
+          open
+          onOpenChange={() => {}}
+          onSaved={() => true}
+          editingTheme={null}
+          initialAppearance="dark"
+          restoreTheme={() => {}}
+        />
+      </>,
     ),
   );
   const panel = screen.getByRole("dialog", { name: "Create theme" });
@@ -147,5 +152,40 @@ describe("ThemeEditorPanel", () => {
       pointerAt(hueSlider, "pointerup", 0.75);
     });
     expect((hex.element() as HTMLInputElement).value).toBe(original);
+  });
+
+  it("keeps the typed text while backspacing the background hex past valid shorthand", async () => {
+    await using _view = await renderPanel();
+    const hex = page.getByRole("textbox", { name: "Background hex value" });
+    await userEvent.fill(hex, "#222222");
+    await expect.element(hex).toHaveValue("#222222");
+
+    // Four- and three-digit prefixes are valid shorthand; the guided palette must not rewrite them.
+    for (const expected of ["#22222", "#2222", "#222", "#22", "#2", "#", ""]) {
+      await userEvent.keyboard("{Backspace}");
+      await expect.element(hex).toHaveValue(expected);
+    }
+
+    await userEvent.keyboard("#3366cc");
+    await expect.element(hex).toHaveValue("#3366cc");
+    await act(async () => (hex.element() as HTMLInputElement).blur());
+    await expect.element(hex).toHaveValue("#3366cc");
+  });
+
+  it("commits a typed shorthand hex when inspecting an advanced color switches modes", async () => {
+    await using _view = await renderPanel(<div className="bg-sidebar" data-testid="app-sidebar" />);
+    await userEvent.click(page.getByRole("button", { name: "Inspect app colors" }));
+    await userEvent.fill(page.getByRole("textbox", { name: "Background hex value" }), "#abc");
+
+    // Inspect mode cancels the pointerdown, so the hex field keeps focus while it unmounts.
+    const sidebar = page.getByTestId("app-sidebar").element() as HTMLElement;
+    await act(async () => pointerAt(sidebar, "pointerdown", 0.5));
+
+    await expect
+      .element(page.getByRole("switch", { name: "Use advanced theme colors" }))
+      .toBeChecked();
+    await expect
+      .element(page.getByRole("textbox", { name: "Background hex value" }))
+      .toHaveValue("#aabbcc");
   });
 });
