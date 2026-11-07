@@ -175,6 +175,7 @@ export interface BitbucketPullRequest {
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly reviewerIds: ReadonlyArray<string>;
+  readonly reviewerUsers: ReadonlyArray<PullRequestActor & { readonly id: string }>;
   readonly reviews: ReadonlyArray<PullRequestComment>;
 }
 
@@ -187,6 +188,12 @@ function toActor(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefine
         name: trimmed(raw?.display_name),
         avatarUrl: trimmed(raw?.links?.avatar?.href),
       };
+}
+
+function toUser(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefined) {
+  const id = trimmed(raw?.uuid);
+  const actor = toActor(raw);
+  return id === null || actor === null ? null : { ...actor, id };
 }
 
 function toState(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): PullRequestState {
@@ -264,6 +271,7 @@ function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): Bi
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
     reviewers,
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) => trimmed(reviewer.uuid) ?? []),
+    reviewerUsers: (raw.reviewers ?? []).flatMap((reviewer) => toUser(reviewer) ?? []),
     reviews: toReviews(raw),
   };
 }
@@ -341,10 +349,8 @@ export function decodeWorkspaceMembersJson(
   for (const entry of decoded.success.values) {
     const member = decodeMemberEntry(entry);
     if (Exit.isFailure(member)) continue;
-    const uuid = trimmed(member.value.user?.uuid);
-    const actor = toActor(member.value.user);
-    if (uuid === null || actor === null) continue;
-    items.push({ ...actor, id: uuid, kind: "user", isRequested: false });
+    const user = toUser(member.value.user);
+    if (user !== null) items.push({ ...user, kind: "user", isRequested: false });
   }
   return Result.succeed({ items, next: trimmed(decoded.success.next) });
 }

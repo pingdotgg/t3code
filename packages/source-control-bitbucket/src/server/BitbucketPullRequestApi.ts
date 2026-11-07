@@ -699,15 +699,22 @@ export const make = Effect.gen(function* () {
             { concurrency: 2 },
           ).pipe(
             Effect.map(([pullRequest, members]) => {
-              const requested = new Set(pullRequest.reviewerIds);
+              const listed = new Set(pullRequest.reviewerUsers.map(({ id }) => id));
               const author = pullRequest.author?.login;
               return {
-                // Bitbucket forbids requesting a review from the PR author.
-                candidates: members.items.flatMap((candidate) =>
-                  candidate.login === author
-                    ? []
-                    : [{ ...candidate, isRequested: requested.has(candidate.id) }],
-                ),
+                // The reviewers lead, and come from the PR rather than the members page: only one
+                // page of members is read, and somebody missing from it could not be taken off.
+                candidates: [
+                  ...pullRequest.reviewerUsers.map((user) => ({
+                    ...user,
+                    kind: "user" as const,
+                    isRequested: true,
+                  })),
+                  // Bitbucket forbids requesting a review from the PR author.
+                  ...members.items.filter(
+                    (candidate) => candidate.login !== author && !listed.has(candidate.id),
+                  ),
+                ],
                 truncated: members.next !== null,
               };
             }),
