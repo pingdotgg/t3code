@@ -325,6 +325,10 @@ export function useThreadActions() {
     reportFailure: false,
     refresh: true,
   });
+  const loadThreadFamily = useAtomQueryRunner(orchestrationEnvironment.threadFamily, {
+    reportFailure: false,
+    refresh: true,
+  });
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -440,11 +444,37 @@ export function useThreadActions() {
     if (permissionFailure) return permissionFailure;
     const resolved = resolveThreadTarget(target);
     if (!resolved) {
+      let threads = readEnvironmentThreadRefs(target.environmentId).flatMap((ref) => {
+        const shell = readThreadShell(ref);
+        return shell === null ? [] : [{ id: shell.id, lineage: shell.lineage }];
+      });
+      if (
+        appAtomRegistry.get(environmentServerConfigsAtom).get(target.environmentId)
+          ?.shellThreadFamilies
+      ) {
+        const family = await loadThreadFamily({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId },
+        });
+        if (family._tag === "Success") threads = [...family.value.threads];
+      }
       const result = await deleteThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
       if (result._tag === "Success") {
+        for (const ref of [
+          target,
+          ...threads
+            .filter(
+              (entry) =>
+                entry.lineage.sideChat === true && entry.lineage.parentThreadId === target.threadId,
+            )
+            .map((entry) => scopeThreadRef(target.environmentId, entry.id)),
+        ]) {
+          releaseComposerDraftUploads(ref);
+          clearComposerDraftForThread(ref);
+        }
         expireThreadUndos(target, [...LIST_PLACEMENT_UNDO_KINDS, "archive"]);
         refreshArchivedThreadsForEnvironment(target.environmentId);
         clearDeletedThreadPanelState(target);
@@ -567,6 +597,15 @@ export function useThreadActions() {
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
     releaseComposerDraftUploads(threadRef);
     clearComposerDraftForThread(threadRef);
+    // The server deletes the thread's side chats with it.
+    for (const entry of threads) {
+      if (entry.lineage.sideChat !== true || entry.lineage.parentThreadId !== threadRef.threadId) {
+        continue;
+      }
+      const sideChatRef = scopeThreadRef(threadRef.environmentId, entry.id);
+      releaseComposerDraftUploads(sideChatRef);
+      clearComposerDraftForThread(sideChatRef);
+    }
     clearProjectDraftThreadById(
       scopeProjectRef(threadRef.environmentId, thread.projectId),
       threadRef,
