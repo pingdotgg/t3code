@@ -1,3 +1,4 @@
+import type * as Digest from "effect/crypto/Digest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
@@ -589,6 +590,7 @@ export const makeKiroAdapterV2 = Effect.fn("makeKiroAdapterV2")(function* (
 });
 
 export type KiroAdapterV2DriverEnv =
+  | Digest.Digest
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
   | FileSystem.FileSystem

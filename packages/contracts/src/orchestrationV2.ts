@@ -1049,6 +1049,14 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
 export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
+  acpInstructions: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        nativeSessionId: TrimmedNonEmptyString,
+        digest: TrimmedNonEmptyString,
+      }),
+    ),
+  ),
   modelSelection: Schema.optional(ModelSelection),
   title: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

@@ -227,6 +227,7 @@ interface LiveSessionEntry {
     ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
   >;
   readonly requestEventPermit: Semaphore.Semaphore;
+  readonly instructionInvalidations: Map<ProviderThreadId, OrchestrationV2ProviderThread>;
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
@@ -1666,6 +1667,7 @@ export const layerWithOptions = (
 
       const makeEventSubscription = Effect.fn("ProviderSessionManager.makeEventSubscription")(
         function* (
+          providerSessionId: ProviderSessionId,
           subscribers: Ref.Ref<
             ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
           >,
@@ -1677,20 +1679,39 @@ export const layerWithOptions = (
             updated.set(subscriberId, queue);
             return updated;
           });
-          const close = Ref.modify(subscribers, (current) => {
-            if (!current.has(subscriberId)) {
-              return [false, current] as const;
+          const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
+          const close = Effect.gen(function* () {
+            const release = Effect.gen(function* () {
+              const removed = yield* Ref.modify(subscribers, (current) => {
+                if (!current.has(subscriberId)) return [false, current] as const;
+                const updated = new Map(current);
+                updated.delete(subscriberId);
+                return [true, updated] as const;
+              });
+              if (removed) {
+                yield* Queue.clear(queue);
+                yield* Queue.end(queue);
+              }
+            });
+            yield* entry === undefined ? release : entry.requestEventPermit.withPermits(1)(release);
+            // Completion can restore its cached receipt after an idle invalidation was persisted.
+            // Retry outside the cleanup lock so release can stop a competing runtime writer.
+            if (entry !== undefined) {
+              yield* Effect.forEach(
+                [...entry.instructionInvalidations.values()],
+                (offered) =>
+                  persistInstructionInvalidation(entry, offered).pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning(
+                        "orchestration-v2.provider-session.instruction-invalidation-failed",
+                        { providerSessionId, providerThreadId: offered.id, cause },
+                      ),
+                    ),
+                  ),
+                { discard: true },
+              );
             }
-            const updated = new Map(current);
-            updated.delete(subscriberId);
-            return [true, updated] as const;
-          }).pipe(
-            Effect.flatMap((removed) =>
-              removed
-                ? Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
-                : Effect.void,
-            ),
-          );
+          }).pipe(Effect.orDie);
           const events = Stream.fromQueue(queue).pipe(
             Stream.mapEffect((signal) =>
               signal.type === "event"
@@ -1710,7 +1731,7 @@ export const layerWithOptions = (
         >,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
-        const subscribeEvents = makeEventSubscription(eventSubscribers);
+        const subscribeEvents = makeEventSubscription(providerSessionId, eventSubscribers);
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
             counter: providerTurnsTotal,
@@ -1957,6 +1978,54 @@ export const layerWithOptions = (
           ),
       );
 
+      const persistInstructionInvalidation = Effect.fn(
+        "ProviderSessionManager.persistInstructionInvalidation",
+      )(function* (entry: LiveSessionEntry, offered: OrchestrationV2ProviderThread) {
+        const threadId = offered.appThreadId;
+        if (threadId === null || offered.nativeMetadata?.acpInstructions !== null) return;
+        // Idle updates outlive run subscribers; invalidate only the receipt, not newer thread state.
+        yield* Effect.gen(function* () {
+          if (entry.instructionInvalidations.get(offered.id) !== offered) return true;
+          const current = (yield* Ref.get(sessions)).get(
+            sessionKey(entry.runtime.providerSessionId),
+          );
+          if (current !== undefined && current.runtime !== entry.runtime) return true;
+          if (!(current?.attachedThreadIds ?? entry.attachedThreadIds).has(threadId)) return true;
+          const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+          const stored = projection.providerThreads.find(
+            (candidate) => candidate.id === offered.id,
+          );
+          if (
+            stored === undefined ||
+            stored.providerSessionId !== entry.runtime.providerSessionId ||
+            stored.lastRunOrdinal !== offered.lastRunOrdinal ||
+            stored.nativeThreadRef?.nativeId !== offered.nativeThreadRef?.nativeId ||
+            stored.nativeMetadata?.acpInstructions == null
+          )
+            return true;
+          const events = yield* providerEventIngestor.normalize({
+            providerSessionId: entry.runtime.providerSessionId,
+            providerInstanceId: entry.runtime.instanceId,
+            threadId,
+            event: {
+              type: "provider_thread.updated",
+              driver: entry.runtime.driver,
+              providerThread: {
+                ...stored,
+                nativeMetadata: { ...stored.nativeMetadata, acpInstructions: null },
+              },
+            },
+          });
+          return (yield* eventSink.writeIfProviderThreadUnchanged({ expected: stored, events }))
+            .committed;
+        }).pipe(
+          // Each comparison owns the permit; retries must let cleanup and newer receipts through.
+          entry.requestEventPermit.withPermits(1),
+          Effect.tap((committed) => (committed ? Effect.void : Effect.yieldNow)),
+          Effect.repeat({ until: (committed) => committed }),
+        );
+      });
+
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
         let lastSessionStatus = entry.runtime.providerSession.status;
@@ -2021,6 +2090,35 @@ export const layerWithOptions = (
                         loadedProviderThreadKeyByThread,
                       });
                     });
+                  }
+                  if (
+                    event.type === "provider_thread.updated" &&
+                    event.providerThread.nativeMetadata?.acpInstructions !== undefined
+                  ) {
+                    yield* Effect.sync(() => {
+                      if (event.providerThread.nativeMetadata?.acpInstructions === null) {
+                        entry.instructionInvalidations.set(
+                          event.providerThread.id,
+                          event.providerThread,
+                        );
+                      } else {
+                        entry.instructionInvalidations.delete(event.providerThread.id);
+                      }
+                    }).pipe(entry.requestEventPermit.withPermits(1));
+                    yield* persistInstructionInvalidation(entry, event.providerThread).pipe(
+                      Effect.catch((cause) =>
+                        Effect.logWarning(
+                          "orchestration-v2.provider-session.instruction-invalidation-failed",
+                          {
+                            providerSessionId: entry.runtime.providerSessionId,
+                            providerThreadId: event.providerThread.id,
+                            cause,
+                          },
+                        ),
+                      ),
+                    );
+                    yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                    return;
                   }
                   // Some providers can block before a run subscriber exists
                   // (project trust, login, or session-switch hooks). Persist
@@ -2269,6 +2367,7 @@ export const layerWithOptions = (
                 exposedRuntime,
                 eventSubscribers,
                 requestEventPermit: yield* Semaphore.make(1),
+                instructionInvalidations: new Map(),
                 scope: sessionScope,
                 idleGeneration: 0,
                 busyTurns: new Set(),

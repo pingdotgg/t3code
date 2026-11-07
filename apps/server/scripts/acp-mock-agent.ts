@@ -64,6 +64,7 @@ const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const echoAcceptedPrompt = process.env.T3_ACP_ECHO_ACCEPTED_PROMPT === "1";
 // JSON for the `data` of an "Internal error" response to `session/new`, as
 // Antigravity sends when its runtime cannot reach its local harness.
 const newSessionErrorData =
@@ -829,6 +830,15 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (echoAcceptedPrompt) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "Accepted test prompt" },
+          },
+        });
+      }
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
       if (idleError === "grok-background" && promptCount === 1) {

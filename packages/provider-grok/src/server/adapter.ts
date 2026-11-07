@@ -1,3 +1,4 @@
+import type * as Digest from "effect/crypto/Digest";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   XAiPromptFailureText,
@@ -357,6 +358,7 @@ export const makeGrokAdapterV2 = Effect.fn("makeGrokAdapterV2")(function* (
 });
 
 export type GrokAdapterV2DriverEnv =
+  | Digest.Digest
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
   | FileSystem.FileSystem
