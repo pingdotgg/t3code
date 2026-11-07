@@ -6,6 +6,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { previewEnvironment } from "./state/preview";
 import { useEnvironmentQuery } from "./state/query";
@@ -40,11 +42,30 @@ export function boundConfiguredLocalServerUrls(
   return bounded;
 }
 
-function useDiscoveredPorts(
+const lastDiscoveredServersAtom = Atom.family((_environmentId: EnvironmentId) =>
+  Atom.make<ReadonlyArray<DiscoveredLocalServer> | null>(null).pipe(Atom.keepAlive),
+);
+
+// The subscription closes with its last reader, so fall back to its last answer until it reopens.
+const discoveredServersAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const last = lastDiscoveredServersAtom(environmentId);
+    const result = get(previewEnvironment.discoveredServers({ environmentId, input: {} }));
+    const live = AsyncResult.getOrElse(result, () => null)?.servers;
+    if (live === undefined) return get.once(last) ?? EMPTY_PORTS;
+    get.set(last, live);
+    return live;
+  }),
+);
+
+const NO_ENVIRONMENT_SERVERS_ATOM = Atom.make(EMPTY_PORTS);
+
+export function useDiscoveredPorts(
   environmentId: EnvironmentId | null,
-  configuredUrls?: ReadonlyArray<string>,
 ): ReadonlyArray<DiscoveredLocalServer> {
-  return useDiscoveredPortsState(environmentId, configuredUrls).servers;
+  return useAtomValue(
+    environmentId === null ? NO_ENVIRONMENT_SERVERS_ATOM : discoveredServersAtom(environmentId),
+  );
 }
 
 export function useDiscoveredPortsState(
