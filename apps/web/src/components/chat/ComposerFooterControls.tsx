@@ -183,7 +183,7 @@ export function ComposerPermissionsSection(props: {
         onValueChange={(value: RuntimeMode) => {
           if (value !== props.runtimeMode) props.onRuntimeModeChange(value);
         }}
-        className="flex rounded-lg bg-input/40 p-0.5"
+        className="flex rounded-lg bg-input/40"
         // Menus navigate with Up/Down only; the row reads horizontally, so Left/Right move too.
         onKeyDown={(event) => {
           if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -213,9 +213,11 @@ export function ComposerPermissionsSection(props: {
               onPointerLeave={() => setPreviewMode(null)}
               onFocus={() => setPreviewMode(option.mode)}
               onBlur={() => setPreviewMode(null)}
-              className="flex h-6 flex-1 cursor-pointer items-center justify-center text-muted-foreground outline-none first:rounded-l-md last:rounded-r-md data-disabled:cursor-not-allowed data-disabled:opacity-40 data-checked:bg-input/72 data-checked:text-foreground data-highlighted:text-foreground not-data-checked:data-highlighted:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              className="group flex h-7 flex-1 cursor-pointer p-0.5 text-muted-foreground outline-none data-disabled:cursor-not-allowed data-disabled:opacity-40 data-checked:text-foreground data-highlighted:text-foreground"
             >
-              <OptionIcon aria-hidden="true" className="size-3.5" />
+              <span className="flex size-full items-center justify-center rounded-md group-data-checked:bg-input/72 group-not-data-checked:group-data-highlighted:bg-input/32 group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-inset">
+                <OptionIcon aria-hidden="true" className="size-3.5" />
+              </span>
             </MenuPrimitive.RadioItem>
           );
         })}
