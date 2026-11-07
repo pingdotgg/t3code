@@ -1,3 +1,7 @@
+import { describe, expect, it } from "@alchemy.run/test";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { AlchemyContext } from "@/AlchemyContext.ts";
 import {
   fromEnv,
@@ -8,10 +12,6 @@ import {
 import { Stack } from "@/Stack.ts";
 import { Stage } from "@/Stage.ts";
 import { PlatformServices } from "@/Util/PlatformServices.ts";
-import { describe, expect, it } from "alchemy-test";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 const sessionEnv = {
   alchemyContext: {
@@ -66,12 +66,7 @@ describe("Local.RpcServerEnvironment", { tags: ["unit", "local"] }, () => {
         }),
       );
       const stack = yield* Stack.pipe(
-        Effect.provide(
-          Layer.provide(
-            fromEnv(),
-            Layer.mergeAll(PlatformServices, environment),
-          ),
-        ),
+        Effect.provide(Layer.provide(fromEnv(), Layer.mergeAll(PlatformServices, environment))),
       );
       expect(stack.name).toBe(sessionEnv.stack.name);
       expect(stack.stage).toBe(sessionEnv.stack.stage);

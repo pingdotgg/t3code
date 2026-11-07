@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   currentPdfPage,
+  pdfFindIncludes,
   pdfFindMatchRuns,
   pdfPageOffsets,
   pdfPageScrollTop,
   pdfPageText,
   pdfPageWidth,
+  pdfRestoredScrollTop,
   stepPdfZoom,
   visiblePdfPages,
 } from "./pdfLayout";
@@ -71,6 +73,14 @@ describe("mixed-height page layout", () => {
   it("scales offsets with the page width when zoomed", () => {
     expect(pdfPageOffsets(ratios, width * 2)).toEqual([16, 312, 1912, 2540]);
   });
+
+  it("restores a saved spot scaled to the new width and kept inside pages that remain", () => {
+    expect(pdfRestoredScrollTop(ratios, width, { page: 1, offset: 100 })).toBe(256);
+    expect(pdfRestoredScrollTop(ratios, width * 2, { page: 1, offset: 100 }, width)).toBe(496);
+    // A page that shrank keeps the reader on its last pixel; a removed page falls back to the last.
+    expect(pdfRestoredScrollTop(ratios, width, { page: 2, offset: 600 })).toBe(964 + 305);
+    expect(pdfRestoredScrollTop(ratios.slice(0, 2), width, { page: 2, offset: 0 })).toBe(156);
+  });
 });
 
 describe("pdfPageText", () => {
@@ -103,6 +113,36 @@ describe("pdfFindMatchRuns", () => {
       false,
       true,
     ]);
+  });
+
+  it("matches a space in the query across a line end", () => {
+    expect(
+      pdfFindMatchRuns(["Q3 quarterly", "\n", "outlook", " ahead"], "quarterly outlook"),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it("matches a word hyphenated across a line end", () => {
+    expect(pdfFindMatchRuns(["the quar-", "\n", "terly report"], "quarterly")).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it("drops a line-end hyphen after a letter outside the BMP", () => {
+    expect(pdfFindMatchRuns(["\u{10400}-", "\n", "\u{10401}"], "\u{10400}\u{10401}")).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it("finds the same pages the highlights do", () => {
+    const page = "Q3 quarterly\noutlook ahead, the quar-\nterly report";
+    expect(pdfFindIncludes(page, "Quarterly  OUTLOOK")).toBe(true);
+    expect(pdfFindIncludes(page, "quarterly report")).toBe(true);
+    expect(pdfFindIncludes(page, "bud-get")).toBe(false);
+    expect(pdfFindIncludes(page, " ")).toBe(false);
   });
 
   it("highlights nothing for a blank or missing query", () => {

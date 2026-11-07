@@ -1,25 +1,4 @@
-import {
-  WORKTREE_SETUP_ACTIVITY_KIND,
-  WorktreeSetupSnapshot,
-  type ThreadId,
-} from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-
-const decodeWorktreeSetupSnapshot = Schema.decodeUnknownOption(WorktreeSetupSnapshot);
-
-export function findRecordedWorktreeSetup(
-  activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>,
-  threadId: ThreadId,
-): WorktreeSetupSnapshot | null {
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index]!;
-    if (activity.kind !== WORKTREE_SETUP_ACTIVITY_KIND) continue;
-    const decoded = decodeWorktreeSetupSnapshot(activity.payload);
-    if (Option.isSome(decoded) && decoded.value.threadId === threadId) return decoded.value;
-  }
-  return null;
-}
+import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 
 export function resolveVisibleWorktreeSetup(input: {
   live: WorktreeSetupSnapshot | null;

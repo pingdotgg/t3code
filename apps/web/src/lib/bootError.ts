@@ -26,7 +26,7 @@ function launcherCommand(launcherPath: string) {
 /** Desktop can run its bundled launcher without Node; everything else falls back to npx. */
 export async function resolveTriageCommand(bridge: DesktopBridge | undefined) {
   try {
-    const state = await bridge?.cliCommand?.getState();
+    const state = await bridge?.cliCommand.getState();
     // Windows reports onPath from its PATH entry alone; only an existing launcher proves it runs.
     if (state?.launcherPath) {
       return state.onPath ? "t3 triage" : `${launcherCommand(state.launcherPath)} triage`;
@@ -121,7 +121,7 @@ export function buildErrorReport(error: unknown, environment: BootErrorEnvironme
 
 function clientPlatform(bridge: DesktopBridge | undefined) {
   try {
-    return bridge?.getClientPlatform?.() ?? navigator.platform;
+    return bridge?.getClientPlatform() ?? navigator.platform;
   } catch {
     return navigator.platform;
   }

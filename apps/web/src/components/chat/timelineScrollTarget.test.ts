@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  createComposerScrollGestureState,
-  recordComposerScrollGestureEvent,
-} from "./composerScrollGesture";
 import { createUpwardScrollDetector, isTimelineScrollTarget } from "./timelineScrollTarget";
 
 class ScrollElement extends EventTarget {
@@ -71,7 +67,7 @@ describe("timeline scroll targets", () => {
     { deltaX: 80, deltaY: -30, shiftKey: false },
     { deltaX: -80, deltaY: 30, shiftKey: false },
     { deltaX: 0, deltaY: -30, shiftKey: true },
-  ])("keeps horizontal gestures out of composer collapse and timeline follow: %j", (gesture) => {
+  ])("keeps horizontal gestures from releasing timeline follow: %j", (gesture) => {
     const { timeline } = setup();
     const table = new ScrollElement(timeline);
     const targets = isTimelineScrollTarget(
@@ -81,16 +77,6 @@ describe("timeline scroll targets", () => {
       gesture,
     );
     expect(targets).toBe(false);
-    expect(
-      recordComposerScrollGestureEvent(createComposerScrollGestureState(), {
-        now: 0,
-        deltaPx: Math.abs(gesture.deltaY),
-        collapseThresholdPx: 24,
-        collapseEligible: targets,
-        canScrollInGestureDirection: true,
-        scrollsTowardLogicalEnd: false,
-      }),
-    ).toBe(false);
   });
 
   it.each([-30, 30])("keeps a nested tool group's scroll out of the timeline: %i", (deltaY) => {
@@ -107,26 +93,6 @@ describe("timeline scroll targets", () => {
     group.scrollTop = scrollTop;
     expect(targetsTimeline(content, timeline, deltaY)).toBe(true);
     expect(targetsTimeline(content, timeline, -deltaY)).toBe(false);
-  });
-
-  it("does not accumulate nested scrolling toward composer collapse", () => {
-    const { timeline, group, content } = setup();
-    const state = createComposerScrollGestureState();
-    const record = (target: ScrollElement, now: number, deltaPx: number) =>
-      recordComposerScrollGestureEvent(state, {
-        now,
-        deltaPx,
-        collapseThresholdPx: 24,
-        collapseEligible: targetsTimeline(target, timeline, -deltaPx),
-        canScrollInGestureDirection: timeline.scrollTop > 0,
-        scrollsTowardLogicalEnd: false,
-      });
-
-    expect(record(timeline, 0, 20)).toBe(false);
-    expect(record(content, 20, 30)).toBe(false);
-    group.scrollTop = 0;
-    expect(record(content, 40, 10)).toBe(false);
-    expect(record(content, 60, 14)).toBe(true);
   });
 });
 
