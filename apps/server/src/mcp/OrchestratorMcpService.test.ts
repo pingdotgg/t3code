@@ -2556,6 +2556,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks }),
+              find: (id) => Effect.succeed(tasks.find((task) => task.id === id) ?? null),
               upsert: () =>
                 Ref.update(upserted, (count) => count + 1).pipe(Effect.as({ task: tasks[0]! })),
             }),
@@ -2717,7 +2718,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-                    list: () => Effect.succeed({ tasks: [bound] }),
+                    find: () => Effect.succeed(bound),
                     upsert: () =>
                       Ref.update(upserted, (count) => count + 1).pipe(Effect.as({ task: bound })),
                   }),
@@ -2806,7 +2807,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-              list: () => Effect.succeed({ tasks: [task] }),
+              find: () => Effect.succeed(task),
               upsert: (input) =>
                 Ref.update(saved, (strategies) => [...strategies, input.workspaceStrategy]).pipe(
                   Effect.andThen(
