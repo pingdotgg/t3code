@@ -150,6 +150,8 @@ export const PullRequestComment = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   path: Schema.NullOr(Schema.String),
   reviewState: Schema.NullOr(Schema.String),
+  isMinimized: Schema.optional(Schema.Boolean),
+  minimizedReason: Schema.optional(Schema.NullOr(Schema.String)),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
   canEdit: Schema.optional(Schema.Boolean),
 });

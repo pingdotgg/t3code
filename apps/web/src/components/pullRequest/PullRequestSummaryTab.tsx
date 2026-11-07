@@ -300,7 +300,7 @@ function CollapsedComment({
             {reactionBar}
           </div>
           <CommentLocation comment={comment} thread={thread} />
-          {!open && body ? (
+          {!open && body && !comment.isMinimized ? (
             <CollapsibleTrigger
               className="mt-2 block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
               onClick={() => statusTriggerRef.current?.focus({ preventScroll: true })}
@@ -703,7 +703,7 @@ export function PullRequestSummaryTab({
       ) : null;
     const moreReplies =
       item.kind === "thread" && item.hasMoreReplies ? <PullRequestMoreReplies {...item} /> : null;
-    if (isPullRequestCommentFinished(comment, thread)) {
+    if (comment.isMinimized || isPullRequestCommentFinished(comment, thread)) {
       const chat = chatSubject(comment, thread);
       return (
         <CollapsedComment
@@ -712,7 +712,13 @@ export function PullRequestSummaryTab({
           editing={commentEditing}
           detail={detail}
           thread={thread}
-          label={thread?.isResolved ? "Resolved" : "Review dismissed"}
+          label={
+            comment.isMinimized
+              ? `Minimized${comment.minimizedReason ? ` · ${reviewStateLabel(comment.minimizedReason)}` : ""}`
+              : thread?.isResolved
+                ? "Resolved"
+                : "Review dismissed"
+          }
           body={visibleBody(comment.body)}
           replyCount={item.kind === "thread" ? item.replies.length + item.moreReplies : 0}
           replies={replies}
