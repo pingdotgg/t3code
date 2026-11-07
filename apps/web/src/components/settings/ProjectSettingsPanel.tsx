@@ -691,18 +691,20 @@ function ProjectDetail({
         </SettingsSection>
       </SettingsPageContainer>
 
-      <ProjectFaviconPickerDialog
-        key={`${representative.environmentId}:${representative.workspaceRoot}:${faviconPickerOpen}`}
-        cwd={representative.workspaceRoot}
-        environmentId={representative.environmentId}
-        onOpenChange={setFaviconPickerOpen}
-        {...(pickProjectFavicon
-          ? { onPickExternal: () => pickProjectFavicon(representative.workspaceRoot) }
-          : {})}
-        onSelect={(path) => void setProjectIcon({ faviconPath: path, projectIcon: null })}
-        open={faviconPickerOpen && canEditGroup}
-        projectName={group.displayName}
-      />
+      {faviconPickerOpen && canEditGroup ? (
+        <ProjectFaviconPickerDialog
+          key={`${representative.environmentId}:${representative.workspaceRoot}`}
+          cwd={representative.workspaceRoot}
+          environmentId={representative.environmentId}
+          onOpenChange={setFaviconPickerOpen}
+          {...(pickProjectFavicon
+            ? { onPickExternal: () => pickProjectFavicon(representative.workspaceRoot) }
+            : {})}
+          onSelect={(path) => void setProjectIcon({ faviconPath: path, projectIcon: null })}
+          open
+          projectName={group.displayName}
+        />
+      ) : null}
       {iconPickerOpen && canEditGroup ? (
         <Suspense fallback={null}>
           <ProjectIconPickerDialog
