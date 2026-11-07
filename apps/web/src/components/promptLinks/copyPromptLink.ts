@@ -16,6 +16,8 @@ import { type ComposerThreadTarget, useComposerDraftStore } from "~/composerDraf
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { configuredHostedAppUrl } from "~/hostedPairing";
 
+import { serializeComposerTray } from "../chat/composerSubmission";
+
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 /** A shareable link to a prompt on the hosted app, or null when the prompt cannot fit in one. */
@@ -52,7 +54,8 @@ export function composerPromptLink(input: {
 }): string | null {
   const draft = useComposerDraftStore.getState().getComposerDraft(input.target);
   if (!draft) return null;
-  if (!input.withContext) return promptLinkFor(draft.prompt);
+  const prompt = serializeComposerTray(draft.prompt, draft.trayCitations);
+  if (!input.withContext) return promptLinkFor(prompt);
   const selection =
     (draft.activeProvider ? draft.modelSelectionByProvider[draft.activeProvider] : undefined) ??
     input.threadModelSelection;
@@ -60,7 +63,7 @@ export function composerPromptLink(input: {
     ? (input.providers.find((candidate) => candidate.instanceId === selection.instanceId)?.driver ??
       null)
     : null;
-  return promptLinkFor(draft.prompt, {
+  return promptLinkFor(prompt, {
     repository: promptLinkRepositoryOf(input.project),
     provider,
     model: provider === null ? null : (selection?.model ?? null),

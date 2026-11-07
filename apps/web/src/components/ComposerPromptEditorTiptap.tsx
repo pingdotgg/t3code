@@ -405,6 +405,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     return typeof pos === "number" ? pos : null;
   };
 
+  const destination = commentContext.onMoveToTray ? commentTarget?.destination : "inline";
   const onSaveComment = (comment: string): boolean => {
     if (!editor.isEditable) return false;
     const pos = nodePos();
@@ -413,7 +414,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     if (!current || current.type.name !== "composer-citation") return false;
     const currentCitation = current.attrs.citation as AssistantCitation;
     const next = withAssistantCitationComment(currentCitation, comment);
-    if (commentTarget?.destination === "tray" && commentContext.onMoveToTray) {
+    if (destination === "tray" && commentContext.onMoveToTray) {
       commentContext.onMoveToTray(next);
       onRemove();
       return true;
@@ -482,11 +483,11 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           sourceAnchor: commentTarget?.sourceAnchor,
           onOpenChange: (open) => {
             if (open && !editor.isEditable) return;
-            if (!open && commentTarget?.destination === "tray") {
+            if (!open && destination === "tray" && commentContext.onMoveToTray) {
               const pos = nodePos();
               const current = pos === null ? null : editor.state.doc.nodeAt(pos);
               if (current?.type.name === "composer-citation" && current.attrs.citeKey === citeKey) {
-                commentContext.onMoveToTray?.(current.attrs.citation as AssistantCitation);
+                commentContext.onMoveToTray(current.attrs.citation as AssistantCitation);
                 onRemove();
               }
             }
@@ -495,8 +496,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           ...(removeOnCancel
             ? {
                 onCancel: () => {
-                  if (commentTarget?.destination === "tray")
-                    commentContext.onMoveToTray?.(citation);
+                  if (destination === "tray") commentContext.onMoveToTray?.(citation);
                   onRemove();
                 },
               }

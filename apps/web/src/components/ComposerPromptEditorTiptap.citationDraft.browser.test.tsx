@@ -119,7 +119,8 @@ function TrayComposer({ question = false }: { question?: boolean }) {
         onClick={() => {
           const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
           if (!sourceAnchor) throw new Error("Citation source did not resolve");
-          setPrompt(promptBefore);
+          if (question) setAnswer(promptBefore);
+          else setPrompt(promptBefore);
           editorRef.current?.requestCitationComment({
             previousValue: "See ",
             value: promptBefore,
@@ -132,7 +133,7 @@ function TrayComposer({ question = false }: { question?: boolean }) {
       >
         Cite to tray
       </button>
-      <output data-tray-count={tray.length} data-prompt={prompt} />
+      <output data-tray-count={tray.length} data-prompt={prompt} data-answer={answer} />
       <AssistantCitationTray
         citations={tray}
         onChange={setTray}
@@ -193,3 +194,20 @@ it("opens a source comment for tray citations and preserves saved and cancelled 
   expect(state()?.prompt).toContain(serializeAssistantCitation(citation));
   expect(state()?.prompt).not.toContain("Discard this comment");
 });
+
+it.each(["Save", "dismiss"])(
+  "keeps question citations inline on %s when tray transfer is unavailable",
+  async (action) => {
+    await using screen = await render(<TrayComposer question />);
+    await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
+    await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+    await page.getByLabelText("Comment on selected text").fill("Question comment");
+    if (action === "Save") await page.getByRole("button", { name: "Save", exact: true }).click();
+    else await page.getByText("hello world", { exact: true }).click();
+    const state = screen.container.querySelector("output")?.dataset;
+    expect(state?.trayCount).toBe("0");
+    expect(state?.answer).toContain(
+      serializeAssistantCitation(withAssistantCitationComment(citation, "Question comment")),
+    );
+  },
+);

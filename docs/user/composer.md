@@ -140,6 +140,10 @@ delete it like other inline context. Copying, reloading, and restoring a
 with its quote, and sending tells the agent which words were quoted and which comment you wrote.
 The quoted text and comment count toward the message limit.
 
+On web and desktop, set **New citations go** to **In the tray** in **Settings → Chat**
+to collect quotes above the input. The default is **Inline**. Tray quotes are sent
+before your message in their listed order and stay with saved drafts and stashed prompts.
+
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
@@ -408,7 +412,3 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
-
-### Citation tray
-
-On web and desktop, in **Settings → Chat** (Composer section), set **New citations go** to **In the tray** to collect quotes above the input. The default is **Inline**. Open the annotations pill to review, edit, or delete quotes; use **Clear all annotations** to clear them all. In a citation comment editor, **Move to tray** and **Insert inline** move the quote between the tray and your text. Tray quotes are sent in their listed order before your message and stay with saved drafts and stashed prompts.

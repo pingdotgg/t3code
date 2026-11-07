@@ -93,6 +93,7 @@ import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated, useEnvironmentSettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import {
+  composerDraftChangedSinceSend,
   approvalRedirectNotice,
   loadBalancingSendWarning,
   multipleModelSendBlock,
@@ -1058,6 +1059,41 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       return;
     }
+    // A draft edited since send, or a paste still landing in it, is no longer the message
+    // the user sent.
+    const attachmentIdsAtSend = composerAttachmentsSnapshot.map((attachment) => attachment.id);
+    // A direct annotation send writes its image and reference into the draft as it sends,
+    // so the live draft may still lack them; anything else differing is a real edit.
+    const annotationImageId = directAnnotation?.image?.id;
+    const attachmentIdsBeforeAnnotation = attachmentIdsAtSend.filter(
+      (id) => id !== annotationImageId,
+    );
+    const draftChangedSinceSend = () => {
+      if (composerRef.current?.hasPendingAttachments() === true) return true;
+      const sendContext = composerRef.current?.getSendContext();
+      const attachmentIds = sendContext
+        ? [...sendContext.images, ...sendContext.files].map((attachment) => attachment.id)
+        : attachmentIdsAtSend;
+      return composerDraftChangedSinceSend({
+        prompt: promptRef.current,
+        promptAtSend,
+        promptForSend,
+        attachmentIds,
+        attachmentIdsAtSend,
+        attachmentIdsBeforeAnnotation,
+        annotationImageId,
+        trayCitations,
+        liveTrayCitations:
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.trayCitations ??
+          [],
+      });
+    };
+    if (currentRouteThreadKeyRef.current === routeThreadKey && draftChangedSinceSend()) {
+      sendInFlightRef.current = false;
+      setThreadError(threadIdForSend, "Your message changed, so it wasn't sent.");
+      return;
+    }
+
     // A message sent while approvals are pending redirects the agent. They are declined only
     // here, after everything above has accepted the send, so local commands and rejected
     // drafts leave them alone. After navigating away during an upload, the shown approvals
@@ -1069,31 +1105,6 @@ export function useComposerSend(input: ComposerSendInput) {
           )
         : [];
     if (approvalsToDecline.length > 0 || approvalFeedbackTarget !== undefined) {
-      // A draft edited since send, or a paste still landing in it, is no longer the message
-      // the user sent.
-      const attachmentIdsAtSend = composerAttachmentsSnapshot.map((attachment) => attachment.id);
-      // A direct annotation send writes its image and reference into the draft as it sends,
-      // so the live draft may still lack them; anything else differing is a real edit.
-      const annotationImageId = directAnnotation?.image?.id;
-      const attachmentIdsBeforeAnnotation = attachmentIdsAtSend.filter(
-        (id) => id !== annotationImageId,
-      );
-      const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
-        left.length === right.length && left.every((id, index) => id === right[index]);
-      const draftChangedSinceSend = () => {
-        if (composerRef.current?.hasPendingAttachments() === true) return true;
-        const sendContext = composerRef.current?.getSendContext();
-        const attachmentIds = sendContext
-          ? [...sendContext.images, ...sendContext.files].map((attachment) => attachment.id)
-          : attachmentIdsAtSend;
-        const promptUnchanged =
-          promptRef.current === promptAtSend || promptRef.current === promptForSend;
-        const attachmentsUnchanged =
-          sameIds(attachmentIds, attachmentIdsAtSend) ||
-          (annotationImageId !== undefined &&
-            sameIds(attachmentIds, attachmentIdsBeforeAnnotation));
-        return !promptUnchanged || !attachmentsUnchanged;
-      };
       const draftBeforeDecline = useComposerDraftStore
         .getState()
         .getComposerDraft(composerDraftTarget);

@@ -1436,7 +1436,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }
 
   if (composerSubmissionError !== null) {
-    const nextError = getComposerPromptLengthValidationMessage(prompt);
+    const nextError = getComposerPromptLengthValidationMessage(prompt, composerDraft.trayCitations);
     if (nextError !== composerSubmissionError) {
       setComposerSubmissionError(nextError);
     }

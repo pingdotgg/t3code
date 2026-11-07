@@ -1,10 +1,11 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
+  composerDraftChangedSinceSend,
   approvalRedirectNotice,
   loadBalancingSendWarning,
   multipleModelSendBlock,
@@ -123,4 +124,37 @@ describe("approvalRedirectNotice", () => {
     expect(approvalRedirectNotice({ ...settled, declined: false })).toBeNull();
     expect(approvalRedirectNotice(settled)).toBeNull();
   });
+});
+
+it("detects tray edits while uploads are pending", () => {
+  const citation = {
+    version: 1 as const,
+    environmentId: local,
+    threadId: ThreadId.make("thread"),
+    messageId: MessageId.make("message"),
+    text: "quote",
+    start: 0,
+    end: 5,
+    prefix: "",
+    suffix: "",
+  };
+  const input = {
+    prompt: "draft",
+    promptAtSend: "draft",
+    promptForSend: "draft",
+    attachmentIds: ["upload"],
+    attachmentIdsAtSend: ["upload"],
+    attachmentIdsBeforeAnnotation: ["upload"],
+    annotationImageId: undefined,
+    trayCitations: [citation],
+    liveTrayCitations: [citation],
+  };
+  expect(composerDraftChangedSinceSend(input)).toBe(false);
+  expect(
+    composerDraftChangedSinceSend({
+      ...input,
+      liveTrayCitations: [{ ...citation, comment: "edited" }],
+    }),
+  ).toBe(true);
+  expect(composerDraftChangedSinceSend({ ...input, liveTrayCitations: [] })).toBe(true);
 });

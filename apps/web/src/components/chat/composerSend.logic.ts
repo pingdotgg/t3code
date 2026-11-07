@@ -1,4 +1,5 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type { AssistantCitation, EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import { serializeComposerTray } from "./composerSubmission";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
@@ -78,4 +79,31 @@ export function approvalRedirectNotice(input: {
     return "Another approval arrived, so your message wasn't sent.";
   }
   return null;
+}
+
+export function composerDraftChangedSinceSend(input: {
+  prompt: string;
+  promptAtSend: string;
+  promptForSend: string;
+  attachmentIds: ReadonlyArray<string>;
+  attachmentIdsAtSend: ReadonlyArray<string>;
+  attachmentIdsBeforeAnnotation: ReadonlyArray<string>;
+  annotationImageId: string | undefined;
+  trayCitations: ReadonlyArray<AssistantCitation>;
+  liveTrayCitations: ReadonlyArray<AssistantCitation>;
+}) {
+  const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
+    left.length === right.length && left.every((id, index) => id === right[index]);
+  const promptUnchanged =
+    input.prompt === input.promptAtSend || input.prompt === input.promptForSend;
+  const attachmentsUnchanged =
+    sameIds(input.attachmentIds, input.attachmentIdsAtSend) ||
+    (input.annotationImageId !== undefined &&
+      sameIds(input.attachmentIds, input.attachmentIdsBeforeAnnotation));
+  return (
+    !promptUnchanged ||
+    !attachmentsUnchanged ||
+    serializeComposerTray("", input.trayCitations) !==
+      serializeComposerTray("", input.liveTrayCitations)
+  );
 }
