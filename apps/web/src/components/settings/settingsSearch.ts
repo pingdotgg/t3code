@@ -57,7 +57,6 @@ export interface SettingsSearchItem {
   readonly scope?: SettingsSearchScope;
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
-  readonly nonMacOnly?: boolean;
   readonly windowsOnly?: boolean;
   readonly releaseChannelOnly?: boolean;
   readonly secretsFeatureOnly?: boolean;
@@ -69,6 +68,7 @@ export interface SettingsSearchItem {
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
+  readonly spellcheckAvailableOnly?: boolean;
   readonly peerLinksOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
@@ -85,6 +85,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasSpellcheckLanguages?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -708,8 +709,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/chat",
     searchTerms: ["spelling dictionary dictionaries language red underline typo composer"],
     desktopOnly: true,
-    // macOS spellchecks natively, so ChatSettingsPanel never renders this row there.
-    nonMacOnly: true,
+    spellcheckAvailableOnly: true,
   },
   {
     id: "follow-up-behavior",
@@ -1463,7 +1463,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.spellcheckAvailableOnly || availability.hasSpellcheckLanguages === true),
   );
 }
 
@@ -1478,7 +1479,6 @@ export function settingsForThisPlatform(
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.secretsFeatureOnly || isSecretsFeatureEnabled) &&
       (!item.macOnly || isMacPlatform(platform)) &&
-      (!item.nonMacOnly || !isMacPlatform(platform)) &&
       (!item.windowsOnly || isWindowsPlatform(platform)),
   );
 }

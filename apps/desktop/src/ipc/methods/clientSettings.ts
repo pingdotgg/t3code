@@ -33,9 +33,8 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const getSpellcheckLanguages = DesktopIpc.makeIpcMethod({
+export const getSpellcheckLanguages = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SPELLCHECK_LANGUAGES_CHANNEL,
-  payload: Schema.Void,
   result: Schema.Array(Schema.String),
   handler: Effect.fn("desktop.ipc.clientSettings.getSpellcheckLanguages")(function* () {
     const spellcheck = yield* DesktopSpellcheck.DesktopSpellcheck;

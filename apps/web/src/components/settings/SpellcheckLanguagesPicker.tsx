@@ -1,5 +1,6 @@
+import { MAX_SPELLCHECK_LANGUAGES } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
   Combobox,
@@ -22,25 +23,12 @@ function spellcheckLanguageLabel(code: string): string {
   }
 }
 
-/** Dictionaries the desktop main process can load; empty on web and macOS. */
-export function useAvailableSpellcheckLanguages(): readonly string[] {
-  const [languages, setLanguages] = useState<readonly string[]>([]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the dictionary list from the Electron main process
-  useEffect(() => {
-    const bridge = window.desktopBridge;
-    if (!bridge) return;
-    let cancelled = false;
-    bridge.getSpellcheckLanguages().then(
-      (available) => {
-        if (!cancelled) setLanguages(available);
-      },
-      () => {},
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return languages;
+let availableSpellcheckLanguages: readonly string[] | undefined;
+
+/** Dictionaries the desktop main process can load; empty on web and macOS. Fixed per app session. */
+export function readAvailableSpellcheckLanguages(): readonly string[] {
+  availableSpellcheckLanguages ??= window.desktopBridge?.getSpellcheckLanguages() ?? [];
+  return availableSpellcheckLanguages;
 }
 
 export function SpellcheckLanguagesPicker({
@@ -53,7 +41,9 @@ export function SpellcheckLanguagesPicker({
   onChange: (languages: string[]) => void;
 }) {
   const [query, setQuery] = useState("");
-  const items = [...new Set([...selected, ...available])].toSorted((a, b) =>
+  // Stored codes without a dictionary stay in `selected` but are not shown as active.
+  const active = selected.filter((code) => available.includes(code));
+  const items = available.toSorted((a, b) =>
     spellcheckLanguageLabel(a).localeCompare(spellcheckLanguageLabel(b)),
   );
   const needle = query.trim().toLowerCase();
@@ -65,7 +55,7 @@ export function SpellcheckLanguagesPicker({
       )
     : items;
   const summary =
-    selected.length === 0 ? "System default" : selected.map(spellcheckLanguageLabel).join(", ");
+    active.length === 0 ? "System default" : active.map(spellcheckLanguageLabel).join(", ");
 
   return (
     <Combobox
@@ -78,7 +68,9 @@ export function SpellcheckLanguagesPicker({
       onOpenChange={(open) => {
         if (!open) setQuery("");
       }}
-      onValueChange={(next) => onChange(next)}
+      onValueChange={(next) => {
+        if (next.length <= MAX_SPELLCHECK_LANGUAGES) onChange(next);
+      }}
     >
       <ComboboxTrigger aria-label="Spellcheck languages" render={<SelectButton size="sm" />}>
         {summary}
@@ -95,7 +87,7 @@ export function SpellcheckLanguagesPicker({
           {(code: string) => (
             <ComboboxItem key={code} value={code} selectedFill={false}>
               <span className="min-w-0 flex-1 truncate">{spellcheckLanguageLabel(code)}</span>
-              {selected.includes(code) ? <CheckIcon className="ml-auto size-3.5" /> : null}
+              {active.includes(code) ? <CheckIcon className="ml-auto size-3.5" /> : null}
             </ComboboxItem>
           )}
         </ComboboxList>

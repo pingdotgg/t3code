@@ -44,7 +44,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
   SpellcheckLanguagesPicker,
-  useAvailableSpellcheckLanguages,
+  readAvailableSpellcheckLanguages,
 } from "./SpellcheckLanguagesPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
@@ -1091,7 +1091,7 @@ export function ChatSettingsPanel() {
   ] as const;
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const spellcheckLanguages = useAvailableSpellcheckLanguages();
+  const spellcheckLanguages = readAvailableSpellcheckLanguages();
 
   return (
     <SettingsPageContainer>

@@ -372,8 +372,9 @@ export const VoiceTranscriptionDestination = Schema.Struct({
 });
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
+export const MAX_SPELLCHECK_LANGUAGES = 32;
 export const SpellcheckLanguages = Schema.Array(TrimmedNonEmptyString).check(
-  Schema.isMaxLength(32),
+  Schema.isMaxLength(MAX_SPELLCHECK_LANGUAGES),
 );
 export type SpellcheckLanguages = typeof SpellcheckLanguages.Type;
 

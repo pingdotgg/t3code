@@ -1055,7 +1055,7 @@ export interface DesktopBridge {
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   /** Dictionary codes `spellcheckLanguages` may name. Empty on macOS, which picks languages itself. */
-  getSpellcheckLanguages: () => Promise<readonly string[]>;
+  getSpellcheckLanguages: () => readonly string[];
   getConnectionCatalog: () => Promise<string | null>;
   setConnectionCatalog: (catalog: string) => Promise<boolean>;
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
