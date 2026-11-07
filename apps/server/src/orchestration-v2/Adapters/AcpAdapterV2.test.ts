@@ -5060,6 +5060,116 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("preserves the workspace runtime on background work or failed reactivation", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceB = yield* fs.makeTempDirectoryScoped();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-workspace-reactivation");
+      let applyMutation: AcpAdapterV2ExtensionContext["applyBackgroundTaskMutation"] | undefined;
+      const inputs: Array<AcpAdapterV2RuntimeInput> = [];
+      const nativeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          replaceRuntimeOnActivation: () => true,
+          enablePostSettleContinuation: true,
+          registerExtensions: (context) =>
+            Effect.sync(() => {
+              applyMutation = context.applyBackgroundTaskMutation;
+            }),
+          makeRuntime: (input): ReturnType<AcpAdapterV2Flavor["makeRuntime"]> => {
+            inputs.push(input);
+            if (inputs.length === 2)
+              return Effect.fail(
+                new EffectAcpErrors.AcpTransportError({
+                  detail: "Fixture activation failure",
+                  cause: null,
+                }),
+              );
+            return nativeRuntime(input).pipe(
+              Effect.map((candidate) =>
+                inputs.length === 3
+                  ? {
+                      ...candidate,
+                      start: () =>
+                        candidate.start().pipe(
+                          Effect.tap(() =>
+                            originalMutation({
+                              sessionId,
+                              taskId: "late-workspace-task",
+                              status: "running",
+                            }),
+                          ),
+                        ),
+                    }
+                  : candidate,
+              ),
+            );
+          },
+        },
+        continuationRequests: { offer: () => Effect.void },
+      });
+      const threadId = ThreadId.make("thread-workspace-reactivation");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        providerSessionId: ProviderSessionId.make("session-workspace-reactivation"),
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      if (applyMutation === undefined) return yield* Effect.die("Expected background task handler");
+      const originalMutation = applyMutation;
+      const sessionId = "mock-session-1";
+      assert.equal(providerThread.nativeThreadRef?.nativeId, sessionId);
+      yield* originalMutation({ sessionId, taskId: "workspace-task", status: "running" });
+      const nextPolicy = { ...runtimePolicy, cwd: workspaceB };
+      const resume = () =>
+        runtime.resumeThread({ providerThread, modelSelection, runtimePolicy: nextPolicy });
+      const busy = yield* Effect.exit(resume());
+      assert.isTrue(Exit.isFailure(busy));
+      if (Exit.isFailure(busy))
+        assert.include(Cause.pretty(busy.cause), "background work is running");
+      assert.lengthOf(inputs, 1);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* originalMutation({ sessionId, taskId: "workspace-task", status: "completed" });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(resume())));
+      const unchanged = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.equal(unchanged.providerThread.nativeThreadRef?.nativeId, sessionId);
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(resume())));
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* originalMutation({ sessionId, taskId: "late-workspace-task", status: "completed" });
+      yield* resume();
+      assert.deepEqual(
+        inputs.map((input) => [input.cwd, input.runtimePolicy.cwd, input.resumeSessionId]),
+        [
+          [runtimePolicy.cwd, runtimePolicy.cwd, undefined],
+          [workspaceB, workspaceB, sessionId],
+          [workspaceB, workspaceB, sessionId],
+          [workspaceB, workspaceB, sessionId],
+        ],
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

@@ -32,6 +32,7 @@ import {
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
 } from "../../provider/acp/AntigravityChildWork.ts";
+import { readAntigravityInstructions } from "../../provider/acp/AntigravityInstructions.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
@@ -72,9 +73,11 @@ const AntigravityProviderCapabilitiesV2 = {
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
+  readonly userHome: string;
   readonly selfInvocation: SelfInvocation;
   readonly makeRuntime: (
-    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner"> &
+      Pick<AcpAdapterV2RuntimeInput, "runtimePolicy">,
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError | ProviderSetupError,
@@ -138,6 +141,16 @@ export function makeAntigravityAcpAdapterFlavor(
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
+      const instructions: Array<string> = [];
+      for (const filePath of [
+        options.path.join(options.userHome, ".gemini", "GEMINI.md"),
+        options.path.join(input.cwd, "AGENTS.md"),
+        options.path.join(input.cwd, "GEMINI.md"),
+      ]) {
+        const contents = yield* readAntigravityInstructions(filePath);
+        if (contents?.trim()) instructions.push(`# ${filePath}\n\n${contents}`);
+      }
+      instructions.push(PULL_REQUEST_LINKING_INSTRUCTIONS);
       const scope = yield* Scope.fork(yield* Effect.scope);
       const runtime = yield* options
         .withProcess(
@@ -145,7 +158,7 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileReads: true,
-            sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
+            sessionSystemPromptAppend: instructions.join("\n\n"),
             additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
@@ -211,6 +224,7 @@ export function makeAntigravityAcpAdapterFlavor(
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
+    replaceRuntimeOnActivation: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildPrompt: ({
       text,

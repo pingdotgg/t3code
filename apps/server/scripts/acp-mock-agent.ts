@@ -53,6 +53,7 @@ const agentVersion = process.env.T3_ACP_AGENT_VERSION ?? "0.0.0";
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const idleError = process.env.T3_ACP_IDLE_ERROR;
 const emitTrackedToolCallKindThenHang = process.env.T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG;
+const resumeReadPath = process.env.T3_ACP_RESUME_READ_PATH;
 const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
 const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -618,6 +619,19 @@ const program = Effect.gen(function* () {
   yield* agent.handleResumeSession((request) =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      if (resumeReadPath !== undefined) {
+        const read = yield* agent.raw.request("fs/read_text_file", {
+          sessionId: request.sessionId,
+          path: resumeReadPath,
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: request.sessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: `native-resume-read:${encodeJson(read)}` },
+          },
+        });
+      }
       yield* agent.client.sessionUpdate({
         sessionId: request.sessionId,
         update: {

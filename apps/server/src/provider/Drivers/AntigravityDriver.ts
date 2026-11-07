@@ -454,6 +454,7 @@ export const AntigravityDriver: ProviderDriver<
     const defaultModel = currentCatalog.pipe(Effect.map((catalog) => catalog?.defaultChatModel));
     const orchestrationAdapter = yield* makeAntigravityAdapterV2({
       instanceId,
+      userHome,
       selfInvocation,
       makeRuntime,
       withProcess: authFlow.withProcess,
