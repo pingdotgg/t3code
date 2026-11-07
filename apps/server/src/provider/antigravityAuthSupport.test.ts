@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
+import * as NodeFSP from "node:fs/promises";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -13,7 +16,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as AcpErrors from "effect-acp/errors";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
   ANTIGRAVITY_AUTH_BROWSER_MARKER,
@@ -576,7 +578,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
     }),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
+  it.effect(
     "links only the user's existing global skill directories without touching real content",
     () =>
       Effect.gen(function* () {
@@ -592,6 +594,8 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
             Effect.as(true),
             Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
           );
+        const linkDirectory = (target: string, link: string) =>
+          Effect.promise(() => NodeFSP.symlink(target, link, "junction"));
         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
 
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
@@ -618,11 +622,15 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect((yield* fs.stat(configLink)).type).toBe("Directory");
 
         yield* fs.remove(cliLink);
-        yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
+        yield* linkDirectory(path.join(temporaryDirectory, "elsewhere"), cliLink);
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
 
         yield* fs.remove(cliSkills, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* isLink(cliLink)).toBe(false);
+
+        yield* linkDirectory(path.join(temporaryDirectory, "gone"), cliSkills);
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* isLink(cliLink)).toBe(false);
       }),
