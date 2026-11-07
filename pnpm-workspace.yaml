@@ -21,6 +21,8 @@ allowBuilds:
   # Ships prebuilds; its host-architecture probe triggers source builds during cross-packaging.
   koffi: false
   node-pty: true
+  # Ships prebuilt binaries; its postinstall only builds llama.cpp from source when none fit.
+  node-llama-cpp: false
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
   # Its install script only fetches the CUDA provider; speech synthesis runs on the CPU.

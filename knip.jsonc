@@ -59,8 +59,6 @@
       ],
       // The generated operations export every selection's class.
       "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
-      // Unreferenced until the voice call service lands on the branch above this one.
-      "ignoreFiles": ["src/voice/FrontModel.ts"],
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.
       // Native and disk-loaded provider packages stay external to the bundle; the
@@ -72,6 +70,7 @@
         "ffi-rs",
         "transcribe-cpp",
         "kokoro-js",
+        "node-llama-cpp",
       ],
     },
     "apps/desktop": {

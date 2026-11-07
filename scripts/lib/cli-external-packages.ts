@@ -23,7 +23,7 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
 
 // Only spawned workers load these from disk; the bundle never imports them, so they are staged
 // with their dependencies but need no bundler rule.
-const CLI_STAGED_WORKER_DEPENDENCIES = ["kokoro-js"] as const;
+const CLI_STAGED_WORKER_DEPENDENCIES = ["kokoro-js", "node-llama-cpp"] as const;
 
 // Match Cursor dependency boundaries so zod does not externalize zod-to-json-schema.
 const CURSOR_RUNTIME_DEPENDENCIES = [

@@ -30,6 +30,9 @@ export async function runCliCommand() {
     if (mode === "tts") {
       const { runKokoroWorker } = await import("./speech/kokoro.ts");
       await runKokoroWorker();
+    } else if (mode === "front") {
+      const { runFrontModelWorker } = await import("./voice/llama.ts");
+      await runFrontModelWorker();
     } else if (mode === "discover" || mode === "model") {
       const { runNativeSpeechWorker } = await import("./speech/native.ts");
       await runNativeSpeechWorker(mode, process.argv[4]);
