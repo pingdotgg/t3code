@@ -276,13 +276,13 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..d7f59b63cd4982dfc9c347732caa77e0
    return !!(state == null ? void 0 : state.initialScroll) && !state.didFinishInitialScroll;
  }
  
-+// Size-only changes may not emit a scroll event to refresh the edge signal.
++// Size-only changes may not emit a scroll event. getContentSize already counts the end inset.
 +function getIsAtEnd(ctx, contentSize = getContentSize(ctx)) {
 +  const { queuedInitialLayout, scroll, scrollLength } = ctx.state;
 +  if (!(contentSize > 0 && queuedInitialLayout)) {
 +    return peek$(ctx, "isAtEnd");
 +  }
-+  return contentSize < scrollLength || contentSize - scroll - scrollLength - getContentInsetEnd(ctx) <= EDGE_POSITION_EPSILON;
++  return contentSize + getContentInsetStartAdjustment(ctx) < scrollLength || contentSize - scroll - scrollLength <= EDGE_POSITION_EPSILON;
 +}
 +
  // src/utils/checkAtBottom.ts
@@ -412,7 +412,8 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..d7f59b63cd4982dfc9c347732caa77e0
 +    }
      const contentSize = getContentSize(ctx);
 +    const maintainInsetStartAdjustment = getContentInsetStartAdjustment(ctx);
-     if (contentSize < state.scrollLength) {
+-    if (contentSize < state.scrollLength) {
++    if (contentSize + maintainInsetStartAdjustment < state.scrollLength) {
 -      state.scroll = 0;
 +      state.scroll = -maintainInsetStartAdjustment;
 +      if (maintainInsetStartAdjustment > 0) {
@@ -916,13 +917,13 @@ index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c2ca39bab6ea1ebaaed25190a01e8cf2
    return !!(state == null ? void 0 : state.initialScroll) && !state.didFinishInitialScroll;
  }
  
-+// Size-only changes may not emit a scroll event to refresh the edge signal.
++// Size-only changes may not emit a scroll event. getContentSize already counts the end inset.
 +function getIsAtEnd(ctx, contentSize = getContentSize(ctx)) {
 +  const { queuedInitialLayout, scroll, scrollLength } = ctx.state;
 +  if (!(contentSize > 0 && queuedInitialLayout)) {
 +    return peek$(ctx, "isAtEnd");
 +  }
-+  return contentSize < scrollLength || contentSize - scroll - scrollLength - getContentInsetEnd(ctx) <= EDGE_POSITION_EPSILON;
++  return contentSize + getContentInsetStartAdjustment(ctx) < scrollLength || contentSize - scroll - scrollLength <= EDGE_POSITION_EPSILON;
 +}
 +
  // src/utils/checkAtBottom.ts
@@ -1052,7 +1053,8 @@ index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c2ca39bab6ea1ebaaed25190a01e8cf2
 +    }
      const contentSize = getContentSize(ctx);
 +    const maintainInsetStartAdjustment = getContentInsetStartAdjustment(ctx);
-     if (contentSize < state.scrollLength) {
+-    if (contentSize < state.scrollLength) {
++    if (contentSize + maintainInsetStartAdjustment < state.scrollLength) {
 -      state.scroll = 0;
 +      state.scroll = -maintainInsetStartAdjustment;
 +      if (maintainInsetStartAdjustment > 0) {
