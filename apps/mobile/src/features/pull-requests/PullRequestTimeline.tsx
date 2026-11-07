@@ -82,12 +82,14 @@ function TimelineComment({
   actions: CommentActions;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
   const { themeVariables: colors } = useAppearancePreferences();
   const feedback = useMemo(() => parseAiReviewerFeedback(comment.body), [comment.body]);
-  const displayBody = useMemo(
-    () => (feedback === null ? comment.body : aiReviewerDisplayBody(feedback)),
-    [comment.body, feedback],
+  const compactBody = useMemo(
+    () => (feedback === null ? null : aiReviewerDisplayBody(feedback)),
+    [feedback],
   );
+  const displayBody = showOriginal || compactBody === null ? comment.body : compactBody;
   const oneLine = feedback === null ? null : aiReviewerOneLine(feedback);
   const long =
     oneLine !== null ? true : displayBody.length > 450 || displayBody.split("\n").length > 8;
@@ -148,9 +150,20 @@ function TimelineComment({
             {expanded ? (
               <Animated.View
                 entering={PR_DISCLOSURE_ENTER}
-                className="w-full min-w-0 overflow-hidden"
+                className="w-full min-w-0 gap-2 overflow-hidden"
               >
                 <PullRequestMarkdown markdown={displayBody} imageGroupMarkdown={displayBody} />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: showOriginal }}
+                  onPress={() => setShowOriginal((current) => !current)}
+                  hitSlop={8}
+                  className="self-start py-1 active:opacity-70"
+                >
+                  <Text className="text-xs font-t3-medium text-foreground-muted">
+                    {showOriginal ? "Show summary" : "Show original"}
+                  </Text>
+                </Pressable>
               </Animated.View>
             ) : null}
           </View>

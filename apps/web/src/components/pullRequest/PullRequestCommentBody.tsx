@@ -27,14 +27,18 @@ export function PullRequestCommentBody({
   const clip = useRef<HTMLDivElement>(null);
   const id = useId();
   const feedback = parseAiReviewerFeedback(text);
-  const compact = feedback === null ? null : aiReviewerDisplayBody(feedback);
-  const oneLine = feedback === null ? null : aiReviewerOneLine(feedback);
+  const optimized =
+    feedback !== null
+      ? {
+          compact: aiReviewerDisplayBody(feedback),
+          oneLine: aiReviewerOneLine(feedback),
+        }
+      : null;
   // visibleBody trims; keep leading spaces on ordinary comments so indented fences stay code.
   const original = feedback === null ? text : (visibleBody(text) ?? text);
-  const optimized = compact !== null;
-  const rendered = showOriginal || compact === null ? original : compact;
+  const rendered = showOriginal || optimized === null ? original : optimized.compact;
 
-  if (aiCollapsed && oneLine !== null && !showOriginal) {
+  if (aiCollapsed && optimized !== null && !showOriginal) {
     return (
       <div className={cn("min-w-0", className)}>
         <Collapsible open={aiOpen} onOpenChange={setAiOpen}>
@@ -46,12 +50,14 @@ export function PullRequestCommentBody({
                 aiOpen && "rotate-90",
               )}
             />
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">{oneLine}</span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              {optimized.oneLine}
+            </span>
           </CollapsibleTrigger>
           {/* Keep children mounted so CollapsiblePanel can animate height open and closed. */}
           <CollapsiblePanel>
             <div className="space-y-2 pt-2">
-              <PullRequestMarkdown {...props} text={compact!} />
+              <PullRequestMarkdown {...props} text={optimized.compact} />
               <Button
                 size="xs"
                 variant="ghost-muted"
@@ -95,7 +101,7 @@ export function PullRequestCommentBody({
           />
         ) : null}
       </div>
-      {overflowing || optimized ? (
+      {overflowing || optimized !== null ? (
         <div className="mt-2 flex flex-wrap gap-1">
           {overflowing ? (
             <Button
@@ -111,7 +117,7 @@ export function PullRequestCommentBody({
               {expanded ? "Show less" : "Show full comment"}
             </Button>
           ) : null}
-          {optimized ? (
+          {optimized !== null ? (
             <Button
               size="xs"
               variant="ghost-muted"
