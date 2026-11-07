@@ -1780,6 +1780,87 @@ const stoppedThere = (
       ),
     );
 
+it.effect("a follower that keeps hitting defects leaves a stop it owes owed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const retries = yield* steppedRetries;
+      // Follow attempts hit a defect only once the task has its result.
+      const broken = yield* Ref.make(false);
+      const follower = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+      const beforeFollow = Ref.get(broken).pipe(
+        Effect.flatMap((isBroken) =>
+          isBroken
+            ? Effect.withFiber((fiber) => Deferred.succeed(follower, fiber)).pipe(
+                Effect.andThen(Effect.die(new Error("A follow attempt hit a bug."))),
+              )
+            : Effect.void,
+        ),
+      );
+      const a = yield* makeLaptop(database, offers, undefined, beforeFollow).pipe(
+        Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule),
+      );
+      yield* a.remote.start();
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+      yield* Ref.set(thread.reply, "All green.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      yield* taskResult(a, delegated.taskId);
+      yield* Ref.set(broken, true);
+      yield* Queue.take(retries.failed).pipe(
+        Effect.andThen(Queue.offer(retries.retry, undefined)),
+        Effect.forever,
+        Effect.forkScoped,
+      );
+
+      // The Stop owes one stop there, which every attempt to send fails on.
+      yield* a.threads.stopDelegatedTasks({
+        threadId: parentThreadId,
+        commandId: CommandId.make("command:stop:laptop-parent-defective-follower"),
+      });
+      const owedAgain = a.orchestrator
+        .streamStoredEventsFrom({
+          threadId: parentThreadId,
+          afterSequence: 0,
+          eventType: "subagent.updated",
+        })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.id === delegated.taskId &&
+              (stored.event.payload.remoteChild?.stopCount ?? 0) > 1,
+          ),
+          Stream.runHead,
+          Effect.flatMap((owed) =>
+            Option.isSome(owed) ? Effect.succeed("owed another stop" as const) : Effect.never,
+          ),
+        );
+      const ended = yield* Deferred.await(follower).pipe(
+        Effect.flatMap(Fiber.await),
+        Effect.as("follower ended" as const),
+        Effect.raceFirst(owedAgain),
+      );
+      expect(ended).toBe("follower ended");
+      const { subagents } = yield* a.threads.getThreadRecords(parentThreadId, ["subagents"], {
+        subagentIds: [delegated.taskId],
+      });
+      expect(subagents[0]).toMatchObject({
+        status: "completed",
+        result: "All green.",
+        remoteChild: { stoppedThere: false, stopCount: 1 },
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("stopping the parent stops follow-up work on a task there that has its result", () =>
   Effect.scoped(
     Effect.gen(function* () {

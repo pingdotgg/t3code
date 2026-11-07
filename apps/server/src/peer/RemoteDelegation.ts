@@ -514,44 +514,46 @@ const make = Effect.gen(function* () {
    * fails the task with nothing left to stop, as do repeated defects here; anything else (the
    * other machine asleep, a dropped route) is retried with back-off, and so is completing.
    */
-  const follow = (parentThreadId: ThreadId, taskId: NodeId): Effect.Effect<void> => {
-    let defects = 0;
-    const noDefect = Effect.sync(() => {
-      defects = 0;
+  const follow = (parentThreadId: ThreadId, taskId: NodeId): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      let defects = 0;
+      const noDefect = Effect.sync(() => {
+        defects = 0;
+      });
+      return followOnce(parentThreadId, taskId).pipe(
+        Effect.tap(noDefect),
+        // `false` means it is still running there: follow again straight away.
+        Effect.repeat({ while: (done) => !done }),
+        Effect.catchTags({
+          OrchestratorMcpFailure: Effect.fn("RemoteDelegation.followFailed")(function* (error) {
+            const reason = yield* finalReason(parentThreadId, taskId, error);
+            if (reason === undefined) return yield* error;
+            // Gone there, or no link to reach it by: nothing left to stop there.
+            const { task } = yield* readTask(parentThreadId, taskId);
+            const stopCount = task?.remoteChild?.stopCount;
+            yield* complete(parentThreadId, taskId, "failed", reason, "stopped", stopCount);
+          }),
+        }),
+        Effect.tapError(() => noDefect),
+        Effect.catchDefect((defect) => {
+          defects += 1;
+          const message = defect instanceof Error ? defect.message : String(defect);
+          return Effect.fail(new Cause.UnknownError(defect, message));
+        }),
+        Effect.retry({ schedule: followRetry, while: () => defects < FOLLOW_MAX_DEFECTS }),
+        Effect.catch(
+          Effect.fn("RemoteDelegation.followGaveUp")(function* (error) {
+            const { task } = yield* readTask(parentThreadId, taskId);
+            const remote = task?.remoteChild;
+            // A task with its result keeps it; completing it again would owe another stop there.
+            if (remote === undefined || task?.result !== null) return;
+            const result = `Following the thread ${remote.threadId} in ${remote.label} failed: ${error.message}`;
+            yield* complete(parentThreadId, taskId, "failed", result, undefined);
+          }),
+        ),
+        Effect.ignoreCause({ log: true }),
+      );
     });
-    return followOnce(parentThreadId, taskId).pipe(
-      Effect.tap(noDefect),
-      // `false` means it is still running there: follow again straight away.
-      Effect.repeat({ while: (done) => !done }),
-      Effect.catchTags({
-        OrchestratorMcpFailure: Effect.fn("RemoteDelegation.followFailed")(function* (error) {
-          const reason = yield* finalReason(parentThreadId, taskId, error);
-          if (reason === undefined) return yield* error;
-          // Gone there, or no link to reach it by: nothing left to stop there.
-          const { task } = yield* readTask(parentThreadId, taskId);
-          const stopCount = task?.remoteChild?.stopCount;
-          yield* complete(parentThreadId, taskId, "failed", reason, "stopped", stopCount);
-        }),
-      }),
-      Effect.tapError(() => noDefect),
-      Effect.catchDefect((defect) => {
-        defects += 1;
-        const message = defect instanceof Error ? defect.message : String(defect);
-        return Effect.fail(new Cause.UnknownError(defect, message));
-      }),
-      Effect.retry({ schedule: followRetry, while: () => defects < FOLLOW_MAX_DEFECTS }),
-      Effect.catch(
-        Effect.fn("RemoteDelegation.followGaveUp")(function* (error) {
-          const { task } = yield* readTask(parentThreadId, taskId);
-          const remote = task?.remoteChild;
-          if (remote === undefined) return;
-          const result = `Following the thread ${remote.threadId} in ${remote.label} failed: ${error.message}`;
-          yield* complete(parentThreadId, taskId, "failed", result, undefined);
-        }),
-      ),
-      Effect.ignoreCause({ log: true }),
-    );
-  };
 
   /**
    * One wait on the task's thread there; true once the task here is done.
