@@ -22,7 +22,7 @@ import {
   type AtomCommand,
 } from "./runtime.ts";
 
-const createTicketedUploadUrl = Effect.fnUntraced(function* (
+const createTicketedUploadUrl = Effect.fn("attachments.createTicketedUploadUrl")(function* (
   input: AttachmentCreateUploadUrlInput,
 ) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
