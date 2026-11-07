@@ -563,6 +563,21 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       },
     },
     {
+      name: "a ChatGPT provider.quota usage window (429)",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.quota",
+        message: "The usage limit has been reached",
+        status: 429,
+        response: {
+          body: JSON.stringify({
+            error: { type: "usage_limit_reached", resets_at: 1793114741, resets_in_seconds: 222 },
+          }),
+        },
+      },
+      resetAt: "2026-10-27T15:25:41.000Z",
+    },
+    {
       name: "a provider.rate-limit failure (429)",
       failureClass: "usage_limit",
       error: {
@@ -587,7 +602,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         message: "Request failed. Resets at 2026-11-02T20:00:00Z.",
       },
     },
-  ] as const)("classifies $name as $failureClass", ({ error, failureClass }) =>
+  ] as const)("classifies $name as $failureClass", ({ error, failureClass, ...row }) =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
@@ -603,6 +618,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         code: error.type,
         message: error.message,
         retryable: null,
+        ...("resetAt" in row ? { resetAt: row.resetAt } : {}),
       });
     }).pipe(Effect.scoped),
   );
