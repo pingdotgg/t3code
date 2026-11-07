@@ -17,6 +17,7 @@ import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import { resolveHostCliCommand } from "./invocation.ts";
 import { upsertServiceEnv } from "./service.ts";
 import { connectEnabled, planRoutes, statusCommand, upCommand } from "./up.ts";
 
@@ -166,7 +167,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     readonly reportStatus?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
-    readonly prints?: string;
+    /** Text the run prints, with `<command>` standing for `t3 <subcommand> --base-dir <baseDir>`. */
+    readonly prints?: { readonly text: string; readonly subcommand: string };
     readonly env: string;
     readonly args: ReadonlyArray<string>;
     readonly installs: number;
@@ -184,7 +186,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "the local network opens",
-      prints: "Run `t3 pair --base-dir <baseDir>`.",
+      prints: { text: "Run `<command>`.", subcommand: "pair" },
       installed: true,
       env: "T3CODE_LAN=false\n",
       args: ["--lan"],
@@ -203,6 +205,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "a route turns off with no service to run",
+      prints: { text: "Run `<command>` to use T3 Code here.", subcommand: "" },
       installed: false,
       env: "T3CODE_LAN=true\n",
       args: ["--no-lan"],
@@ -223,7 +226,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       label: "a failed update keeps service.env matching the old service",
       // The old service still runs, so no foreground server is offered.
-      prints: "Fix that, then run `t3 up --base-dir <baseDir>` again.",
+      prints: { text: "Fix that, then run `<command>` again.", subcommand: "up" },
       installed: true,
       status: { current: false },
       installFails: true,
@@ -369,7 +372,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         ),
       );
       if (input.prints !== undefined) {
-        expect(lines.join("\n")).toContain(input.prints.replace("<baseDir>", baseDir));
+        const { command } = yield* resolveHostCliCommand(input.prints.subcommand, [
+          "--base-dir",
+          baseDir,
+        ]).pipe(Effect.provideService(HostProcess.Environment, {}));
+        expect(lines.join("\n")).toContain(input.prints.text.replace("<command>", command));
       }
       if (input.reportStatus) {
         expect(JSON.parse(lines.join("\n"))).toMatchObject({
@@ -385,6 +392,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         restarts: input.restarts,
       });
       expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe(input.envAfter);
+    }),
+  );
+
+  it.effect("t3 status names commands that keep --base-dir", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-status-test-" });
+      // No T3CODE_LAN with an installed service keeps the old default: LAN on.
+      yield* fs.writeFileString(`${baseDir}/service.env`, "");
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(
+          BootService.BootService,
+          BootService.BootService.of({
+            status: Effect.succeed(SERVICE),
+            withStopped: (operation) => operation,
+            restart: Effect.succeed("restarted" as const),
+            install: () => Effect.die("t3 status installs nothing"),
+            uninstall: Effect.succeed(false),
+          }),
+        ),
+      );
+
+      const lines = yield* Command.runWith(statusCommand, { version: packageJson.version })([
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.andThen(TestConsole.logLines),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+      const output = lines.map(String).join("\n");
+      const upCommandWith = (args: ReadonlyArray<string>) =>
+        resolveHostCliCommand("up", ["--base-dir", baseDir, ...args]).pipe(
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.map((resolved) => resolved.command),
+        );
+      expect(output).toContain(`Turn it off: \`${yield* upCommandWith(["--no-lan"])}\`.`);
+      expect(output).toContain(`Change access: \`${yield* upCommandWith([])}\`.`);
     }),
   );
 });
