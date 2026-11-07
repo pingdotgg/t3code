@@ -26,6 +26,7 @@ interface RecordedRegistration {
   readonly files: Array<{ readonly path: string; readonly content: string }>;
   readonly commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>;
   readonly copies: Array<{ readonly source: string; readonly destination: string }>;
+  readonly removals: string[];
 }
 
 const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {}) =>
@@ -36,6 +37,7 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     displayName: "T3 Code (Alpha)",
     linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
+    linuxSystemApplicationsDirs: ["/usr/local/share/applications", "/usr/share/applications"],
     desktopLauncherPath: Option.none(),
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path,
@@ -68,6 +70,7 @@ const layerHandler = (
     readonly xdgMimeExitCode?: number;
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
+    readonly installedEntries?: ReadonlyArray<string>;
     readonly iconSource?: string;
     readonly iconCopyError?: PlatformError.PlatformError;
   } = {},
@@ -98,6 +101,11 @@ const layerHandler = (
                   recorded.copies.push({ source, destination });
                 }),
           readFileString: () => Effect.succeed(input.existingEntry ?? ""),
+          exists: (path) => Effect.succeed(input.installedEntries?.includes(path) ?? false),
+          remove: (path) =>
+            Effect.sync(() => {
+              recorded.removals.push(path);
+            }),
           makeDirectory: (path) =>
             Effect.sync(() => {
               recorded.directories.push(path);
@@ -119,7 +127,9 @@ const layerHandler = (
             };
             if (childProcess.command === "update-desktop-database") {
               assert.isTrue(
-                recorded.files.length > 0 || input.existingEntry !== undefined,
+                recorded.files.length > 0 ||
+                  input.existingEntry !== undefined ||
+                  (input.installedEntries?.length ?? 0) > 0,
                 "the desktop entry must exist before refreshing the MIME cache",
               );
             }
@@ -162,6 +172,7 @@ const emptyRecording = (): RecordedRegistration => ({
   files: [],
   commands: [],
   copies: [],
+  removals: [],
 });
 
 describe("DesktopLinuxUrlHandler", () => {
@@ -183,6 +194,16 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.notInclude(entry, "StartupWMClass=");
     assert.include(entry, "MimeType=x-scheme-handler/t3code;");
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
+  });
+
+  it("treats a generated entry with an edited Exec as generated", () => {
+    // Startup has always rewritten this file, so an edited Exec never took effect.
+    const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      displayName: "T3 Code (Beta)",
+      execTarget: "t3code",
+      scheme: "t3code",
+    }).replace(/^Exec=.*$/m, "Exec=t3code --ozone-platform=x11 %U");
+    assert.isTrue(DesktopLinuxUrlHandler.isGeneratedUrlHandlerDesktopEntry(entry, "t3code"));
   });
 
   it.effect(
@@ -273,6 +294,77 @@ describe("DesktopLinuxUrlHandler", () => {
           args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
         },
       ]);
+    });
+  });
+
+  it.effect("defers to an installed entry and removes the one an earlier launch wrote", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: { appImagePath: Option.none() },
+        installedEntries: ["/usr/share/applications/com.t3tools.T3Code.desktop"],
+        existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+          displayName: "T3 Code (Alpha)",
+          execTarget: "/usr/lib/electron/electron",
+          scheme: "t3code",
+        }),
+      });
+
+      assert.deepEqual(recorded.files, []);
+      assert.deepEqual(recorded.removals, [
+        "/home/alice/.local/share/applications/com.t3tools.T3Code.desktop",
+      ]);
+      assert.deepEqual(recorded.commands, [
+        {
+          command: "update-desktop-database",
+          args: ["/home/alice/.local/share/applications"],
+        },
+        {
+          command: "xdg-mime",
+          args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
+        },
+      ]);
+    });
+  });
+
+  it.effect("keeps a user's own entry next to an installed entry", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        installedEntries: ["/usr/share/applications/com.t3tools.T3Code.desktop"],
+        existingEntry: [
+          "[Desktop Entry]",
+          "Type=Application",
+          "Name=T3 Code",
+          "Exec=t3code --ozone-platform=x11 %U",
+          "MimeType=x-scheme-handler/t3code;",
+          "",
+        ].join("\n"),
+      });
+
+      assert.deepEqual(recorded.files, []);
+      assert.deepEqual(recorded.removals, []);
+    });
+  });
+
+  it.effect("does not treat $XDG_DATA_HOME as an installed entry", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: {
+          linuxSystemApplicationsDirs: [
+            "/home/alice/.local/share/applications",
+            "/usr/share/applications",
+          ],
+        },
+        installedEntries: ["/home/alice/.local/share/applications/com.t3tools.T3Code.desktop"],
+      });
+
+      assert.equal(recorded.files.length, 1);
+      assert.deepEqual(recorded.removals, []);
     });
   });
 
