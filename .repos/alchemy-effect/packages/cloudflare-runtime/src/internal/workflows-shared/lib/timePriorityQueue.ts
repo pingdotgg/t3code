@@ -3,9 +3,7 @@
 import Heap from "heap-js";
 import type { InstanceMetadata, WakerPriorityEntry, WakerPriorityType } from "../instance.ts";
 
-const wakerPriorityEntryComparator = (a: WakerPriorityEntry, b: WakerPriorityEntry) => {
-  return a.targetTimestamp - b.targetTimestamp;
-};
+const wakerPriorityEntryComparator = (a: WakerPriorityEntry, b: WakerPriorityEntry) =>(a.targetTimestamp - b.targetTimestamp);
 
 const enum SQLiteBoolean {
   FALSE = 0,

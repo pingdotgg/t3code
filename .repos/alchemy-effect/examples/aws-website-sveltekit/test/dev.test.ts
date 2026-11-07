@@ -15,9 +15,9 @@
  *                       Vite's HMR without a redeploy
  */
 import { afterAll, expect, test } from "bun:test";
-import { DevCli, fetchOk } from "alchemy-test/DevCli";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { DevCli, fetchOk } from "@alchemy.run/test/DevCli";
 
 const root = path.resolve(import.meta.dirname, "..");
 // Isolated stage so this suite never fights integ.test.ts (same stack
