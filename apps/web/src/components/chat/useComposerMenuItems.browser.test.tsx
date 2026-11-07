@@ -37,6 +37,7 @@ function Menu({ showSkills, query }: { showSkills: boolean; query: string }) {
     planModeUiEnabled: false,
     sideChatAvailable: false,
     sideChatDisabledReason: null,
+    freshSessionAvailable: false,
     compactSlashCommandAvailable: true,
     selectedProvider: ProviderDriverKind.make("claudeAgent"),
     selectedProviderSkills: [
@@ -69,6 +70,15 @@ it("hides skill-backed commands when skills are off and restores one skill row w
   await expect
     .element(screen.getByRole("status"))
     .toHaveTextContent(JSON.stringify([...commands, "/skill:pstack:bro", "/skill:boat"]));
+
+  await screen.rerender(<Menu showSkills query="sandbox" />);
+  await expect.element(screen.getByRole("status")).toHaveTextContent('["/skill:boat"]');
+
+  await screen.rerender(<Menu showSkills query="boat" />);
+  await expect.element(screen.getByRole("status")).toHaveTextContent('["/skill:boat"]');
+
+  await screen.rerender(<Menu showSkills={false} query="sandbox" />);
+  await expect.element(screen.getByRole("status")).toHaveTextContent("[]");
 
   await screen.rerender(<Menu showSkills={false} query="" />);
   await expect.element(screen.getByRole("status")).toHaveTextContent(JSON.stringify(commands));
