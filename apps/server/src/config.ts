@@ -81,6 +81,10 @@ export class ServerConfig extends Context.Service<
     readonly otlpLogsSource?: OtlpEndpointSource;
     readonly otlpLogsVariable?: string;
     readonly otelEnvironment: OtelEnvironment.OtelEnvironment;
+    /** `T3CODE_TELEMETRY_ENABLED` when set; it overrides the `telemetryEnabled` setting. */
+    readonly telemetryEnabledByEnvironment?: boolean | undefined;
+    /** The `telemetryEnabled` setting at startup, for relay tracing, which cannot change later. */
+    readonly telemetryEnabledInSettings?: boolean | undefined;
     readonly mode: RuntimeMode;
     readonly port: number;
     readonly host: string | undefined;

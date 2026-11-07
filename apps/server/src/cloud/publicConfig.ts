@@ -85,8 +85,9 @@ const buildTimeRelayClientTracing = {
 export function resolveRelayClientTracingConfig(
   env: Readonly<Record<string, string | undefined>> = process.env,
   fallback = buildTimeRelayClientTracing,
+  telemetrySetting = true,
 ) {
-  if (!isRelayTracingEnabled(env)) {
+  if (!isRelayTracingEnabled(env, telemetrySetting)) {
     return null;
   }
 

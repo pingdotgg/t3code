@@ -271,6 +271,7 @@ describe("serverSettings helpers", () => {
       otlpTracesUrl: "http://localhost:4318/v1/traces",
       otlpMetricsUrl: "http://localhost:4318/v1/metrics",
       otlpLogsUrl: "http://localhost:4318/v1/logs",
+      telemetryEnabled: true,
     });
     // The server still loads a file holding the retired token streaming mode.
     expect(
@@ -283,12 +284,27 @@ describe("serverSettings helpers", () => {
     ).toBe("http://localhost:4318/v1/traces");
   });
 
-  it("falls back cleanly when persisted settings are invalid", () => {
+  it("reads a persisted telemetry opt-out", () => {
+    expect(
+      parsePersistedServerObservabilitySettings(JSON.stringify({ telemetryEnabled: false }))
+        .telemetryEnabled,
+    ).toBe(false);
+    // The retired token streaming mode must not cost the file its opt-out either.
+    expect(
+      parsePersistedServerObservabilitySettings(
+        JSON.stringify({ responseStreamingMode: "token", telemetryEnabled: false }),
+      ).telemetryEnabled,
+    ).toBe(false);
+  });
+
+  it("falls back to no endpoints and telemetry off when persisted settings are invalid", () => {
     expect(parsePersistedServerObservabilitySettings("{")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
       otlpLogsUrl: undefined,
+      telemetryEnabled: false,
     });
+    expect(parsePersistedServerObservabilitySettings("  \n").telemetryEnabled).toBe(false);
   });
 
   it("still deep merges text generation selection when only options are provided", () => {
