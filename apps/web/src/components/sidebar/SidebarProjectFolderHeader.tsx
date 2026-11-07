@@ -45,20 +45,21 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
 }) {
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
-  const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const dot = collapsed
-    ? resolveSidebarFolderDot(
-        hiddenThreads.map((thread) => ({
-          ...thread,
-          lastVisitedAt: resolveThreadLastVisitedAt(
-            thread.lastVisitedAt,
-            localLastVisitedAtById[
-              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
-            ],
-          ),
-        })),
-      )
-    : null;
+  const dot = useUiStateStore((state) =>
+    collapsed
+      ? resolveSidebarFolderDot(
+          hiddenThreads.map((thread) => ({
+            ...thread,
+            lastVisitedAt: resolveThreadLastVisitedAt(
+              thread.lastVisitedAt,
+              state.threadLastVisitedAtById[
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+              ],
+            ),
+          })),
+        )
+      : null,
+  );
   return (
     <li
       data-testid="sidebar-project-folder"
