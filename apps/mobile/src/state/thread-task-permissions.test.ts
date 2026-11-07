@@ -9,6 +9,7 @@ import {
   RuntimeRequestId,
   TurnItemId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationV2ThreadProjection,
   type ServerConfig,
 } from "@t3tools/contracts";
@@ -30,6 +31,7 @@ const state = vi.hoisted(() => ({
     text: "Keep my draft",
     attachments: [] as DraftComposerImageAttachment[],
     modelSelection: undefined as ModelSelection | undefined,
+    context: undefined as OrchestrationMessageContext | undefined,
   },
   serverConfig: null as ServerConfig | null,
   projection: null as OrchestrationV2ThreadProjection | null,
@@ -193,7 +195,12 @@ const NO_SIDE_CHATS = { startSideChat: async () => false };
 beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
   state.connectionState = "connected";
-  state.draft = { text: "Keep my draft", attachments: [], modelSelection: undefined };
+  state.draft = {
+    text: "Keep my draft",
+    attachments: [],
+    modelSelection: undefined,
+    context: undefined,
+  };
   state.freshPending = false;
   state.compactDue = false;
   state.thread.latestRun = null;
@@ -345,17 +352,40 @@ describe("mobile task permissions", () => {
       ...state.serverConfig,
       environment: { capabilities: { sideChats: true } },
     } as ServerConfig;
-    state.draft = { ...state.draft, text: "/side why does this fail?" };
+    const screenshot = { id: "screenshot" } as DraftComposerImageAttachment;
+    const screenshotContext = {
+      version: 1,
+      records: [{ kind: "image", attachmentId: "screenshot" }],
+    } as unknown as OrchestrationMessageContext;
+    state.draft = {
+      ...state.draft,
+      text: "/side why does this fail?",
+      attachments: [screenshot],
+      context: screenshotContext,
+    };
     const startSideChat = vi.fn(async () => true);
     const composer = useThreadComposerState({ startSideChat });
     expect(composer.sideChatUnavailableReason).toBeNull();
     expect(await composer.onSendMessage()).toBeNull();
     expect(startSideChat).toHaveBeenCalledExactlyOnceWith(
       { environmentId: "secondary", threadId: "thread" },
-      "why does this fail?",
+      { text: "why does this fail?", attachments: [screenshot], context: screenshotContext },
     );
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).toHaveBeenCalled();
+
+    // Context other than attachments stays out of side chats.
+    vi.clearAllMocks();
+    state.draft = {
+      ...state.draft,
+      context: {
+        version: 1,
+        records: [{ kind: "terminal" }],
+      } as unknown as OrchestrationMessageContext,
+    };
+    expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
+    expect(startSideChat).not.toHaveBeenCalled();
+    expect(state.clearDraft).not.toHaveBeenCalled();
 
     // An attachment added while the side chat starts stays in the draft.
     vi.clearAllMocks();
@@ -366,7 +396,7 @@ describe("mobile task permissions", () => {
       };
       return true;
     });
-    state.draft = { ...state.draft, text: "/side again?", attachments: [] };
+    state.draft = { ...state.draft, text: "/side again?", attachments: [], context: undefined };
     expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
     expect(startSideChat).toHaveBeenCalledOnce();
     expect(state.clearDraft).not.toHaveBeenCalled();

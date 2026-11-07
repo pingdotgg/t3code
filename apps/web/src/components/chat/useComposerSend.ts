@@ -6,6 +6,8 @@ import {
   shouldDockDraftHeroForSubmission,
   restorePlanFollowUpComposer,
   buildExpiredTerminalContextToastCopy,
+  sideChatFirstMessage,
+  type SideChatFirstMessage,
   deriveComposerSendState,
   boundAttachmentIds,
   formatOutgoingPrompt,
@@ -44,7 +46,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
-import { type SetStateAction, useLayoutEffect, useRef } from "react";
+import { type SetStateAction, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -244,8 +246,8 @@ interface ComposerSendInput {
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
   readonly handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
-  /** Resolves true once the side chat started and got the prompt. */
-  readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
+  /** Resolves true once the side chat started and got the message. */
+  readonly onSideChat?: ((message: SideChatFirstMessage | null) => Promise<boolean>) | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
   readonly sideChatDisabledReason: string | null;
   readonly handleNewThreadInActiveProject: () => void;
@@ -363,6 +365,9 @@ export function useComposerSend(input: ComposerSendInput) {
     (store) => store.setEnvironmentContexts,
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const clearComposerPromptAndImages = useComposerDraftStore(
+    (store) => store.clearComposerPromptAndImages,
+  );
   const sendToMultipleModels = useMultipleModelSend({
     environmentId,
     routeThreadKey,
@@ -395,6 +400,8 @@ export function useComposerSend(input: ComposerSendInput) {
     persistThreadSettingsForNextTurn,
   });
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  // Keeps the composer busy until a `/side` start settles, uploads included.
+  const [sideChatStartingThreadKey, setSideChatStartingThreadKey] = useState<string | null>(null);
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
@@ -405,6 +412,45 @@ export function useComposerSend(input: ComposerSendInput) {
     pendingApprovalsRef.current = pendingApprovals;
     respondingRequestIdsRef.current = respondingRequestIds;
   }, [pendingApprovals, respondingRequestIds]);
+
+  // Side chats need the server's config, so their attachments always upload.
+  const uploadSideChatAttachments = async (
+    threadId: ThreadId,
+    attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
+  ) => {
+    const fileBlockReason = () => {
+      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
+      return fileAttachmentCapabilityBlockReason({
+        files: attachments.filter((attachment) => attachment.type === "file"),
+        attachmentUploadsCapabilityKnown: config !== null,
+        supportsAttachmentUploads: config !== null,
+        maxFileAttachmentBytes:
+          config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
+      });
+    };
+    const blockedBeforeUpload = fileBlockReason();
+    if (blockedBeforeUpload !== null) {
+      setThreadError(threadId, blockedBeforeUpload);
+      return null;
+    }
+    for (const attachment of attachments) {
+      const upload =
+        readAttachmentUpload(attachment.id)?.status === "failed"
+          ? retryAttachmentUpload
+          : startAttachmentUpload;
+      upload({ environmentId, image: attachment, draftTarget: composerDraftTarget });
+    }
+    await awaitAttachmentUploads(attachments.map((attachment) => attachment.id));
+    const blockedAfterUpload = fileBlockReason();
+    if (blockedAfterUpload !== null) {
+      setThreadError(threadId, blockedAfterUpload);
+      return null;
+    }
+    const uploaded = getUploadedAttachments({ environmentId, images: attachments });
+    if (uploaded === null)
+      setThreadError(threadId, "Retry or remove failed uploads before sending.");
+    return uploaded;
+  };
 
   const onSend = async (
     e?: { preventDefault: () => void },
@@ -507,8 +553,6 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (onSideChat && sendCtx && sideChatCommand && sideChatDisabledReason === null) {
       if (
-        sendCtx.images.length > 0 ||
-        sendCtx.files.length > 0 ||
         filterTerminalContextsWithText(sendCtx.terminalContexts).length > 0 ||
         sendCtx.previewAnnotations.length > 0 ||
         sendCtx.reviewComments.length > 0 ||
@@ -518,22 +562,39 @@ export function useComposerSend(input: ComposerSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
-            title: "Side chats take text only",
-            description: "Remove the attachments and context, then send it again.",
+            title: "Side chats take text and attachments only",
+            description: "Remove the added context, then send it again.",
           }),
         );
         return;
       }
-      const started = await onSideChat(sideChatCommand.prompt);
+      const attachments = [...sendCtx.images, ...sendCtx.files];
+      const startWithAttachments = async () => {
+        const turnAttachments = await uploadSideChatAttachments(activeThread.id, attachments);
+        if (turnAttachments === null) return false;
+        return onSideChat(
+          sideChatFirstMessage({ prompt: sideChatCommand.prompt, attachments, turnAttachments }),
+        );
+      };
+      sendInFlightRef.current = true;
+      setSideChatStartingThreadKey(routeThreadKey);
+      const started = await startWithAttachments().finally(() => {
+        sendInFlightRef.current = false;
+        setSideChatStartingThreadKey((current) => (current === routeThreadKey ? null : current));
+      });
+      const current = composerRef.current?.getSendContext();
       // Clear only what was sent; the user may have edited the draft or left meanwhile.
       if (
         started &&
         currentRouteThreadKeyRef.current === routeThreadKey &&
-        promptRef.current === promptAtSend
+        promptRef.current === promptAtSend &&
+        composerRef.current?.hasPendingAttachments() !== true &&
+        sameAttachmentIds(current ? [...current.images, ...current.files] : [], attachments)
       ) {
         promptRef.current = "";
-        setComposerDraftPrompt(composerDraftTarget, "");
+        clearComposerPromptAndImages(composerDraftTarget);
         composerRef.current?.resetCursorState();
+        releaseDraftAttachments(attachments);
       }
       return;
     }
@@ -1531,5 +1592,12 @@ export function useComposerSend(input: ComposerSendInput) {
     }
   };
 
-  return { onSend };
+  return { onSend, sideChatStarting: sideChatStartingThreadKey === routeThreadKey };
+}
+
+function sameAttachmentIds(
+  left: ReadonlyArray<{ readonly id: string }>,
+  right: ReadonlyArray<{ readonly id: string }>,
+) {
+  return left.length === right.length && left.every((item, index) => item.id === right[index]?.id);
 }

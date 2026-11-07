@@ -61,6 +61,7 @@ import {
   appendPendingThreadMessages,
   selectPendingAcknowledgedMessages,
 } from "../features/threads/pending-thread-feed";
+import type { SideChatMessage } from "../features/threads/useStartSideChat";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
 import { appAtomRegistry } from "./atom-registry";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
@@ -196,8 +197,8 @@ export function updateThreadDraftModelSelection(
 }
 
 export function useThreadComposerState(input: {
-  /** Forks the thread into a side chat that gets `prompt`; resolves false when it did not start. */
-  readonly startSideChat: (source: ScopedThreadRef, prompt: string) => Promise<boolean>;
+  /** Forks the thread into a side chat that gets `message`; resolves false when it did not start. */
+  readonly startSideChat: (source: ScopedThreadRef, message: SideChatMessage) => Promise<boolean>;
 }) {
   const {
     selectedThread: selectedThreadShell,
@@ -569,19 +570,21 @@ export function useThreadComposerState(input: {
     if (sideChatCommand) {
       if (sideChatUnavailableReason !== null) {
         Dialog.alert("Side chat not started", sideChatUnavailableReason);
-      } else if (attachments.length > 0 || (draft.context?.records.length ?? 0) > 0) {
+      } else if (
+        draft.context?.records.some((record) => record.kind !== "image" && record.kind !== "file")
+      ) {
         Dialog.alert(
-          "Side chats take text only",
-          "Remove the attachments and context, then send it again.",
+          "Side chats take text and attachments only",
+          "Remove the added context, then send it again.",
         );
-      } else if (sideChatCommand.prompt.length === 0) {
+      } else if (sideChatCommand.prompt.length === 0 && attachments.length === 0) {
         Dialog.alert("Ask a side question", "Type the question after /side, then send it.");
       } else if (!startingSideChatRef.current) {
         startingSideChatRef.current = true;
         const started = await input
           .startSideChat(
             { environmentId: thread.environmentId, threadId: thread.id },
-            sideChatCommand.prompt,
+            { text: sideChatCommand.prompt, attachments, context: draft.context },
           )
           .finally(() => {
             startingSideChatRef.current = false;
@@ -591,8 +594,11 @@ export function useThreadComposerState(input: {
         if (
           started &&
           current.text === draft.text &&
-          current.attachments.length === 0 &&
-          (current.context?.records.length ?? 0) === 0
+          current.attachments.length === attachments.length &&
+          current.attachments.every(
+            (attachment, index) => attachment.id === attachments[index]?.id,
+          ) &&
+          JSON.stringify(current.context) === JSON.stringify(draft.context)
         ) {
           clearComposerDraftContent(threadKey);
         }
