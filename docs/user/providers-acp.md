@@ -126,6 +126,11 @@ Registry agents can schedule work and use T3's MCP tools. Child-task presentatio
 the agent exposes: ACP has no portable native subagent-lineage contract, so richer delegation views
 remain agent-specific.
 
+Background command waits are not portable across ACP agents. T3's `t3_background_wait` is
+available only to providers with an awaited-task lifecycle. For a finite command whose result
+is needed before replying, keep it in the agent's foreground command/wait path. Its own
+background process IDs are not T3 delegated task IDs. Leave dev servers and watchers unawaited.
+
 ## Checkpoints
 
 Checkpoint rollback restores your files as usual. ACP agents cannot rewind their own conversation,

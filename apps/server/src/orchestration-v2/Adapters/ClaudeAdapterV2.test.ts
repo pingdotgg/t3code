@@ -3377,6 +3377,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       return {
         attachmentsDir,
         runtime,
+        supportsBackgroundWait: adapter.supportsBackgroundWait,
         providerThread,
         threadId,
         sdkMessages,
@@ -9971,6 +9972,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
+        assert.isTrue(harness.supportsBackgroundWait);
         const now = yield* DateTime.now;
         const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
         if (awaitBackgroundTasks === undefined) {

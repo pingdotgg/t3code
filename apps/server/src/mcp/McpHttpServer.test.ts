@@ -1242,12 +1242,13 @@ it.effect("hides tools for links and refuses another environment while the beta 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("lists pull request watch tools only to threads that are not delegated children", () =>
+it.effect("lists provider background waits only when supported and limits child PR watches", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const scopeFor = (
         token: string,
         subagent: boolean,
+        backgroundWaitAvailable = false,
       ): McpInvocationContext.McpThreadInvocationScope => ({
         environmentId,
         requestNamespace: token,
@@ -1256,17 +1257,34 @@ it.effect("lists pull request watch tools only to threads that are not delegated
           providerSessionId: token,
           providerInstanceId: ProviderInstanceId.make("codex"),
           subagent,
+          backgroundWaitAvailable,
         },
         client: undefined,
         capabilities: new Set(["pull-requests"]),
         issuedAt: 1,
       });
       const scopes = new Map([
-        ["parentToken", scopeFor("parentToken", false)],
+        ["parentToken", scopeFor("parentToken", false, true)],
         ["childToken", scopeFor("childToken", true)],
+        ["acpToken", scopeFor("acpToken", false)],
       ]);
+      const WaitToolkit = Toolkit.make(OrchestratorToolkit.tools.t3_background_wait);
+      let waitCalls = 0;
       const serverLayer = McpHttpServer.layerMcpTransport(
-        McpHttpServer.layerPullRequestsToolkit,
+        Layer.merge(
+          McpHttpServer.layerPullRequestsToolkit,
+          McpHttpServer.toolkitRegistration(
+            WaitToolkit,
+            McpToolAccess.toLayer(WaitToolkit, {
+              t3_background_wait: McpToolAccess.reads(() =>
+                Effect.sync(() => {
+                  waitCalls++;
+                  return { matched: ["finite-command"], unmatched: [] };
+                }),
+              ),
+            }),
+          ),
+        ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(
@@ -1277,6 +1295,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
         Layer.provide(
           Layer.mergeAll(
             McpToolAccessTestkit.liveThreadsLayer,
+            Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
             Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -1290,7 +1309,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
         Layer.build,
       );
       const httpClient = yield* HttpClient.HttpClient;
-      const listedTools = (token: string) =>
+      const requestTool = (token: string, call = false) =>
         Effect.gen(function* () {
           const headers = {
             accept: "application/json, text/event-stream",
@@ -1310,18 +1329,34 @@ it.effect("lists pull request watch tools only to threads that are not delegated
               "mcp-protocol-version": "2025-06-18",
             },
             body: HttpBody.text(
-              `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+              call
+                ? `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"t3_background_wait","arguments":{"taskIds":["finite-command"]}}}`
+                : `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
               "application/json",
             ),
           });
-          const body = (yield* listed.json) as {
-            readonly result: { readonly tools: ReadonlyArray<{ readonly name: string }> };
+          return (yield* listed.json) as {
+            readonly error?: unknown;
+            readonly result?: {
+              readonly isError?: boolean;
+              readonly tools?: ReadonlyArray<{ readonly name: string }>;
+            };
           };
-          return body.result.tools.map((tool) => tool.name);
         });
 
+      const listedTools = (token: string) =>
+        requestTool(token).pipe(Effect.map((body) => body.result!.tools!.map((tool) => tool.name)));
       const parentTools = yield* listedTools("parentToken");
       const childTools = yield* listedTools("childToken");
+      const acpTools = yield* listedTools("acpToken");
+      expect(parentTools).toContain("t3_background_wait");
+      expect(childTools).not.toContain("t3_background_wait");
+      expect(acpTools).not.toContain("t3_background_wait");
+      const refused = yield* requestTool("acpToken", true);
+      expect(refused.error !== undefined || refused.result?.isError === true).toBe(true);
+      expect(waitCalls).toBe(0);
+      expect((yield* requestTool("parentToken", true)).result?.isError).not.toBe(true);
+      expect(waitCalls).toBe(1);
       expect(parentTools).toEqual(
         expect.arrayContaining(["link_pull_request", "watch_pull_request", "unwatch_pull_request"]),
       );
