@@ -88,9 +88,10 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 
-// Emulates `t3 serve`: it takes the home owner lock at startup, then binds and
-// publishes server-runtime.json once a second server has tried the same home
-// (or after 2s), so a concurrent launch always sees the home still unclaimed.
+// Emulates `t3 serve`: it takes the home owner lock at startup, then binds
+// once a second server has tried the same home (or after 2s), so a concurrent
+// launch always sees the home still unclaimed. Like the real server, it
+// publishes server-runtime.json some time after it starts answering HTTP.
 const FAKE_T3_SERVE = `const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
@@ -114,7 +115,9 @@ const serve = (tries) => {
   }
   http.createServer((_, response) => response.end()).listen(port, "127.0.0.1", () => {
     const origin = "http://127.0.0.1:" + port;
-    fs.writeFileSync(path.join(userdata, "server-runtime.json"), JSON.stringify({ pid: process.pid, port, origin }));
+    setTimeout(() => {
+      fs.writeFileSync(path.join(userdata, "server-runtime.json"), JSON.stringify({ pid: process.pid, port, origin }));
+    }, 1_500);
   });
 };
 serve(40);
@@ -540,6 +543,10 @@ describe("ssh tunnel scripts", () => {
       );
       const serverScript = path.join(home, "fake-t3.cjs");
       yield* fs.writeFileString(serverScript, FAKE_T3_SERVE);
+      // A launch that died holding the lock must not block or double-admit later ones.
+      const launchLock = path.join(home, ".t3", "ssh-launch", ".launch.lock");
+      yield* fs.makeDirectory(path.dirname(launchLock), { recursive: true });
+      yield* fs.writeFileString(launchLock, "999999999\n");
       const targets = [
         { alias: "devbox", hostname: "devbox", username: null, port: null },
         { alias: "devbox-tailnet", hostname: "devbox-tailnet", username: null, port: null },
@@ -571,6 +578,7 @@ describe("ssh tunnel scripts", () => {
           `${targets[index]!.alias} reported a managed server, but its recorded PID is not the server that owns the remote home`,
         );
       }
+      assert.isFalse(yield* fs.exists(launchLock));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 });

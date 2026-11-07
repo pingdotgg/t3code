@@ -51,7 +51,7 @@ const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
-const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
+const REMOTE_LAUNCH_BASE_TIMEOUT_MS = 90_000;
 // Cold archive launches download and extract ~70 MB and may wait on an install lock.
 // Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
 // Leave slack for verification and extraction, which have no timeout.
@@ -61,15 +61,22 @@ const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 const REMOTE_PID_EXIT_WAIT_MS = 2_000;
-// A launch holds the home lock through up to two reuse probes, readiness, and
-// two server exit waits; each probe may overrun its deadline by one request.
+// The server answers HTTP before it writes server-runtime.json, which is how
+// a launch for another alias finds it.
+const REMOTE_RUNTIME_RECORD_WAIT_SECONDS = 10;
+// A launch holds the home lock through up to two reuse probes, readiness, two
+// server exit waits, and the runtime record wait; each probe may overrun its
+// deadline by one request.
 const REMOTE_LAUNCH_LOCK_WAIT_SECONDS = Math.ceil(
   (REMOTE_READY_TIMEOUT_MS +
     2 * REMOTE_REUSE_READY_TIMEOUT_MS +
     2 * REMOTE_PID_EXIT_WAIT_MS +
-    3 * SSH_READY_PROBE_TIMEOUT_MS) /
+    REMOTE_RUNTIME_RECORD_WAIT_SECONDS * 1000 +
+    4 * SSH_READY_PROBE_TIMEOUT_MS) /
     1000,
 );
+const REMOTE_LAUNCH_TIMEOUT_MS =
+  REMOTE_LAUNCH_LOCK_WAIT_SECONDS * 1000 + REMOTE_LAUNCH_BASE_TIMEOUT_MS;
 
 export interface RemoteT3RunnerOptions {
   readonly nodeScriptPath?: string | null;
@@ -546,15 +553,16 @@ LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
-LAUNCH_LOCK_OWNED=0
 mkdir -p "$STATE_DIR"
 cleanup_launch() {
   rm -f "$RUNNER_NEXT"
-  if [ "$LAUNCH_LOCK_OWNED" = "1" ]; then
+  if [ "$(cat "$LAUNCH_LOCK" 2>/dev/null || true)" = "$$" ]; then
     rm -f "$LAUNCH_LOCK"
   fi
 }
 trap cleanup_launch EXIT
+# A dropped SSH session signals the launch; exit so the lock is released.
+trap 'exit 1' HUP INT TERM
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
@@ -569,6 +577,15 @@ elif ! ensure_remote_node_path; then
   printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
   exit 1
 fi
+# Only one waiter can move a given stale lock aside. If the moved file no
+# longer holds what this waiter judged stale, it belongs to a live owner.
+discard_stale_launch_lock() {
+  mv "$LAUNCH_LOCK" "$LAUNCH_LOCK.$$" 2>/dev/null || return 0
+  if [ "$(cat "$LAUNCH_LOCK.$$" 2>/dev/null || true)" != "$1" ]; then
+    ln "$LAUNCH_LOCK.$$" "$LAUNCH_LOCK" 2>/dev/null || true
+  fi
+  rm -f "$LAUNCH_LOCK.$$"
+}
 # Concurrent launches share this home's owner lock and may share this record.
 # Hold the lock from comparing the runner until the server is recorded and
 # ready, so a waiting launch reuses that server instead of starting or
@@ -580,13 +597,14 @@ while ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_LOCK") 2>/dev/null; do
   if [ -n "$LAUNCH_LOCK_OWNER" ]; then
     LAUNCH_LOCK_UNOWNED=0
     if ! kill -0 "$LAUNCH_LOCK_OWNER" 2>/dev/null; then
-      rm -f "$LAUNCH_LOCK"
+      discard_stale_launch_lock "$LAUNCH_LOCK_OWNER"
       continue
     fi
   else
     LAUNCH_LOCK_UNOWNED=$((LAUNCH_LOCK_UNOWNED + 1))
     if [ "$LAUNCH_LOCK_UNOWNED" -ge 5 ]; then
-      rm -f "$LAUNCH_LOCK"
+      LAUNCH_LOCK_UNOWNED=0
+      discard_stale_launch_lock ""
       continue
     fi
   fi
@@ -597,7 +615,6 @@ while ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_LOCK") 2>/dev/null; do
   sleep 1
   LAUNCH_LOCK_WAITED=$((LAUNCH_LOCK_WAITED + 1))
 done
-LAUNCH_LOCK_OWNED=1
 RUNNER_CHANGED=0
 if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
   RUNNER_CHANGED=1
@@ -762,6 +779,14 @@ if [ -z "$REMOTE_PORT" ]; then
     rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     exit 1
   fi
+  # Keep the lock until another alias's launch can find this server, or it
+  # would start a second one that loses the home's owner lock.
+  RECORD_DEADLINE=$(($(date +%s) + @@T3_RUNTIME_RECORD_WAIT_SECONDS@@))
+  while [ "$(date +%s)" -lt "$RECORD_DEADLINE" ]; do
+    DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+    [ "\${DEFAULT_RUNTIME_INFO%% *}" = "$REMOTE_PID" ] && break
+    sleep 0.1
+  done
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
@@ -883,6 +908,7 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
     T3_PID_EXIT_WAIT_TICKS: String(REMOTE_PID_EXIT_WAIT_MS / 100),
     T3_LAUNCH_LOCK_WAIT_SECONDS: String(REMOTE_LAUNCH_LOCK_WAIT_SECONDS),
+    T3_RUNTIME_RECORD_WAIT_SECONDS: String(REMOTE_RUNTIME_RECORD_WAIT_SECONDS),
   });
 }
 
