@@ -42,7 +42,22 @@ export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
-export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
+const BOOT_SERVICE_LOG_FILE = "boot-service.log";
+
+export const resolveBootServiceLogPath = Effect.fn("cloud.boot_service.resolve_log_path")(
+  function* (logsDir: string) {
+    const path = yield* Path.Path;
+    if ((yield* HostProcess.Platform) !== "darwin") {
+      return path.join(logsDir, BOOT_SERVICE_LOG_FILE);
+    }
+    const homeDir =
+      (yield* Config.String("HOME").pipe(Config.withDefault(""))) ||
+      (yield* HostProcess.HomeDirectory);
+    if (homeDir === "") return path.join(logsDir, BOOT_SERVICE_LOG_FILE);
+    // launchd opens these before t3 runs and may lack access to an external T3 home.
+    return path.join(homeDir, "Library", "Logs", "T3Code", BOOT_SERVICE_LOG_FILE);
+  },
+);
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
 function escapeSystemdSpecifiers(value: string): string {
@@ -652,7 +667,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     environmentPath,
   });
   const unitPath = detectedManager?.unitPath ?? "";
-  const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
+  const logPath = yield* resolveBootServiceLogPath(input.logsDir);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const otherBaseDirOf = (unit: string) => {
@@ -814,7 +829,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       return yield* new BootServiceOtherBaseDirError({ installedBaseDir, baseDir: input.baseDir });
     }
     yield* fs
-      .makeDirectory(input.logsDir, { recursive: true })
+      .makeDirectory(path.dirname(logPath), { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
     if (manager.kind === "systemd") {
