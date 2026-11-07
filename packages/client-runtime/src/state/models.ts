@@ -105,6 +105,8 @@ export interface ThreadRuntimeSummary {
   readonly lastErrorClass?: OrchestrationV2ProviderFailureClass | null;
   readonly lastErrorCode?: string | null;
   readonly usageLimitResetAt?: string | null;
+  /** The latest run's provider turn ended, but its agent still awaits background work. */
+  readonly awaitingBackgroundWork?: boolean;
   readonly updatedAt: string;
 }
 
