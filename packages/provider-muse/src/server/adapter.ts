@@ -1152,7 +1152,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const publishRequest = Effect.fnUntraced(function* (native: PendingRequest["native"]) {
         const child = native.type === "approval" && native.value.subagentOrigin !== undefined;
         const runless =
-          child || (active?.compact === true && wake !== undefined && native.value.turnId === wake.nativeId);
+          child ||
+          (active?.compact === true && wake !== undefined && native.value.turnId === wake.nativeId);
         const turn = runless ? undefined : active;
         if (
           !thread ||
