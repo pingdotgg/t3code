@@ -1483,7 +1483,7 @@ function TerminalTabStrip({
       <div
         ref={ref}
         data-layout-pane-tab={tabId ?? undefined}
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
+        className="flex min-w-15 items-center gap-1 overflow-hidden"
         role="tablist"
         aria-label="Terminals"
       >
