@@ -202,6 +202,8 @@ it.effect("a divergence-only refresh does not cancel another turn's PR lookup", 
   const lookupStarted = Deferred.makeUnsafe<void>();
   const release = Deferred.makeUnsafe<void>();
   const finished = Deferred.makeUnsafe<void>();
+  const divergedAgain = Deferred.makeUnsafe<void>();
+  let divergenceRefreshes = 0;
   let checkedOutBranch = "feature";
   const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
@@ -220,7 +222,13 @@ it.effect("a divergence-only refresh does not cancel another turn's PR lookup", 
               hasWorkingTreeChanges: false,
               workingTree: { files: [], insertions: 0, deletions: 0 },
             })),
-          refreshDivergence: () => Effect.succeed(null),
+          refreshDivergence: () =>
+            Effect.suspend(() => {
+              divergenceRefreshes += 1;
+              return divergenceRefreshes === 2
+                ? Deferred.succeed(divergedAgain, undefined).pipe(Effect.as(null))
+                : Effect.succeed(null);
+            }),
           refreshPullRequestStatus: () =>
             Deferred.succeed(lookupStarted, undefined).pipe(
               Effect.andThen(Deferred.await(release)),
@@ -245,6 +253,7 @@ it.effect("a divergence-only refresh does not cancel another turn's PR lookup", 
     yield* Deferred.await(lookupStarted);
     checkedOutBranch = "other";
     yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    yield* Deferred.await(divergedAgain);
     yield* Deferred.succeed(release, undefined);
     yield* Deferred.await(finished);
   }).pipe(Effect.provide(layer));

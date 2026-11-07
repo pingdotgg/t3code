@@ -7,8 +7,16 @@ import type { EnvironmentThreadShell } from "./models.ts";
 
 const REF = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 
-const shellWith = (status: string) =>
-  ({ runtime: { status, activeRunId: null } }) as unknown as EnvironmentThreadShell;
+const shellWith = (
+  status: string,
+  overrides: Partial<Pick<EnvironmentThreadShell, "worktreePath" | "pendingBackgroundTasks">> = {},
+) =>
+  ({
+    runtime: { status, activeRunId: null },
+    worktreePath: null,
+    pendingBackgroundTasks: [],
+    ...overrides,
+  }) as unknown as EnvironmentThreadShell;
 
 function setup(status = "running") {
   const registry = AtomRegistry.make();
@@ -35,6 +43,7 @@ describe("createGitActionQueue", () => {
     expect(h.run).not.toHaveBeenCalled();
 
     h.setShell(shellWith(status));
+    expect(h.run).toHaveBeenCalledOnce();
     h.setShell(shellWith("completed"));
     expect(h.run).toHaveBeenCalledOnce();
     expect(h.onDropped).not.toHaveBeenCalled();
@@ -52,6 +61,27 @@ describe("createGitActionQueue", () => {
       expect(h.queued()).toBeNull();
     },
   );
+
+  it("waits out background work the agent is parked on", () => {
+    const h = setup();
+    h.enqueue();
+    const awaited = [{ kind: "command", awaited: true }] as never;
+    h.setShell(shellWith("idle", { pendingBackgroundTasks: awaited }));
+    expect(h.run).not.toHaveBeenCalled();
+    expect(h.queued()).toBe("commit");
+
+    h.setShell(shellWith("idle"));
+    expect(h.run).toHaveBeenCalledOnce();
+  });
+
+  it("drops the action when the thread moves to another checkout", () => {
+    const h = setup();
+    h.enqueue();
+    h.setShell(shellWith("running", { worktreePath: "/other" }));
+    expect(h.run).not.toHaveBeenCalled();
+    expect(h.onDropped).toHaveBeenCalledOnce();
+    expect(h.queued()).toBeNull();
+  });
 
   it("drops the action when the thread goes away", () => {
     const h = setup();

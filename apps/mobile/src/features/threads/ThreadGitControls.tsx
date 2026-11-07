@@ -185,7 +185,6 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     const decision = await confirmCommitDuringRun({
       thread: threadRef,
       action: input.action,
-      hasChanges: gitStatus?.hasWorkingTreeChanges === true,
       queuedRun: requiresDefaultBranchConfirmation(input.action, isDefaultRef)
         ? null
         : () => void onRunAction(request),

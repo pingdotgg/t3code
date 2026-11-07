@@ -273,6 +273,7 @@ export const make = Effect.gen(function* () {
     remoteWriteLocks.withLock(cwd, effect);
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
   const remoteRefreshes = yield* FiberMap.make<string>();
+  const remoteRefreshesWanted = new Set<string>();
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -578,6 +579,16 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const refreshWantedRemote = Effect.fn("VcsStatusBroadcaster.refreshWantedRemote")(function* (
+    cwd: string,
+  ) {
+    remoteRefreshesWanted.delete(cwd);
+    const remoteMissing = !(yield* getCachedStatus(cwd))?.remote?.value;
+    return yield* remoteMissing
+      ? refreshRemoteStatus(cwd, { refreshUpstream: false })
+      : refreshDivergence(cwd);
+  });
+
   const refreshWatchedStatus: VcsStatusBroadcaster["Service"]["refreshWatchedStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshWatchedStatus",
   )(function* (rawCwd, { includeDivergence }) {
@@ -589,11 +600,11 @@ export const make = Effect.gen(function* () {
     // A clean tree reads as up to date until divergence catches up, and a new ref reads as pending.
     if (!includeDivergence && !remoteMissing && !(wasDirty && !local.hasWorkingTreeChanges)) return;
     // A forge lookup can hold the remote lock for minutes, and local refreshes must not wait on it.
-    const remoteRead = remoteMissing
-      ? refreshRemoteStatus(cwd, { refreshUpstream: false })
-      : refreshDivergence(cwd);
-    yield* remoteRead.pipe(
+    // A read already running may discard its result for a ref that moved, so ask for another.
+    remoteRefreshesWanted.add(cwd);
+    yield* Effect.suspend(() => refreshWantedRemote(cwd)).pipe(
       Effect.ignore({ log: true }),
+      Effect.repeat({ while: () => remoteRefreshesWanted.has(cwd) }),
       FiberMap.run(remoteRefreshes, cwd, { onlyIfMissing: true }),
     );
   });

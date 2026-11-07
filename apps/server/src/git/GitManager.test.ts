@@ -4431,6 +4431,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
       expect(renamed.commit.status).toBe("created");
 
+      yield* runGit(repoDir, ["branch", "t3/deadbeef"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "unrelated.txt"), "unrelated\n");
+      const unrelatedMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Should not land on an unrelated branch",
+        expectedRefName: "t3/deadbeef",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+      expect(unrelatedMessage).toContain('"feature/renamed" is checked out');
+
       yield* runGit(repoDir, ["checkout", "main"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "default.txt"), "default\n");
       const defaultRefMessage = yield* runStackedAction(manager, {

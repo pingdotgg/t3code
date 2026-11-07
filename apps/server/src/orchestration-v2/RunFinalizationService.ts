@@ -98,6 +98,7 @@ export const layerObserver = Layer.effect(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const pullRequestLookups = yield* FiberMap.make<string>();
+    const divergenceRefreshes = yield* FiberMap.make<string>();
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: Effect.fn("RunFinalizationService.refresh")(
@@ -113,22 +114,25 @@ export const layerObserver = Layer.effect(
             (thread.activeRunId === null || thread.activeRunId === runId);
           // Divergence goes first so a clean tree never reads as up to date while the forge CLI
           // runs. That CLI can take minutes, so the next turn must not wait for it. A newer
-          // turn's lookup replaces a running one, but divergence alone must not cancel a lookup.
+          // turn's lookup replaces a running one, but divergence alone must neither cancel a
+          // lookup nor be skipped for one.
           const divergence = vcsStatus.refreshDivergence(cwd);
-          yield* (
-            shouldLookUpPullRequest
-              ? divergence.pipe(Effect.andThen(vcsStatus.refreshPullRequestStatus(cwd)))
-              : divergence
-          ).pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("failed to refresh remote status after run completion", {
-                threadId,
-                cwd,
-                detail: error.message,
-              }),
-            ),
-            FiberMap.run(pullRequestLookups, cwd, { onlyIfMissing: !shouldLookUpPullRequest }),
-          );
+          const logFailure = (error: { readonly message: string }) =>
+            Effect.logWarning("failed to refresh remote status after run completion", {
+              threadId,
+              cwd,
+              detail: error.message,
+            });
+          yield* shouldLookUpPullRequest
+            ? divergence.pipe(
+                Effect.andThen(vcsStatus.refreshPullRequestStatus(cwd)),
+                Effect.catch(logFailure),
+                FiberMap.run(pullRequestLookups, cwd),
+              )
+            : divergence.pipe(
+                Effect.catch(logFailure),
+                FiberMap.run(divergenceRefreshes, cwd, { onlyIfMissing: true }),
+              );
         },
         (effect, { cwd }) =>
           effect.pipe(Effect.mapError((cause) => new RunFinalizationRefreshError({ cwd, cause }))),

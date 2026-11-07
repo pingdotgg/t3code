@@ -341,7 +341,7 @@ export const ACTIVE_RUN_COMMIT_COPY = {
 
 export const QUEUED_COMMIT_DROPPED_COPY = {
   title: "Queued commit cancelled",
-  description: "The agent didn't finish, so nothing was committed.",
+  description: "The agent didn't finish in this checkout, so nothing was committed.",
 };
 
 export const CANCEL_QUEUED_QUICK_ACTION = {
@@ -353,11 +353,11 @@ export const CANCEL_QUEUED_QUICK_ACTION = {
 export function requiresActiveRunConfirmation(
   action: GitStackedAction,
   isThreadRunning: boolean,
-  hasChanges: boolean,
 ): boolean {
-  if (!isThreadRunning) return false;
-  if (action === "commit") return true;
-  return (action === "commit_push" || action === "commit_push_pr") && hasChanges;
+  return (
+    isThreadRunning &&
+    (action === "commit" || action === "commit_push" || action === "commit_push_pr")
+  );
 }
 
 export function requiresDefaultBranchConfirmation(

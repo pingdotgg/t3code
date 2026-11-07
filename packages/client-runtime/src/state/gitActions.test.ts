@@ -76,17 +76,14 @@ describe("resolveQuickAction", () => {
 
 describe("requiresActiveRunConfirmation", () => {
   it.each([
-    { action: "commit", running: true, hasChanges: true, expected: true },
-    { action: "commit_push", running: true, hasChanges: true, expected: true },
-    { action: "commit_push_pr", running: true, hasChanges: true, expected: true },
-    { action: "commit_push", running: true, hasChanges: false, expected: false },
-    { action: "push", running: true, hasChanges: true, expected: false },
-    { action: "create_pr", running: true, hasChanges: true, expected: false },
-    { action: "commit", running: false, hasChanges: true, expected: false },
-  ] as const)("$action running=$running changes=$hasChanges", (row) => {
-    expect(requiresActiveRunConfirmation(row.action, row.running, row.hasChanges)).toBe(
-      row.expected,
-    );
+    { action: "commit", running: true, expected: true },
+    { action: "commit_push", running: true, expected: true },
+    { action: "commit_push_pr", running: true, expected: true },
+    { action: "push", running: true, expected: false },
+    { action: "create_pr", running: true, expected: false },
+    { action: "commit", running: false, expected: false },
+  ] as const)("$action running=$running", (row) => {
+    expect(requiresActiveRunConfirmation(row.action, row.running)).toBe(row.expected);
   });
 });
 

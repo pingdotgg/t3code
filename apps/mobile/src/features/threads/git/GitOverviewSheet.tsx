@@ -150,7 +150,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     const decision = await confirmCommitDuringRun({
       thread: { environmentId, threadId },
       action: input.action,
-      hasChanges: gitStatus.data?.hasWorkingTreeChanges === true,
       queuedRun: requiresDefaultBranchConfirmation(input.action, isDefaultRef)
         ? null
         : () => void gitActions.onRunSelectedThreadGitAction(request),

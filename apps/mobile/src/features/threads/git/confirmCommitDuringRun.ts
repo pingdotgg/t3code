@@ -1,4 +1,4 @@
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { threadWorkIsActive } from "@t3tools/client-runtime/state/shell";
 import {
   ACTIVE_RUN_COMMIT_COPY,
   QUEUED_COMMIT_DROPPED_COPY,
@@ -14,20 +14,22 @@ import { gitActionQueue } from "../../../state/vcs";
 export function confirmCommitDuringRun(input: {
   readonly thread: ScopedThreadRef | null;
   readonly action: GitStackedAction;
-  readonly hasChanges: boolean;
   readonly queuedRun: (() => void) | null;
 }): Promise<"proceed" | "queued" | "cancelled"> {
   const { thread, queuedRun } = input;
   // A native menu keeps the closure from when it opened, and a run can start while it is open.
   const shell =
     thread === null ? null : appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread));
-  const isThreadRunning = threadRuntimeIsActive(shell?.runtime);
-  if (!requiresActiveRunConfirmation(input.action, isThreadRunning, input.hasChanges)) {
+  if (!requiresActiveRunConfirmation(input.action, threadWorkIsActive(shell))) {
     return Promise.resolve("proceed");
   }
+  const canQueue =
+    thread !== null &&
+    queuedRun !== null &&
+    appAtomRegistry.get(gitActionQueue.queuedActionAtom(thread)) === null;
   return new Promise((resolve) => {
     Dialog.alert(ACTIVE_RUN_COMMIT_COPY.title, ACTIVE_RUN_COMMIT_COPY.description, [
-      ...(thread !== null && queuedRun !== null
+      ...(canQueue
         ? [
             {
               text: ACTIVE_RUN_COMMIT_COPY.queueLabel,

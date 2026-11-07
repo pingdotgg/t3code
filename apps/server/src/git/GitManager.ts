@@ -2195,6 +2195,22 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const wasRenamedTo = Effect.fn("wasRenamedTo")(function* (
+    cwd: string,
+    oldBranch: string,
+    branch: string,
+  ) {
+    const rename = `Branch: renamed refs/heads/${oldBranch} to refs/heads/${branch}`;
+    const reflog = yield* gitCore.execute({
+      operation: "GitManager.wasRenamedTo",
+      cwd,
+      args: ["log", "-g", "--format=%gs", "--fixed-strings", `--grep-reflog=${rename}`, "HEAD"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    });
+    return reflog.exitCode === 0 && reflog.stdout.split("\n").includes(rename);
+  });
+
   const runCommitStep = Effect.fn("runCommitStep")(function* (
     settings: SourceControlTextGenerationSettings,
     cwd: string,
@@ -2455,7 +2471,11 @@ export const make = Effect.gen(function* () {
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
     function* (input, options) {
       const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
-      if (options?.refreshUpstream === false || options?.refreshMissingPullRequest) {
+      if (
+        options?.refreshUpstream === false ||
+        options?.refreshMissingPullRequest ||
+        options?.reuseKnownPullRequest
+      ) {
         return yield* readRemoteStatus(cacheKey, options);
       }
       return yield* Cache.get(remoteStatusResultCache, cacheKey);
@@ -3200,7 +3220,8 @@ export const make = Effect.gen(function* () {
           input.expectedRefName !== undefined &&
           isTemporaryWorktreeBranch(input.expectedRefName) &&
           initialStatus.branch !== null &&
-          !initialStatus.isDefaultBranch;
+          !initialStatus.isDefaultBranch &&
+          (yield* wasRenamedTo(input.cwd, input.expectedRefName, initialStatus.branch));
         if (
           input.expectedRefName !== undefined &&
           input.expectedRefName !== initialStatus.branch &&

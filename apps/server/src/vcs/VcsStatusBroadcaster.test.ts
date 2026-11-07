@@ -579,6 +579,40 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
+  it.effect("a watched refresh that lands during a remote read runs after it", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const remoteUpdates = yield* watchRemoteUpdates(broadcaster);
+
+      const reading = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(reading, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: true });
+      yield* Deferred.await(reading);
+
+      yield* broadcaster.refreshWatchedStatus("/repo", { includeDivergence: true });
+      state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 1 };
+      state.beforeRemoteStatus = Effect.sync(() => {
+        state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 2 };
+      });
+      yield* Deferred.succeed(release, undefined);
+
+      assert.equal((yield* Queue.take(remoteUpdates))?.aheadCount, 1);
+      assert.equal((yield* Queue.take(remoteUpdates))?.aheadCount, 2);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
   it.effect("a poll that started before the turn-end refresh cannot overwrite its PR", () => {
     const releaseFirstPoll = Deferred.makeUnsafe<void>();
     const firstPollStarted = Deferred.makeUnsafe<void>();

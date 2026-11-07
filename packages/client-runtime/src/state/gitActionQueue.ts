@@ -1,7 +1,7 @@
 import type { GitStackedAction, ScopedThreadRef } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
-import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
+import { threadWorkIsActive, type EnvironmentThreadShell } from "./models.ts";
 
 export interface QueuedGitAction {
   readonly action: GitStackedAction;
@@ -32,12 +32,20 @@ export function createGitActionQueue(input: {
     registry.set(queuedAtom(key), null);
   };
 
-  const settle = (key: string, item: QueuedGitAction, shell: EnvironmentThreadShell | null) => {
-    if (threadRuntimeIsActive(shell?.runtime)) return;
+  const settle = (
+    key: string,
+    item: QueuedGitAction,
+    worktreePath: string | null,
+    shell: EnvironmentThreadShell | null,
+  ) => {
+    // The action, its files and its message all belong to the checkout it was queued from.
+    const moved = shell !== null && shell.worktreePath !== worktreePath;
+    if (!moved && threadWorkIsActive(shell)) return;
     clear(key);
     const status = shell?.runtime?.status;
     // Anything but a clean finish may leave the half-done work the queue exists to avoid.
-    const finished = shell !== null && (!status || status === "completed" || status === "idle");
+    const finished =
+      !moved && shell !== null && (!status || status === "completed" || status === "idle");
     if (finished) item.run();
     else item.onDropped();
   };
@@ -48,13 +56,15 @@ export function createGitActionQueue(input: {
     enqueue: (ref: ScopedThreadRef, item: QueuedGitAction) => {
       const key = threadKey(ref);
       const shellAtom = input.threadShellAtom(ref);
+      const shell = registry.get(shellAtom);
+      const worktreePath = shell?.worktreePath ?? null;
       clear(key);
       registry.set(queuedAtom(key), item.action);
       subscriptions.set(
         key,
-        registry.subscribe(shellAtom, (shell) => settle(key, item, shell)),
+        registry.subscribe(shellAtom, (next) => settle(key, item, worktreePath, next)),
       );
-      settle(key, item, registry.get(shellAtom));
+      settle(key, item, worktreePath, shell);
     },
     cancel: (ref: ScopedThreadRef) => clear(threadKey(ref)),
   };

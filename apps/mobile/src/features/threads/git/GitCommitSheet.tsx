@@ -72,7 +72,6 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           ? null
           : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
       action: "commit",
-      hasChanges: true,
       queuedRun: () => void gitActions.onRunSelectedThreadGitAction(request),
     });
     if (decision === "cancelled") return;

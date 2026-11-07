@@ -1,4 +1,4 @@
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { threadWorkIsActive } from "@t3tools/client-runtime/state/shell";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
@@ -140,6 +140,7 @@ interface PendingDefaultBranchAction {
   includesCommit: boolean;
   commitMessage?: string;
   onConfirmed?: () => void;
+  skipActiveRunPrompt?: boolean;
   filePaths?: string[];
 }
 
@@ -968,7 +969,7 @@ export default function GitActionsControl({
   );
   const threadToastData = activeThreadRef ? { threadRef: activeThreadRef } : undefined;
   const activeServerThreadShell = useQuietThreadShell(activeThreadRef);
-  const isThreadRunning = threadRuntimeIsActive(activeServerThreadShell?.runtime);
+  const isThreadRunning = threadWorkIsActive(activeServerThreadShell);
   const activeDraftThread = useComposerDraftStore((store) =>
     draftId
       ? store.getDraftSession(draftId)
@@ -1196,11 +1197,12 @@ export default function GitActionsControl({
     const includesCommit =
       actionCanCommit &&
       (action === "commit" || !!actionStatus?.hasWorkingTreeChanges || featureBranch);
-    if (
-      !input.skipActiveRunPrompt &&
-      requiresActiveRunConfirmation(action, isThreadRunning, !!actionStatus?.hasWorkingTreeChanges)
-    ) {
-      setPendingActiveRunAction(input);
+    if (!input.skipActiveRunPrompt && requiresActiveRunConfirmation(action, isThreadRunning)) {
+      const confirmingRefName = expectedRefName ?? actionBranch;
+      setPendingActiveRunAction({
+        ...input,
+        ...(confirmingRefName ? { expectedRefName: confirmingRefName } : {}),
+      });
       return;
     }
     if (
@@ -1222,6 +1224,7 @@ export default function GitActionsControl({
         includesCommit,
         ...(commitMessage ? { commitMessage } : {}),
         ...(onConfirmed ? { onConfirmed } : {}),
+        ...(input.skipActiveRunPrompt ? { skipActiveRunPrompt: true } : {}),
         ...(filePaths ? { filePaths } : {}),
       });
       return;
@@ -1279,6 +1282,7 @@ export default function GitActionsControl({
   const canQueuePendingActiveRunAction =
     pendingActiveRunAction !== null &&
     activeThreadRef !== null &&
+    queuedGitAction === null &&
     !requiresDefaultBranchConfirmation(pendingActiveRunAction.action, isDefaultRef);
 
   const queuePendingActiveRunAction = () => {
@@ -1303,13 +1307,14 @@ export default function GitActionsControl({
     if (!pendingDefaultBranchAction || !canWriteSourceControl) return;
     if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null))
       return;
-    const { action, branchName, commitMessage, onConfirmed, filePaths } =
+    const { action, branchName, commitMessage, onConfirmed, skipActiveRunPrompt, filePaths } =
       pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
+      ...(skipActiveRunPrompt ? { skipActiveRunPrompt } : {}),
       ...(filePaths ? { filePaths } : {}),
       expectedRefName: branchName,
       featureBranch,
@@ -1320,14 +1325,14 @@ export default function GitActionsControl({
   const runDialogActionOnNewBranch = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
-
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-
     void runGitActionWithToast({
       action: "commit",
+      onConfirmed: () => {
+        setIsCommitDialogOpen(false);
+        setDialogCommitMessage("");
+        setExcludedFiles(new Set());
+        setIsEditingFiles(false);
+      },
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
       featureBranch: true,
