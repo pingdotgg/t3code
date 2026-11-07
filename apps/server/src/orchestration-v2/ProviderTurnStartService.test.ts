@@ -41,6 +41,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
@@ -131,6 +132,7 @@ function startWithMissingWorktree(
   const pruneWorktrees = vi.fn(() => Effect.void);
   const createWorktree = vi.fn(() => Effect.succeed({} as never));
   const listLocalBranchNames = vi.fn(() => Effect.succeed(["feature/restore"]));
+  const droppedWorkspaceSnapshots: Array<string> = [];
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -191,6 +193,10 @@ function startWithMissingWorktree(
         Layer.mock(ProviderAuthService.ProviderAuthService)({
           tryHandlePromptCommand: () => Effect.succeed(false),
         }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          dropWorkspaceSnapshots: (cwd) =>
+            Effect.sync(() => void droppedWorkspaceSnapshots.push(cwd)),
+        }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
       ),
@@ -208,6 +214,7 @@ function startWithMissingWorktree(
     createWorktree,
     writeIfRunCurrent,
     startRootRun,
+    droppedWorkspaceSnapshots,
     projectionReads: () => projectionReadCount,
   };
 }
@@ -265,6 +272,7 @@ it.each([
   const harness = startWithMissingWorktree(input.worktreePath, input.realPaths);
   await harness.start;
   expect(harness.createWorktree).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
+  expect(harness.droppedWorkspaceSnapshots).toEqual(input.recreated ? [input.worktreePath] : []);
 });
 
 function makeLocalCommandHarness(input: {
@@ -994,6 +1002,9 @@ function makeLocalCommandHarness(input: {
             ),
         }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          dropWorkspaceSnapshots: () => Effect.void,
+        }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
           runStarted: () => Effect.void,
