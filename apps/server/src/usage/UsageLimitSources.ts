@@ -79,7 +79,13 @@ export const make = Effect.gen(function* () {
     config: UsageLimitSourceConfig,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
+    const base = {
+      id,
+      kind: config.kind,
+      label: sourceLabel(id, config),
+      checkedAt,
+      routesClients: config.routesClients === true,
+    } as const;
     const managementKey = yield* readManagementKey(config);
     if (managementKey.length === 0) {
       return { ...base, accounts: [], error: missingManagementKey(config) };

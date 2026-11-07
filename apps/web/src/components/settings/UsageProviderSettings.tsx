@@ -110,7 +110,19 @@ export function UsageProviderSettings({
                     />
                   ) : null
                 }
-              />
+              >
+                <label className="flex items-center gap-2 pt-1 pb-2 text-xs text-muted-foreground">
+                  <Switch
+                    size="sm"
+                    checked={source.routesClients === true}
+                    disabled={readOnly}
+                    onCheckedChange={(routesClients) =>
+                      updateSettings({ usageLimitSources: { [id]: { ...source, routesClients } } })
+                    }
+                  />
+                  Clients route through this hub
+                </label>
+              </SettingsRow>
             );
           })
         )}

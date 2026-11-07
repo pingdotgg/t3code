@@ -70,6 +70,7 @@ export const UsageLimitSourceSnapshot = Schema.Struct({
   kind: Schema.Literal("cliproxy"),
   label: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
+  routesClients: Schema.optional(Schema.Boolean),
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
   error: Schema.optional(TrimmedNonEmptyString),
 });
