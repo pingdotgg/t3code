@@ -527,6 +527,12 @@ const make = Effect.gen(function* () {
         message: `${environmentId} has no delegation session yet. Pair it with a bootstrap credential from the peer.`,
       });
     }
+    if (DateTime.isLessThanOrEqualTo(peer.session.value.expiresAt, yield* DateTime.now)) {
+      return yield* new PeerEnvironmentRegistryError({
+        reason: "not_paired",
+        message: `The delegation session for ${peer.label} expired. Pair it again with a fresh bootstrap credential from the peer.`,
+      });
+    }
     const stored = yield* secrets.get(row.secret_name).pipe(Effect.catch(failStorage));
     if (Option.isNone(stored)) {
       return yield* new PeerEnvironmentRegistryError({

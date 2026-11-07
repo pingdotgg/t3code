@@ -2255,12 +2255,7 @@ export const layerWsRpc = (
                         modelSelection: input.modelSelection,
                         runtimeMode: input.runtimeMode,
                         interactionMode: input.interactionMode,
-                        // A sandbox workspace is a fleet worker's, so it arrives
-                        // as a delegation rather than a local launch (spec §6.3).
-                        workspaceStrategy:
-                          input.workspaceStrategy?.type === "sandbox"
-                            ? { type: "root" }
-                            : input.workspaceStrategy,
+                        workspaceStrategy: input.workspaceStrategy,
                         ...(input.initialMessage === undefined
                           ? {}
                           : {
