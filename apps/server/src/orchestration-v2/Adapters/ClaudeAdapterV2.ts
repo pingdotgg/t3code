@@ -762,10 +762,16 @@ function claudeMcpSecrets(mcpServers: Record<string, unknown>): ReadonlyArray<st
       add(encodeURIComponent(value));
     });
     // An error can echo the URL as configured, and its percent-encoding (such as a lowercase
-    // "%2f") matches neither the decoded value nor encodeURIComponent's output.
-    for (const pair of parsed.search.slice(1).split("&")) {
-      const separator = pair.indexOf("=");
-      if (separator !== -1) add(pair.slice(separator + 1));
+    // "%2f") matches neither the decoded value nor encodeURIComponent's output. URL parsing
+    // also re-encodes non-ASCII characters, so read the configured string as well.
+    const queryStart = url.indexOf("?");
+    const configuredQuery =
+      queryStart === -1 ? "" : (url.slice(queryStart + 1).split("#", 1)[0] ?? "");
+    for (const query of [parsed.search.slice(1), configuredQuery]) {
+      for (const pair of query.split("&")) {
+        const separator = pair.indexOf("=");
+        if (separator !== -1) add(pair.slice(separator + 1));
+      }
     }
   }
   // Longest first, so a value that contains another is redacted whole.
