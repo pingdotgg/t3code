@@ -34,6 +34,8 @@ export const ServerProviderUsageLimits = Schema.Struct({
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  /** True: the account keeps working on credits after its windows run out. False: revoked since the last probe. */
+  continuesOnCredits: Schema.optional(Schema.Boolean),
   externalUsage: Schema.optional(
     Schema.Struct({
       label: TrimmedNonEmptyString,
@@ -52,6 +54,8 @@ export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 /** Partial updates merge windows by id; omitted windows remain unchanged. */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
+  /** False revokes the probe's credit grant; only a probe can grant it. */
+  continuesOnCredits: Schema.optional(Schema.Literal(false)),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 
