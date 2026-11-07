@@ -674,6 +674,7 @@ type ClaimFilter = Omit<Parameters<EffectOutbox.EffectOutboxV2Shape["claimNext"]
 
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
+  /** Keep the caller's scope open until overdue executions settle, or use drain to await them. */
   readonly runOnce: (input?: {
     readonly maxRunningTitleGenerations?: number;
   }) => Effect.Effect<boolean, OrchestrationEffectWorkerError, Scope.Scope>;
