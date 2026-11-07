@@ -175,6 +175,9 @@ it("reanchors the comment when the cited source mounts after activation", async 
   const viewport = document.createElement("div");
   viewport.dataset.assistantCitationViewport = "";
   const source = document.createElement("p");
+  source.style.position = "fixed";
+  source.style.left = "500px";
+  source.style.top = "300px";
   source.dataset.assistantCitationSource = citation.messageId;
   source.dataset.assistantCitationEnvironment = citation.environmentId;
   source.dataset.assistantCitationThread = citation.threadId;
@@ -187,6 +190,14 @@ it("reanchors the comment when the cited source mounts after activation", async 
     const highlight = CSS.highlights.get("t3-assistant-citation-comment");
     expect(highlight?.size).toBe(1);
     expect(highlight && [...highlight][0]?.startContainer.parentElement).toBe(source);
+    const popup = page.getByRole("dialog").element().getBoundingClientRect();
+    const sourceRect = source.getBoundingClientRect();
+    const chipRect = screen
+      .getByRole("link", { name: "View cited assistant text: hello" })
+      .element()
+      .getBoundingClientRect();
+    const distance = (rect: DOMRect) => Math.hypot(popup.left - rect.left, popup.top - rect.bottom);
+    expect(distance(sourceRect)).toBeLessThan(distance(chipRect));
   });
 });
 
