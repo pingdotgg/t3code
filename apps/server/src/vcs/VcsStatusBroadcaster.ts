@@ -217,7 +217,11 @@ export class VcsStatusBroadcaster extends Context.Service<
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly refreshStatus: (
       cwd: string,
-      options?: { readonly localOnly?: boolean },
+      options?: {
+        readonly localOnly?: boolean;
+        /** For a caller that just ran `refreshLocalStatus`; local is still re-read after the fetch. */
+        readonly skipLocalRefresh?: boolean;
+      },
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly refreshPullRequestStatus: (
       cwd: string,
@@ -511,9 +515,9 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    const previous = options?.localOnly ? yield* getCachedStatus(cwd) : null;
-    const local = yield* refreshLocalStatusCore(cwd);
     if (options?.localOnly) {
+      const previous = yield* getCachedStatus(cwd);
+      const local = yield* refreshLocalStatusCore(cwd);
       return yield* withRemoteWriteLock(
         cwd,
         Effect.gen(function* () {
@@ -530,6 +534,7 @@ export const make = Effect.gen(function* () {
         }),
       );
     }
+    if (!options?.skipLocalRefresh) yield* refreshLocalStatusCore(cwd);
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
