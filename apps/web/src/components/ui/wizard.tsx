@@ -15,9 +15,7 @@ export function WizardPopup({
 }) {
   return (
     <DialogPopup {...props} className={size === "wide" ? "max-w-3xl" : "max-w-xl"}>
-      <ScrollArea className="*:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4">
-        <div className="flex min-h-0 flex-col">{children}</div>
-      </ScrollArea>
+      {children}
     </DialogPopup>
   );
 }
@@ -34,7 +32,7 @@ export function WizardHeader({
   readonly children?: ReactNode;
 }) {
   return (
-    <DialogHeader>
+    <DialogHeader className="shrink-0">
       <DialogTitle className={identity ? "sr-only" : undefined}>{title}</DialogTitle>
       {identity}
       {description ? <DialogDescription>{description}</DialogDescription> : null}
@@ -51,7 +49,7 @@ export function WizardFooter({
   readonly leading?: ReactNode;
 }) {
   return (
-    <DialogFooter variant="bare" className={leading ? "sm:justify-between" : undefined}>
+    <DialogFooter variant="bare" className={cn("shrink-0", leading && "sm:justify-between")}>
       {leading}
       {leading ? (
         <div className="flex flex-col-reverse gap-2 sm:flex-row">{children}</div>
@@ -142,14 +140,16 @@ export function WizardPanel({
   readonly className?: string;
 }) {
   return (
-    <div
-      data-slot="dialog-panel"
-      className={cn(
-        "min-w-0 space-y-4 bg-background/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
-        className,
-      )}
-    >
-      <AnimatedHeight holdHeight={holdHeight}>{children}</AnimatedHeight>
-    </div>
+    <ScrollArea>
+      <div
+        data-slot="dialog-panel"
+        className={cn(
+          "min-w-0 space-y-4 border-y border-black/5 bg-background/80 px-6 py-5 dark:border-white/5 dark:bg-white/2",
+          className,
+        )}
+      >
+        <AnimatedHeight holdHeight={holdHeight}>{children}</AnimatedHeight>
+      </div>
+    </ScrollArea>
   );
 }
