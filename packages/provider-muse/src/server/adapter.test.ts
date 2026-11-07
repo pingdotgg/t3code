@@ -190,6 +190,7 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params });
       }),
+    takeNextCall: Queue.take(requests),
     takeCall: Effect.fnUntraced(function* (method: string) {
       while (true) {
         const call = yield* Queue.take(requests);
@@ -640,13 +641,17 @@ describe("MuseAdapterV2", () => {
           turnId: first.nativeId,
           blockingAgents: ["goal-reminder", "verify-reminder"],
         });
-        yield* fake.emit("session/contextUsage", { usedTokens: 2 });
+        yield* fake.emit("session/contextUsage", { usedTokens: 2, windowTokens: 64000 });
         yield* harness.takeEvent(
           "provider_thread.updated",
           (event) => event.providerThread.contextUsage?.usedTokens === 2,
         );
         const completed = harness.allEvents.find((event) => event.type === "turn.terminal");
         assert.strictEqual(completed?.status, "completed");
+        assert.isTrue(
+          harness.allEvents.filter((event) => event.type === "provider_turn.updated").at(-1)
+            ?.providerTurn.usagePending,
+        );
         assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
         assert.isTrue(
           harness.allEvents.some(
@@ -660,12 +665,32 @@ describe("MuseAdapterV2", () => {
         assert.strictEqual(fake.closeCount(), 0);
 
         yield* fake.emit("session/tokenUsage", { turnId: first.nativeId, promptTokens: 5, usage });
-        yield* fake.emit("session/contextUsage", { usedTokens: 2 });
+        yield* fake.emit("session/contextUsage", { usedTokens: 2, windowTokens: 64000 });
         yield* harness.takeEvent(
           "provider_thread.updated",
           (event) => event.providerThread.contextUsage?.usedTokens === 2,
         );
         const next = yield* startConversation(harness, fake, 2);
+        yield* fake.emit("turn/foregroundCompleted", {
+          turnId: first.nativeId,
+          blockingAgents: [],
+        });
+        yield* fake.emit("item/completed", {
+          turnId: first.nativeId,
+          item: {
+            itemId: "late-reminder",
+            turnId: first.nativeId,
+            kind: "agentMessage",
+            status: "completed",
+            revision: 1,
+            text: "Reminder done",
+          },
+        });
+        yield* harness.takeEvent(
+          "turn_item.updated",
+          (event) =>
+            event.turnItem.type === "assistant_message" && event.turnItem.text === "Reminder done",
+        );
         yield* fake.emit("session/tokenUsage", { turnId: first.nativeId, promptTokens: 7, usage });
         assert.strictEqual(
           fake.calls.filter((call) => call.method === "turn/start").at(-1)?.params.ifBusy,
@@ -691,6 +716,8 @@ describe("MuseAdapterV2", () => {
           assert.strictEqual(settled?.providerTurn.turnTokenUsage?.outputTokens, 4);
           assert.strictEqual(settled?.providerTurn.turnTokenUsage?.inputTokens, 15);
           assert.strictEqual(settled?.providerTurn.tokenUsage?.usedTokens, 2);
+          assert.strictEqual(settled?.providerTurn.tokenUsage?.maxTokens, 64000);
+          assert.isUndefined(settled?.providerTurn.usagePending);
           if (terminal === "failed")
             assert.isTrue(
               harness.allEvents.some(
@@ -713,6 +740,95 @@ describe("MuseAdapterV2", () => {
         );
         assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect.each([
+    "queued",
+    "started-before-ack",
+    "starts-during-unqueue",
+    "launch-before-notification",
+  ] as const)("cancels a foreground follow-up that is %s", (admission) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const first = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/foregroundCompleted", {
+        turnId: first.nativeId,
+        blockingAgents: ["goal-reminder"],
+      });
+      yield* harness.takeEvent("turn.terminal");
+      const ack = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("turn/start", ack.promise);
+      const start = yield* harness.runtime
+        .startTurn(yield* turnInput(harness.providerThread, 2))
+        .pipe(Effect.forkChild);
+      const call = yield* fake.takeCall("turn/start");
+      const next = yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.ordinal === 2,
+      );
+      if (admission === "started-before-ack") {
+        yield* fake.emit("turn/started", { turnId: call.commandId });
+        yield* fake.emit("session/contextUsage", { usedTokens: 12 });
+        yield* harness.takeEvent(
+          "provider_thread.updated",
+          (event) => event.providerThread.contextUsage?.usedTokens === 12,
+        );
+      }
+      const reclaim = pendingPromise<Record<string, unknown>>();
+      if (admission === "starts-during-unqueue" || admission === "launch-before-notification")
+        fake.queueResponse("turn/unqueue", reclaim.promise);
+      const stopping = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: next.providerTurn.id,
+        })
+        .pipe(Effect.forkChild);
+      ack.resolve({ turnId: call.commandId, disposition: "queued" });
+      yield* Fiber.join(start);
+      const stoppedCall = yield* fake.takeNextCall;
+      assert.equal(
+        stoppedCall.method,
+        admission === "started-before-ack" ? "turn/interrupt" : "turn/unqueue",
+      );
+      assert.equal(stoppedCall.params.turnId, call.commandId);
+      if (admission === "starts-during-unqueue" || admission === "launch-before-notification") {
+        if (admission === "starts-during-unqueue") {
+          yield* fake.emit("turn/started", { turnId: call.commandId });
+          yield* fake.emit("session/contextUsage", { usedTokens: 13 });
+          yield* harness.takeEvent(
+            "provider_thread.updated",
+            (event) => event.providerThread.contextUsage?.usedTokens === 13,
+          );
+        }
+        reclaim.reject(
+          new MspError({
+            code: -32030,
+            message: "Turn already launched",
+            data: { kind: "commandRejected" },
+          }),
+        );
+        const interrupted = yield* fake.takeCall("turn/interrupt");
+        assert.equal(interrupted.params.turnId, call.commandId);
+      }
+      yield* fake.emit(admission === "queued" ? "turn/unqueued" : "turn/completed", {
+        turnId: call.commandId,
+        terminal: "cancelled",
+      });
+      yield* Fiber.join(stopping);
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.equal(terminal.status, "interrupted");
+      assert.equal(terminal.providerTurnId, next.providerTurn.id);
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+      assert.isFalse(
+        fake.calls.some(
+          (entry) => entry.method === "turn/interrupt" && entry.params.turnId === first.nativeId,
+        ),
+      );
+      yield* fake.emit("turn/completed", { turnId: first.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("background_work.updated", (event) => !event.pending);
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>

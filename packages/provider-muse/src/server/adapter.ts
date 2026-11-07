@@ -220,6 +220,7 @@ interface ActiveTurn {
   nextOrdinal: number;
   flushScheduled: boolean;
   interruptRequested: boolean;
+  admission: "starting" | "queued" | "started";
   compact: boolean;
 }
 
@@ -957,6 +958,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         disposition: "reusable" | "broken" = "reusable",
         quota?: { readonly resetsAtMs: number },
       ) {
+        const foreground = active === turn && settlingTurns.get(turn.nativeId) === turn;
         const background = active !== turn && settlingTurns.get(turn.nativeId) === turn;
         if (!background && (active !== turn || seenTerminals.has(turn.nativeId))) return;
         if (background) settlingTurns.delete(turn.nativeId);
@@ -977,8 +979,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         for (const entry of pending.values())
           if (entry.request.providerTurnId === turn.providerTurn.id)
             yield* resolvePending(entry, "cancelled");
+        const { usagePending: _usagePending, ...settledTurn } = turn.providerTurn;
         turn.providerTurn = {
-          ...turn.providerTurn,
+          ...settledTurn,
+          ...(foreground ? { usagePending: true as const } : {}),
           ...(background && lastProviderTurn?.id === turn.providerTurn.id
             ? { tokenUsage: lastProviderTurn.tokenUsage }
             : {}),
@@ -1386,7 +1390,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           method === "turn/started" &&
           typeof params.turnId === "string" &&
           params.turnId !== active?.nativeId &&
-          params.turnId !== wake?.nativeId
+          params.turnId !== wake?.nativeId &&
+          !settlingTurns.has(params.turnId)
         ) {
           if (active && !active.compact) active.joined.add(params.turnId);
           else if (!active && !wake) {
@@ -1416,11 +1421,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             return;
           }
         }
-        const turn =
-          ((method === "turn/completed" || method === "session/tokenUsage") &&
-          typeof params.turnId === "string"
-            ? settlingTurns.get(params.turnId)
-            : undefined) ?? active;
+        const ownerTurnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
+        const turn = (ownerTurnId ? settlingTurns.get(ownerTurnId) : undefined) ?? active;
         if (!turn) return;
         if (typeof params.turnId === "string" && !owns(turn, params.turnId) && !turn.compact)
           return;
@@ -1483,7 +1485,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             break;
           }
           case "turn/foregroundCompleted": {
-            if (turn.compact) return;
+            if (turn.compact || active !== turn) return;
             const result = yield* decode(MuseTurnForegroundCompleted, params);
             if (result.turnId !== turn.nativeId) return;
             // Foreground completion ends the visible run; reminders still own the native turn.
@@ -1497,6 +1499,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             yield* finish(turn, "completed");
             break;
           }
+          case "turn/started":
+            if (params.turnId === turn.nativeId) turn.admission = "started";
+            break;
+          case "turn/unqueued":
+            if (params.turnId === turn.nativeId)
+              yield* finish(turn, turn.interruptRequested ? "interrupted" : "cancelled");
+            break;
           case "turn/completed": {
             if (turn.compact) return;
             const result = yield* decode(MuseTurnCompleted, params);
@@ -1554,7 +1563,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 ? {
                     tokenUsage: {
                       ...turn.providerTurn.tokenUsage,
-                      usedTokens: contextUsage.usedTokens,
+                      ...contextUsage,
                       inputTokens: usage.usage.inputTokens,
                       outputTokens: usage.usage.outputTokens,
                       cachedInputTokens: usage.usage.cacheReadTokens ?? usage.usage.cachedTokens,
@@ -2087,6 +2096,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
           flushScheduled: false,
           interruptRequested: false,
+          admission: compact || continuation ? "started" : "starting",
           compact,
         };
         yield* Effect.gen(function* () {
@@ -2155,6 +2165,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               );
               return yield* protocolError("Muse admitted the turn under an unexpected identity");
             }
+            yield* eventPermit.withPermits(1)(
+              Effect.sync(() => {
+                // turn/started may arrive before the admission response.
+                if (turn.admission !== "started")
+                  turn.admission = result.disposition === "queued" ? "queued" : "started";
+              }),
+            );
           }
         }).pipe(
           Effect.onError((cause) => {
@@ -2331,10 +2348,25 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               );
               return;
             }
-            // Muse runs a joined turn first, so Stop must end it too.
-            for (const joined of turn.joined)
-              yield* request("turn/interrupt", { turnId: joined }).pipe(Effect.ignore);
-            yield* request("turn/interrupt", { turnId: turn.nativeId });
+            if (turn.admission === "queued") {
+              yield* request("turn/unqueue", { turnId: turn.nativeId }).pipe(
+                Effect.catch((error) => {
+                  // An unqueue loses to launch; interrupt only this exact turn, never its predecessor.
+                  if (active !== turn) return Effect.void;
+                  if (
+                    turn.admission === "started" ||
+                    (error.payload instanceof MspError && error.payload.kind === "commandRejected")
+                  )
+                    return request("turn/interrupt", { turnId: turn.nativeId }).pipe(Effect.asVoid);
+                  return Effect.fail(error);
+                }),
+              );
+            } else {
+              // Muse runs a joined turn first, so Stop must end it too.
+              for (const joined of turn.joined)
+                yield* request("turn/interrupt", { turnId: joined }).pipe(Effect.ignore);
+              yield* request("turn/interrupt", { turnId: turn.nativeId });
+            }
             yield* Deferred.await(turn.done).pipe(
               Effect.timeout(options.requestTimeoutMs ?? 30_000),
               Effect.mapError((cause) => protocolError("Muse did not confirm interruption", cause)),
