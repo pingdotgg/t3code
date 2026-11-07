@@ -211,7 +211,7 @@ describe("CLIProxyAPI built-in management API", () => {
           accounts: accounts.map((account) => ({ ...account, provider: "claude" })),
           upstream: () =>
             limited
-              ? { status, body: {}, headers: { "Retry-After": ["600"] } }
+              ? { status, body: {}, headers: { "Retry-After": ["420"] } }
               : { status: 200, body: { five_hour: { utilization: 25, resets_at: null } } },
         });
         const api = yield* test.api;
@@ -238,11 +238,26 @@ describe("CLIProxyAPI built-in management API", () => {
           "probeFailed",
           "probeFailed",
         ]);
+        expect(stale.map((account) => account.usageLimits.refreshAfter)).toEqual([
+          720_000, 720_000,
+        ]);
         yield* TestClock.adjust("5 minutes");
-        yield* api.readAccounts(config, ["claudeAgent"]);
+        const cooling = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(cooling.map((account) => account.usageLimits.refreshAfter)).toEqual([
+          720_000, 720_000,
+        ]);
         expect(
           test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
         ).toHaveLength(4);
+        limited = false;
+        yield* TestClock.adjust("2 minutes");
+        const recovered = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(recovered.map((account) => account.usageLimits.windows[0]?.usedPercent)).toEqual([
+          25, 25,
+        ]);
+        expect(
+          test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
+        ).toHaveLength(6);
       }),
   );
 

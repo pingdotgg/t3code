@@ -13,6 +13,7 @@ import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import * as MutableHashMap from "effect/MutableHashMap";
@@ -58,6 +59,12 @@ const ApiCallInput = Schema.Struct({
   url: Schema.String,
 });
 const decodeApiCallInput = Schema.decodeEffect(Schema.fromJsonString(ApiCallInput));
+const decodeCacheKey = Schema.decodeSync(Schema.fromJsonString(ApiCallInput));
+const encodeCooldownKey = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String])),
+);
+const cooldownKey = (hub: CliproxyHub, account: typeof AuthFile.Type) =>
+  encodeCooldownKey([hub.url, hub.managementKey, account.auth_index, account.id]);
 const CodexWindow = Schema.Struct({
   used_percent: Schema.Number,
   reset_at: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -194,6 +201,7 @@ const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(fun
 
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
+  const clock = yield* Clock.Clock;
   const digest = yield* Digest.Digest;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
@@ -238,12 +246,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     url: string,
     data?: unknown,
   ) {
-    const accountKey = yield* encodeJson([
-      hub.url,
-      hub.managementKey,
-      account.auth_index,
-      account.id,
-    ]);
+    const accountKey = cooldownKey(hub, account);
     const now = yield* Clock.currentTimeMillis;
     if (data === undefined && now < (cooldowns.get(accountKey) ?? 0))
       return yield* new UsageLimitSourceError({
@@ -323,7 +326,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
           Effect.map(DateTime.now, (now) => ({ body, checkedAt: DateTime.formatIso(now) })),
         ),
       ),
-    { capacity: 128, timeToLive: () => Duration.minutes(5) },
+    {
+      capacity: 128,
+      timeToLive: (exit, key) => {
+        if (Exit.isFailure(exit)) {
+          const { hub, account } = decodeCacheKey(key);
+          const retryAt = cooldowns.get(cooldownKey(hub, account));
+          const now = clock.currentTimeMillisUnsafe();
+          if (retryAt !== undefined && retryAt > now) return Duration.millis(retryAt - now);
+        }
+        return Duration.minutes(5);
+      },
+    },
   );
   const apiCall = Effect.fn("CliproxyApi.cachedApiCall")(function* (
     hub: CliproxyHub,
