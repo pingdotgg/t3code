@@ -972,6 +972,57 @@ describe("pooled account columns", () => {
     expect(accounts).toEqual(snapshot);
   });
 
+  it("treats OpenCode Go session and weekly quota as spent while the monthly quota is", () => {
+    const go = (key: string, rolling: number, weeklyUsed: number, monthly: number) => ({
+      ...account(key, [
+        { ...window, id: "go_rolling", usedPercent: rolling },
+        { ...weekly, id: "go_weekly", usedPercent: weeklyUsed },
+        {
+          ...window,
+          id: "go_monthly",
+          kind: "monthly",
+          usedPercent: monthly,
+          windowDurationMins: undefined,
+          resetsAt: "2026-09-20T12:00:00.000Z",
+        },
+      ]),
+      driver: ProviderDriverKind.make("opencode"),
+    });
+    const [pool] = collectLimitPools([go("a", 1, 24, 20), go("b", 0, 0, 100)], now);
+    expect
+      .soft(pool!.windows.map((row) => row.columns[1]?.window?.usedPercent))
+      .toEqual([100, 100, 100]);
+    expect(pool!.windows.map((row) => row.remainingPercent)).toEqual([50, 38, 40]);
+  });
+
+  it("holds an OpenCode Go session spent until the last spent longer quota resets", () => {
+    const monthlyReset = "2026-09-20T12:00:00.000Z";
+    const weeklyLater = "2026-09-25T12:00:00.000Z";
+    const go = (key: string, monthlyUsed: number, weeklyReset = "2026-09-05T12:00:00.000Z") => ({
+      ...account(key, [
+        { ...window, id: "go_rolling", usedPercent: 0 },
+        { ...weekly, id: "go_weekly", usedPercent: 100, resetsAt: weeklyReset },
+        {
+          ...window,
+          id: "go_monthly",
+          kind: "monthly",
+          usedPercent: monthlyUsed,
+          windowDurationMins: undefined,
+          resetsAt: monthlyReset,
+        },
+      ]),
+      driver: ProviderDriverKind.make("opencode"),
+    });
+    const sessions = [go("weekly", 40), go("both", 100), go("weekly-later", 100, weeklyLater)].map(
+      (account) => collectLimitPools([account], now)[0]!.windows[0]!,
+    );
+    expect.soft(sessions.map((session) => session.remainingPercent)).toEqual([0, 0, 0]);
+    expect(sessions.slice(1).map((session) => session.resets[0]?.at)).toEqual([
+      Date.parse(monthlyReset),
+      Date.parse(weeklyLater),
+    ]);
+  });
+
   it("keeps session columns across rows with opposite reset and usage orders", () => {
     const accounts = [
       account("a", [

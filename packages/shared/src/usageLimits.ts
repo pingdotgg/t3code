@@ -511,45 +511,66 @@ function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWi
   return driver === "codex" ? window.kind : `${window.kind}:${window.id}`;
 }
 
-function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, now: number) {
-  const spentWeekly =
-    reported.kind === "session"
-      ? account.limits.windows.find(
-          (window) =>
-            window.usedPercent >= 100 &&
-            (account.driver === "claudeAgent"
-              ? window.id === "seven_day"
-              : account.driver === "codex" && window.kind === "weekly"),
-        )
-      : undefined;
-  if (!spentWeekly) return { account, window: reported, refillPercent: reported.usedPercent };
+// A spent blocker window leaves no usable quota in the windows it blocks.
+const BLOCKS = new Map<
+  string,
+  (blocker: ServerProviderUsageWindow, reported: ServerProviderUsageWindow) => boolean
+>([
+  ["claudeAgent", (blocker, reported) => reported.kind === "session" && blocker.id === "seven_day"],
+  ["codex", (blocker, reported) => reported.kind === "session" && blocker.kind === "weekly"],
+  [
+    "opencode",
+    (blocker, reported) =>
+      blocker.id === "go_monthly"
+        ? reported.id === "go_rolling" || reported.id === "go_weekly"
+        : blocker.id === "go_weekly" && reported.id === "go_rolling",
+  ],
+]);
 
-  const weeklyReset = resetMillis(spentWeekly);
-  const sessionReset = resetMillis(reported);
+function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, now: number) {
+  const blocks = BLOCKS.get(account.driver);
+  // With several spent blockers, quota returns only when the last of them resets.
+  const blocker = blocks
+    ? account.limits.windows
+        .filter((window) => window.usedPercent >= 100 && blocks(window, reported))
+        .reduce<ServerProviderUsageWindow | undefined>(
+          (latest, window) =>
+            latest &&
+            (resetMillis(latest) ?? Number.POSITIVE_INFINITY) >=
+              (resetMillis(window) ?? Number.POSITIVE_INFINITY)
+              ? latest
+              : window,
+          undefined,
+        )
+    : undefined;
+  if (!blocker) return { account, window: reported, refillPercent: reported.usedPercent };
+
+  const blockerReset = resetMillis(blocker);
+  const reportedReset = resetMillis(reported);
   const cutoff = Math.max(now, Date.parse(account.limits.checkedAt));
   let resetsAt: string | undefined;
   let refillPercent = 0;
   // A stale or missing clock cannot tell us when blocked quota becomes usable.
   if (
-    weeklyReset !== null &&
-    sessionReset !== null &&
-    weeklyReset > cutoff &&
-    sessionReset > cutoff
+    blockerReset !== null &&
+    reportedReset !== null &&
+    blockerReset > cutoff &&
+    reportedReset > cutoff
   ) {
-    if (sessionReset <= weeklyReset) {
-      resetsAt = spentWeekly.resetsAt;
+    if (reportedReset <= blockerReset) {
+      resetsAt = blocker.resetsAt;
       refillPercent = 100;
     } else if (reported.usedPercent >= 100) {
       resetsAt = reported.resetsAt;
       refillPercent = 100;
     } else {
-      resetsAt = spentWeekly.resetsAt;
+      resetsAt = blocker.resetsAt;
       refillPercent = 100 - Math.max(0, Math.min(100, reported.usedPercent));
     }
   }
   return {
     account,
-    // Suppression is not session spending, so it has no session pace clock.
+    // Suppression is not spending in the reported window, so it has no pace clock.
     window: { ...reported, usedPercent: 100, resetsAt, windowDurationMins: undefined },
     refillPercent,
   };
