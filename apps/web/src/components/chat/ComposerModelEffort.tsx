@@ -204,7 +204,7 @@ function ColumnRow(props: {
     disabled: props.disabled,
     "data-effort-row": true,
     // Focus lands on a level after a model pick.
-    "data-effort-level": true,
+    "data-effort-level": props.label,
     // Up and Down move between rows.
     tabIndex: props.tabStop ? 0 : -1,
     className: COLUMN_ROW,
@@ -235,15 +235,28 @@ function ColumnRow(props: {
 }
 
 function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const arrow = event.key === "ArrowDown" || event.key === "ArrowUp";
+  if (
+    !arrow &&
+    (event.key.length !== 1 ||
+      event.key.trim() === "" ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.metaKey ||
+      event.nativeEvent.isComposing)
+  )
+    return;
   // An option's side menu is a React child here, but it moves through its own items.
   if (!event.currentTarget.contains(event.target as Node)) return;
   const rows = Array.from(
     event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-effort-row]:not(:disabled)"),
   );
   const index = rows.findIndex((row) => row === document.activeElement);
-  const next =
-    rows[Math.min(rows.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))];
+  const next = arrow
+    ? rows[Math.min(rows.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))]
+    : [...rows.slice(index + 1), ...rows.slice(0, index + 1)].find((row) =>
+        row.dataset.effortLevel?.toLowerCase().startsWith(event.key.toLowerCase()),
+      );
   if (!next) return;
   event.preventDefault();
   event.stopPropagation();
