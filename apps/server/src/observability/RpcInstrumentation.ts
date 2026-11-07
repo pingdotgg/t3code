@@ -151,6 +151,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeProjectClones]: "source-control",
   [WS_METHODS.projectsListEntries]: "workspace",
   [WS_METHODS.projectsListIgnoredFiles]: "workspace",
+  [WS_METHODS.projectsInspectCheckout]: "workspace",
   [WS_METHODS.projectsReadFile]: "workspace",
   [WS_METHODS.projectsSearchContents]: "workspace",
   [WS_METHODS.projectsSearchEntries]: "workspace",

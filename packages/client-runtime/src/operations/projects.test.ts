@@ -11,6 +11,7 @@ import {
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
+  planAddProject,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
@@ -166,5 +167,132 @@ describe("add project shared logic", () => {
     expect(findExistingAddProject({ projects, environmentId: env, path: "/repo" })?.id).toBe(
       "project",
     );
+  });
+});
+
+describe("planAddProject", () => {
+  const environmentId = EnvironmentId.make("environment");
+  const project = (id: string, workspaceRoot: string, inEnvironment = environmentId) =>
+    ({
+      id: ProjectId.make(id),
+      environmentId: inEnvironment,
+      title: id,
+      workspaceRoot,
+    }) as EnvironmentProject;
+  const checkout = (
+    overrides: Partial<{ selectedPath: string; rootProjectId: ProjectId }> = {},
+  ) => ({
+    selectedPath: "/work/repo",
+    root: "/work/repo",
+    rootProjectId: null,
+    branch: "main",
+    isLinkedWorktree: false,
+    ...overrides,
+  });
+
+  it("adds the folder as asked when the host could not inspect it", () => {
+    expect(planAddProject({ inspection: null, projects: [], environmentId })).toEqual({
+      kind: "add",
+    });
+  });
+
+  it("adds a folder outside any checkout without asking", () => {
+    expect(
+      planAddProject({
+        inspection: { projectId: null, checkout: null },
+        projects: [],
+        environmentId,
+      }),
+    ).toEqual({ kind: "add" });
+  });
+
+  it("opens the project already at this folder, even outside a checkout", () => {
+    const existing = project("existing", "/alias/folder");
+
+    expect(
+      planAddProject({
+        inspection: { projectId: existing.id, checkout: null },
+        projects: [existing],
+        environmentId,
+      }),
+    ).toEqual({ kind: "open", project: existing });
+  });
+
+  it("ignores a project with the same id on another environment", () => {
+    const elsewhere = project("existing", "/folder", EnvironmentId.make("elsewhere"));
+
+    expect(
+      planAddProject({
+        inspection: { projectId: elsewhere.id, checkout: null },
+        projects: [elsewhere],
+        environmentId,
+      }),
+    ).toEqual({ kind: "add" });
+  });
+
+  it("confirms a checkout at its root with one choice", () => {
+    const plan = planAddProject({
+      inspection: { projectId: null, checkout: checkout() },
+      projects: [],
+      environmentId,
+    });
+
+    expect(plan).toEqual({
+      kind: "confirm",
+      confirmation: {
+        title: "repo",
+        description: "main · Main checkout",
+        choices: [{ kind: "add", title: "Add project", workspaceRoot: "/work/repo" }],
+      },
+    });
+  });
+
+  it("names a linked worktree and a detached HEAD", () => {
+    const plan = planAddProject({
+      inspection: {
+        projectId: null,
+        checkout: { ...checkout(), branch: null, isLinkedWorktree: true },
+      },
+      projects: [],
+      environmentId,
+    });
+
+    expect(plan.kind === "confirm" && plan.confirmation.description).toBe(
+      "Detached HEAD · Linked worktree",
+    );
+  });
+
+  it("offers a nested folder's repository root first, and still the folder itself", () => {
+    const plan = planAddProject({
+      inspection: {
+        projectId: null,
+        checkout: checkout({ selectedPath: "/work/repo/apps/web" }),
+      },
+      projects: [],
+      environmentId,
+    });
+
+    expect(plan.kind === "confirm" && plan.confirmation.choices).toEqual([
+      { kind: "add", title: "Add repository root", workspaceRoot: "/work/repo" },
+      { kind: "add", title: "Add selected folder", workspaceRoot: "/work/repo/apps/web" },
+    ]);
+  });
+
+  it("offers to open the project that already holds a nested folder's root", () => {
+    const rootProject = project("repo", "/alias/repo");
+
+    const plan = planAddProject({
+      inspection: {
+        projectId: null,
+        checkout: checkout({ selectedPath: "/work/repo/apps/web", rootProjectId: rootProject.id }),
+      },
+      projects: [rootProject],
+      environmentId,
+    });
+
+    expect(plan.kind === "confirm" && plan.confirmation.choices).toEqual([
+      { kind: "open", title: "Open repo", workspaceRoot: "/alias/repo", project: rootProject },
+      { kind: "add", title: "Add selected folder", workspaceRoot: "/work/repo/apps/web" },
+    ]);
   });
 });

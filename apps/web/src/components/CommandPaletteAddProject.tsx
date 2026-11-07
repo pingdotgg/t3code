@@ -149,23 +149,48 @@ export function NewProjectSummary(props: {
   );
 }
 
-export function RemoteRepositorySummary(props: {
-  readonly source: AddProjectRemoteSource;
+function SelectionSummary(props: {
+  readonly label: string;
+  readonly icon: ReactNode;
   readonly title: string;
   readonly description: string;
 }) {
   return (
     <div className="shrink-0 p-2 pb-0">
-      <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Repository</div>
+      <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">{props.label}</div>
       <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
-        <CommandPaletteTitleIcon>
-          {remoteProjectSourceIcon(props.source, ITEM_ICON_CLASS)}
-        </CommandPaletteTitleIcon>
+        <CommandPaletteTitleIcon>{props.icon}</CommandPaletteTitleIcon>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-foreground text-sm">{props.title}</span>
           <span className="truncate text-muted-foreground/85 text-xs">{props.description}</span>
         </span>
       </div>
     </div>
+  );
+}
+
+export function CheckoutSummary(props: { readonly title: string; readonly description: string }) {
+  return (
+    <SelectionSummary
+      label="Checkout"
+      icon={<FolderGit2Icon className={ITEM_ICON_CLASS} />}
+      title={props.title}
+      description={props.description}
+    />
+  );
+}
+
+export function RemoteRepositorySummary(props: {
+  readonly source: AddProjectRemoteSource;
+  readonly title: string;
+  readonly description: string;
+}) {
+  return (
+    <SelectionSummary
+      label="Repository"
+      icon={remoteProjectSourceIcon(props.source, ITEM_ICON_CLASS)}
+      title={props.title}
+      description={props.description}
+    />
   );
 }

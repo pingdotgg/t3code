@@ -242,6 +242,8 @@ import {
   ProjectListEntriesError,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
+  ProjectCheckoutInspection,
+  ProjectInspectCheckoutInput,
   ProjectListIgnoredFilesInput,
   ProjectListIgnoredFilesResult,
   ProjectReadFileError,
@@ -410,6 +412,7 @@ import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
+  projectsInspectCheckout: "projects.inspectCheckout",
   projectsReadFile: "projects.readFile",
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
@@ -1332,6 +1335,12 @@ const WsProjectsListIgnoredFilesRpc = Rpc.make(WS_METHODS.projectsListIgnoredFil
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsInspectCheckoutRpc = Rpc.make(WS_METHODS.projectsInspectCheckout, {
+  payload: ProjectInspectCheckoutInput,
+  success: ProjectCheckoutInspection,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
@@ -2126,6 +2135,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeProjectClonesRpc,
   WsProjectsListEntriesRpc,
   WsProjectsListIgnoredFilesRpc,
+  WsProjectsInspectCheckoutRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,

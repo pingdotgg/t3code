@@ -20,6 +20,7 @@ const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
+const PROJECT_INSPECT_CHECKOUT_PATH_MAX_LENGTH = 512;
 
 export const ProjectScriptIcon = Schema.Literals([
   "play",
@@ -184,6 +185,31 @@ export const ProjectCreatePayload = Schema.Struct({
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
+
+export const ProjectInspectCheckoutInput = Schema.Struct({
+  // Absolute host path, including ~/; clients must anchor relative paths.
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_INSPECT_CHECKOUT_PATH_MAX_LENGTH)),
+});
+export type ProjectInspectCheckoutInput = typeof ProjectInspectCheckoutInput.Type;
+
+export const ProjectCheckoutInspection = Schema.Struct({
+  /** The project already at this folder, also when it is registered through a symlink. */
+  projectId: Schema.NullOr(ProjectId),
+  /** Null outside a Git working tree, and whenever Git could not answer. */
+  checkout: Schema.NullOr(
+    Schema.Struct({
+      /** The requested folder as `project.create` would record it. */
+      selectedPath: TrimmedNonEmptyString,
+      /** Equals `selectedPath` unless that folder is nested inside the working tree. */
+      root: TrimmedNonEmptyString,
+      rootProjectId: Schema.NullOr(ProjectId),
+      /** Null on a detached HEAD. */
+      branch: Schema.NullOr(TrimmedNonEmptyString),
+      isLinkedWorktree: Schema.Boolean,
+    }),
+  ),
+});
+export type ProjectCheckoutInspection = typeof ProjectCheckoutInspection.Type;
 
 export const ProjectUpdatePayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),

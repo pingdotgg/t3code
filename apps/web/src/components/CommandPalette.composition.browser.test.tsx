@@ -7,6 +7,14 @@ import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
+const addProject = vi.hoisted(() => ({
+  inspection: undefined as unknown,
+  createdRoots: [] as string[],
+  createGate: Promise.resolve(),
+  projects: [] as ReadonlyArray<unknown>,
+  openedProjectIds: [] as string[],
+}));
+
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
   useAtomValue: (atom: unknown) =>
@@ -24,7 +32,10 @@ vi.mock("../hooks/useSettings", async (original) => ({
   useUpdateEnvironmentSettings: () => () => undefined,
 }));
 vi.mock("../hooks/useScratchProject", () => ({
-  useScratchProject: () => ({ scratchEnvironmentId: () => null }),
+  useScratchProject: () => ({
+    scratchEnvironmentId: () => null,
+    scratchWorkspaceRootFor: () => null,
+  }),
 }));
 vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => async () => undefined }));
 vi.mock("../hooks/useHandleNewThread", () => ({
@@ -32,17 +43,28 @@ vi.mock("../hooks/useHandleNewThread", () => ({
     activeDraftThread: null,
     activeThread: null,
     defaultProjectRef: null,
-    handleNewThread: async () => undefined,
+    handleNewThread: async (ref: { readonly projectId: string }) => {
+      addProject.openedProjectIds.push(ref.projectId);
+    },
   }),
   useNewThreadHandler: () => async () => undefined,
 }));
 vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestUrl: () => null }));
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
 vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: () => async () => ({ _tag: "Success", value: undefined }),
+  useAtomCommand: () => async (args?: { input?: { workspaceRoot?: string } }) => {
+    if (args?.input?.workspaceRoot !== undefined) {
+      addProject.createdRoots.push(args.input.workspaceRoot);
+      await addProject.createGate;
+    }
+    return { _tag: "Success", value: undefined };
+  },
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
+  useAtomQueryRunner: () => async (args?: { input?: { path?: string } }) => ({
+    _tag: "Success",
+    value: args?.input?.path === undefined ? undefined : addProject.inspection,
+  }),
 }));
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),
@@ -54,7 +76,10 @@ vi.mock("../state/environments", async (original) => ({
         connection: { phase: "connected" },
         entry: { target: { _tag: "PrimaryConnectionTarget" } },
         serverConfig: {
-          environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
+          environment: {
+            platform: { os: "linux" },
+            capabilities: { projectCloneTracking: true, projectCheckoutInspection: true },
+          },
           settings: { addProjectBaseDirectory: "/workspace/" },
         },
       },
@@ -65,7 +90,7 @@ vi.mock("../state/environments", async (original) => ({
 }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
-  useProjects: () => [],
+  useProjects: () => addProject.projects,
   useThreadShells: () => [],
   useVisibleThreadShells: () => [],
   useHiddenThreadKeys: () => new Set(),
@@ -146,4 +171,76 @@ it("keeps the caret in place when an edit briefly makes the folder path not a pa
   await expect.element(input()).toHaveValue("/workspace/project");
   await userEvent.keyboard("w");
   await expect.element(input()).toHaveValue("/wworkspace/project");
+});
+
+describe("add-project checkout choice", () => {
+  async function showChoices(input: {
+    readonly rootProjectId: string | null;
+    readonly projects: typeof addProject.projects;
+  }) {
+    let finishCreate = () => {};
+    addProject.createGate = new Promise((resolve) => {
+      finishCreate = resolve;
+    });
+    addProject.createdRoots = [];
+    addProject.openedProjectIds = [];
+    addProject.projects = input.projects;
+    addProject.inspection = {
+      projectId: null,
+      checkout: {
+        selectedPath: "/workspace/repo/apps",
+        root: "/workspace/repo",
+        rootProjectId: input.rootProjectId,
+        branch: "main",
+        isLinkedWorktree: false,
+      },
+    };
+    const screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    await page.getByRole("combobox").fill("/workspace/repo/apps");
+    await userEvent.keyboard("{Enter}");
+    return {
+      finishCreate: () => act(() => finishCreate()),
+      async [Symbol.asyncDispose]() {
+        await screen[Symbol.asyncDispose]();
+        addProject.inspection = undefined;
+        addProject.createGate = Promise.resolve();
+        addProject.projects = [];
+      },
+    };
+  }
+
+  it("sends one create when chosen again while the first is pending", async () => {
+    await using choices = await showChoices({ rootProjectId: null, projects: [] });
+
+    const addRoot = page.getByText("Add repository root", { exact: true });
+    await addRoot.click();
+    await addRoot.click();
+    await choices.finishCreate();
+
+    expect(addProject.createdRoots).toEqual(["/workspace/repo"]);
+  });
+
+  it("does not open the root project while an add is pending", async () => {
+    await using choices = await showChoices({
+      rootProjectId: "root-project",
+      projects: [
+        {
+          id: "root-project",
+          environmentId: "local",
+          title: "Root",
+          workspaceRoot: "/workspace/repo",
+          archivedAt: null,
+        },
+      ],
+    });
+
+    await page.getByText("Add selected folder", { exact: true }).click();
+    await page.getByText("Open Root", { exact: true }).click();
+    await choices.finishCreate();
+
+    expect(addProject.createdRoots).toEqual(["/workspace/repo/apps"]);
+    expect(addProject.openedProjectIds).not.toContain("root-project");
+  });
 });

@@ -31,6 +31,9 @@ import {
   resolveAddProjectPath,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
+  planAddProject,
+  type AddProjectCheckoutConfirmation,
+  type AddProjectPlan,
 } from "@t3tools/client-runtime/operations/projects";
 import {
   connectionStatusText,
@@ -114,6 +117,7 @@ interface EnvironmentOption {
   readonly machine: EnvironmentMachineKind;
   readonly baseDirectory: string | null;
   readonly newProjectsRoot: string | null;
+  readonly canInspectCheckout: boolean;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
@@ -409,6 +413,7 @@ function useEnvironmentOptions(
         machine: resolveEnvironmentMachineKind(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
         newProjectsRoot: config?.newProjectsRoot ?? null,
+        canInspectCheckout: config?.environment.capabilities.projectCheckoutInspection === true,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
         connectionErrorTraceId: runtime?.connectionErrorTraceId ?? null,
@@ -628,7 +633,7 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
               title="Local folder"
               subtitle={
                 canCreateProject
-                  ? "Browse a folder on disk"
+                  ? "Browse to a folder or existing checkout"
                   : "This connection cannot add projects."
               }
               icon={
@@ -730,7 +735,11 @@ function useCreateProject(environment: EnvironmentOption | null) {
   });
   const projects = useProjects();
 
-  return async (workspaceRoot: string, originRoute = getActiveRoute(navigation)) => {
+  return async (
+    workspaceRoot: string,
+    originRoute = getActiveRoute(navigation),
+    createWorkspaceRootIfMissing = true,
+  ) => {
     if (
       !environment ||
       !canCreateProjectInEnvironment(environment.connectionState) ||
@@ -778,6 +787,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
       commandId: CommandId.make(uuidv4()),
       projectId,
       workspaceRoot,
+      createWorkspaceRootIfMissing,
     });
     const result = await createProject({
       environmentId: environment.environmentId,
@@ -1302,13 +1312,33 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     AuthOrchestrationOperateScope,
   );
   const createProject = useCreateProject(environment);
+  const navigation = useNavigation();
+  const projects = useProjects();
+  // Advisory: when this fails the folder is added as it always was.
+  const inspectCheckout = useAtomQueryRunner(projectEnvironment.inspectCheckout, {
+    reportFailure: false,
+    reportDefect: false,
+    refresh: true,
+  });
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
     useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingCheckout, setPendingCheckout] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly confirmation: AddProjectCheckoutConfirmation;
+  } | null>(null);
+  const environmentId = environment?.environmentId;
+  const confirmation =
+    pendingCheckout !== null && pendingCheckout.environmentId === environmentId
+      ? pendingCheckout.confirmation
+      : null;
 
+  // State lags a render behind, so a double tap could send a second create,
+  // which the server would reject as a conflict with the first.
+  const submittingRef = useRef(false);
   const submitPath = async () => {
-    if (!environment || isBrowseNavigating || isSubmitting) return;
+    if (!environment || isBrowseNavigating || submittingRef.current) return;
     setError(null);
     const resolved = resolveAddProjectPath({
       rawPath: pathInput,
@@ -1320,18 +1350,89 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
       return;
     }
 
+    const originRoute = getActiveRoute(navigation);
+    submittingRef.current = true;
     setIsSubmitting(true);
-    const result = await createProject(resolved.path);
+    let plan: AddProjectPlan = { kind: "add" };
+    if (environment.canInspectCheckout) {
+      const inspection = await inspectCheckout({
+        environmentId: environment.environmentId,
+        input: { path: resolved.path },
+      });
+      plan = planAddProject({
+        inspection: inspection._tag === "Success" ? inspection.value : null,
+        projects,
+        environmentId: environment.environmentId,
+      });
+    }
+    if (plan.kind === "confirm") {
+      setPendingCheckout({
+        environmentId: environment.environmentId,
+        confirmation: plan.confirmation,
+      });
+      submittingRef.current = false;
+      setIsSubmitting(false);
+      return;
+    }
+    const result = await createProject(
+      plan.kind === "open" ? plan.project.workspaceRoot : resolved.path,
+      originRoute,
+    );
     if (result && AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     }
+    submittingRef.current = false;
+    setIsSubmitting(false);
+  };
+
+  const submitCheckoutChoice = async (workspaceRoot: string) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setError(null);
+    setIsSubmitting(true);
+    // The folder was just seen on disk; if it has gone, say so rather than recreate it.
+    const result = await createProject(workspaceRoot, undefined, false);
+    if (result && AsyncResult.isFailure(result)) {
+      setError(errorMessage(Cause.squash(result.cause)));
+    }
+    submittingRef.current = false;
     setIsSubmitting(false);
   };
 
   return (
     <AddProjectShell title="Local folder">
       {error ? <ErrorBanner message={error} /> : null}
-      {environment ? (
+      {environment && confirmation ? (
+        <>
+          <View className="rounded-[24px] bg-grouped-card px-4 py-3">
+            <Text className="text-base font-t3-bold">{confirmation.title}</Text>
+            <Text className="mt-0.5 text-xs text-foreground-muted" numberOfLines={2}>
+              {confirmation.description}
+            </Text>
+          </View>
+          {confirmation.choices.map((choice, index) => (
+            <View key={choice.workspaceRoot} className="gap-1.5">
+              <Button
+                label={choice.title}
+                tone={index === 0 ? "primary" : "secondary"}
+                fullWidth
+                disabled={!canCreateProject || isSubmitting}
+                onPress={() => void submitCheckoutChoice(choice.workspaceRoot)}
+              />
+              <Text className="px-1 text-xs text-foreground-muted" numberOfLines={2}>
+                {choice.workspaceRoot}
+              </Text>
+            </View>
+          ))}
+          <Button
+            label="Choose another folder"
+            tone="text"
+            fullWidth
+            disabled={isSubmitting}
+            onPress={() => setPendingCheckout(null)}
+          />
+        </>
+      ) : environment ? (
         <>
           {!canCreateProject ? (
             <ErrorBanner message="This connection cannot add projects." />

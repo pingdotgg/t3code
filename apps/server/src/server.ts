@@ -127,6 +127,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as ProjectCheckoutInspector from "./project/ProjectCheckoutInspector.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -451,6 +452,12 @@ const layerProjectCloneTracker = ProjectCloneTracker.layer.pipe(
   Layer.provide(layerSourceControlRepositoryService),
 );
 
+const layerProjectCheckoutInspector = ProjectCheckoutInspector.layer.pipe(
+  Layer.provide(ProjectStore.layer),
+  Layer.provide(GitVcsDriver.layer),
+  Layer.provide(WorkspacePaths.layer),
+);
+
 const layerKnownWorkspaces = KnownWorkspaces.layer.pipe(
   Layer.provide(ProjectStore.layer),
   Layer.provide(GitVcsDriver.layer),
@@ -473,6 +480,7 @@ const layerVcs = Layer.empty.pipe(
     SourceControlSignIn.layer.pipe(Layer.provide(layerSourceControlProviderRegistry)),
   ),
   Layer.provideMerge(layerProjectCloneTracker),
+  Layer.provideMerge(layerProjectCheckoutInspector),
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
       Layer.provide(layerGitWorkflow),

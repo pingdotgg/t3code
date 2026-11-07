@@ -28,6 +28,9 @@ const state = vi.hoisted(() => ({
   startCloneResult: null as Promise<unknown> | null,
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
+  capabilities: {} as Record<string, unknown>,
+  inspectCheckout: vi.fn(),
+  createInputs: [] as Array<{ workspaceRoot: string; createWorkspaceRootIfMissing?: boolean }>,
   waitForProject: vi.fn(),
   dispatch: vi.fn(),
   alert: vi.fn(),
@@ -112,7 +115,7 @@ vi.mock("../../state/entities", () => ({
       [
         "environment",
         {
-          environment: { platform: { os: "linux" }, capabilities: {} },
+          environment: { platform: { os: "linux" }, capabilities: state.capabilities },
           newProjectsRoot: state.newProjectsRoot,
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
@@ -134,7 +137,10 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => () => {} }));
+vi.mock("../../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner: (family: unknown) =>
+    family === "inspect-checkout" ? state.inspectCheckout : () => {},
+}));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
@@ -152,8 +158,14 @@ vi.mock("../../state/sourceControl", () => ({
 }));
 vi.mock("../../state/projects", () => ({
   projectEnvironment: {
+    inspectCheckout: "inspect-checkout",
     createNew: () => state.createNewResult,
-    create: ({ input }: { input: { workspaceRoot: string } }) => {
+    create: ({
+      input,
+    }: {
+      input: { workspaceRoot: string; createWorkspaceRootIfMissing?: boolean };
+    }) => {
+      state.createInputs.push(input);
       if (!state.scopes.has(AuthOrchestrationOperateScope)) {
         return Promise.resolve(
           AsyncResult.failure(Cause.fail(new Error("Project creation denied"))),
@@ -754,5 +766,121 @@ describe("local folder path", () => {
     state.connectionStates = {};
     await screen.render();
     expect(screen.path).toBe("~/code/app");
+  });
+});
+
+describe("local folder checkout", () => {
+  const checkout = {
+    selectedPath: "/work/repo/apps/web",
+    root: "/work/repo",
+    rootProjectId: null,
+    branch: "main",
+    isLinkedWorktree: false,
+  };
+
+  function mountFlow(
+    inspection: unknown,
+    capabilities: Record<string, unknown> = { projectCheckoutInspection: true },
+  ) {
+    state.scopes = new Set([AuthOrchestrationOperateScope]);
+    state.baseDirectory = "/work/repo/apps/web";
+    state.capabilities = capabilities;
+    state.createInputs = [];
+    state.createResult = null;
+    state.existingProjects = [];
+    state.waitForProject.mockReset();
+    state.waitForProject.mockResolvedValue(null);
+    state.inspectCheckout.mockReset();
+    state.inspectCheckout.mockResolvedValue(inspection);
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    mountedRoots.push(root);
+    let screen: ReactNode;
+    function Observer() {
+      screen = AddProjectLocalFolderScreen({ environmentId: "environment" });
+      return null;
+    }
+    act(() => root.render(createElement(Observer)));
+    return {
+      action: (label: string) => findAction(screen, label),
+      press: (label: string) =>
+        act(async () => {
+          const action = findAction(screen, label);
+          if (!action) throw new Error(`${label} action missing`);
+          await action();
+        }),
+    };
+  }
+
+  afterEach(() => {
+    state.capabilities = {};
+    state.baseDirectory = "";
+    state.createInputs = [];
+  });
+
+  it("asks before adding, offers the repository root, and never creates the folder", async () => {
+    const flow = mountFlow(AsyncResult.success({ projectId: null, checkout }));
+
+    await flow.press("Add project");
+
+    expect(state.createInputs).toEqual([]);
+    expect(flow.action("Add selected folder")).not.toBeNull();
+
+    await flow.press("Add repository root");
+
+    expect(state.createInputs).toMatchObject([
+      { workspaceRoot: "/work/repo", createWorkspaceRootIfMissing: false },
+    ]);
+  });
+
+  it("sends one create when a checkout choice is tapped twice before rendering", async () => {
+    const flow = mountFlow(AsyncResult.success({ projectId: null, checkout }));
+    await flow.press("Add project");
+
+    const addRoot = flow.action("Add repository root");
+    await act(async () => {
+      await Promise.all([addRoot?.(), addRoot?.()]);
+    });
+
+    expect(state.createInputs).toHaveLength(1);
+  });
+
+  it("goes back to the folder browser from the confirmation", async () => {
+    const flow = mountFlow(AsyncResult.success({ projectId: null, checkout }));
+
+    await flow.press("Add project");
+    await flow.press("Choose another folder");
+
+    expect(flow.action("Add project")).not.toBeNull();
+    expect(state.createInputs).toEqual([]);
+  });
+
+  it("adds the folder directly when it is not a checkout", async () => {
+    const flow = mountFlow(AsyncResult.success({ projectId: null, checkout: null }));
+
+    await flow.press("Add project");
+
+    expect(state.createInputs).toMatchObject([
+      { workspaceRoot: "/work/repo/apps/web", createWorkspaceRootIfMissing: true },
+    ]);
+  });
+
+  it("still adds the folder when the inspection fails", async () => {
+    const flow = mountFlow(AsyncResult.failure(Cause.fail(new Error("offline"))));
+
+    await flow.press("Add project");
+
+    expect(state.createInputs).toMatchObject([{ workspaceRoot: "/work/repo/apps/web" }]);
+  });
+
+  it("does not ask a server without the capability", async () => {
+    const flow = mountFlow(AsyncResult.success({ projectId: null, checkout }), {});
+
+    await flow.press("Add project");
+
+    expect(state.inspectCheckout).not.toHaveBeenCalled();
+    expect(state.createInputs).toMatchObject([
+      { workspaceRoot: "/work/repo/apps/web", createWorkspaceRootIfMissing: true },
+    ]);
   });
 });

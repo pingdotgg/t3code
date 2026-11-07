@@ -133,6 +133,10 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsListIgnoredFiles,
       staleTimeMs: 15_000,
     }),
+    inspectCheckout: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:inspect-checkout",
+      tag: WS_METHODS.projectsInspectCheckout,
+    }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,

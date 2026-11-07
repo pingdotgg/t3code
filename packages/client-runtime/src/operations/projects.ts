@@ -2,6 +2,7 @@ import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import type {
   CommandId,
   EnvironmentId,
+  ProjectCheckoutInspection,
   ProjectMutation,
   ProjectId,
   ServerConfig,
@@ -334,6 +335,7 @@ export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
+  readonly createWorkspaceRootIfMissing?: boolean;
 }): Extract<ProjectMutation, { type: "project.create" }> {
   return {
     type: "project.create",
@@ -341,7 +343,88 @@ export function buildProjectCreateCommand(input: {
     projectId: input.projectId,
     title: inferProjectTitleFromPath(input.workspaceRoot),
     workspaceRoot: input.workspaceRoot,
-    createWorkspaceRootIfMissing: true,
+    createWorkspaceRootIfMissing: input.createWorkspaceRootIfMissing ?? true,
     defaultModelSelection: null,
+  };
+}
+
+type AddProjectCheckoutChoice =
+  | {
+      readonly kind: "add";
+      readonly title: string;
+      readonly workspaceRoot: string;
+    }
+  | {
+      readonly kind: "open";
+      readonly title: string;
+      readonly workspaceRoot: string;
+      readonly project: EnvironmentProject;
+    };
+
+export interface AddProjectCheckoutConfirmation {
+  readonly title: string;
+  readonly description: string;
+  /** The first choice is the one a confirmation accepts by default. */
+  readonly choices: ReadonlyArray<AddProjectCheckoutChoice>;
+}
+
+export type AddProjectPlan =
+  /** Outside a Git checkout, and wherever the host could not say: add the folder as asked. */
+  | { readonly kind: "add" }
+  | { readonly kind: "open"; readonly project: EnvironmentProject }
+  | { readonly kind: "confirm"; readonly confirmation: AddProjectCheckoutConfirmation };
+
+/** `inspection` is null where the host cannot inspect a checkout, or the request failed. */
+export function planAddProject(input: {
+  readonly inspection: ProjectCheckoutInspection | null;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly environmentId: EnvironmentId;
+}): AddProjectPlan {
+  const projectById = (projectId: ProjectId | null | undefined) =>
+    input.projects.find(
+      (project) => project.environmentId === input.environmentId && project.id === projectId,
+    ) ?? null;
+
+  const selectedProject = projectById(input.inspection?.projectId);
+  if (selectedProject !== null) return { kind: "open", project: selectedProject };
+
+  const checkout = input.inspection?.checkout ?? null;
+  if (checkout === null) return { kind: "add" };
+
+  const isNested = checkout.root !== checkout.selectedPath;
+  const rootProject = isNested ? projectById(checkout.rootProjectId) : null;
+  const rootChoice: AddProjectCheckoutChoice =
+    rootProject !== null
+      ? {
+          kind: "open",
+          title: `Open ${rootProject.title}`,
+          workspaceRoot: rootProject.workspaceRoot,
+          project: rootProject,
+        }
+      : {
+          kind: "add",
+          title: isNested ? "Add repository root" : "Add project",
+          workspaceRoot: checkout.root,
+        };
+
+  return {
+    kind: "confirm",
+    confirmation: {
+      title: inferProjectTitleFromPath(checkout.root),
+      description: [
+        checkout.branch ?? "Detached HEAD",
+        checkout.isLinkedWorktree ? "Linked worktree" : "Main checkout",
+      ].join(" · "),
+      choices: isNested
+        ? [
+            rootChoice,
+            {
+              kind: "add",
+              title: "Add selected folder",
+              workspaceRoot: checkout.selectedPath,
+            },
+          ]
+        : [rootChoice],
+    },
   };
 }
