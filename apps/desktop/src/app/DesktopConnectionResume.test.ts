@@ -8,7 +8,7 @@ import { SYSTEM_RESUME_CHANNEL } from "../ipc/channels.ts";
 import { listen } from "./DesktopConnectionResume.ts";
 
 describe("desktop connection resume", () => {
-  it.effect("notifies renderers on repeated OS wakes without revealing a window", () =>
+  it.effect("notifies renderers on every OS wake, even after a failed broadcast", () =>
     Effect.gen(function* () {
       const registered = yield* Deferred.make<void>();
       const firstWake = yield* Deferred.make<void>();
@@ -50,7 +50,11 @@ describe("desktop connection resume", () => {
           }).pipe(
             Effect.andThen(
               Effect.suspend(() =>
-                Deferred.succeed(channels.length === 1 ? firstWake : secondWake, undefined),
+                channels.length === 1
+                  ? Deferred.succeed(firstWake, undefined).pipe(
+                      Effect.andThen(Effect.die("window closed mid-send")),
+                    )
+                  : Deferred.succeed(secondWake, undefined),
               ),
             ),
             Effect.asVoid,
