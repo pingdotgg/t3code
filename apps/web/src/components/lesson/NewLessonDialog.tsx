@@ -2,12 +2,12 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   ThreadId,
-  type ModelSelection,
-  type ProviderInteractionMode,
-  type RuntimeMode,
+  ModelSelection,
   type ScopedProjectRef,
   supportsLessonProjects,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { createModelSelection } from "@t3tools/shared/model";
 import { create } from "zustand";
 import { useId, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -36,19 +36,56 @@ import { Textarea } from "../ui/textarea";
 import { useProject, useServerConfigs } from "../../state/entities";
 import { useEnvironmentProviders } from "../../state/environments";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { resolveProjectDefaultProviderModelSelection } from "../../providerInstances";
+import {
+  type ProviderInstanceEntry,
+  providerInstanceEntriesFor,
+  resolveProjectDefaultProviderModelSelection,
+} from "../../providerInstances";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
+import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "../settings/settingsLayout";
 import { randomUUID } from "../../lib/utils";
 
 type Request = {
   projectRef: ScopedProjectRef;
-  modelSelection?: ModelSelection;
-  runtimeMode?: RuntimeMode;
-  interactionMode?: ProviderInteractionMode;
   source?: { threadId: string; excerpt: string };
 };
 const useLessonDialog = create<{ request: Request | null }>(() => ({ request: null }));
 export function openNewLesson(request: Request) {
   useLessonDialog.setState({ request });
+}
+
+const LESSON_MODEL = "claude-sonnet-5-5";
+const LESSON_MODEL_SCHEMA = Schema.NullOr(ModelSelection);
+
+function lessonModelSelection(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  remembered: ModelSelection | null,
+  fallback: ModelSelection | null,
+): ModelSelection | null {
+  const offers = (entry: ProviderInstanceEntry, model: string) =>
+    entry.enabled &&
+    entry.isAvailable &&
+    entry.status !== "error" &&
+    entry.models.some((candidate) => candidate.slug === model);
+  if (
+    remembered &&
+    entries.some(
+      (entry) => entry.instanceId === remembered.instanceId && offers(entry, remembered.model),
+    )
+  ) {
+    return remembered;
+  }
+  const preferred =
+    entries.find(
+      (entry) => entry.instanceId === "claude-public-pool" && offers(entry, LESSON_MODEL),
+    ) ?? entries.find((entry) => entry.driverKind === "claudeAgent" && offers(entry, LESSON_MODEL));
+  return preferred
+    ? createModelSelection(preferred.instanceId, LESSON_MODEL, [{ id: "effort", value: "high" }])
+    : fallback;
 }
 
 const depthOptions = [
@@ -87,19 +124,41 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
   const lessonProjectsSupported =
     serverConfig !== undefined && supportsLessonProjects(serverConfig.environment);
   const providers = useEnvironmentProviders().get(request.projectRef.environmentId) ?? [];
+  const [rememberedModel, setRememberedModel] = useLocalStorage(
+    `ominax:lesson-model:${request.projectRef.environmentId}`,
+    null,
+    LESSON_MODEL_SCHEMA,
+  );
   const projectSettings = resolveProjectSettings(
     serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
     request.projectRef.projectId,
     project ?? undefined,
   ).settings;
-  const modelSelection =
-    request.modelSelection ??
+  const pickerSettings = useEnvironmentSettings(request.projectRef.environmentId, (value) => value);
+  const pickerEntries = providerInstanceEntriesFor(
+    providers,
+    pickerSettings,
+    request.projectRef.projectId,
+  );
+  const modelSelection = lessonModelSelection(
+    pickerEntries,
+    rememberedModel,
     projectSettings.defaultModelSelection ??
-    resolveProjectDefaultProviderModelSelection(
-      providers,
-      serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-      request.projectRef.projectId,
-    );
+      resolveProjectDefaultProviderModelSelection(
+        providers,
+        serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+        request.projectRef.projectId,
+      ),
+  );
+  const active = modelSelection
+    ? pickerEntries.find((entry) => entry.instanceId === modelSelection.instanceId)
+    : undefined;
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    pickerSettings,
+    providers,
+    modelSelection?.instanceId,
+    modelSelection?.model,
+  );
   const submit = async () => {
     const trimmed = topic.trim();
     if (!trimmed || modelSelection === null || pending) return;
@@ -122,8 +181,12 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
             : {}),
         },
         modelSelection,
-        runtimeMode: request.runtimeMode ?? projectSettings.defaultRuntimeMode,
-        interactionMode: request.interactionMode ?? "default",
+        // Lessons rarely need to write, so never above Auto, and never above the user's own default.
+        runtimeMode:
+          projectSettings.defaultRuntimeMode === "full-access"
+            ? "auto"
+            : projectSettings.defaultRuntimeMode,
+        interactionMode: "default",
       },
     });
     setPending(false);
@@ -185,6 +248,44 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
                   rows={4}
                 />
               </div>
+              {modelSelection && active ? (
+                <div className="flex flex-col gap-2">
+                  <span className="text-sm font-medium">Model</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <ProviderModelPicker
+                      environmentId={request.projectRef.environmentId}
+                      activeInstanceId={modelSelection.instanceId}
+                      model={modelSelection.model}
+                      lockedProvider={null}
+                      instanceEntries={pickerEntries}
+                      modelOptionsByInstance={modelOptionsByInstance}
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      triggerAriaLabel="Lesson model"
+                      onInstanceModelChange={(instanceId, model) =>
+                        setRememberedModel(createModelSelection(instanceId, model))
+                      }
+                    />
+                    <TraitsPicker
+                      provider={active.driverKind}
+                      models={active.models}
+                      model={modelSelection.model}
+                      modelOptions={modelSelection.options ?? []}
+                      allowPromptInjectedEffort={false}
+                      planModeEnabled={false}
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      onModelOptionsChange={(options) =>
+                        setRememberedModel(
+                          createModelSelection(
+                            modelSelection.instanceId,
+                            modelSelection.model,
+                            options,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
+                </div>
+              ) : null}
               <ChoiceGroup
                 label="How deep?"
                 value={depth}

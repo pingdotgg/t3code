@@ -1011,9 +1011,6 @@ export default function ChatView(props: ChatViewProps) {
         environmentId: activeThreadRef.environmentId,
         projectId: activeThread.projectId,
       },
-      modelSelection: activeThread.modelSelection,
-      runtimeMode: activeThread.runtimeMode,
-      interactionMode: activeThread.interactionMode,
       source: { threadId: activeThread.id, excerpt: citation.text },
     });
     return true;
