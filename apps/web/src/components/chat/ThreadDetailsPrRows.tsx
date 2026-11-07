@@ -28,7 +28,11 @@ function ThreadDetailsPrLinkRow({
   onOpen,
   onActed,
   onStopWatching,
+  currentThread,
+  handoffDisabled,
 }: {
+  currentThread?: ComponentProps<typeof ThreadDetailsPrRow>["currentThread"];
+  handoffDisabled?: boolean | undefined;
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
@@ -48,6 +52,8 @@ function ThreadDetailsPrLinkRow({
   const pr = linked?.pr ?? null;
   return (
     <ThreadDetailsPrRow
+      handoffDisabled={handoffDisabled}
+      currentThread={currentThread}
       environmentId={environmentId}
       pr={pr}
       number={link.number}
@@ -108,6 +114,8 @@ export function ThreadDetailsPrRows({
           {rest.map((link) => (
             <ThreadDetailsPrLinkRow
               key={threadPullRequestKeyOf(link)}
+              handoffDisabled={row.handoffDisabled}
+              currentThread={row.currentThread}
               environmentId={row.environmentId}
               link={link}
               onOpen={(event) => onOpenLink(event, link.url)}
