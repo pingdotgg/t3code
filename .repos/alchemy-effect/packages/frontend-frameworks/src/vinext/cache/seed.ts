@@ -13,20 +13,12 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import * as nodePath from "node:path";
-import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import {
-  buildVinextPrerenderKVPairs,
-  type VinextPrerenderKVPair,
-} from "../PrerenderCache.ts";
+import { buildVinextPrerenderKVPairs, type VinextPrerenderKVPair } from "../PrerenderCache.ts";
 import type { DataCacheStore } from "./handler.ts";
 
 export interface SeedSink<E = never, R = never> {
-  readonly putText: (
-    key: string,
-    value: string,
-    ttlMs?: number,
-  ) => Effect.Effect<unknown, E, R>;
+  readonly putText: (key: string, value: string, ttlMs?: number) => Effect.Effect<unknown, E, R>;
 }
 
 export type LoadedPrerenderPairs = {
@@ -48,11 +40,7 @@ const resolveVinextRoot = (cwd: string): string | undefined => {
 const resolveServerDir = (cwd: string): string | undefined => {
   const fromEnv = process.env.VINEXT_SERVER_DIR;
   if (typeof fromEnv === "string" && fromEnv.length > 0) return fromEnv;
-  const candidates = [
-    nodePath.join(cwd, "dist", "server"),
-    nodePath.join(cwd, "server"),
-    cwd,
-  ];
+  const candidates = [nodePath.join(cwd, "dist", "server"), nodePath.join(cwd, "server"), cwd];
   for (const dir of candidates) {
     if (existsSync(nodePath.join(dir, "vinext-prerender.json"))) return dir;
   }
@@ -64,9 +52,7 @@ const ttlMsOf = (pair: VinextPrerenderKVPair): number | undefined =>
     ? pair.expirationTtl * 1000
     : undefined;
 
-export const loadPrerenderPairs = async (
-  cwd: string,
-): Promise<LoadedPrerenderPairs> => {
+export const loadPrerenderPairs = async (cwd: string): Promise<LoadedPrerenderPairs> => {
   const vinextRoot = resolveVinextRoot(cwd);
   const serverDir = resolveServerDir(cwd);
   if (vinextRoot === undefined || serverDir === undefined) {
@@ -79,16 +65,10 @@ export const loadPrerenderPairs = async (
 export const seedPrerenderTo = <E, R>(
   sink: SeedSink<E, R>,
   options: { readonly rootDir: string; readonly label: string },
-): Effect.Effect<
-  { readonly count: number; readonly routeCount: number },
-  E,
-  R
-> =>
+): Effect.Effect<{ readonly count: number; readonly routeCount: number }, E, R> =>
   Effect.gen(function* () {
-    const loaded = yield* Effect.promise(() =>
-      loadPrerenderPairs(options.rootDir),
-    );
-    for (const warning of loaded.warnings) yield* Console.warn(warning);
+    const loaded = yield* Effect.promise(() => loadPrerenderPairs(options.rootDir));
+    for (const warning of loaded.warnings) yield* Effect.logWarning(warning);
     if (loaded.pairs.length === 0) {
       return { count: 0, routeCount: loaded.routeCount };
     }
@@ -97,12 +77,10 @@ export const seedPrerenderTo = <E, R>(
       (pair) => sink.putText(pair.key, pair.value, ttlMsOf(pair)),
       { concurrency: 8 },
     );
-    yield* Console.log(
+    yield* Effect.logInfo(
       `[vinext] seeded ${loaded.pairs.length} prerender cache ${
         loaded.pairs.length === 1 ? "entry" : "entries"
-      } into ${options.label} (${loaded.routeCount} route${
-        loaded.routeCount === 1 ? "" : "s"
-      })`,
+      } into ${options.label} (${loaded.routeCount} route${loaded.routeCount === 1 ? "" : "s"})`,
     );
     return { count: loaded.pairs.length, routeCount: loaded.routeCount };
   });

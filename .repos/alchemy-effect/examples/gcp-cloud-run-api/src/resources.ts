@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 
 /**
  * One Firestore document per short link, at `links/{code}`. Firestore is
