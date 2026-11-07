@@ -92,4 +92,91 @@ describe("mobile workspace projection", () => {
     expect(state.hasReadyEnvironment).toBe(false);
     expect(state.connectionState).toBe("reconnecting");
   });
+
+  it("reports why an incompatible host was switched off instead of calling it offline", () => {
+    const blocked = environment("unsupported");
+    const environments = [
+      projectWorkspaceEnvironment(ENVIRONMENT_ID, {
+        ...blocked,
+        entry: { ...blocked.entry, enabled: false },
+        connection: { ...blocked.connection, error: "Update T3 Code on the host to connect." },
+      }),
+    ];
+    const state = projectWorkspaceState({
+      isReady: true,
+      networkStatus: "online",
+      environments,
+      shellSummary: EMPTY_SHELL_SUMMARY,
+    });
+
+    expect(state.hasEnabledEnvironment).toBe(false);
+    expect(state.connectionState).toBe("unsupported");
+    expect(state.connectionError).toBe("Update T3 Code on the host to connect.");
+  });
+
+  it("keeps the detail with the environment whose state names the title", () => {
+    const blocked = environment("unsupported");
+    const environments = [
+      projectWorkspaceEnvironment(EnvironmentId.make("environment-failed"), environment("error")),
+      projectWorkspaceEnvironment(ENVIRONMENT_ID, {
+        ...blocked,
+        entry: { ...blocked.entry, enabled: false },
+        connection: { ...blocked.connection, error: "Update T3 Code on the host to connect." },
+      }),
+    ];
+    const state = projectWorkspaceState({
+      isReady: true,
+      networkStatus: "online",
+      environments,
+      shellSummary: EMPTY_SHELL_SUMMARY,
+    });
+
+    expect(state.connectionState).toBe("unsupported");
+    expect(state.connectionError).toBe("Update T3 Code on the host to connect.");
+  });
+
+  it("does not attach a switched-off host's reason to another environment's state", () => {
+    const blocked = environment("unsupported");
+    const environments = [
+      projectWorkspaceEnvironment(
+        EnvironmentId.make("environment-connecting"),
+        environment("connecting"),
+      ),
+      projectWorkspaceEnvironment(ENVIRONMENT_ID, {
+        ...blocked,
+        entry: { ...blocked.entry, enabled: false },
+        connection: { ...blocked.connection, error: "Update T3 Code on the host to connect." },
+      }),
+    ];
+    const state = projectWorkspaceState({
+      isReady: true,
+      networkStatus: "online",
+      environments,
+      shellSummary: EMPTY_SHELL_SUMMARY,
+    });
+
+    expect(state.connectionState).toBe("connecting");
+    expect(state.connectionError).toBeNull();
+  });
+
+  it("does not report environments the user switched off", () => {
+    const failed = environment("error");
+    const environments = [
+      projectWorkspaceEnvironment(ENVIRONMENT_ID, {
+        ...failed,
+        entry: { ...failed.entry, enabled: false },
+      }),
+    ];
+    const state = projectWorkspaceState({
+      isReady: true,
+      networkStatus: "online",
+      environments,
+      shellSummary: EMPTY_SHELL_SUMMARY,
+    });
+
+    expect(state.hasConnections).toBe(true);
+    expect(state.hasEnabledEnvironment).toBe(false);
+    expect(state.connectionState).toBe("available");
+    expect(state.connectionError).toBeNull();
+  });
 });
