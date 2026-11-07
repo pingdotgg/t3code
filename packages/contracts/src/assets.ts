@@ -81,6 +81,7 @@ export const AssetCreateUrlResult = Schema.Struct({
   sourcePath: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   ),
+  /** An image's pixel size, or a video's display frame, read from the file header. */
   imageDimensions: Schema.optional(AssetImageDimensions),
   /** Changes only when the file's contents or identity change, unlike `relativeUrl`, which is re-signed on every mint. */
   fileRevision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),

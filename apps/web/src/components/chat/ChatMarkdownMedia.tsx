@@ -286,6 +286,10 @@ export function ChatMarkdownVideo(props: {
   readonly actionsSource?: MediaActionSource | undefined;
   readonly onRetry?: (() => Promise<unknown>) | undefined;
 }) {
+  const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
+  const style =
+    props.style ??
+    (videoSize ? authoredImageSizeStyle(videoSize.width, videoSize.height) : undefined);
   return (
     <MediaVideoPlayer
       key={props.mediaIdentity ?? props.copyMarkdown ?? props.src}
@@ -293,7 +297,8 @@ export function ChatMarkdownVideo(props: {
       sourceFailed={props.sourceFailed}
       label={props.alt}
       originalUrl={props.originalUrl}
-      style={props.style}
+      style={style}
+      onVideoSize={setVideoSize}
       copyMarkdown={props.copyMarkdown}
       className={cn(
         CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
@@ -411,7 +416,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         originalUrl={props.originalUrl}
-        style={props.style}
+        style={style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
         onRetry={refreshAssetUrl}
         actionsSource={actionsSource}

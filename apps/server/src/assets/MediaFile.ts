@@ -7,6 +7,8 @@ import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { readVideoDimensions } from "./videoDimensions.ts";
+
 class MediaFileOpenError extends Schema.TaggedError<MediaFileOpenError>()("MediaFileOpenError", {
   path: Schema.String,
   cause: Schema.Defect(),
@@ -100,6 +102,17 @@ export const readMediaFileHeader = (filePath: string, file: OpenMediaFile, byteC
       const { bytesRead } = await file.handle.read(buffer, 0, byteCount, 0);
       return buffer.subarray(0, bytesRead);
     },
+    catch: (cause) => new MediaFileReadError({ path: filePath, cause }),
+  });
+
+export const readMediaFileVideoDimensions = (filePath: string, file: OpenMediaFile) =>
+  Effect.tryPromise({
+    try: () =>
+      readVideoDimensions(async (offset, length) => {
+        const buffer = new Uint8Array(length);
+        const { bytesRead } = await file.handle.read(buffer, 0, length, offset);
+        return buffer.subarray(0, bytesRead);
+      }, Number(file.info.size)),
     catch: (cause) => new MediaFileReadError({ path: filePath, cause }),
   });
 

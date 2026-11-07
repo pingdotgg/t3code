@@ -60,7 +60,12 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
-import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
+import {
+  openMediaFile,
+  readMediaFileHeader,
+  readMediaFileVideoDimensions,
+  type OpenMediaFile,
+} from "./MediaFile.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -329,19 +334,24 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
-const HEADER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+const HEADER_IMAGE_PATH = /\.(?:png|jpe?g|gif|webp)$/i;
 
-const readImageDimensionsFromOpenFile = (filePath: string, file: OpenMediaFile) =>
-  readMediaFileHeader(filePath, file, IMAGE_DIMENSIONS_HEADER_BYTES).pipe(
-    Effect.map(readImageDimensions),
-    Effect.orElseSucceed((): ImageDimensions | null => null),
-  );
+const hasHeaderDimensions = (filePath: string) =>
+  HEADER_IMAGE_PATH.test(filePath) || isWorkspaceVideoPreviewPath(filePath);
+
+const readMediaDimensionsFromOpenFile = (filePath: string, file: OpenMediaFile) =>
+  (isWorkspaceVideoPreviewPath(filePath)
+    ? readMediaFileVideoDimensions(filePath, file)
+    : readMediaFileHeader(filePath, file, IMAGE_DIMENSIONS_HEADER_BYTES).pipe(
+        Effect.map(readImageDimensions),
+      )
+  ).pipe(Effect.orElseSucceed((): ImageDimensions | null => null));
 
 // Non-blocking open prevents swapped-in FIFOs from hanging the request.
-const readImageDimensionsFromHeader = (filePath: string) =>
+const readMediaDimensionsFromHeader = (filePath: string) =>
   openMediaFile(filePath).pipe(
     Effect.flatMap((file) =>
-      file === null ? Effect.succeed(null) : readImageDimensionsFromOpenFile(filePath, file),
+      file === null ? Effect.succeed(null) : readMediaDimensionsFromOpenFile(filePath, file),
     ),
     Effect.scoped,
     Effect.orElseSucceed((): ImageDimensions | null => null),
@@ -392,14 +402,14 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
     if (!download && hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
     }
-    const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(path.extname(canonicalFile).toLowerCase());
+    const wantsDimensions = hasHeaderDimensions(canonicalFile);
     const opened = yield* openMediaFile(canonicalFile).pipe(
       Effect.flatMap((file) =>
         file === null
           ? Effect.succeed(null)
           : Effect.map(
               wantsDimensions
-                ? readImageDimensionsFromOpenFile(canonicalFile, file)
+                ? readMediaDimensionsFromOpenFile(canonicalFile, file)
                 : Effect.succeed(null),
               (dimensions) => ({
                 identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
@@ -501,10 +511,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           }),
       ),
     );
-    const imageDimensions = HEADER_IMAGE_EXTENSIONS.has(
-      path.extname(resolved.relativePath).toLowerCase(),
-    )
-      ? yield* readImageDimensionsFromHeader(canonicalFile)
+    const imageDimensions = hasHeaderDimensions(resolved.relativePath)
+      ? yield* readMediaDimensionsFromHeader(canonicalFile)
       : null;
     return {
       claims: !/\.html?$/i.test(resolved.relativePath)
@@ -661,7 +669,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           : undefined;
       if (!isGenericFile) {
         imageDimensions = yield* fileSystem.realPath(attachmentPath).pipe(
-          Effect.flatMap(readImageDimensionsFromHeader),
+          Effect.flatMap(readMediaDimensionsFromHeader),
           Effect.orElseSucceed(() => null),
         );
       }

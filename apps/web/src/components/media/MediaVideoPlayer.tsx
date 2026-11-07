@@ -26,6 +26,7 @@ interface MediaVideoPlayerProps {
   readonly copyMarkdown?: string | undefined;
   readonly onRetry?: (() => Promise<unknown>) | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
+  readonly onVideoSize?: ((size: { width: number; height: number }) => void) | undefined;
 }
 
 export function MediaVideoPlayer({
@@ -44,6 +45,7 @@ export function MediaVideoPlayer({
   copyMarkdown,
   onRetry,
   actionsSource,
+  onVideoSize,
 }: MediaVideoPlayerProps) {
   const [playbackSource, setPlaybackSource] = useState<{
     src: string;
@@ -174,6 +176,10 @@ export function MediaVideoPlayer({
           )}
           style={style}
           onLoadedMetadata={(event) => {
+            const { videoWidth, videoHeight } = event.currentTarget;
+            if (videoWidth > 0 && videoHeight > 0) {
+              onVideoSize?.({ width: videoWidth, height: videoHeight });
+            }
             prepareVideoFirstFrame(event.currentTarget);
             if (sourceRevision !== null) setPlaybackSource({ src, revision: sourceRevision });
           }}

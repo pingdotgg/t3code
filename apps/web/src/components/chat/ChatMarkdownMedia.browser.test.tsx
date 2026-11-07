@@ -2,8 +2,9 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
-import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
+import { act, render, stubGlobal } from "../../../test/render";
+import "../../index.css";
+import { ChatMarkdownAssetImage, ChatMarkdownVideo } from "./ChatMarkdownMedia";
 
 // Every evaluation of the URL query is one mint: the first read, then one per refresh.
 const assetQuery = vi.hoisted(() => ({ mints: 0 }));
@@ -82,5 +83,31 @@ describe("ChatMarkdownAssetImage", () => {
     await using screen = await render(<ChatMarkdownAssetImage {...image.props} />);
     await expect.element(screen.getByRole("img", { name: "diagram" })).toBeInTheDocument();
     expect(assetQuery.mints).toBe(2);
+  });
+});
+
+// Keeps preload="none" so the fake URL is never fetched; the test fires the metadata event.
+class HiddenIntersectionObserver {
+  observe() {}
+  disconnect() {}
+}
+
+describe("ChatMarkdownVideo", () => {
+  it("sizes a portrait video to its own shape within the height cap", async () => {
+    using _observer = stubGlobal("IntersectionObserver", HiddenIntersectionObserver);
+    await using screen = await render(
+      <ChatMarkdownVideo src="/asset/portrait.mp4" alt="portrait" copyMarkdown={undefined} />,
+    );
+    const video = screen.getByLabelText("portrait").element() as HTMLVideoElement;
+    Object.defineProperties(video, {
+      videoWidth: { value: 1080 },
+      videoHeight: { value: 1920 },
+    });
+    await act(() => {
+      video.dispatchEvent(new Event("loadedmetadata"));
+    });
+
+    const box = video.getBoundingClientRect();
+    expect({ width: box.width, height: box.height }).toEqual({ width: 270, height: 480 });
   });
 });
