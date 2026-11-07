@@ -54,10 +54,13 @@ const makeVoiceDownlink = Effect.fn("speech.makeVoiceDownlink")(function* (
     yield* tts.synthesize(text, voice).pipe(
       Stream.runForEach((pcm) =>
         Effect.gen(function* () {
-          for (let start = 0; start < pcm.length && seq > cutSeq; start += SPEECH_FRAME_SAMPLES)
+          for (let start = 0; start < pcm.length; start += SPEECH_FRAME_SAMPLES) {
+            // A cut lands between frames, even while this fiber is mid-sentence.
+            if (seq <= cutSeq) return;
             yield* write(
               encodeSpeechAudioFrame(seq, pcm.subarray(start, start + SPEECH_FRAME_SAMPLES)),
             );
+          }
         }),
       ),
     );
