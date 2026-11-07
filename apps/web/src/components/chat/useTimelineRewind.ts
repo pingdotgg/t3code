@@ -125,7 +125,11 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       return;
     }
     if (restoreFiles === undefined) {
-      openRevertConfirm(routeThreadKey, { turnCount, messageId });
+      openRevertConfirm(routeThreadKey, {
+        turnCount,
+        messageId,
+        canRestoreFiles: activeThread.worktreePath !== null,
+      });
       return;
     }
 

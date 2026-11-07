@@ -182,6 +182,8 @@ export function BranchRestoreConfirmHost(props: {
 interface PendingRevert {
   readonly turnCount: number;
   readonly messageId: MessageId;
+  // The server only restores files in a thread's own worktree.
+  readonly canRestoreFiles: boolean;
 }
 
 const revertConfirmAtom = makeThreadOverlayAtom<PendingRevert>("revert-confirm");
@@ -195,6 +197,7 @@ export function RevertConfirmHost(props: {
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
+  const canRestoreFiles = pending?.canRestoreFiles !== false;
   const confirm = (restoreFiles: boolean) => {
     if (pending === null) return;
     closeThreadOverlay(revertConfirmAtom);
@@ -211,16 +214,24 @@ export function RevertConfirmHost(props: {
         <AlertDialogHeader>
           <AlertDialogTitle>Edit from here?</AlertDialogTitle>
           <AlertDialogDescription>
-            Rewind chat to before this message. Your prompt and attachments return to the composer.
-            “Revert files too” also undoes your own edits.
+            Rewind chat to before this message. Your prompt and attachments return to the composer.{" "}
+            {canRestoreFiles
+              ? "“Revert files too” also undoes your own edits."
+              : "Files stay as they are because this thread works in the project folder, not its own worktree."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button variant="destructive-outline" onClick={() => confirm(true)}>
-            Revert files too
-          </Button>
-          <Button onClick={() => confirm(false)}>Revert and keep changes</Button>
+          {canRestoreFiles ? (
+            <>
+              <Button variant="destructive-outline" onClick={() => confirm(true)}>
+                Revert files too
+              </Button>
+              <Button onClick={() => confirm(false)}>Revert and keep changes</Button>
+            </>
+          ) : (
+            <Button onClick={() => confirm(false)}>Revert</Button>
+          )}
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
