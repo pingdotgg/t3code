@@ -920,6 +920,38 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-night-sparkle: var(--stage-night-line);
   }
 
+  html[data-theme-id]:not(
+      :is(
+        [data-theme-id="t3-chat"],
+        [data-theme-id="grove"],
+        [data-theme-id="ocean"],
+        [data-theme-id="ember"],
+        [data-theme-id="iris"]
+      )
+    ) {
+    --stage-art-top: color-mix(in oklab, var(--app-theme-accent) 65%, black);
+    --stage-art-mid: color-mix(in oklab, var(--app-theme-accent) 50%, black);
+    --stage-art-bottom: color-mix(in oklab, var(--app-theme-accent) 35%, black);
+    --stage-art-highlight: color-mix(in oklab, var(--app-theme-accent) 20%, white);
+    --stage-art-secondary: color-mix(in oklab, var(--app-theme-accent) 60%, white);
+    --stage-art-tertiary: var(--stage-art-secondary);
+    --stage-art-line: var(--stage-art-highlight);
+    --stage-art-celeste-highlight: var(--stage-art-highlight);
+    --stage-art-celeste-secondary: var(--stage-art-secondary);
+    --stage-art-violet-highlight: var(--stage-art-highlight);
+    --stage-art-grid-line: var(--stage-art-line);
+    --stage-night-top: color-mix(in oklab, var(--app-theme-accent) 35%, black);
+    --stage-night-mid: color-mix(in oklab, var(--app-theme-accent) 25%, black);
+    --stage-night-bottom: color-mix(in oklab, var(--app-theme-accent) 15%, black);
+    --stage-night-highlight: var(--stage-art-highlight);
+    --stage-night-secondary: var(--stage-art-secondary);
+    --stage-night-tertiary: var(--stage-art-tertiary);
+    --stage-night-line: var(--stage-art-line);
+    --stage-night-glow-highlight: var(--stage-night-highlight);
+    --stage-night-glow-secondary: var(--stage-night-secondary);
+    --stage-night-sparkle: var(--stage-night-line);
+  }
+
   @keyframes settings-search-target-pulse {
     0%,
     100% {
