@@ -18,6 +18,7 @@ import {
   decodePersistedLayoutState,
   findLayoutTabByContent,
   isLayoutTabInFocusedGroup,
+  keepLayoutTab,
   focusAdjacentLayoutTab,
   focusLayoutColumnEdge,
   focusLayoutDirection,
@@ -225,8 +226,14 @@ export function saveLayoutNow(): void {
   layoutDeferredStorage.flush();
 }
 
-/** Where the next new thread's route opens: a placement, or in place of a launcher tab. */
-export type LayoutNewTabRequest = LayoutOpenPlacement | { readonly replaceTabId: string };
+/**
+ * Where the next new thread's route opens: a placement, in place of a launcher tab, or as the
+ * ghost tab beside the chat of the thread it was opened from.
+ */
+export type LayoutNewTabRequest =
+  | LayoutOpenPlacement
+  | { readonly replaceTabId: string }
+  | { readonly ghostOf: ScopedThreadRef };
 
 type LayoutPersistedState = Pick<LayoutStoreState, "layout" | "companionShares">;
 
@@ -294,6 +301,8 @@ interface LayoutStoreState {
   focusChat: (target: ThreadRouteTarget) => void;
   openTab: (content: LayoutTabContent, options?: LayoutOpenOptions) => void;
   replaceTabContent: (tabId: string, content: LayoutTabContent) => void;
+  /** Make a ghost tab an ordinary one (see `LayoutTab.ghostOf`). */
+  keepTab: (tabId: string) => void;
   closeTab: (tabId: string) => void;
   closeTabsWhere: (predicate: (tab: LayoutTab) => boolean) => void;
   focusAdjacentTab: (delta: 1 | -1) => void;
@@ -464,6 +473,7 @@ export const useLayoutStore = create<LayoutStoreState>()(
         openTab: (content, options) => apply((layout) => openLayoutTab(layout, content, options)),
         replaceTabContent: (tabId, content) =>
           apply((layout) => replaceLayoutTabContent(layout, tabId, content)),
+        keepTab: (tabId) => apply((layout) => keepLayoutTab(layout, tabId)),
         closeTab: (tabId) => apply((layout) => closeLayoutTab(layout, tabId)),
         closeTabsWhere: (predicate) => apply((layout) => closeLayoutTabsWhere(layout, predicate)),
         focusAdjacentTab: (delta) => apply((layout) => focusAdjacentLayoutTab(layout, delta)),
