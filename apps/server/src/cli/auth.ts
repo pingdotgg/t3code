@@ -24,6 +24,7 @@ import {
   formatSessionList,
 } from "../cliAuthFormat.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import {
@@ -230,6 +231,15 @@ const sessionListCommand = Command.make("list", {
   ),
 );
 
+class OtherEnvironmentAtOriginError extends Schema.TaggedError<OtherEnvironmentAtOriginError>()(
+  "OtherEnvironmentAtOriginError",
+  { origin: Schema.String },
+) {
+  override get message(): string {
+    return `The server at ${this.origin} serves another T3 home.`;
+  }
+}
+
 const LIVE_SERVER_TIMEOUT = Duration.seconds(10);
 // Bounds how long the helper session outlives a CLI killed before it can revoke it.
 const LIVE_SERVER_SESSION_TTL = Duration.minutes(1);
@@ -243,27 +253,34 @@ const revokeSession = Effect.fn("auth.revokeSession")(function* (
   const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isSome(runtimeState) && isProcessAlive(runtimeState.value.pid)) {
     const origin = runtimeState.value.origin;
+    const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    const environmentId = yield* identity.getEnvironmentId;
     const attempted = yield* Effect.result(
-      Effect.acquireUseRelease(
-        environmentAuth.issueSession({
-          ttl: LIVE_SERVER_SESSION_TTL,
-          scopes: [AuthAccessWriteScope],
-          subject: "auth-cli",
-          label: "t3 auth cli",
-        }),
-        (issued) =>
-          HttpApiClient.make(EnvironmentHttpApi, { baseUrl: origin }).pipe(
-            Effect.flatMap((client) =>
-              client.auth.revokeClient({
-                headers: { authorization: `Bearer ${issued.token}` },
-                payload: { sessionId },
-              }),
-            ),
-            Effect.timeout(LIVE_SERVER_TIMEOUT),
+      Effect.gen(function* () {
+        const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl: origin });
+        // A reused PID can make a stale record look live; only this home's server gets a credential.
+        yield* client.metadata.descriptor().pipe(
+          Effect.filterOrFail(
+            (descriptor) => descriptor.environmentId === environmentId,
+            () => new OtherEnvironmentAtOriginError({ origin }),
           ),
-        (issued) =>
-          environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-      ),
+        );
+        return yield* Effect.acquireUseRelease(
+          environmentAuth.issueSession({
+            ttl: LIVE_SERVER_SESSION_TTL,
+            scopes: [AuthAccessWriteScope],
+            subject: "auth-cli",
+            label: "t3 auth cli",
+          }),
+          (issued) =>
+            client.auth.revokeClient({
+              headers: { authorization: `Bearer ${issued.token}` },
+              payload: { sessionId },
+            }),
+          (issued) =>
+            environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+        );
+      }).pipe(Effect.timeout(LIVE_SERVER_TIMEOUT)),
     );
     if (attempted._tag === "Success") {
       return attempted.success.revoked;

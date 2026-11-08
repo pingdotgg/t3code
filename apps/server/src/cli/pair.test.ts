@@ -10,6 +10,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthStandardClientScopes,
   EnvironmentHttpApi,
+  ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_VERSION,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
@@ -24,6 +25,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
@@ -39,6 +41,7 @@ import * as AuthHttp from "../auth/http.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import { cli } from "../binCli.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -113,14 +116,21 @@ const testDescriptor = {
   capabilities: { repositoryIdentity: true },
 };
 
+interface RecordedRequest {
+  readonly url: string | undefined;
+  readonly authorization: string | undefined;
+}
+
 const withDescriptorServer = <A, E, R>(
-  run: (origin: string) => Effect.Effect<A, E, R>,
+  run: (origin: string, requests: ReadonlyArray<RecordedRequest>) => Effect.Effect<A, E, R>,
   host = "127.0.0.1",
   descriptor: object = testDescriptor,
-) =>
-  Effect.acquireUseRelease(
+) => {
+  const requests: Array<RecordedRequest> = [];
+  return Effect.acquireUseRelease(
     Effect.callback<NodeHttp.Server>((resume) => {
       const server = NodeHttp.createServer((request, response) => {
+        requests.push({ url: request.url, authorization: request.headers.authorization });
         if (request.url === "/.well-known/t3/environment") {
           response.writeHead(200, { "content-type": "application/json" });
           response.end(JSON.stringify(descriptor));
@@ -136,10 +146,11 @@ const withDescriptorServer = <A, E, R>(
       if (address === null || typeof address === "string") {
         return Effect.die(new Error("Expected a TCP address"));
       }
-      return run(`http://${host === "::1" ? "[::1]" : host}:${String(address.port)}`);
+      return run(`http://${host === "::1" ? "[::1]" : host}:${String(address.port)}`, requests);
     },
     (server) => Effect.sync(() => server.close()),
   );
+};
 
 describe("t3 pair", () => {
   it.effect("publishes an IPv6-only server through Tailscale Serve when pairing", () =>
@@ -556,7 +567,24 @@ describe("auth scope options", () => {
   );
 });
 
-class AuthRoutesApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
+class AuthRoutesApi extends HttpApi.make("environment")
+  .add(EnvironmentHttpApi.groups.metadata)
+  .add(EnvironmentHttpApi.groups.auth) {}
+
+const decodeEnvironmentDescriptor = Schema.decodeUnknownEffect(ExecutionEnvironmentDescriptor);
+
+const layerHomeDescriptor = HttpApiBuilder.group(
+  AuthRoutesApi,
+  "metadata",
+  Effect.fnUntraced(function* (handlers) {
+    const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    const descriptor = yield* decodeEnvironmentDescriptor({
+      ...testDescriptor,
+      environmentId: yield* identity.getEnvironmentId,
+    });
+    return handlers.handle("descriptor", () => Effect.succeed(descriptor));
+  }),
+);
 
 // A separate store must receive the removal event; a database read alone cannot wake open sockets.
 const serveAuthRoutesWithWatchedSession = (baseDir: string) =>
@@ -565,6 +593,7 @@ const serveAuthRoutesWithWatchedSession = (baseDir: string) =>
     const services = yield* Layer.build(
       HttpRouter.serve(
         HttpApiBuilder.layer(AuthRoutesApi).pipe(
+          Layer.provide(layerHomeDescriptor),
           Layer.provide(AuthHttp.layer),
           Layer.provide(AuthHttp.layerAuthenticatedAuth),
         ),
@@ -601,6 +630,40 @@ const serveAuthRoutesWithWatchedSession = (baseDir: string) =>
     });
     return { config, session, removed, persistRunningServer };
   });
+
+// The recorded server process is alive, but no server for this T3 home answers at its origin.
+const expectDatabaseOnlyRevoke = (origin: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-auth-revoke-local-test-" });
+    const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
+    yield* persistServerRuntimeState({
+      path: config.serverRuntimeStatePath,
+      state: { ...baseState, pid: process.pid, origin },
+    });
+
+    const issued = JSON.parse(
+      yield* captureStdout(runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"])),
+    ) as { readonly sessionId: string };
+
+    const stderr = yield* provideCliTestLayers(
+      Effect.gen(function* () {
+        yield* runCli(["auth", "session", "revoke", issued.sessionId, "--base-dir", baseDir]);
+        return yield* TestConsole.errorLines;
+      }),
+    );
+    const listed = JSON.parse(
+      yield* captureStdout(runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"])),
+    ) as ReadonlyArray<{ readonly sessionId: string }>;
+
+    expect(stderr).toContain(
+      `Could not reach the T3 Code server at ${origin}. Connections already open with this session stay open until they close.`,
+    );
+    assert.notInclude(
+      listed.map((entry) => entry.sessionId),
+      issued.sessionId,
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerCliRuntime));
 
 describe("auth session revoke", () => {
   it.effect("signals the running server and cleans up its helper session", () =>
@@ -648,38 +711,18 @@ describe("auth session revoke", () => {
   );
 
   it.effect("still revokes in the database when the running server cannot be reached", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "t3-cli-auth-revoke-unreachable-test-",
-      });
-      const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
-      yield* persistServerRuntimeState({
-        path: config.serverRuntimeStatePath,
-        state: { ...baseState, pid: process.pid, origin: "http://127.0.0.1:1" },
-      });
-      const issued = JSON.parse(
-        yield* captureStdout(runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"])),
-      ) as { readonly sessionId: string };
+    expectDatabaseOnlyRevoke("http://127.0.0.1:1"),
+  );
 
-      const stderr = yield* provideCliTestLayers(
-        Effect.gen(function* () {
-          yield* runCli(["auth", "session", "revoke", issued.sessionId, "--base-dir", baseDir]);
-          return yield* TestConsole.errorLines;
-        }),
-      );
-      const listed = JSON.parse(
-        yield* captureStdout(runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"])),
-      ) as ReadonlyArray<{ readonly sessionId: string }>;
-
-      expect(stderr).toContain(
-        "Could not reach the T3 Code server at http://127.0.0.1:1. Connections already open with this session stay open until they close.",
-      );
-      assert.notInclude(
-        listed.map((entry) => entry.sessionId),
-        issued.sessionId,
-      );
-    }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
+  it.effect("sends no credential when the recorded origin serves another T3 home", () =>
+    withDescriptorServer((origin, requests) =>
+      Effect.gen(function* () {
+        yield* expectDatabaseOnlyRevoke(origin);
+        assert.deepEqual(requests, [
+          { url: "/.well-known/t3/environment", authorization: undefined },
+        ]);
+      }),
+    ),
   );
 });
 
