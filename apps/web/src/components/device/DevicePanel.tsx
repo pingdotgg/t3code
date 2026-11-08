@@ -186,7 +186,12 @@ export function DevicePanel(props: {
     const settleOperation = startOperation(null);
     return close({
       environmentId,
-      input: { threadId: holder.threadId, hostId: holder.hostId, deviceId: holder.deviceId },
+      input: {
+        threadId: holder.threadId,
+        hostId: holder.hostId,
+        deviceId: holder.deviceId,
+        takeOver: { openedAt: holder.openedAt },
+      },
     }).then((result) =>
       settleOperation(result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null),
     );
@@ -434,7 +439,7 @@ function DeviceHolderNotice(props: {
             title: "another thread",
           }}
         />
-        {running ? ", which is running." : ", which isn't running."}
+        {running ? ", which is running." : shell ? ", which isn't running." : "."}
       </span>
       {running ? null : (
         <Button

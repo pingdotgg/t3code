@@ -358,6 +358,11 @@ export const DeviceCloseInput = Schema.Struct({
   deviceId: Schema.optional(DeviceId),
   /** Also shut the simulator or emulator down. Defaults to false. */
   shutdown: Schema.optional(Schema.Boolean),
+  /**
+   * Close another thread's session to take its device over: only the session opened
+   * at `openedAt`, only while that thread is idle, and never powering the device off.
+   */
+  takeOver: Schema.optional(Schema.Struct({ openedAt: Schema.String })),
 });
 export type DeviceCloseInput = typeof DeviceCloseInput.Type;
 
@@ -620,6 +625,20 @@ export class DeviceActionUnavailableError extends Schema.TaggedError<DeviceActio
   }
 }
 
+export class DeviceTakeoverRefusedError extends Schema.TaggedError<DeviceTakeoverRefusedError>()(
+  "DeviceTakeoverRefusedError",
+  {
+    threadId: ThreadId,
+    reason: Schema.Literals(["thread_active", "activity_unknown"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "thread_active"
+      ? "That thread is working now, so the device stays with it. Take over after it finishes."
+      : "Could not confirm that thread is idle, so the device stays with it.";
+  }
+}
+
 export const DeviceError = Schema.Union([
   DeviceHostUnavailableError,
   DevicePlatformUnavailableError,
@@ -627,6 +646,7 @@ export const DeviceError = Schema.Union([
   DeviceBootError,
   DeviceOperationError,
   DeviceActionUnavailableError,
+  DeviceTakeoverRefusedError,
 ]);
 export type DeviceError = typeof DeviceError.Type;
 
@@ -722,6 +742,7 @@ export const DeviceToolError = Schema.Union([
   DeviceBootError,
   DeviceOperationError,
   DeviceActionUnavailableError,
+  DeviceTakeoverRefusedError,
 ]);
 export type DeviceToolError = typeof DeviceToolError.Type;
 

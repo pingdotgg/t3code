@@ -86,6 +86,7 @@ import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as DeviceThreadActivity from "./device/DeviceThreadActivity.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -501,6 +502,7 @@ const layerPreview = Layer.empty.pipe(
 );
 
 const layerDevice = DeviceService.layer.pipe(
+  Layer.provide(DeviceThreadActivity.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   Layer.provide(layerServerSettings),
   Layer.provide(ProcessRunner.layer),
   Layer.provide(NetService.layer),

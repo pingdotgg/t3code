@@ -244,7 +244,12 @@ describe("DevicePanel takeover", () => {
       [
         {
           environmentId: threadA.environmentId,
-          input: { threadId: holder, hostId: "local", deviceId: "phone" },
+          input: {
+            threadId: holder,
+            hostId: "local",
+            deviceId: "phone",
+            takeOver: { openedAt: session.openedAt },
+          },
         },
       ],
     ]);

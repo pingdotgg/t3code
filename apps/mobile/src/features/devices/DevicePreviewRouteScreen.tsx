@@ -166,7 +166,12 @@ export function DevicePreviewScreen({
   const takeOver = async (holder: DeviceSession) => {
     const result = await close({
       environmentId,
-      input: { threadId: holder.threadId, hostId: holder.hostId, deviceId: holder.deviceId },
+      input: {
+        threadId: holder.threadId,
+        hostId: holder.hostId,
+        deviceId: holder.deviceId,
+        takeOver: { openedAt: holder.openedAt },
+      },
     });
     if (result._tag === "Failure") {
       Dialog.alert("Could not take over device", String(Cause.squash(result.cause)));
@@ -434,7 +439,7 @@ function DeviceHolderBanner(props: {
       >
         <AppText numberOfLines={2} className="text-sm text-foreground-muted">
           Busy in <AppText className="font-t3-medium text-sm text-foreground">{title}</AppText>
-          {running ? ", which is running." : ", which isn't running."}
+          {running ? ", which is running." : shell ? ", which isn't running." : "."}
         </AppText>
       </Pressable>
       {running ? null : (
