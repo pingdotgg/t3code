@@ -98,6 +98,28 @@ describe("V2 client presentation", () => {
     ).toBeNull();
   });
 
+  it("presents a thread that never ran without runtime even when it has a provider thread", () => {
+    // An imported Claude Code or Codex session has its provider thread but no runs.
+    const providerThreadId = ProviderThreadId.make("provider-thread-imported");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: null,
+      activeProviderThreadId: providerThreadId,
+      activeRunId: null,
+      status: "idle",
+      pendingBackgroundTasks: [],
+    });
+    expect(shell.runtime).toBeNull();
+    expect(isThreadWorking(shell)).toBe(false);
+    expect(
+      deriveThreadRuntime({
+        ...v2Projection,
+        thread: { ...v2Projection.thread, activeProviderThreadId: providerThreadId },
+        runs: [],
+      }),
+    ).toBeNull();
+  });
+
   it.each([
     { kinds: ["command"], expected: "completed" },
     { kinds: ["command", "subagent"], expected: "idle" },
