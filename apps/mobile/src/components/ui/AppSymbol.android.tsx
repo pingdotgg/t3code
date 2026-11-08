@@ -38,6 +38,7 @@ import IconChevronUp from "@tabler/icons-react-native/IconChevronUp";
 import IconCircle from "@tabler/icons-react-native/IconCircle";
 import IconCircleFilled from "@tabler/icons-react-native/IconCircleFilled";
 import IconCircleCheck from "@tabler/icons-react-native/IconCircleCheck";
+import IconCircleCheckFilled from "@tabler/icons-react-native/IconCircleCheckFilled";
 import IconCircleDashed from "@tabler/icons-react-native/IconCircleDashed";
 import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
@@ -324,6 +325,7 @@ const ANDROID_ICON_BY_MATERIAL_NAME = {
   chat: IconMessage,
   chat_bubble: IconMessage,
   check: IconCheck,
+  check_circle: IconCircleCheckFilled,
   close: IconX,
   construction: IconHammer,
   content_copy: IconCopy,

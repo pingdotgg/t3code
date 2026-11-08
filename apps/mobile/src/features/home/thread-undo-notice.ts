@@ -5,6 +5,8 @@ type UndoNotice = {
   readonly action: "Settled" | "Snoozed" | "Unpinned";
   readonly claim: ReturnType<typeof ThreadUndo.begin>;
   readonly undo: () => Promise<void>;
+  /** How long the notice stays up. Defaults to 5 s. */
+  readonly durationMs?: number;
 };
 
 let notice: UndoNotice | null = null;
@@ -43,7 +45,7 @@ export function showThreadUndoNotice(options: UndoNotice) {
     },
   };
   notify();
-  expiry = setTimeout(dismissThreadUndoNotice, 5_000);
+  expiry = setTimeout(dismissThreadUndoNotice, options.durationMs ?? 5_000);
 }
 
 export function useThreadUndoNotice() {

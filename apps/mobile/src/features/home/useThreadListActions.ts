@@ -2,6 +2,8 @@ import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
+import { requestThreadReveal } from "./return-pulse";
+import { AccessibilityInfo } from "react-native";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -189,10 +191,20 @@ function confirmThreadDeletion(
   });
 }
 
+export type SettleThreadOptions = {
+  /** How long Undo stays up; Android may lengthen it for accessibility. */
+  readonly undoDurationMs?: number;
+  /** After Undo, scroll the restored row into view and pulse it. */
+  readonly revealOnUndo?: boolean;
+};
+
 export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
-  readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly settleThread: (
+    thread: EnvironmentThreadShell,
+    options?: SettleThreadOptions,
+  ) => Promise<boolean>;
   readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -229,10 +241,12 @@ export function useThreadListActions(): {
     action: "Settled" | "Snoozed" | "Unpinned",
     claim: ReturnType<typeof ThreadUndo.begin>,
     plan: ThreadUndo.ThreadUndoPlan,
+    options?: { readonly durationMs?: number; readonly onUndone?: () => void },
   ) =>
     showThreadUndoNotice({
       action,
       claim,
+      ...(options?.durationMs === undefined ? {} : { durationMs: options.durationMs }),
       undo: async () => {
         try {
           await ThreadUndo.executeThreadUndo(
@@ -267,6 +281,7 @@ export function useThreadListActions(): {
             },
             (result) => result,
           );
+          options?.onUndone?.();
         } catch (error) {
           Dialog.alert(
             "Could not undo thread action",
@@ -275,7 +290,7 @@ export function useThreadListActions(): {
         }
       },
     });
-  const settleThread = async (thread: EnvironmentThreadShell) => {
+  const settleThread = async (thread: EnvironmentThreadShell, options?: SettleThreadOptions) => {
     const key = scopedThreadKey(thread.environmentId, thread.id);
     const plan = ThreadUndo.planThreadUndo("settle", thread);
     let claim: ReturnType<typeof ThreadUndo.begin> | undefined;
@@ -285,8 +300,18 @@ export function useThreadListActions(): {
       claim = ThreadUndo.begin("settle", key);
     });
     if (claim) {
-      if (succeeded) offerUndo(thread, "Settled", claim, plan);
-      else claim.finish();
+      if (succeeded) {
+        const durationMs =
+          options?.undoDurationMs === undefined
+            ? undefined
+            : await AccessibilityInfo.getRecommendedTimeoutMillis(options.undoDurationMs).catch(
+                () => options.undoDurationMs!,
+              );
+        offerUndo(thread, "Settled", claim, plan, {
+          ...(durationMs === undefined ? {} : { durationMs }),
+          ...(options?.revealOnUndo ? { onUndone: () => requestThreadReveal(key) } : {}),
+        });
+      } else claim.finish();
     }
     return succeeded;
   };

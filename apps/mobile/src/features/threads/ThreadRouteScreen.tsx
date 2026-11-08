@@ -8,6 +8,7 @@ import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setu
 import { AppBar } from "../../components/ui/AppBar";
 import {
   StackActions,
+  useFocusEffect,
   useNavigation,
   useRoute,
   type StaticScreenProps,
@@ -69,6 +70,9 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
+import { recordThreadViewed } from "../home/return-pulse";
+import { useThreadListActions } from "../home/useThreadListActions";
+
 import {
   buildTerminalMenuSessions,
   nextOpenTerminalId,
@@ -262,6 +266,10 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     selectedThread === null
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
+  // Going back to the list scrolls to and pulses the thread focused here last.
+  useFocusEffect(() => {
+    if (routeThreadKey !== null && !props.inspectorPresentation) recordThreadViewed(routeThreadKey);
+  });
   const selectedThreadDetailState = useSelectedThreadDetailState();
   const detailError = selectedThreadDetailState.error;
   const [errorBeforeConnected, setErrorBeforeConnected] = useState(() =>
@@ -341,6 +349,9 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   );
 }
 
+/** Undo after settling from the thread screen stays up longer than a list swipe's 5 s. */
+const SETTLE_FROM_THREAD_UNDO_MS = 10_000;
+
 function ThreadRouteContent(
   props: ThreadRouteScreenProps & {
     readonly selectedThreadDetailState: ReturnType<typeof useSelectedThreadDetailState>;
@@ -361,6 +372,27 @@ function ThreadRouteContent(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
+  // Phone: one tap settles the open thread and goes back to the list, where Undo stays up.
+  const threadListActions = useThreadListActions();
+  const returnToThreadList = useWorkspaceBackNavigation("threads");
+  const [settleBusy, setSettleBusy] = useState(false);
+  const handleSettleFromHeader = async () => {
+    if (selectedThread === null || settleBusy) return;
+    setSettleBusy(true);
+    try {
+      if (selectedThread.settledOverride === "settled") {
+        await threadListActions.unsettleThread(selectedThread);
+        return;
+      }
+      const settled = await threadListActions.settleThread(selectedThread, {
+        undoDurationMs: SETTLE_FROM_THREAD_UNDO_MS,
+        revealOnUndo: true,
+      });
+      if (settled) returnToThreadList();
+    } finally {
+      setSettleBusy(false);
+    }
+  };
   const canReadTerminal = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthTerminalReadScope,
@@ -963,6 +995,15 @@ function ThreadRouteContent(
                 inspectorMode={inspectorMode}
                 onOpenFilesInspector={handleOpenFilesInspector}
                 onReturnToThread={props.onReturnToThread}
+                settle={
+                  layout.variant === "compact" && canOperateThread && creationState === null
+                    ? {
+                        settled: selectedThread.settledOverride === "settled",
+                        busy: settleBusy,
+                        onPress: () => void handleSettleFromHeader(),
+                      }
+                    : undefined
+                }
               />
             )
           }

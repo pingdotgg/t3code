@@ -90,6 +90,13 @@ import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-sw
 import { useFabScroll } from "./FabScrollContext";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+import {
+  clearPendingReveal,
+  revealReturnTarget,
+  SETTLED_SHELF_PULSE_KEY,
+  startReturnPulse,
+  usePendingReveal,
+} from "./return-pulse";
 
 interface HomeScreenProps {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -112,6 +119,8 @@ interface HomeScreenProps {
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
+  /** The phone's full-screen list: coming back into view pulses the thread you left. */
+  readonly visible?: boolean;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -265,7 +274,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const insets = useSafeAreaInsets();
   const contentTopInset = useContentTopInset();
   const emptyTopInset = useWorkspaceListEmptyTopInset();
-  const { fabClearance } = useAndroidControlSizing();
+  const { fabClearance, fabSize } = useAndroidControlSizing();
   const screenMetrics = useNativeLayoutMetrics();
   const contentSideInsets = usesNativeWorkspaceColumns
     ? (columnMetrics ?? screenMetrics)?.safeArea
@@ -501,6 +510,95 @@ export function HomeScreen(props: HomeScreenProps) {
     onSelectThread(thread);
   };
   useThreadJumpShortcuts(threadListV2Items, selectThread);
+  const listHeaderHeightRef = useRef(0);
+  // LegendList counts a half-hidden row as visible, and the New thread button covers the
+  // list's bottom edge, so work out "fully visible" here.
+  const scrollRowFullyIntoView = async (list: LegendListRef, index: number) => {
+    if (Platform.OS !== "android") {
+      await list.scrollIndexIntoView({ index, animated: true });
+      return;
+    }
+    const state = list.getState();
+    const top = (state.positionAtIndex(index) ?? 0) + listHeaderHeightRef.current;
+    // Rows that aren't drawn yet report no size.
+    const size = state.sizeAtIndex(index) || ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT;
+    // The floating New thread button and its 16-point margin cover the list's bottom edge.
+    const visibleLength = state.scrollLength - (fabSize + 16);
+    if (top < state.scroll + listHeaderHeightRef.current) {
+      // Keep the header's breathing room above the first rows.
+      await list.scrollToOffset({
+        offset: Math.max(0, top - listHeaderHeightRef.current),
+        animated: true,
+      });
+    } else if (top + size > state.scroll + visibleLength) {
+      await list.scrollToOffset({ offset: top + size - visibleLength, animated: true });
+    }
+  };
+  const wasVisibleRef = useRef(props.visible);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- coming back into view from a thread queues a reveal of that thread's row
+  useEffect(() => {
+    const wasVisible = wasVisibleRef.current;
+    wasVisibleRef.current = props.visible;
+    if (props.visible === true && wasVisible === false) revealReturnTarget();
+  }, [props.visible]);
+  const pendingReveal = usePendingReveal();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls a queued thread row into view once it is listed, then pulses it
+  useEffect(() => {
+    if (pendingReveal === null || props.visible === false) return;
+    const now = Date.now();
+    if (now > pendingReveal.expiresAt) {
+      clearPendingReveal(pendingReveal);
+      return;
+    }
+    const index = threadListV2Items.findIndex(
+      (item) =>
+        item.type === "v2-thread" &&
+        // After Undo, wait for the row to leave the Settled section before pointing at it.
+        (pendingReveal.settledShelfFallback || item.item.variant !== "slim") &&
+        scopedThreadKey(item.item.thread.environmentId, item.item.thread.id) ===
+          pendingReveal.threadKey,
+    );
+    const shelfIndex =
+      index < 0 && pendingReveal.settledShelfFallback
+        ? threadListV2Items.findIndex((item) => item.type === "v2-settled-shelf")
+        : -1;
+    // Not listed yet (Undo still in flight): wait for the list to change.
+    if (index < 0 && !pendingReveal.settledShelfFallback) return;
+    // Just settled into an open Settled section: point at it only where it already is on screen.
+    const settledRow =
+      index >= 0 &&
+      threadListV2Items[index]?.type === "v2-thread" &&
+      threadListV2Items[index].item.variant === "slim";
+    const timer = setTimeout(
+      () => {
+        // Clearing re-runs this effect with nothing queued; the scroll below carries on.
+        clearPendingReveal(pendingReveal);
+        const list = listRef.current;
+        if (index < 0) {
+          // Settled into the folded shelf: point at the shelf only if it's already on screen,
+          // and never expand it, which would move every row below.
+          const state = list?.getState();
+          if (shelfIndex >= 0 && state && shelfIndex >= state.start && shelfIndex <= state.end) {
+            startReturnPulse(SETTLED_SHELF_PULSE_KEY);
+          }
+          return;
+        }
+        if (settledRow) {
+          const state = list?.getState();
+          if (state && index >= state.start && index <= state.end) {
+            startReturnPulse(pendingReveal.threadKey);
+          }
+          return;
+        }
+        void (list ? scrollRowFullyIntoView(list, index) : Promise.resolve())
+          .catch(() => undefined)
+          .then(() => startReturnPulse(pendingReveal.threadKey));
+      },
+      Math.max(0, pendingReveal.notBefore - now),
+    );
+    return () => clearTimeout(timer);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the scroll helper only reads refs and the list's live state when the timer fires
+  }, [pendingReveal, props.visible, threadListV2Items]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
@@ -728,7 +826,11 @@ export function HomeScreen(props: HomeScreenProps) {
   const listHeader = Platform.OS === "ios" ? undefined : <HomeTopContentSpacer />;
 
   const v2ListHeader = (
-    <>
+    <View
+      onLayout={(event) => {
+        listHeaderHeightRef.current = event.nativeEvent.layout.height;
+      }}
+    >
       {listHeader}
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
@@ -744,7 +846,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onProjectChange={props.onProjectChange}
         />
       ) : null}
-    </>
+    </View>
   );
 
   const v2ListEmpty =
