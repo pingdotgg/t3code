@@ -774,6 +774,17 @@ const InstanceIdleCompaction = Schema.Literals(
   INSTANCE_IDLE_COMPACTION_MODES.map((mode) => mode.value),
 );
 
+const CLAUDE_WORKFLOW_SIZE_GUIDELINES = [
+  { value: "default", label: "Use default" },
+  { value: "small", label: "Small (under 5 agents)" },
+  { value: "medium", label: "Medium (under 10 agents)" },
+  { value: "large", label: "Large (under 50 agents)" },
+  { value: "unrestricted", label: "Unrestricted" },
+] as const;
+const ClaudeWorkflowSizeGuideline = Schema.Literals(
+  CLAUDE_WORKFLOW_SIZE_GUIDELINES.map((size) => size.value),
+);
+
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -838,9 +849,29 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    workflowSizeGuideline: ClaudeWorkflowSizeGuideline.pipe(
+      Schema.withDecodingDefault(Effect.succeed("default" as const)),
+      Schema.annotateKey({
+        title: "Dynamic workflow size",
+        description:
+          "How many agents Claude aims for in a workflow. A guideline, not a hard limit. Use default keeps Claude's /config choice.",
+        providerSettingsForm: {
+          control: "select",
+          options: CLAUDE_WORKFLOW_SIZE_GUIDELINES,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "idleCompaction",
+      "workflowSizeGuideline",
+      "launchArgs",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;

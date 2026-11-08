@@ -419,6 +419,22 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.equal(requestedModel, "opus");
   });
 
+  it("sends the workflow size guideline only when one is chosen", () => {
+    const sentSize = (workflowSizeGuideline: ClaudeSettings["workflowSizeGuideline"]) =>
+      (
+        ClaudeAdapterV2.makeClaudeQueryOptions({
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          nativeThreadId: "native-workflow-size",
+          resume: false,
+          cwd: "/workspace",
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, workflowSizeGuideline },
+        }).settings as { workflowSizeGuideline?: string } | undefined
+      )?.workflowSizeGuideline;
+    assert.equal(sentSize("large"), "large");
+    assert.equal(sentSize("unrestricted"), "unrestricted");
+    assert.isUndefined(sentSize("default"));
+  });
+
   it("projects AskUserQuestion input with question text as the answer key", () => {
     const preview = "\n  **Proposed change**\n\n```ts\n\tconst enabled = true;\n```\n  ";
     assert.deepEqual(

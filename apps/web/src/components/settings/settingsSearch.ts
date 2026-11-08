@@ -642,6 +642,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["claude context compaction idle cache tokens usage summary resume"],
   },
   {
+    id: "dynamic-workflow-size",
+    title: "Dynamic workflow size",
+    to: "/settings/providers",
+    searchTerms: ["claude ultracode agents subagents limit guideline small medium large"],
+  },
+  {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/threads",
