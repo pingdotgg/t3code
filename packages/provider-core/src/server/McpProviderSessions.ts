@@ -68,6 +68,10 @@ const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput
       : input.height;
   const sameFrame = (page: KeptHtmlRender) => page.title === input.title && page.height === height;
   const path = input.path;
+  // The handler refuses a call with both sources, so it published nothing to recover.
+  if (path !== undefined && input.html !== undefined) {
+    return -1;
+  }
   if (typeof path === "string" && path.length > 0) {
     // An edited file is published again under the same path; completions arrive in publish order.
     return kept.findIndex((page) => page.path === path && sameFrame(page));

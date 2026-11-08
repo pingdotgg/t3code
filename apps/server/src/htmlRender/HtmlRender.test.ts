@@ -289,6 +289,9 @@ describe("HtmlRender", () => {
       expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, path: `${file}x` })).toBe(
         undefined,
       );
+      expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, html: inline.html })).toBe(
+        undefined,
+      );
       expect(yield* mcpSessions.takeHtmlRender(threadId, inline)).toEqual(inlineReference);
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(first);
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(second);

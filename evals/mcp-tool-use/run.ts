@@ -1696,7 +1696,10 @@ export const pastedText = ({ prompt, setup }: Pick<McpToolUseCase, "prompt" | "s
 /** `page` is the HTML a page tool shows: its inline `html`, or the file the agent wrote at `path`. */
 const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, string>) => {
   if ((tool !== "html_preview" && tool !== "html_render") || !isRecord(input)) return input;
-  const page = typeof input.html === "string" ? input.html : files.get(valueText(input.path));
+  const path = valueText(input.path);
+  // A patch may name the file relative to the agent's working directory.
+  const written = [...files].find(([file]) => !file.startsWith("/") && path.endsWith(`/${file}`));
+  const page = typeof input.html === "string" ? input.html : (files.get(path) ?? written?.[1]);
   return page === undefined ? input : { ...input, page };
 };
 
@@ -1728,16 +1731,17 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
   }
   for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
   // A page check must not pass because the grader never saw the file a path call shows.
-  if ([...(expect.calls ?? []), ...(expect.callsMustNot ?? [])].some((call) => call.args?.page)) {
-    for (const call of calls)
-      if (
-        /^html_(?:preview|render)$/.test(call.tool) &&
-        isRecord(call.input) &&
-        call.input.path !== undefined &&
-        call.input.page === undefined
-      )
-        add(`page known ${call.tool} ${valueText(call.input.path)}`, false);
-  }
+  const pageTools = [...(expect.calls ?? []), ...(expect.callsMustNot ?? [])].flatMap((call) =>
+    call.args?.page === undefined ? [] : call.tool.split("|"),
+  );
+  for (const call of calls)
+    if (
+      pageTools.includes(call.tool) &&
+      isRecord(call.input) &&
+      call.input.path !== undefined &&
+      call.input.page === undefined
+    )
+      add(`page known ${call.tool} ${valueText(call.input.path)}`, false);
   for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
   if (expect.order !== undefined) {
     const firsts = expect.order.map((tool) => calls.findIndex((call) => call.tool === tool));

@@ -463,9 +463,18 @@ const make = Effect.gen(function* () {
             sizeBytes: Number(file.info.size),
           });
         }
-        // readFile reads to EOF; a single read may return fewer bytes and cut the page short.
+        // One read may return fewer bytes, so fill up to the checked size; growth past it is ignored.
         return yield* Effect.tryPromise({
-          try: () => file.handle.readFile("utf8"),
+          try: async () => {
+            const buffer = Buffer.alloc(Number(file.info.size));
+            let filled = 0;
+            while (filled < buffer.length) {
+              const { bytesRead } = await file.handle.read(buffer, filled, buffer.length - filled);
+              if (bytesRead === 0) break;
+              filled += bytesRead;
+            }
+            return buffer.toString("utf8", 0, filled);
+          },
           catch: (cause) => new HtmlRenderFileError({ path: filePath, cause }),
         });
       }),
