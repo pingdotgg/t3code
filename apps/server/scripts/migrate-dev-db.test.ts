@@ -38,8 +38,10 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         '{"lineage":{"parentThreadId":"stopped-thread","relationshipToParent":"fork","rootThreadId":"stopped-thread"}}';
       const subagentPayload =
         '{"lineage":{"parentThreadId":"subagent-parent","relationshipToParent":"subagent","rootThreadId":"subagent-parent"},"forkedFrom":{"type":"node","nodeId":"node-1"}}';
+      const watchedPayload =
+        '{"pullRequests":[{"number":7,"url":"https://github.com/o/r/pull/7","watch":{"startedAt":"2026-08-01T00:00:00.000Z"}}]}';
       const threads = [
-        ["stopped-thread", "project-kept", "completed", "{}", "2026-08-01"],
+        ["stopped-thread", "project-kept", "completed", watchedPayload, "2026-08-01"],
         ["fork-thread", "project-kept", "completed", forkPayload, "2026-08-02"],
         ["running-thread", "project-kept", "running", "{}", "2026-08-05"],
         ["settled-thread", "project-kept", "completed", '{"settledAt":"2026-08-01"}', "2026-08-05"],
@@ -143,7 +145,10 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
               (SELECT COUNT(*) FROM peer_environment_links) AS links`;
-          return { threads, events, sessions, leftovers };
+          const pullRequests = yield* sql<{ pull_requests: string }>`
+            SELECT json_extract(payload_json, '$.pullRequests') AS pull_requests
+            FROM orchestration_v2_projection_threads WHERE thread_id = 'stopped-thread'`;
+          return { threads, events, sessions, leftovers, pullRequests };
         }),
       );
       assert.deepStrictEqual(
@@ -165,6 +170,10 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         transfers: 0,
         links: 0,
       });
+      assert.deepStrictEqual(
+        kept.pullRequests.map((row) => JSON.parse(row.pull_requests)),
+        [[{ number: 7, url: "https://github.com/o/r/pull/7" }]],
+      );
     }),
   );
 

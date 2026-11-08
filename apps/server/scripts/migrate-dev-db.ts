@@ -384,6 +384,14 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
       for (const table of CLEARED_TABLES) {
         yield* sql`DELETE FROM ${sql(table)}`;
       }
+      // A kept watch would read the host and wake the source install's agent; keep the links.
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.pullRequests', json((
+          SELECT json_group_array(json_remove(link.value, '$.watch') ORDER BY link.key)
+          FROM json_each(payload_json, '$.pullRequests') link)))
+        WHERE EXISTS (
+          SELECT 1 FROM json_each(payload_json, '$.pullRequests') link
+          WHERE json_type(link.value, '$.watch') IS NOT NULL)`;
     }),
   );
 
