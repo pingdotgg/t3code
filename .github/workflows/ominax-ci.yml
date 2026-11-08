@@ -127,7 +127,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.build != 'false' || needs.changes.outputs.typecheck != 'false') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -205,23 +205,23 @@ jobs:
       # which gates the whole run. Chromium comes from the cache Test Web shares.
       - name: Resolve Playwright version
         id: playwright_version
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (needs.changes.outputs.test_web != 'false' || needs.changes.outputs.test_server != 'false') }}
         run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Cache Chromium
         id: chromium_cache
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (needs.changes.outputs.test_web != 'false' || needs.changes.outputs.test_server != 'false') }}
         uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
 
       - name: Install Chromium for the built web client boot check
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' && steps.chromium_cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (needs.changes.outputs.test_web != 'false' || needs.changes.outputs.test_server != 'false') && steps.chromium_cache.outputs.cache-hit != 'true' }}
         run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
 
       - name: Install missing Chromium system dependencies
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (needs.changes.outputs.test_web != 'false' || needs.changes.outputs.test_server != 'false') }}
         run: |
           browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
           test -n "$browser"
@@ -233,6 +233,18 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
         timeout-minutes: 3
         run: node apps/web/scripts/verify-built-boot.ts
+
+      - name: Run the scripted learner
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (needs.changes.outputs.test_web != 'false' || needs.changes.outputs.test_server != 'false') }}
+        timeout-minutes: 8
+        run: node scripts/learner-e2e.ts --skip-build --out "$RUNNER_TEMP/learner-e2e"
+
+      - name: Upload scripted learner results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: learner-e2e
+          path: ${{ runner.temp }}/learner-e2e
 
       - name: Typecheck
         if: ${{ !cancelled() && steps.typecheck.outcome == 'success' }}

@@ -39,6 +39,28 @@ s/^( *)runs-on: blacksmith-[0-9]+vcpu-macos-26$/\1runs-on: macos-26/
         shard: [1, 2, 3, 4]
   s/^(        run: vp run --filter @t3tools\/web test)$/\1 --shard ${{ matrix.shard }}\/${{ strategy.job-total }} --testTimeout=30000/
 }
+# The scripted learner (scripts/learner-e2e.ts) drives the web build this job
+# just made against a source server on Replay, so a server-only PR runs it too
+# and needs the Chromium the boot check installs.
+/^  build:$/,/^  [a-z_]+:$/{
+  s/^    timeout-minutes: 10$/    timeout-minutes: 15/
+  /^      - name: Resolve Playwright version$/,/^      - name: Boot the built web client$/{
+    s/needs\.changes\.outputs\.test_web != '\''false'\''/(& || needs.changes.outputs.test_server != '\''false'\'')/
+  }
+  /^        run: node apps\/web\/scripts\/verify-built-boot\.ts$/a\
+\
+      - name: Run the scripted learner\
+        if: ${{ !cancelled() && steps.build.outcome == '\''success'\'' && (needs.changes.outputs.test_web != '\''false'\'' || needs.changes.outputs.test_server != '\''false'\'') }}\
+        timeout-minutes: 8\
+        run: node scripts/learner-e2e.ts --skip-build --out "$RUNNER_TEMP/learner-e2e"\
+\
+      - name: Upload scripted learner results\
+        if: failure()\
+        uses: actions/upload-artifact@v7\
+        with:\
+          name: learner-e2e\
+          path: ${{ runner.temp }}/learner-e2e
+}
 /^      - name: Reject repository-owned PR assets$/i\
       - name: Require ominax-ci.yml to match ci.yml\
         run: bash .github/scripts/ominax-ci.sh && git diff --exit-code -- .github/workflows/ominax-ci.yml\
@@ -78,6 +100,10 @@ count() { grep -c "$1" <<<"$generated" || true; }
   fail "Test Web shards not applied"
 [[ $(count '^        run: vp run --filter @t3tools/web test --shard ') -eq 1 ]] ||
   fail "Test Web shard flag not applied"
+[[ $(count '^      - name: Run the scripted learner$') -eq 1 ]] ||
+  fail "scripted learner step not appended to Build"
+[[ $(count "test_web != 'false' || needs.changes.outputs.test_server != 'false'") -eq 5 ]] ||
+  fail "Chromium steps not widened for server-only changes"
 # Any runner label, including one set through a matrix or an input.
 if grep -nE 'blacksmith-[0-9]+vcpu-' <<<"$generated" >&2; then
   fail "unmapped Blacksmith runner"
