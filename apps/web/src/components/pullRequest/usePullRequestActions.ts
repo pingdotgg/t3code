@@ -266,6 +266,26 @@ export type PullRequestCheckoutPrepared = {
   readonly isOnPullRequestHead: boolean;
 };
 
+type CheckoutHandoffOpened = { readonly draftId: DraftId; readonly threadId: ThreadId };
+
+const CHECKOUT_HANDOFF_TOAST_TIMEOUT_MS = 8_000;
+
+function finishCheckoutHandoffToast(
+  toastId: ReturnType<typeof toastManager.add>,
+  options: {
+    readonly type: "error" | "warning" | "success" | "info";
+    readonly title: string;
+    readonly description?: string;
+  },
+) {
+  // Base UI merges updates into the loading toast, so clear Cancel and restore a finite timeout.
+  toastManager.update(toastId, {
+    ...options,
+    timeout: CHECKOUT_HANDOFF_TOAST_TIMEOUT_MS,
+    actionProps: undefined,
+  });
+}
+
 /**
  * Opens a thread, puts any task in its composer before checkout finishes, then prepares the
  * branch. Cancel skips applying the checkout; the prompt stays in the composer.
@@ -274,15 +294,19 @@ export async function runPullRequestCheckoutHandoff(input: {
   readonly terminology: ChangeRequestTerminology;
   readonly mode: "worktree" | "local";
   readonly task: PullRequestThreadTask | null;
-  readonly openThread: () => Promise<{ draftId: DraftId; threadId: ThreadId } | null>;
+  readonly openThread: () => Promise<CheckoutHandoffOpened | null>;
   readonly prepare: (
     threadId: ThreadId,
   ) => Promise<AtomCommandResult<PullRequestCheckoutPrepared, unknown>>;
-  readonly pointThread: (prepared: PullRequestCheckoutPrepared) => Promise<boolean>;
+  readonly pointThread: (
+    prepared: PullRequestCheckoutPrepared,
+    opened: CheckoutHandoffOpened,
+  ) => Promise<boolean>;
   readonly clearHandoff: () => void;
 }): Promise<void> {
   // Explicit timeouts survive toast updates and would pin the result after loading.
   let cancelled = false;
+  let settled = false;
   const toastId = toastManager.add({
     type: "loading",
     title: `Preparing the ${input.terminology.singular} checkout...`,
@@ -290,18 +314,16 @@ export async function runPullRequestCheckoutHandoff(input: {
     actionProps: {
       children: "Cancel",
       onClick: () => {
-        if (cancelled) return;
+        if (cancelled || settled) return;
         cancelled = true;
         input.clearHandoff();
-        toastManager.update(toastId, {
+        finishCheckoutHandoffToast(toastId, {
           type: "info",
-          title: "Cancelled checkout preparation",
+          title: "Stopped applying the checkout",
           description:
             input.task === null
               ? "The thread is still open."
               : "The prompt is still in the composer.",
-          timeout: 8_000,
-          actionProps: undefined,
         });
       },
     },
@@ -309,10 +331,15 @@ export async function runPullRequestCheckoutHandoff(input: {
   });
 
   const opened = await input.openThread();
+  // Cancel promises the prompt stays in the composer, so seed even after a cancel during open.
+  if (opened !== null && input.task !== null) {
+    writeHandoffToComposer(opened.draftId, input.task);
+  }
   if (cancelled) return;
   if (opened === null) {
+    settled = true;
     input.clearHandoff();
-    toastManager.update(toastId, {
+    finishCheckoutHandoffToast(toastId, {
       type: "error",
       title: "Could not open a thread for the checkout",
       description: "Try again from the project, or open a thread first.",
@@ -320,16 +347,12 @@ export async function runPullRequestCheckoutHandoff(input: {
     return;
   }
 
-  // Seed the composer before checkout finishes so a long prepare still shows the task.
-  if (input.task !== null) {
-    writeHandoffToComposer(opened.draftId, input.task);
-  }
-
   const prepared = await input.prepare(opened.threadId);
   if (cancelled) return;
   if (prepared._tag === "Failure") {
+    settled = true;
     input.clearHandoff();
-    toastManager.update(toastId, {
+    finishCheckoutHandoffToast(toastId, {
       type: "error",
       title: `Could not prepare the ${input.terminology.singular} checkout`,
       description: checkoutFailureDescription(
@@ -339,11 +362,12 @@ export async function runPullRequestCheckoutHandoff(input: {
     return;
   }
 
-  const pointed = await input.pointThread(prepared.value);
+  const pointed = await input.pointThread(prepared.value, opened);
   if (cancelled) return;
+  settled = true;
   if (!pointed) {
     input.clearHandoff();
-    toastManager.update(toastId, {
+    finishCheckoutHandoffToast(toastId, {
       type: "error",
       title: "Checked out, but the thread stayed where it was",
       description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
@@ -353,7 +377,7 @@ export async function runPullRequestCheckoutHandoff(input: {
 
   input.clearHandoff();
   if (input.task === null) {
-    toastManager.update(
+    finishCheckoutHandoffToast(
       toastId,
       prepared.value.isOnPullRequestHead
         ? {
@@ -368,7 +392,7 @@ export async function runPullRequestCheckoutHandoff(input: {
     );
     return;
   }
-  toastManager.update(
+  finishCheckoutHandoffToast(
     toastId,
     prepared.value.isOnPullRequestHead
       ? {
@@ -472,15 +496,15 @@ export function usePullRequestHandoffs({
           mode,
           threadId,
         }),
-      pointThread: (prepared) =>
-        newThread(projectRef, {
+      // Rebind the opened draft: newThread would open a second empty draft once the prompt is seeded.
+      pointThread: async (prepared, opened) => {
+        useComposerDraftStore.getState().setDraftThreadContext(opened.draftId, {
           branch: prepared.branch,
           worktreePath: prepared.worktreePath,
           envMode: prepared.worktreePath === null ? "local" : "worktree",
-        }).then(
-          (session) => session !== null,
-          () => false,
-        ),
+        });
+        return true;
+      },
     });
   };
 
