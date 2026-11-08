@@ -565,6 +565,99 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("refuses a new package install under policy and reuses an installed one", () => {
+    const agent = makeAgent({
+      npx: { package: "@example/acp@V1.2.3", args: ["--stdio"] },
+    });
+    let published = agent;
+    const installDenial = "Example Corp's policy does not allow installing or updating providers.";
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-denied-package-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const makeResolver = (denial?: string) =>
+        AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+          ...(denial === undefined ? {} : { installDenial: denial }),
+        }).pipe(Effect.provideService(HostProcess.Environment, toolchain.environment));
+
+      const denied = yield* makeResolver(installDenial);
+      const error = yield* Effect.flip(
+        denied.resolve(settings(), "/workspace", toolchain.environment),
+      );
+      expect(error.detail).toBe(installDenial);
+      const commands = yield* fileSystem
+        .readFileString(toolchain.logPath)
+        .pipe(Effect.orElseSucceed(() => ""));
+      expect(commands).not.toContain("install --global");
+
+      const allowed = yield* makeResolver();
+      yield* allowed.resolve(settings(), "/workspace", toolchain.environment);
+      // A newer release must not strand what is installed, since it could never be installed.
+      published = {
+        ...makeAgent({ npx: { package: "@example/acp@V2.0.0", args: ["--stdio"] } }),
+        version: "2.0.0",
+      };
+      const frozen = yield* makeResolver(installDenial);
+      yield* frozen.search({ query: "example" });
+      const cached = yield* frozen.resolve(settings(), "/workspace", toolchain.environment);
+      expect(cached.spawn.command).toBe(toolchain.executablePath);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(published))),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("refuses to download a binary under policy", () => {
+    const agent = makeAgent({
+      binary: {
+        "linux-x86_64": {
+          archive: archiveUrl,
+          cmd: "./bin/example-agent",
+          args: ["acp"],
+          sha256: "97b29a636d7ddf7bf3567ae4d48c0f2a9b03943fd808b6efbf74f1dd3db131b7",
+        },
+      },
+    });
+    const installDenial = "Example Corp's policy does not allow installing or updating providers.";
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-denied-binary-",
+      });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+        installDenial,
+      });
+      const error = yield* Effect.flip(resolver.resolve(settings(), "/workspace"));
+      expect(error.detail).toBe(installDenial);
+      expect(requests).toEqual([registryUrl]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests.push(request.url);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
+          );
+        }),
+      ),
+    );
+  });
+
   it.effect("installs and reuses a registry binary in the managed cache", () => {
     const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
     const agent = makeAgent({

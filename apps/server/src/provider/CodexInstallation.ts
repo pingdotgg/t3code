@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import {
+  managedProviderInstallDenial,
   ProviderDriverKind,
   type ProviderInstallState,
   type ServerProviderCompatibilityAdvisory,
@@ -29,6 +30,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeCrypto from "node:crypto";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 
@@ -151,12 +153,18 @@ export class CodexInstallation extends Context.Service<
     CodexInstallation,
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
-      return yield* makeCodexInstallation({ baseDir: config.baseDir });
+      const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
+      return yield* makeCodexInstallation({
+        baseDir: config.baseDir,
+        installsRefused: managedProviderInstallDenial(managedPolicy) !== undefined,
+      });
     }),
   );
 }
 export interface CodexInstallationOptions {
   readonly baseDir: string;
+  /** Skips the startup update; `ProviderInstallation.start` refuses requested installs. */
+  readonly installsRefused?: boolean;
   readonly releaseAsset?: CodexReleaseAsset | null;
   readonly validate?: (
     executable: CodexExecutable,
@@ -807,7 +815,11 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }) satisfies ProviderInstallState,
     );
     // A supported older runtime still resolves, so a raised pin needs its own update.
-    if (asset && compareSemverVersions(installed.version, asset.version) < 0)
+    if (
+      asset &&
+      options.installsRefused !== true &&
+      compareSemverVersions(installed.version, asset.version) < 0
+    )
       yield* start.pipe(Effect.ignore);
   }).pipe(
     Effect.catch(() =>

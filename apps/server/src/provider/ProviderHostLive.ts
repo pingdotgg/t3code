@@ -23,6 +23,7 @@ export const layer = Layer.effect(
     const digest = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
     return ProviderHost.ProviderHost.of({
+      managedPolicy: serverSettings.managedPolicy,
       paths: {
         cwd: config.cwd,
         baseDir: config.baseDir,

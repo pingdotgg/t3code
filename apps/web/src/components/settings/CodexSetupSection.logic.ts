@@ -15,6 +15,23 @@ export function readCodexSetupMode(config: unknown): "managed" | "existing" {
 
 const RUNNING_INSTALL_PHASES = new Set(["downloading", "extracting", "verifying"]);
 
+/** Whether Codex must install before sign-in; a refused update signs in on what is installed. */
+export function codexNeedsInstall(input: {
+  readonly installed: boolean;
+  readonly updateAvailable: boolean;
+  readonly canInstall: boolean;
+}): boolean {
+  return !input.installed || (input.updateAvailable && input.canInstall);
+}
+
+/** Whether setup can never begin here: nothing is installed and nothing may install it. */
+export function codexSetupRefused(
+  installation: Pick<ProviderInstallState, "installedVersion"> | null,
+  canInstall: boolean | undefined,
+): boolean {
+  return installation !== null && installation.installedVersion === null && canInstall === false;
+}
+
 /**
  * Whether the `started` install left a usable runtime; `undefined` until settled.
  * The subscription can still carry the previous operation's state when start

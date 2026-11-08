@@ -21,6 +21,7 @@ import {
   defaultInstanceIdForDriver,
   AuthOrchestrationOperateScope,
   isManagedDriverAllowed,
+  managedProviderInstallDenial,
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
@@ -84,6 +85,7 @@ import { connectPairing } from "../../connection/onboarding";
 import { getProviderSummary } from "../settings/providerStatus";
 import { providerClients } from "../settings/providerDriverMeta";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
+import { ManagedControl, ManagedNotice } from "../ManagedPolicy";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
@@ -819,6 +821,7 @@ function ConnectedAgentsStep({
               key={driver}
               driver={driver}
               provider={provider}
+              installDenial={managedProviderInstallDenial(managedPolicy)}
               terminalOpen={terminalSession?.driver === driver}
               terminalAvailable={serverConfig !== null && canOperateTerminal}
               onOpenTerminal={() => {
@@ -949,6 +952,7 @@ function OnboardingCodexSetup({
     <AgentCard
       driver="codex"
       provider={provider}
+      installDenial={managedProviderInstallDenial(serverConfig.managedPolicy)}
       terminalOpen={terminalOpen}
       terminalAvailable={canOperateTerminal}
       onOpenTerminal={onOpenTerminal}
@@ -972,12 +976,14 @@ function OnboardingCodexSetup({
 function AgentCard({
   driver,
   provider,
+  installDenial,
   terminalOpen,
   terminalAvailable,
   onOpenTerminal,
 }: {
   readonly driver: OnboardingAgentDriver;
   readonly provider: ServerProvider | undefined;
+  readonly installDenial: string | undefined;
   readonly terminalOpen: boolean;
   readonly terminalAvailable: boolean;
   readonly onOpenTerminal: () => void;
@@ -987,6 +993,7 @@ function AgentCard({
     provider?.displayName || (driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver));
   const summary = getProviderSummary(provider);
   const providerState = getOnboardingProviderState(provider);
+  const installRefusal = providerState === "install" ? installDenial : undefined;
 
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
@@ -1001,6 +1008,11 @@ function AgentCard({
           {providerState === "ready" ? "Ready to code." : summary.headline}
           {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
         </p>
+        {installRefusal ? (
+          <div className="mt-1">
+            <ManagedNotice>{installRefusal}</ManagedNotice>
+          </div>
+        ) : null}
       </div>
       <div className="shrink-0">
         {providerState === "ready" ? (
@@ -1015,15 +1027,17 @@ function AgentCard({
         ) : providerState === "attention" ? (
           <span className="text-xs text-muted-foreground">{summary.headline}</span>
         ) : (
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={onOpenTerminal}
-            disabled={terminalOpen || !terminalAvailable}
-          >
-            <TerminalIcon className="size-3.5" />
-            {providerState === "signIn" ? "Sign in" : "Install"}
-          </Button>
+          <ManagedControl reason={installRefusal}>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={onOpenTerminal}
+              disabled={terminalOpen || !terminalAvailable}
+            >
+              <TerminalIcon className="size-3.5" />
+              {providerState === "signIn" ? "Sign in" : "Install"}
+            </Button>
+          </ManagedControl>
         )}
       </div>
     </div>

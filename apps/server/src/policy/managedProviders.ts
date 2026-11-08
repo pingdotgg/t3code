@@ -4,6 +4,7 @@ import {
   CodexSettings,
   defaultInstanceIdForDriver,
   disallowedProviderMessage,
+  managedProviderInstallDenial,
   type ManagedProviderInstance,
   type ManagedProviderLimits,
   type ManagedPolicySummary,
@@ -13,6 +14,7 @@ import {
   type ProviderInstanceId,
   resolveProviderInstanceEnabled,
   type RuntimeMode,
+  type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
@@ -24,6 +26,9 @@ import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
 import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
+import type { AnyProviderDriver } from "@t3tools/provider-core/server/driver";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 interface KnownDriver {
   readonly label: string;
@@ -603,3 +608,52 @@ export function makeManagedProviders(
     },
   };
 }
+
+const withoutInstallActions = (provider: ServerProvider): ServerProvider => ({
+  ...provider,
+  ...(provider.setup === undefined ? {} : { setup: { ...provider.setup, canInstall: false } }),
+  ...(provider.versionAdvisory === undefined
+    ? {}
+    : {
+        versionAdvisory: {
+          ...provider.versionAdvisory,
+          canUpdate: false,
+          canInstallVersion: false,
+        },
+      }),
+});
+
+const withoutProviderInstalls = <R>(driver: AnyProviderDriver<R>): AnyProviderDriver<R> => ({
+  ...driver,
+  create: (input) =>
+    driver.create(input).pipe(
+      Effect.map((instance) => ({
+        ...instance,
+        snapshot: {
+          ...instance.snapshot,
+          resolveMaintenance: (options) =>
+            instance.snapshot
+              .resolveMaintenance(options)
+              .pipe(Effect.map((maintenance) => ({ ...maintenance, update: null }))),
+          getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(withoutInstallActions)),
+          refresh: instance.snapshot.refresh.pipe(Effect.map(withoutInstallActions)),
+          // Each read of a live instance's `streamChanges` is its own subscription.
+          get streamChanges() {
+            return instance.snapshot.streamChanges.pipe(Stream.map(withoutInstallActions));
+          },
+        },
+      })),
+    ),
+});
+
+/**
+ * `drivers`, with instances that cannot update or offer to install when the policy refuses
+ * installs, so every client follows the snapshot. `ProviderInstallation.start` refuses on its own.
+ */
+export const withManagedInstalls = <R>(
+  summary: ManagedPolicySummary | undefined,
+  drivers: ReadonlyArray<AnyProviderDriver<R>>,
+): ReadonlyArray<AnyProviderDriver<R>> =>
+  managedProviderInstallDenial(summary) === undefined
+    ? drivers
+    : drivers.map(withoutProviderInstalls);

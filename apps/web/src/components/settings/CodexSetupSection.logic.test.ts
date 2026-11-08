@@ -2,6 +2,8 @@ import type { ProviderAuthState, ProviderInstallState } from "@t3tools/contracts
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  codexNeedsInstall,
+  codexSetupRefused,
   settleAuthorizationPage,
   settleHandoffAuthorizationPage,
   settleProviderInstall,
@@ -117,5 +119,34 @@ describe("settleAuthorizationPage", () => {
       }),
     ).toBe("https://a");
     expect(settleHandoffAuthorizationPage({ phase: "finished", profile: {} as never })).toBeNull();
+  });
+});
+
+describe("codexNeedsInstall", () => {
+  it.each([
+    { installed: false, updateAvailable: false, canInstall: true, expected: true },
+    { installed: true, updateAvailable: true, canInstall: true, expected: true },
+    { installed: true, updateAvailable: false, canInstall: true, expected: false },
+    // A policy can refuse installs; sign-in still runs on the installed runtime.
+    { installed: true, updateAvailable: true, canInstall: false, expected: false },
+  ])("is $expected for $installed, $updateAvailable, $canInstall", ({ expected, ...input }) => {
+    expect(codexNeedsInstall(input)).toBe(expected);
+  });
+});
+
+describe("codexSetupRefused", () => {
+  it.each([
+    { installedVersion: null, canInstall: false, refused: true },
+    { installedVersion: null, canInstall: true, refused: false },
+    { installedVersion: "1.0.0", canInstall: false, refused: false },
+  ])("is $refused for $installedVersion, canInstall $canInstall", (input) => {
+    expect(codexSetupRefused({ installedVersion: input.installedVersion }, input.canInstall)).toBe(
+      input.refused,
+    );
+  });
+
+  it("waits for the install state and provider before refusing", () => {
+    expect(codexSetupRefused(null, false)).toBe(false);
+    expect(codexSetupRefused({ installedVersion: null }, undefined)).toBe(false);
   });
 });
