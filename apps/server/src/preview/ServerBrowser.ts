@@ -91,7 +91,11 @@ import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
-import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
+import {
+  type AssetRequestRedirect,
+  installAssetNavigation,
+  isPdfAssetUrl,
+} from "./PdfDocumentNavigation.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
 const RENDER_SCALE = 2;
@@ -338,8 +342,6 @@ interface ServerTab {
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
   navigationGeneration: number;
-  /** Bumped by every navigation this server requests, so a stale URL resolution never navigates. */
-  requestedNavigation: number;
 
   abortedNavigation: {
     readonly url: string;
@@ -497,20 +499,17 @@ const make = Effect.gen(function* () {
             ? loopbackUrlHostForAddress(address)
             : NetAddress.formatUrlHost(address.address)
         }:${address.port}`;
-  // Clients resolve this server's file links on their own origin, which this machine may not reach.
-  const gotoReachable = (tab: ServerTab, url: string, options: Parameters<Page["goto"]>[1]) => {
-    const request = ++tab.requestedNavigation;
-    return (
-      tab.desktop !== null || listenOrigin === null
-        ? Promise.resolve(url)
-        : runAssetPromise(AssetAccess.rebaseSignedAssetUrl(url, listenOrigin))
-    ).then((reachable) => {
-      if (request !== tab.requestedNavigation) {
-        throw new Error(`Navigation to ${url} is interrupted by another navigation`);
-      }
-      return tab.page.goto(reachable, options);
-    });
-  };
+  // Clients resolve this server's file links on their own origin, which this machine may not
+  // reach. Headless tabs load them from where the server listens; the page keeps the client's URL.
+  const loadAssetsFromListenOrigin: AssetRequestRedirect | null =
+    listenOrigin === null
+      ? null
+      : async (url) => {
+          const reachable = await runAssetPromise(
+            AssetAccess.rebaseSignedAssetUrl(url, listenOrigin),
+          );
+          return reachable === url ? undefined : reachable;
+        };
   // sudo resets the environment, so the command has to name this server's home.
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND, [
     "--base-dir",
@@ -874,7 +873,7 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
-    await installPdfDocumentNavigation(cdp);
+    await installAssetNavigation(cdp, desktop ? null : loadAssetsFromListenOrigin);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
@@ -924,7 +923,6 @@ const make = Effect.gen(function* () {
       recordingStart: null,
       initialNavigation: null,
       navigationGeneration: 0,
-      requestedNavigation: 0,
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
@@ -1064,7 +1062,7 @@ const make = Effect.gen(function* () {
       tab.initialNavigation = (
         (desktop || adopted) && page.url() === snapshot.navStatus.url
           ? page.reload(options)
-          : gotoReachable(tab, snapshot.navStatus.url, options)
+          : page.goto(snapshot.navStatus.url, options)
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });
@@ -1711,7 +1709,7 @@ const make = Effect.gen(function* () {
     readiness: "load" | "domContentLoaded" | "none",
     timeout: number,
   ) => {
-    const navigation = gotoReachable(tab, url, {
+    const navigation = tab.page.goto(url, {
       timeout,
       waitUntil:
         readiness === "domContentLoaded"
@@ -2388,10 +2386,7 @@ const make = Effect.gen(function* () {
             const request = event.request;
             if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
             if (request?.clear === "cache") await tab.cdp.send("Network.clearBrowserCache");
-            if (request?.hardReload) {
-              tab.requestedNavigation++;
-              await tab.cdp.send("Page.reload", { ignoreCache: true });
-            }
+            if (request?.hardReload) await tab.cdp.send("Page.reload", { ignoreCache: true });
           })
           .catch((cause: unknown) =>
             runFork(Effect.logWarning("server preview could not apply a tab setting", { cause })),
@@ -2525,11 +2520,10 @@ const make = Effect.gen(function* () {
       case "navigate":
         if (typeof message.url === "string") {
           const url = normalizePreviewUrl(message.url);
-          tab.control.trackUntilHandoff(gotoReachable(tab, url, VIEWER_NAVIGATION_OPTIONS));
+          tab.control.trackUntilHandoff(tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS));
         }
         return;
       case "history":
-        tab.requestedNavigation++;
         tab.control.trackUntilHandoff(
           num(message.delta) < 0
             ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
@@ -2537,7 +2531,6 @@ const make = Effect.gen(function* () {
         );
         return;
       case "reload":
-        tab.requestedNavigation++;
         if (message.ignoreCache === true) {
           await session.send("Page.reload", { ignoreCache: true });
           return;

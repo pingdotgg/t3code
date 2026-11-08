@@ -9,24 +9,36 @@ export const isPdfAssetUrl = (url: string) => {
   return pathname.startsWith("/api/assets/") && /\.pdf$/i.test(pathname);
 };
 
-export async function installPdfDocumentNavigation(cdp: CDPSession) {
+/** Returns where a request this server can serve should load from, or undefined to leave it. */
+export type AssetRequestRedirect = (url: string) => Promise<string | undefined>;
+
+// One installer because `Fetch.enable` replaces a session's patterns and every handler sees every pause.
+export async function installAssetNavigation(
+  cdp: CDPSession,
+  redirect: AssetRequestRedirect | null,
+) {
   const nativeViewer = await cdp.send("Runtime.evaluate", {
     expression: "navigator.pdfViewerEnabled",
     returnByValue: true,
   });
-  if (nativeViewer.result?.value === true) return;
-  const { frameTree } = await cdp.send("Page.getFrameTree");
-  // The shell cannot open PDFs. Commit a document at the original URL so the
-  // client can embed its signed bytes while Back and Forward keep working.
+  const pdfFrameId =
+    nativeViewer.result?.value === true
+      ? null
+      : (await cdp.send("Page.getFrameTree")).frameTree.frame.id;
+  if (pdfFrameId === null && redirect === null) return;
   cdp.on("Fetch.requestPaused", (event) => {
     const { requestId, request, frameId } = event;
-    const proceed = () => cdp.send("Fetch.continueRequest", { requestId });
+    const proceed = (url?: string) =>
+      cdp.send("Fetch.continueRequest", url === undefined ? { requestId } : { requestId, url });
     void (async () => {
-      if (
-        request.method !== "GET" ||
-        frameId !== frameTree.frame.id ||
-        !isPdfAssetUrl(request.url)
-      ) {
+      // A pause carries a response status or error only at the response stage.
+      if (event.responseStatusCode === undefined && event.responseErrorReason === undefined) {
+        await proceed(await redirect?.(request.url));
+        return;
+      }
+      // The shell cannot open PDFs. Commit a document at the original URL so the
+      // client can embed its signed bytes while Back and Forward keep working.
+      if (request.method !== "GET" || frameId !== pdfFrameId || !isPdfAssetUrl(request.url)) {
         await proceed();
         return;
       }
@@ -63,10 +75,21 @@ export async function installPdfDocumentNavigation(cdp: CDPSession) {
       });
     })().catch(() => proceed().catch(constVoid));
   });
-  // Only document navigations pause; the client's PDF fetch gets the original bytes.
   await cdp.send("Fetch.enable", {
     patterns: [
-      { urlPattern: "*/api/assets/*", resourceType: "Document", requestStage: "Response" },
+      // Only document navigations pause; the client's PDF fetch gets the original bytes.
+      ...(pdfFrameId === null
+        ? []
+        : [
+            {
+              urlPattern: "*/api/assets/*",
+              resourceType: "Document" as const,
+              requestStage: "Response" as const,
+            },
+          ]),
+      ...(redirect === null
+        ? []
+        : [{ urlPattern: "*/api/assets/*", requestStage: "Request" as const }]),
     ],
   });
 }
