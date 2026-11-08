@@ -835,6 +835,74 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
     // Run 8 is a `/compact` run, so the model-switch baseline is the prompt before it, run 7.
     yield* compact(9);
     assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 7, 8, 9]));
+
+    // The search for a prompt before the compaction may walk past an unreadable run.
+    const legacyThreadId = yield* addRolledBackRecoveryCandidate("compacted-legacy");
+    const legacyNodeId = NodeId.make("node:compacted-legacy");
+    const compactionRunId = RunId.make("run:compacted-legacy:2");
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES ('run:compacted-legacy:0', ${legacyThreadId}, 0, 'codex', 'completed', '', '{')
+    `;
+    yield* store.apply({
+      id: EventId.make("event:compacted-legacy:run"),
+      type: "run.created",
+      threadId: legacyThreadId,
+      runId: compactionRunId,
+      nodeId: legacyNodeId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: compactionRunId,
+        threadId: legacyThreadId,
+        ordinal: 2,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:compacted-legacy:2"),
+        rootNodeId: legacyNodeId,
+        activeAttemptId: null,
+        status: "completed",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: now,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    });
+    yield* store.apply({
+      id: EventId.make("event:compacted-legacy:compaction"),
+      type: "turn-item.updated",
+      threadId: legacyThreadId,
+      runId: compactionRunId,
+      nodeId: legacyNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:compacted-legacy:compaction"),
+        threadId: legacyThreadId,
+        runId: compactionRunId,
+        nodeId: legacyNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "compaction",
+        driver,
+      },
+    });
+    const legacy = yield* store.getThreadRecords(legacyThreadId, ["runs"], {
+      sinceLastCompaction: { keepRunIds: [] },
+    });
+    assert.deepEqual(ids(legacy.runs), [compactionRunId]);
   }).pipe(Effect.provide(layerTest)),
 );
 

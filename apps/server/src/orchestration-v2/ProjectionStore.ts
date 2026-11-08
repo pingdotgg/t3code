@@ -3154,13 +3154,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             (SELECT previous.ordinal FROM orchestration_v2_projection_runs AS previous
              WHERE previous.thread_id = ${threadId} AND previous.ordinal < latest.ordinal
                AND previous.status NOT IN ('queued', 'rolled_back')
-               AND NOT EXISTS (
+               AND CASE WHEN json_valid(previous.payload_json) THEN NOT EXISTS (
                  SELECT 1 FROM orchestration_v2_projection_messages AS prompt
                  WHERE prompt.message_id = json_extract(previous.payload_json, '$.userMessageId')
                    AND prompt.role = 'user'
                    AND coalesce(json_array_length(prompt.payload_json, '$.attachments'), 0) = 0
                    AND ${trimmedLowerText(sql.literal("prompt.payload_json"))} = ${IDLE_COMPACTION_TEXT}
-               )
+               ) ELSE 0 END
              ORDER BY previous.ordinal DESC
              LIMIT 1),
             latest.ordinal
