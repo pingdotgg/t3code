@@ -399,6 +399,71 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
   );
 });
 
+it.effect("cancel_merge_back withdraws only this thread's pending merge-back on the target", () => {
+  const dispatched: Array<unknown> = [];
+  const transfer = (id: string, sourceThreadId: ThreadId, targetThreadId: string, status: string) =>
+    ({
+      id,
+      type: "merge_back",
+      sourceThreadId,
+      targetThreadId: ThreadId.make(targetThreadId),
+      status,
+    }) as never;
+  const transfersByThread: Record<string, ReadonlyArray<never>> = {
+    "parent-a": [
+      transfer("transfer-superseded", threadId, "parent-a", "superseded"),
+      transfer("transfer-other-source", ThreadId.make("other-fork"), "parent-a", "pending"),
+    ],
+    "parent-b": [transfer("transfer-pending", threadId, "parent-b", "pending")],
+  };
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const cancel = (targetThreadId: string) =>
+      server
+        .callTool({
+          name: "t3_thread_transfer",
+          arguments: { action: "cancel_merge_back", targetThreadId },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const nothingPending = yield* cancel("parent-a");
+    expect(declaredFailure(nothingPending)).toMatchObject({ code: "invalid_request" });
+    expect(dispatched).toEqual([]);
+
+    const cancelled = yield* cancel("parent-b");
+    expect(cancelled.structuredContent).toMatchObject({ sequence: 1, targetThreadId: "parent-b" });
+    expect(dispatched).toMatchObject([
+      { type: "thread.merge_back.cancel", threadId: "parent-b", transferId: "transfer-pending" },
+    ]);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed({
+                ...McpToolAccessTestkit.idleThreadProjection(
+                  McpToolAccessTestkit.liveThreadShell(id),
+                ),
+                contextTransfers: transfersByThread[id] ?? [],
+              }),
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: 1 } as never);
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("keeps unexpected handler defects private through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

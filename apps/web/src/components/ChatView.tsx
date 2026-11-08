@@ -310,7 +310,7 @@ import {
   shouldShowThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
-import { PendingMergeBackControl } from "./chat/PendingMergeBackControl";
+import { usePendingMergeBackBanner } from "./chat/usePendingMergeBackBanner";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
@@ -1116,6 +1116,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectScripts = activeProject ? resolveProjectScripts(settings, activeProject) : [];
   const { projectCloneBannerItem, projectCloneSendBlockReason } =
     useProjectCloneBanner(activeProjectRef);
+  const pendingMergeBackBannerItem = usePendingMergeBackBanner(environmentId, serverProjection);
   const activeProjectDefaultModelSelection =
     !isServerThread && draftFallback
       ? draftFallback.selection
@@ -2627,6 +2628,8 @@ export default function ChatView(props: ChatViewProps) {
     const extensionStatusItems = extensionStatusBanner === null ? [] : [extensionStatusBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const pendingMergeBackItems =
+      pendingMergeBackBannerItem === null ? [] : [pendingMergeBackBannerItem];
     // An approval's feedback goes to that approval; the armed session waits for the next message.
     const freshSessionItems =
       freshSessionAvailable && freshSessionArmed && activePendingApproval === null
@@ -2640,6 +2643,7 @@ export default function ChatView(props: ChatViewProps) {
         ...extensionStatusItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...pendingMergeBackItems,
         ...freshSessionItems,
         ...systemComposerBannerItems,
       ];
@@ -2651,6 +2655,7 @@ export default function ChatView(props: ChatViewProps) {
       ...extensionStatusItems,
       ...usageLimitsItems,
       ...projectCloneItems,
+      ...pendingMergeBackItems,
       ...freshSessionItems,
       ...systemComposerBannerItems,
       branchMismatchBannerItem({
@@ -3069,10 +3074,6 @@ export default function ChatView(props: ChatViewProps) {
           onCancelEdit={queuedRunEdit.cancelEdit}
           timestampFormat={timestampFormat}
           onOpenThread={onOpenRelatedThreadStable}
-        />
-        <PendingMergeBackControl
-          environmentId={activeThread.environmentId}
-          threadId={activeThread.id}
         />
       </>
     ) : null;

@@ -163,6 +163,32 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           const sourcePoint = input.sourcePoint ?? { type: "latest_stable" as const };
           const { threads, projection } = yield* readThread(input.threadId);
           const commandId = yield* newCommandId();
+          if (input.action === "cancel_merge_back") {
+            const targetThreadId = yield* required(input.targetThreadId, "targetThreadId");
+            const target = yield* readThread(targetThreadId, ["contextTransfers"]);
+            const transfer = target.projection.contextTransfers.findLast(
+              (candidate) =>
+                candidate.type === "merge_back" &&
+                candidate.status === "pending" &&
+                candidate.sourceThreadId === projection.thread.id &&
+                candidate.targetThreadId === target.projection.thread.id,
+            );
+            if (transfer === undefined) {
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "No merge_back from this thread is waiting on the target thread.",
+              });
+            }
+            const result = yield* threads
+              .dispatch({
+                type: "thread.merge_back.cancel",
+                commandId,
+                threadId: target.projection.thread.id,
+                transferId: transfer.id,
+              })
+              .pipe(Effect.mapError(dispatchFailure));
+            return { sequence: result.sequence, targetThreadId: target.projection.thread.id };
+          }
           if (input.action === "merge_back") {
             const targetThreadId = yield* required(input.targetThreadId, "targetThreadId");
             yield* readThread(targetThreadId);
