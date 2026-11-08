@@ -77,10 +77,11 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           "a!b!c",
           "",
         ];
+        const hostPath = (yield* HostProcess.Environment).PATH ?? "";
         yield* Effect.promise(() =>
           expect(
             exec(path.join(shim, "agent-device"), args, {
-              env: { PATH: process.env.PATH ?? "", HOME: temp },
+              env: { PATH: hostPath, HOME: temp },
             }),
           ).rejects.toMatchObject({ code: 23, stdout: `${JSON.stringify(args)}\n`, stderr: "" }),
         );
