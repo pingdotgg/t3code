@@ -30,16 +30,17 @@ export function unsavedDesktopSshHosts(
 ): ReadonlyArray<DesktopDiscoveredSshHost> {
   const savedKeys = new Set<string>();
   for (const environment of savedEnvironments) {
-    const profile = environment.entry.profile;
-    if (
-      environment.entry.target._tag !== "SshConnectionTarget" ||
-      Option.isNone(profile) ||
-      profile.value._tag !== "SshConnectionProfile"
-    ) {
-      continue;
+    for (const { target, profile } of connectionRoutes(environment.entry)) {
+      if (
+        target._tag !== "SshConnectionTarget" ||
+        Option.isNone(profile) ||
+        profile.value._tag !== "SshConnectionProfile"
+      ) {
+        continue;
+      }
+      savedKeys.add(profile.value.target.alias);
+      savedKeys.add(formatDesktopSshTarget(profile.value.target));
     }
-    savedKeys.add(profile.value.target.alias);
-    savedKeys.add(formatDesktopSshTarget(profile.value.target));
   }
   return hosts.filter(
     (host) =>

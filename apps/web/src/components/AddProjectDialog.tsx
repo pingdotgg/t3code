@@ -420,7 +420,11 @@ function FolderStep({
 
   const body = !connected ? (
     <div className="flex items-center gap-2 text-muted-foreground text-sm">
-      <Spinner size="md" />
+      {environment === null ||
+      environment.connection.phase === "connecting" ||
+      environment.connection.phase === "reconnecting" ? (
+        <Spinner size="md" />
+      ) : null}
       {environment ? connectionStatusText(environment.connection) : "Connecting…"}
     </div>
   ) : (
