@@ -37,6 +37,8 @@ export function ThreadContextChip(props: {
   const project = useProject(projectId ? scopeProjectRef(environmentId, projectId) : null);
   const title = shell?.title?.trim() || metadata?.title.trim() || props.record.title;
   const navigate = useNavigate();
+  const settled = shell?.settledOverride === "settled";
+  const settledLabel = settled ? gt("Settled", { $context: "thread status" }) : null;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -63,9 +65,13 @@ export function ThreadContextChip(props: {
                 draggable={false}
               />
             }
-            aria-label={gt("Thread, {title}", { title })}
+            aria-label={gt("Thread, {title}", {
+              title: settledLabel ? `${title}, ${settledLabel}` : title,
+            })}
             data-markdown-copy={props.copyMarkdown}
-            className="no-underline"
+            className={
+              settled ? "rounded-md bg-foreground/5 px-1.5 py-0.5 no-underline" : "no-underline"
+            }
           >
             {project ? (
               <ProjectFavicon project={project} className="size-[1em] self-center" />
@@ -73,6 +79,11 @@ export function ThreadContextChip(props: {
               <MessagesSquareIcon />
             )}
             <ContextChipLabel>{title}</ContextChipLabel>
+            {settled ? (
+              <span className="ms-1 shrink-0 border-s border-foreground/15 ps-1.5 text-xs font-normal text-muted-foreground">
+                {settledLabel}
+              </span>
+            ) : null}
           </ContextChip>
         }
       />
