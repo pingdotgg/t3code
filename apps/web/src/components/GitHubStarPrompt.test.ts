@@ -14,6 +14,7 @@ const { add, update, openExternal, commands, starred, page } = vi.hoisted(() => 
     focused: true,
     activeElement: null as { matches: (selector: string) => boolean } | null,
     events: new EventTarget(),
+    lessonCard: false,
   },
 }));
 vi.mock("./ui/toast", () => ({ toastManager: { add, update, close: vi.fn() } }));
@@ -42,9 +43,12 @@ function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
   page.focused = true;
   page.activeElement = null;
   page.events = new EventTarget();
+  page.lessonCard = false;
   const store = new Map([["t3code:github-star-prompt:sent", String(sent)]]);
   vi.stubGlobal("document", {
     hasFocus: () => page.focused,
+    querySelector: (selector: string) =>
+      page.lessonCard && selector === "[data-quiz-card-seed]" ? {} : null,
     get activeElement() {
       return page.activeElement;
     },
@@ -134,6 +138,18 @@ describe("recordPromptSent", () => {
     setup({ sent: 5, writable: false });
     await (await startSession()).send();
     expect(add).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("waits for the next session while a lesson card is on screen", async () => {
+    const store = setup({ sent: 5 });
+    page.lessonCard = true;
+    await (await startSession()).send();
+    expect(add).not.toHaveBeenCalled();
+    expect(store.has("t3code:github-star-prompt:dismissed")).toBe(false);
+    page.lessonCard = false;
+    await (await startSession()).send();
+    expect(add).toHaveBeenCalledOnce();
     vi.unstubAllGlobals();
   });
 

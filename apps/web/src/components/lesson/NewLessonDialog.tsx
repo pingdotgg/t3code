@@ -1,6 +1,8 @@
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
+  type ProjectId,
   ThreadId,
   ModelSelection,
   type ScopedProjectRef,
@@ -17,7 +19,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import {
@@ -51,9 +53,19 @@ import { randomUUID } from "../../lib/utils";
 
 type Request = {
   projectRef: ScopedProjectRef;
+  inProject?: boolean;
   source?: { threadId: string; excerpt: string };
 };
 const useLessonDialog = create<{ request: Request | null }>(() => ({ request: null }));
+// Opened from a project's thread, draft or page, the lesson defaults to that project.
+export function newLessonRequest(
+  open: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId } | null | undefined,
+  fallback: ScopedProjectRef | null,
+): Request | null {
+  if (open)
+    return { projectRef: scopeProjectRef(open.environmentId, open.projectId), inProject: true };
+  return fallback ? { projectRef: fallback } : null;
+}
 export function openNewLesson(request: Request) {
   useLessonDialog.setState({ request });
 }
@@ -109,7 +121,7 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
   const [purpose, setPurpose] = useState<"outcome" | "prerequisite">("outcome");
   const [history, setHistory] = useState<"new" | "didnt-stick" | "want-depth">("new");
   const [location, setLocation] = useState<"project" | "new">(
-    request.source === undefined ? "new" : "project",
+    request.inProject || request.source !== undefined ? "project" : "new",
   );
   const [goal, setGoal] = useState("");
   const [pending, setPending] = useState(false);

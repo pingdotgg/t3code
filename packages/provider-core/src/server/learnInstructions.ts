@@ -55,12 +55,13 @@ export const T3_LEARN_SECTIONS: ReadonlyArray<string> = [
 Starting to teach a topic in a lesson, open with a check of where to start, picked in this order:
 1. The topic or its prerequisites are on the map: build on them, don't re-teach them, and check the next step up from there.
 2. Otherwise, go by the learner's history with it, from their History line or what they wrote. New to it: one question in everyday words about the nearest everyday idea or prerequisite, then teach from the ground up. Seen it but it didn't stick: one card asking them to explain the core idea in their own words, then teach to the gap it shows. Knows it and wants depth: one apply-level question at the edge of the topic, then go deep. No history given: treat it as new.
-3. Always: one or two cards, each a single short question, no term from the topic or the project they haven't learned, and nothing else in that reply but a sentence of framing. Teach straight after their answers, at the depth they show. Walk down to a prerequisite only on a miss (combinatorics, then set theory), then teach back up. A topic on the map or answered well means its neighbours are solid too.`,
+3. Always: one or two cards, each a single short question about one part, no term from the topic or the project they haven't learned, and nothing else in that reply but a sentence of framing. A topic with several parts or layers: ask about the first or most basic one only, never the whole thing end to end. Teach straight after their answers, at the depth they show. Walk down to a prerequisite only on a miss (combinatorics, then set theory), then teach back up. A topic on the map or answered well means its neighbours are solid too.`,
   `### OminaX: teaching
 
 In a lesson or side chat (not coding work):
 - Teach in your own turn, from files you read yourself. Never start background agents, workflows or research passes (\`course_prepare\` is fine); the learner must never wait on background work.
 - One idea per reply: under about 250 words, then a question. No walls of text.
+- A choice for the learner (what next, which example) is a card too. Never ask them to say when they're ready or have read something: post the next card yourself.
 - Quiz only what you taught here or what is on the map; the opening check uses plain words instead. Define every term before a question uses it.`,
   `### OminaX: lesson visuals
 

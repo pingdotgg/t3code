@@ -86,7 +86,7 @@ import {
 import { openThreadFind } from "./chat/threadFindStore";
 import { openWelcomeGuide } from "./onboarding/WelcomeGuideDialog";
 import { openWhatsNew } from "./onboarding/WhatsNewDialog";
-import { openNewLesson } from "./lesson/NewLessonDialog";
+import { newLessonRequest, openNewLesson } from "./lesson/NewLessonDialog";
 import {
   useDeferredValue,
   useEffect,
@@ -1315,29 +1315,19 @@ function OpenCommandPaletteDialog(props: {
           });
         },
       });
-      const lessonProject =
+      const lessonRequest = newLessonRequest(
         activeThread ??
-        activeDraftThread ??
-        currentProject ??
-        (defaultProjectRef
-          ? (projects.find(
-              (project) =>
-                project.environmentId === defaultProjectRef.environmentId &&
-                project.id === defaultProjectRef.projectId,
-            ) ?? null)
-          : null);
-      const lessonProjectId =
-        lessonProject === null
-          ? null
-          : "projectId" in lessonProject
-            ? lessonProject.projectId
-            : lessonProject.id;
-      const lessonEnvironment = lessonProject
-        ? serverConfigs.get(lessonProject.environmentId)?.environment
+          activeDraftThread ??
+          (currentProject
+            ? { environmentId: currentProject.environmentId, projectId: currentProject.id }
+            : null),
+        defaultProjectRef,
+      );
+      const lessonEnvironment = lessonRequest
+        ? serverConfigs.get(lessonRequest.projectRef.environmentId)?.environment
         : undefined;
       if (
-        lessonProject !== null &&
-        lessonProjectId !== null &&
+        lessonRequest !== null &&
         lessonEnvironment !== undefined &&
         canCreateLesson &&
         supportsLessons(lessonEnvironment)
@@ -1349,9 +1339,7 @@ function OpenCommandPaletteDialog(props: {
           title: "New lesson",
           icon: <BookOpenIcon className={ITEM_ICON_CLASS} />,
           run: async () => {
-            openNewLesson({
-              projectRef: scopeProjectRef(lessonProject.environmentId, lessonProjectId),
-            });
+            openNewLesson(lessonRequest);
           },
         });
       }

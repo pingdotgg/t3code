@@ -253,7 +253,7 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { openNewLesson } from "./lesson/NewLessonDialog";
+import { newLessonRequest, openNewLesson } from "./lesson/NewLessonDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
@@ -2974,15 +2974,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   };
-  const newLessonSource = newThreadContext.activeThread;
-  const newLessonProjectRef = newLessonSource
-    ? scopeProjectRef(newLessonSource.environmentId, newLessonSource.projectId)
-    : newThreadContext.defaultProjectRef;
+  const newLesson = newLessonRequest(
+    newThreadContext.activeThread ?? newThreadContext.activeDraftThread,
+    newThreadContext.defaultProjectRef,
+  );
+  const newLessonProjectRef = newLesson?.projectRef ?? null;
   const handleNewLesson = () => {
-    if (!newLessonProjectRef) return;
-    openNewLesson({
-      projectRef: newLessonProjectRef,
-    });
+    if (newLesson) openNewLesson(newLesson);
   };
   const canCreateLesson = useAtomValue(
     serverEnvironment.createLesson.permissionAtom(newLessonProjectRef?.environmentId ?? null),

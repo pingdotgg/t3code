@@ -47,7 +47,7 @@ vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: () => state.createLesson,
 }));
 
-import { NewLessonDialogHost, openNewLesson } from "./NewLessonDialog";
+import { NewLessonDialogHost, newLessonRequest, openNewLesson } from "./NewLessonDialog";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-local");
@@ -92,6 +92,7 @@ function setup(
   remembered: ModelSelection | null,
   providers: ReadonlyArray<ServerProvider>,
   defaultRuntimeMode: RuntimeMode,
+  lessonProjects = false,
 ) {
   vi.clearAllMocks();
   state.providers = new Map([[ENVIRONMENT_ID, providers]]);
@@ -111,7 +112,7 @@ function setup(
       {
         settings: { ...DEFAULT_SERVER_SETTINGS, defaultRuntimeMode },
         environment: {
-          capabilities: { lessonProjects: false },
+          capabilities: { lessonProjects },
         },
       } as ServerConfig,
     ],
@@ -130,8 +131,10 @@ function setup(
   };
 }
 
-async function startLesson() {
-  openNewLesson({ projectRef: { environmentId: ENVIRONMENT_ID, projectId: PROJECT_ID } });
+const PROJECT_REF = { environmentId: ENVIRONMENT_ID, projectId: PROJECT_ID };
+
+async function startLesson(request = newLessonRequest(null, PROJECT_REF)) {
+  openNewLesson(request!);
   await using screen = await render(<NewLessonDialogHost />);
   await userEvent.fill(
     page.getByLabelText("What do you want to learn?"),
@@ -218,4 +221,13 @@ describe("NewLessonDialog", () => {
       });
     },
   );
+
+  it.each([
+    ["opened from a project's thread or draft, starts in that project", PROJECT_REF, PROJECT_ID],
+    ["opened with no project open, starts a new lesson project", null, undefined],
+  ] as const)("%s", async (_label, open, expectedProjectId) => {
+    using _setup = setup(null, ALL, "full-access", true);
+    await startLesson(newLessonRequest(open, PROJECT_REF));
+    expect(state.createLesson.mock.calls[0]?.[0].input.projectId).toBe(expectedProjectId);
+  });
 });
