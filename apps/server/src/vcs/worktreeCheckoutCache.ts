@@ -363,7 +363,19 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
       return yield* new WorktreeCheckoutCacheError({ detail: "folder names differ only in case" });
     }
     const list = [...directories];
-    const times = yield* directoryTimes(path.join(entryDirectory, "files"), list);
+    // Backdated, so any later change moves the time even on a filesystem with a coarse clock.
+    const root = path.join(entryDirectory, "files");
+    yield* Effect.tryPromise({
+      try: () =>
+        Promise.all(
+          list.map((directory) =>
+            NodeFSP.utimes(directory === "" ? root : `${root}/${directory}`, 1_000_000, 1_000_000),
+          ),
+        ),
+      catch: (cause) =>
+        new WorktreeCheckoutCacheError({ detail: `could not backdate cached folders: ${cause}` }),
+    });
+    const times = yield* directoryTimes(root, list);
     yield* fileSystem.writeFileString(
       path.join(entryDirectory, "directories"),
       list.map((directory, index) => `${times[index]}\0${directory}\0`).join(""),

@@ -207,8 +207,9 @@ On a Mac, T3 Code keeps a few recent checkouts of each repository in the `caches
 home directory. A new worktree is cloned from one of them with APFS copy-on-write, which is about
 twice as fast as writing every file and makes the first `git status` in it fast as well. The first
 worktree of a repository uses Git's normal checkout and fills the cache. It needs Git 2.42 or newer.
-Git's normal checkout is also used for worktrees on another drive than the T3 home directory, sparse checkouts, repositories
-whose attributes use filters such as Git LFS, and repositories whose checkout settings changed.
+Git's normal checkout is also used for worktrees on a different drive from the T3 home directory,
+sparse checkouts, repositories whose attributes use filters such as Git LFS, and repositories
+whose checkout settings changed.
 Turn it off in **Settings → Worktrees → Fast checkout** under Advanced, which also deletes the
 cache.
 
