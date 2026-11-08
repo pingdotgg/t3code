@@ -929,9 +929,11 @@ export const layer: Layer.Layer<
                   .responseStreamingMode,
             ),
           );
-          // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
+          // Shared-workspace threads share a worktree; a snapshot would capture the parent's edits.
           yield* (
-            input.appThread.lineage.sideChat === true
+            input.appThread.lineage.sideChat === true ||
+            input.appThread.lesson !== undefined ||
+            input.appThread.sideChat !== undefined
               ? Effect.void
               : checkpointService.captureBaseline({
                   scope: input.checkpointScope,

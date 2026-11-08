@@ -262,8 +262,8 @@ export interface ProjectionCheckpointCaptureContext {
   readonly scope: OrchestrationV2CheckpointScope | undefined;
   readonly providerThread: OrchestrationV2ProviderThread | undefined;
   readonly readyCheckpointOrdinals: ReadonlyArray<number>;
-  /** Side chats share their parent's worktree and never snapshot it. */
-  readonly sideChat: boolean;
+  /** Shared-workspace threads never snapshot their worktree. */
+  readonly sharedWorkspace: boolean;
 }
 
 const RollbackTargetAttempts = Schema.Array(
@@ -5343,8 +5343,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const threadRows = yield* sql<{ readonly side_chat: number | null }>`
-          SELECT json_extract(payload_json, '$.lineage.sideChat') AS side_chat
+            const threadRows = yield* sql<{ readonly shared_workspace: number | null }>`
+            SELECT (
+              json_extract(payload_json, '$.lineage.sideChat') = 1
+              OR json_extract(payload_json, '$.lesson') IS NOT NULL
+              OR json_extract(payload_json, '$.sideChat') IS NOT NULL
+            ) AS shared_workspace
           FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId} LIMIT 1`;
             if (threadRows[0] === undefined) {
               return yield* new ProjectionStoreThreadNotFoundError({ threadId });
@@ -5385,7 +5389,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ? undefined
                   : yield* decodeProviderThreadPayload(providerRows[0].payload_json),
               readyCheckpointOrdinals: readyRows.map(({ ordinal }) => ordinal),
-              sideChat: threadRows[0].side_chat === 1,
+              sharedWorkspace: threadRows[0].shared_workspace === 1,
             };
           }),
         )
