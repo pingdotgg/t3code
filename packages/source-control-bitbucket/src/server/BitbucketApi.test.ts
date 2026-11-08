@@ -462,6 +462,16 @@ it.effect("prefers an explicit repository and uses context when the repository i
       yield* bitbucket.getRepositoryCloneUrls({ cwd: "/repo", context, repository });
     }
     yield* bitbucket.getDefaultBranch({ cwd: "/repo", context });
+    const unreadableContext = yield* bitbucket
+      .getDefaultBranch({
+        cwd: "/repo",
+        context: { ...context, remoteUrl: "https://bitbucket.org/scm/acme/.git/" },
+      })
+      .pipe(Effect.result);
+    assert.strictEqual(
+      Result.isFailure(unreadableContext) && unreadableContext.failure._tag,
+      "BitbucketRepositoryRemoteNotFoundError",
+    );
 
     assert.deepStrictEqual(
       execute.mock.calls.map(([request]) => request.url).toSorted(),

@@ -790,11 +790,11 @@ export const make = Effect.gen(function* () {
     const link = url ? definition.parseChangeRequestUrl(url) : null;
     if (link) return yield* requireRepositoryLocator(link.repository);
 
-    const fromContext =
-      input.context?.provider.kind === "bitbucket"
-        ? parseBitbucketRemoteUrl(input.context.remoteUrl)
-        : null;
-    if (fromContext) return fromContext;
+    if (input.context?.provider.kind === "bitbucket") {
+      const fromContext = parseBitbucketRemoteUrl(input.context.remoteUrl);
+      if (fromContext) return fromContext;
+      return yield* new BitbucketRepositoryRemoteNotFoundError({ cwd: input.cwd });
+    }
 
     const listRemotes = yield* git.remotes(input.cwd).pipe(
       Effect.mapError(
