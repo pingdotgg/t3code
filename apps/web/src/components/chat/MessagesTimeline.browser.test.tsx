@@ -3,6 +3,7 @@ import { AudioPreview } from "../files/AudioPreview";
 import { cdp, page } from "vite-plus/test/browser";
 import {
   ComposerContextId,
+  DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -33,6 +34,7 @@ import "~/index.css";
 
 import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
+import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
@@ -1383,6 +1385,41 @@ describe("ChangedFilesCard", () => {
         expect(screen.container.textContent).toContain("a.ts");
         expect(after()).toBe(topBefore);
       });
+    },
+  );
+});
+
+describe("MessagesTimeline changed files", () => {
+  it.each([true, false])(
+    "lists a turn's changed files under the reply only when the setting is on (%s)",
+    async (showChangedFilesInChat) => {
+      setup();
+      const previousSettings = getClientSettings();
+      onTestFinished(() => __setClientSettingsForTests(previousSettings));
+      __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, showChangedFilesInChat });
+      const runId = RunId.make("run-1");
+      await using screen = await renderTimeline(
+        [
+          message("Fix the build", { runId }, "user-1"),
+          message("Fixed it.", { role: "assistant", runId }, "assistant-1"),
+        ],
+        {
+          turnDiffSummaries: [
+            {
+              runId,
+              checkpointTurnCount: 1,
+              checkpointRef: "checkpoint-1" as never,
+              status: "ready",
+              files: [{ path: "src/build.ts", kind: "modified", additions: 2, deletions: 1 }],
+              assistantMessageId: MessageId.make("assistant-1"),
+              completedAt: CREATED_AT,
+            },
+          ],
+        },
+      );
+      await vi.waitFor(() => expect(screen.text()).toContain("Fixed it."));
+      expect(screen.text().includes("1 changed file")).toBe(showChangedFilesInChat);
+      expect(screen.buttons("Open diff")).toHaveLength(showChangedFilesInChat ? 1 : 0);
     },
   );
 });

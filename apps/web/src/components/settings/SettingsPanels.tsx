@@ -515,6 +515,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Diff whitespace changes"]
       : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? ["Diff layout"] : []),
+    ...(settings.showChangedFilesInChat !== DEFAULT_UNIFIED_SETTINGS.showChangedFilesInChat
+      ? ["Changed files in chat"]
+      : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? ["Open pull requests and changes panels proactively"]
       : []),
@@ -640,6 +643,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
+      showChangedFilesInChat: DEFAULT_UNIFIED_SETTINGS.showChangedFilesInChat,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -1396,6 +1400,31 @@ export function DiffsSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("changed-files-in-chat")}
+          description="List the files each turn changed under the agent's reply. Off, the diff panel still has every turn's changes."
+          resetAction={
+            settings.showChangedFilesInChat !== DEFAULT_UNIFIED_SETTINGS.showChangedFilesInChat ? (
+              <SettingResetButton
+                label="changed files in chat"
+                onClick={() =>
+                  updateSettings({
+                    showChangedFilesInChat: DEFAULT_UNIFIED_SETTINGS.showChangedFilesInChat,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showChangedFilesInChat}
+              onCheckedChange={(checked) =>
+                updateSettings({ showChangedFilesInChat: Boolean(checked) })
+              }
+              aria-label="Show changed files in chat"
+            />
           }
         />
         <DiffColorsSettingsRow />

@@ -672,6 +672,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["collapsed expanded collapse expand files pull request pr code tab"],
   },
   {
+    id: "changed-files-in-chat",
+    title: "Changed files in chat",
+    to: "/settings/diffs",
+    searchTerms: ["hide card list tree under reply turn timeline"],
+  },
+  {
     id: "diff-layout",
     title: "Diff layout",
     to: "/settings/diffs",
