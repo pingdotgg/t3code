@@ -80,7 +80,6 @@ interface ThreadDetailsPanelProps extends Pick<
   usage: ThreadDetailsUsageInput;
   onCompactContext?: () => void;
   compactDisabled?: boolean;
-  compactDisabledReason?: string | null;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -247,7 +246,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       usage={props.usage.contextWindow}
                       onCompact={props.onCompactContext}
                       compactDisabled={props.compactDisabled}
-                      compactDisabledReason={props.compactDisabledReason}
                     />
                   ) : null}
                 </section>

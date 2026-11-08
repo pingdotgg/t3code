@@ -150,7 +150,8 @@ import {
   useEnvironmentSpeechInput,
   useSpeechUnavailableReason,
 } from "../../speech/useEnvironmentSpeechInput";
-import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
+import { ComposerSpeechButton } from "./ComposerSpeechButton";
+import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME } from "./ComposerPrimaryActions";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
@@ -2394,7 +2395,6 @@ export function ChatComposer(props: ChatComposerProps) {
       <ComposerSpeechButton
         inPill={inPill}
         state={speechInput.state}
-        progress={null}
         shortcutLabel={dictationShortcutLabel}
         disabled={dictationDisabled}
         unavailableReason={speechUnavailableReason}
@@ -2402,9 +2402,16 @@ export function ChatComposer(props: ChatComposerProps) {
           if (isComposerCollapsedMobile) expandMobileComposerStable();
           void speechInput.start();
         }}
-        onCancel={() => speechInput.cancel()}
+        dictation={{
+          level: speechInput.level,
+          onStop: () => void speechInput.stop(),
+          onSkipPostProcessing: () => speechInput.skipPostProcessing(),
+        }}
       />
     ) : null;
+  // While recording, the send slot becomes Stop and finishes the recording.
+  const stopDictationStable = useStableCallback(() => void speechInput.stop());
+  const onStopDictation = speechInput.state.phase === "recording" ? stopDictationStable : undefined;
 
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
@@ -3555,19 +3562,22 @@ export function ChatComposer(props: ChatComposerProps) {
                     <button
                       type="button"
                       className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
-                      disabled={collapsedComposerPrimaryActionDisabled}
-                      aria-label={collapsedComposerPrimaryActionLabel}
+                      disabled={onStopDictation ? false : collapsedComposerPrimaryActionDisabled}
+                      aria-label={
+                        onStopDictation ? "Stop voice input" : collapsedComposerPrimaryActionLabel
+                      }
                       onPointerDown={(event) => event.preventDefault()}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (collapsedComposerShowsStop) onInterrupt();
+                        if (onStopDictation) onStopDictation();
+                        else if (collapsedComposerShowsStop) onInterrupt();
                         else if (showResumeAction) onResume();
                         else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
                           expandMobileComposer();
                         else submitComposer();
                       }}
                     >
-                      {collapsedComposerShowsStop ? (
+                      {onStopDictation || collapsedComposerShowsStop ? (
                         <span
                           className="size-2.5 rounded-xs bg-error-foreground"
                           aria-hidden="true"
@@ -3806,6 +3816,8 @@ export function ChatComposer(props: ChatComposerProps) {
                   onResume={onResume}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryActionStable}
+                  onStopDictation={onStopDictation}
+                  stopDictationShortcutLabel={dictationShortcutLabel}
                   compactBeforeSendTokens={props.resumeCompactionTokens}
                   keepFullHistory={props.keepFullHistory}
                   onToggleKeepFullHistory={props.onToggleKeepFullHistory}
@@ -3815,18 +3827,14 @@ export function ChatComposer(props: ChatComposerProps) {
                     ? { onCompactContext: compactThreadContextStable }
                     : {})}
                 >
-                  {speechInput.available ? (
-                    <ComposerSpeechRecordingPill
-                      state={speechInput.state}
-                      progress={null}
-                      finishShortcutLabel={dictationShortcutLabel}
-                      cancelShortcutLabel="Esc"
-                      level={speechInput.level}
+                  {speechInput.available && speechInput.state.phase === "error" ? (
+                    <VoiceInputErrorPill
+                      error={speechInput.state.error}
+                      errorAction={speechInput.state.errorAction}
                       disabled={dictationDisabled}
-                      onStart={() => void speechInput.start()}
-                      onStop={() => void speechInput.stop()}
-                      onCancel={() => speechInput.cancel()}
-                      onSkipPostProcessing={() => speechInput.skipPostProcessing()}
+                      cancelShortcutLabel="Esc"
+                      onRetry={() => void speechInput.start()}
+                      onDismiss={() => speechInput.cancel()}
                     />
                   ) : null}
                   <VoiceInputSetup

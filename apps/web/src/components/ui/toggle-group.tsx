@@ -31,7 +31,7 @@ function ToggleGroup({
           ? "*:pointer-coarse:after:min-w-auto"
           : "*:pointer-coarse:after:min-h-auto",
         size === "segmented-wide"
-          ? "surface-well h-7 items-center gap-0.5 rounded-[10px] p-0.5"
+          ? "surface-well h-7 items-center gap-0.5 rounded-[10px] p-px"
           : variant === "segmented"
             ? "surface-well gap-0.5 rounded-[9px] p-px"
             : detached
