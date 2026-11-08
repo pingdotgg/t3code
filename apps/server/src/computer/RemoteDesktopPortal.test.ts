@@ -1,13 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import { Message, MessageType, Variant } from "dbus-next";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeNet from "node:net";
 
-import { openRemoteDesktop, type PortalBus } from "./RemoteDesktopPortal.ts";
+import { connectSessionBus, openRemoteDesktop, type PortalBus } from "./RemoteDesktopPortal.ts";
 
+const PORTAL = "org.freedesktop.portal.Desktop";
 const PORTAL_OWNER = ":1.5";
+const DBUS = "org.freedesktop.DBus";
 const OWN_NAME = ":1.42";
 const REQUEST_PREFIX = "/org/freedesktop/portal/desktop/request/1_42/";
 const SESSION_HANDLE = "/org/freedesktop/portal/desktop/session/1_42/s";
@@ -19,18 +27,34 @@ const streams = [
   [50, { position: new Variant("(ii)", [0, 0]), size: new Variant("(ii)", [2560, 1440]) }],
 ];
 
+interface FakeBusOptions {
+  readonly startStreams?: ReadonlyArray<unknown>;
+  /** Sends throw, as dbus-next's do once the stream has ended. */
+  readonly failSend?: boolean;
+  /** Another portal takes over just before the owner lookup's reply arrives. */
+  readonly replacedDuringLookup?: boolean;
+}
+
 /** Answers like xdg-desktop-portal, including a Response that beats its method reply. */
-const makeFakeBus = (start: StartAnswer, startStreams: ReadonlyArray<unknown> = streams) =>
+const makeFakeBus = (start: StartAnswer, fakeOptions: FakeBusOptions = {}) =>
   Effect.gen(function* () {
+    const startStreams = fakeOptions.startStreams ?? streams;
     const startCalled = yield* Deferred.make<void>();
     const calls: Array<Message> = [];
     const sent: Array<Message> = [];
     const listeners = new Set<(message: Message) => void>();
+    const closeListeners = new Set<() => void>();
     let disconnected = false;
-    const emit = (path: string, iface: string, member: string, body: Array<unknown>) => {
+    const emit = (
+      path: string,
+      iface: string,
+      member: string,
+      body: Array<unknown>,
+      sender = PORTAL_OWNER,
+    ) => {
       const signal = new Message({
         type: MessageType.SIGNAL,
-        sender: PORTAL_OWNER,
+        sender,
         path,
         interface: iface,
         member,
@@ -38,6 +62,8 @@ const makeFakeBus = (start: StartAnswer, startStreams: ReadonlyArray<unknown> = 
       });
       for (const listener of listeners) listener(signal);
     };
+    const ownerChanged = (body: Array<unknown>, sender = DBUS) =>
+      emit("/org/freedesktop/DBus", DBUS, "NameOwnerChanged", body, sender);
     const respond = (handle: string, code: number, results: Record<string, Variant>) =>
       emit(handle, "org.freedesktop.portal.Request", "Response", [code, results]);
     const reply = (body: Array<unknown>) =>
@@ -58,6 +84,7 @@ const makeFakeBus = (start: StartAnswer, startStreams: ReadonlyArray<unknown> = 
         const handle = options ? REQUEST_PREFIX + String(options.handle_token!.value) : "";
         switch (message.member) {
           case "GetNameOwner":
+            if (fakeOptions.replacedDuringLookup) ownerChanged([PORTAL, PORTAL_OWNER, ":1.9"]);
             return reply([PORTAL_OWNER]);
           case "GetAll":
             return reply([
@@ -89,12 +116,18 @@ const makeFakeBus = (start: StartAnswer, startStreams: ReadonlyArray<unknown> = 
             return reply([]);
         }
       },
-      send: (message) => sent.push(message),
+      send: (message) => {
+        sent.push(message);
+        if (fakeOptions.failSend) throw new Error("Tried to write a message to a closed stream");
+      },
       onMessage: (listener) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      onError: () => undefined,
+      onClose: (listener) => {
+        closeListeners.add(listener);
+        return () => closeListeners.delete(listener);
+      },
       disconnect: () => {
         disconnected = true;
       },
@@ -105,9 +138,13 @@ const makeFakeBus = (start: StartAnswer, startStreams: ReadonlyArray<unknown> = 
       sent,
       startCalled,
       emit,
+      ownerChanged,
+      listenerCount: () => listeners.size + closeListeners.size,
       isDisconnected: () => disconnected,
     };
   });
+
+type FakeBus = Effect.Success<ReturnType<typeof makeFakeBus>>;
 
 const options = {
   appId: "com.t3tools.T3Code",
@@ -131,6 +168,8 @@ describe("RemoteDesktopPortal", () => {
       expect(session.restoreToken).toBe("restore-2");
       // Registration has to come before any other portal call.
       expect(fake.calls.map((message) => message.member)).toEqual([
+        // Watching the portal's owner before looking it up leaves no window to miss a change.
+        "AddMatch",
         "GetNameOwner",
         "AddMatch",
         "Register",
@@ -185,7 +224,7 @@ describe("RemoteDesktopPortal", () => {
   ])("refuses a shared screen with %s rather than guessing where it is", ([, geometry]) =>
     Effect.gen(function* () {
       // Guessing the origin would line this stream up with the unshared screen there.
-      const fake = yield* makeFakeBus("allow", [[51, geometry], streams[1]]);
+      const fake = yield* makeFakeBus("allow", { startStreams: [[51, geometry], streams[1]] });
       const error = yield* Effect.flip(openRemoteDesktop(fake.bus, options));
       expect(error).toMatchObject({ _tag: "PortalUnsupportedError" });
       expect(fake.sent.map(member)).toEqual(["org.freedesktop.portal.Session.Close"]);
@@ -216,20 +255,114 @@ describe("RemoteDesktopPortal", () => {
     }),
   );
 
-  it.effect("completes `closed` when the desktop ends the session", () =>
+  it.effect.each([
+    [
+      "the desktop ends the session",
+      (fake: FakeBus) => fake.emit(SESSION_HANDLE, "org.freedesktop.portal.Session", "Closed", []),
+    ],
+    ["the portal exits", (fake: FakeBus) => fake.ownerChanged([PORTAL, PORTAL_OWNER, ""])],
+    [
+      "another portal replaces it",
+      (fake: FakeBus) => fake.ownerChanged([PORTAL, PORTAL_OWNER, ":1.9"]),
+    ],
+  ] as const)("completes `closed` when %s", ([, end]) =>
     Effect.gen(function* () {
       const fake = yield* makeFakeBus("allow");
       const session = yield* openRemoteDesktop(fake.bus, options);
-      const closed = yield* Effect.forkChild(session.closed);
       fake.emit(
         "/org/freedesktop/portal/desktop/session/1_42/other",
         "org.freedesktop.portal.Session",
         "Closed",
         [],
       );
-      fake.emit(SESSION_HANDLE, "org.freedesktop.portal.Session", "Closed", []);
-      yield* Fiber.join(closed);
+      // Only the bus daemon speaks for name owners, and only about the portal's own owner.
+      fake.ownerChanged([PORTAL, PORTAL_OWNER, ""], ":1.66");
+      fake.ownerChanged(["org.example.Other", PORTAL_OWNER, ""]);
+      fake.ownerChanged([PORTAL, ":1.7", ""]);
+      fake.ownerChanged([PORTAL, 5]);
+      expect(yield* session.isClosed).toBe(false);
+      end(fake);
+      expect(yield* session.isClosed).toBe(true);
       expect(fake.isDisconnected()).toBe(false);
     }),
+  );
+
+  it.effect.each(["its owner is looked up", "the dialog is open"] as const)(
+    "gives up on a portal that is replaced while %s",
+    (moment) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeBus("never", {
+          replacedDuringLookup: moment === "its owner is looked up",
+        });
+        const opening = yield* Effect.forkChild(Effect.flip(openRemoteDesktop(fake.bus, options)));
+        if (moment === "the dialog is open") {
+          yield* Deferred.await(fake.startCalled);
+          fake.ownerChanged([PORTAL, PORTAL_OWNER, ":1.9"]);
+        }
+        expect(yield* Fiber.join(opening)).toMatchObject({ _tag: "PortalCallError" });
+        const members = fake.calls.map((message) => message.member);
+        expect(members.includes("CreateSession")).toBe(moment === "the dialog is open");
+        expect(fake.isDisconnected()).toBe(true);
+      }),
+  );
+
+  it.effect("tears down locally even when the bus can no longer send", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeBus("allow", { failSend: true });
+      const session = yield* openRemoteDesktop(fake.bus, options);
+      yield* session.close;
+      yield* session.close;
+      expect(yield* session.isClosed).toBe(true);
+      expect(fake.sent.map(member)).toEqual(["org.freedesktop.portal.Session.Close"]);
+      expect(fake.listenerCount()).toBe(0);
+      expect(fake.isDisconnected()).toBe(true);
+
+      const dialog = yield* makeFakeBus("never", { failSend: true });
+      const fiber = yield* Effect.forkChild(openRemoteDesktop(dialog.bus, options));
+      yield* Deferred.await(dialog.startCalled);
+      yield* Fiber.interrupt(fiber);
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      expect(dialog.sent.map(member)).toEqual([
+        "org.freedesktop.portal.Request.Close",
+        "org.freedesktop.portal.Session.Close",
+      ]);
+      expect(dialog.listenerCount()).toBe(0);
+      expect(dialog.isDisconnected()).toBe(true);
+    }),
+  );
+});
+
+describe("connectSessionBus", () => {
+  // A stand-in bus daemon that accepts the client, then closes the connection cleanly.
+  it.live("reports a connection the daemon ends without an error", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dbus-" });
+      const socketPath = path.join(directory, "bus");
+      const server = NodeNet.createServer((socket) => {
+        let received = "";
+        socket.on("data", (chunk) => {
+          received += chunk.toString("latin1");
+          if (received.includes("AUTH ") && !received.includes("OK-sent")) {
+            received += "OK-sent";
+            socket.write("OK 0123456789abcdef0123456789abcdef\r\n");
+          }
+          if (received.includes("BEGIN\r\n")) socket.end();
+        });
+      });
+      yield* Effect.acquireRelease(
+        Effect.callback<void>((resume) => {
+          server.listen(socketPath, () => resume(Effect.void));
+        }),
+        () => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void))),
+      );
+      const bus = connectSessionBus(`unix:path=${socketPath}`);
+      const closed = yield* Deferred.make<void>();
+      bus.onClose(() => Deferred.doneUnsafe(closed, Effect.void));
+      yield* Deferred.await(closed);
+      bus.disconnect();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

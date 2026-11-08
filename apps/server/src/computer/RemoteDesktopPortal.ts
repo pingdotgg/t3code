@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
+import * as NodeEvents from "node:events";
 import { Message, MessageFlag, MessageType, Variant, sessionBus } from "dbus-next";
 
 const PORTAL = "org.freedesktop.portal.Desktop";
@@ -28,12 +29,27 @@ export interface PortalBus {
   call(message: Message): Promise<Message | null>;
   send(message: Message): void;
   onMessage(listener: (message: Message) => void): () => void;
-  onError(listener: () => void): void;
+  /** Calls `listener` once the connection fails or ends, at once if it already has. */
+  onClose(listener: () => void): () => void;
   disconnect(): void;
 }
 
-export const connectSessionBus = (): PortalBus => {
-  const bus = sessionBus();
+export const connectSessionBus = (busAddress?: string): PortalBus => {
+  const bus = sessionBus(busAddress === undefined ? undefined : { busAddress });
+  const closeListeners = new Set<() => void>();
+  let lost = false;
+  const lose = () => {
+    if (lost) return;
+    lost = true;
+    for (const listener of closeListeners) listener();
+    closeListeners.clear();
+  };
+  // Kept for the bus's whole life: an `error` nobody listens to throws from its emitter, and
+  // dbus-next emits one for a write after the stream ends.
+  bus.on("error", lose);
+  // MessageBus forwards its connection's errors but not a clean end of the stream.
+  const connection = "_connection" in bus ? bus._connection : undefined;
+  if (connection instanceof NodeEvents.EventEmitter) connection.once("end", lose);
   let open = true;
   return {
     call: (message) => bus.call(message),
@@ -42,7 +58,14 @@ export const connectSessionBus = (): PortalBus => {
       bus.on("message", listener);
       return () => bus.removeListener("message", listener);
     },
-    onError: (listener) => bus.on("error", listener),
+    onClose: (listener) => {
+      if (lost) {
+        listener();
+        return () => undefined;
+      }
+      closeListeners.add(listener);
+      return () => void closeListeners.delete(listener);
+    },
     disconnect: () => {
       if (!open) return;
       open = false;
@@ -153,6 +176,15 @@ const parseStreams = (value: unknown): ReadonlyArray<PortalStream> | null => {
 
 type MessageInit = ConstructorParameters<typeof Message>[0];
 
+/** Runs one teardown step so a throw, as from a send on a dropped bus, skips none of the rest. */
+const bestEffort = (step: () => void) => {
+  try {
+    step();
+  } catch {
+    // The connection is already gone, which is what the step was helping to reach.
+  }
+};
+
 const call = (bus: PortalBus, message: MessageInit) => {
   const member = message.member ?? "";
   return Effect.tryPromise({
@@ -233,8 +265,29 @@ export const openRemoteDesktop = Effect.fn("RemoteDesktopPortal.open")(function*
   // Responses can arrive ahead of their method reply, so keep the early ones.
   const responses = new Map<string, ReadonlyArray<unknown>>();
   const waiters = new Map<string, (body: ReadonlyArray<unknown>) => void>();
+  // Owners that left before the lookup below returned, since its reply can beat their signal.
+  const departed = new Set<string>();
   const unsubscribe = bus.onMessage((message) => {
-    if (message.type !== MessageType.SIGNAL || message.sender !== portal) return;
+    if (message.type !== MessageType.SIGNAL) return;
+    // The daemon stamps every sender, so no other client can claim to be it.
+    if (
+      message.sender === DBUS &&
+      message.path === DBUS_PATH &&
+      message.interface === DBUS &&
+      message.member === "NameOwnerChanged"
+    ) {
+      const [name, oldOwner, newOwner]: ReadonlyArray<unknown> = message.body;
+      if (name !== PORTAL || typeof oldOwner !== "string" || typeof newOwner !== "string") return;
+      if (oldOwner === "" || oldOwner === newOwner) return;
+      if (portal === undefined) {
+        if (departed.size < 16) departed.add(oldOwner);
+      } else if (oldOwner === portal) {
+        // The portal exited or was replaced, and with it went this session's grant.
+        Deferred.doneUnsafe(closed, Effect.void);
+      }
+      return;
+    }
+    if (message.sender !== portal) return;
     if (message.interface === REQUEST && message.member === "Response") {
       const waiter = waiters.get(message.path);
       if (waiter) waiter(message.body);
@@ -247,29 +300,47 @@ export const openRemoteDesktop = Effect.fn("RemoteDesktopPortal.open")(function*
       Deferred.doneUnsafe(closed, Effect.void);
     }
   });
-  bus.onError(() => Deferred.doneUnsafe(closed, Effect.void));
+  const unsubscribeClose = bus.onClose(() => Deferred.doneUnsafe(closed, Effect.void));
 
   let ended = false;
   const close = Effect.sync(() => {
     if (ended) return;
     ended = true;
-    if (sessionHandle !== undefined && portal !== undefined) {
-      bus.send(
-        new Message({
-          destination: portal,
-          path: sessionHandle,
-          interface: SESSION,
-          member: "Close",
-          flags: MessageFlag.NO_REPLY_EXPECTED,
-        }),
+    const handle = sessionHandle;
+    const destination = portal;
+    if (handle !== undefined && destination !== undefined) {
+      bestEffort(() =>
+        bus.send(
+          new Message({
+            destination,
+            path: handle,
+            interface: SESSION,
+            member: "Close",
+            flags: MessageFlag.NO_REPLY_EXPECTED,
+          }),
+        ),
       );
     }
-    unsubscribe();
-    bus.disconnect();
+    bestEffort(unsubscribe);
+    bestEffort(unsubscribeClose);
+    bestEffort(() => bus.disconnect());
     Deferred.doneUnsafe(closed, Effect.void);
   });
 
+  const addMatch = (rule: string) =>
+    call(bus, {
+      destination: DBUS,
+      path: DBUS_PATH,
+      interface: DBUS,
+      member: "AddMatch",
+      signature: "s",
+      body: [rule],
+    });
+
   const open = Effect.gen(function* () {
+    yield* addMatch(
+      `type='signal',sender='${DBUS}',path='${DBUS_PATH}',interface='${DBUS}',member='NameOwnerChanged',arg0='${PORTAL}'`,
+    );
     const owner = yield* call(bus, {
       destination: DBUS,
       path: DBUS_PATH,
@@ -283,19 +354,12 @@ export const openRemoteDesktop = Effect.fn("RemoteDesktopPortal.open")(function*
       return yield* new PortalCallError({ member: "GetNameOwner", cause: "invalid owner" });
     }
     portal = portalName;
+    if (departed.has(portalName)) {
+      return yield* new PortalCallError({ member: "GetNameOwner", cause: "owner left" });
+    }
     const requestNamespace = `${PORTAL_PATH}/request/${owner.destination.slice(1).replaceAll(".", "_")}`;
     let tokens = 0;
     const token = () => `t3_${process.pid}_${++tokens}`;
-
-    const addMatch = (rule: string) =>
-      call(bus, {
-        destination: DBUS,
-        path: DBUS_PATH,
-        interface: DBUS,
-        member: "AddMatch",
-        signature: "s",
-        body: [rule],
-      });
 
     const awaitResponse = (handle: string) =>
       Effect.callback<ReadonlyArray<unknown>>((resume) => {
@@ -345,14 +409,16 @@ export const openRemoteDesktop = Effect.fn("RemoteDesktopPortal.open")(function*
           Exit.isSuccess(exit)
             ? Effect.void
             : Effect.sync(() =>
-                bus.send(
-                  new Message({
-                    destination: portalName,
-                    path: handle,
-                    interface: REQUEST,
-                    member: "Close",
-                    flags: MessageFlag.NO_REPLY_EXPECTED,
-                  }),
+                bestEffort(() =>
+                  bus.send(
+                    new Message({
+                      destination: portalName,
+                      path: handle,
+                      interface: REQUEST,
+                      member: "Close",
+                      flags: MessageFlag.NO_REPLY_EXPECTED,
+                    }),
+                  ),
                 ),
               ),
         ),
@@ -459,5 +525,11 @@ export const openRemoteDesktop = Effect.fn("RemoteDesktopPortal.open")(function*
     return session;
   });
 
-  return yield* open.pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : close)));
+  // Losing the portal or the bus mid-dialog would otherwise wait out the consent timeout.
+  const lost = Deferred.await(closed).pipe(
+    Effect.andThen(Effect.fail(new PortalCallError({ member: "Start", cause: "session closed" }))),
+  );
+  return yield* Effect.raceFirst(open, lost).pipe(
+    Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : close)),
+  );
 });
