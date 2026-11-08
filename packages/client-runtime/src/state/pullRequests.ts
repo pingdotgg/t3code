@@ -291,12 +291,53 @@ function showWhileInFlight<Target extends { readonly environmentId: EnvironmentI
   } satisfies AtomCommand<Target, A, E>;
 }
 
+function editedResults(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  edit: PullRequestPendingEdit | null,
+) {
+  const results = new Map<unknown, AsyncResult.AsyncResult<unknown, unknown>>();
+  if (edit === null) return results;
+  for (const [atom, node] of registry.getNodes()) {
+    const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
+    if (reader?.environmentId !== environmentId || !reader.concerns(edit.reference)) continue;
+    const result = Option.getOrUndefined(node.valueOption());
+    if (result !== undefined)
+      results.set(atom, result as AsyncResult.AsyncResult<unknown, unknown>);
+  }
+  return results;
+}
+
+function editedText(
+  value: unknown,
+  reference: PullRequestRef,
+): { readonly title?: string; readonly body?: string } | undefined {
+  const held = value as {
+    readonly entries?: ReadonlyArray<PullRequestListEntry>;
+    readonly title?: string;
+    readonly body?: string;
+  } | null;
+  if (held?.entries === undefined) return held ?? undefined;
+  return held.entries.find((entry) => samePullRequest(entry, reference));
+}
+
+/** Whether the edited text changed while the write was out. */
+function hostRewroteEdit(sent: unknown, shown: unknown, edit: PullRequestPendingEdit) {
+  const before = editedText(sent, edit.reference);
+  const after = editedText(shown, edit.reference);
+  if (before === undefined || after === undefined) return false;
+  return (["title", "body"] as const).some(
+    (field) => edit[field] !== undefined && before[field] !== after[field],
+  );
+}
+
 /** Keeps an accepted edit in loaded readers once it stops being in flight. */
 function settleEdit(
   registry: AtomRegistry.AtomRegistry,
   environmentId: EnvironmentId,
   edit: PullRequestPendingEdit | null,
   readsAfterWrite = false,
+  atSend?: ReadonlyMap<unknown, AsyncResult.AsyncResult<unknown, unknown>>,
 ) {
   if (edit === null) return;
   for (const atom of registry.getNodes().keys()) {
@@ -309,10 +350,16 @@ function settleEdit(
     // A read still waiting may predate the write, unless the caller started it after the commit.
     if (!readsAfterWrite && registry.get(writable).waiting) registry.refresh(writable);
     if (Option.isNone(shown)) continue;
+    // Text that changed during the write may be the host's own version of it, or an older read.
+    const sent = atSend?.get(atom);
+    const changed =
+      sent !== undefined &&
+      hostRewroteEdit(Option.getOrUndefined(AsyncResult.value(sent)), shown.value, edit);
     registry.update(
       writable,
       AsyncResult.map((value) => reader.edit(value, [edit]) as never),
     );
+    if (changed) registry.refresh(writable);
   }
 }
 
@@ -1268,9 +1315,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         label: "environment-data:pull-requests:update",
         tag: WS_METHODS.pullRequestsUpdate,
         execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
-        onSuccess: (target, registry) => {
+        onStart: ({ environmentId, input }, registry) =>
+          editedResults(registry, environmentId, updateEdit(input)),
+        onSuccess: (target, registry, _reply, atSend) => {
           const edit = updateEdit(target.input);
-          return Effect.sync(() => settleEdit(registry, target.environmentId, edit)).pipe(
+          return Effect.sync(() =>
+            settleEdit(registry, target.environmentId, edit, false, atSend),
+          ).pipe(
             Effect.andThen(() =>
               edit === null
                 ? Effect.void

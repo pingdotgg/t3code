@@ -2642,6 +2642,69 @@ it.effect.each(["accepted", "refused"] as const)(
     ),
 );
 
+it.effect.each(["rewrites the title", "answers a read before it commits"] as const)(
+  "ends on the host's own title when a read answers during an accepted edit (host %s)",
+  (timing) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let title = "Cached";
+        const sent = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const read = () => Effect.sync(() => ({ ...actionReference, state: "open", title }));
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsDetail]: read,
+          [WS_METHODS.pullRequestsPreview]: read,
+          [WS_METHODS.pullRequestsList]: () =>
+            Effect.sync(() =>
+              listResult([
+                { ...actionReference, state: "open", title, updatedAt: actionReply.updatedAt },
+              ]),
+            ),
+          [WS_METHODS.pullRequestsUpdate]: (input: { readonly title: string }) =>
+            Effect.gen(function* () {
+              title = timing === "rewrites the title" ? `Draft: ${input.title}` : "Original";
+              yield* Deferred.succeed(sent, undefined);
+              yield* Deferred.await(release);
+              if (timing !== "rewrites the title") title = input.title;
+            }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const readers: ReadonlyArray<
+          Atom.Atom<AsyncResult.AsyncResult<{ readonly title: string }, unknown>>
+        > = [atoms.detail(target), atoms.preview(target)];
+        // Pages past the first are not refreshed by the server.
+        const page = atoms.list({
+          environmentId: target.environmentId,
+          input: { state: "open", cursors: { "github.example.com": "page-2" } },
+        });
+        const loaded: ReadonlyArray<Atom.Atom<AsyncResult.AsyncResult<object, unknown>>> = [
+          ...readers,
+          page,
+        ];
+        for (const atom of loaded) {
+          const unmount = registry.mount(atom);
+          yield* Effect.addFinalizer(() => Effect.sync(unmount));
+          yield* Effect.promise(() => executeAtomQuery(registry, atom));
+        }
+        const editing = yield* Effect.promise(() =>
+          atoms.update.run(registry, { ...target, input: { ...actionReference, title: "Edited" } }),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(sent);
+        for (const atom of loaded)
+          yield* Effect.promise(() => executeAtomQuery(registry, atom, { refresh: true }));
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(editing);
+        // Readers whose title changed during the write read it again.
+        for (const atom of loaded) yield* Effect.promise(() => executeAtomQuery(registry, atom));
+        expect([
+          ...readers.map((atom) => Option.getOrThrow(AsyncResult.value(registry.get(atom))).title),
+          Option.getOrThrow(AsyncResult.value(registry.get(page))).entries[0]?.title,
+        ]).toEqual(Array(3).fill(title));
+      }),
+    ),
+);
+
 it.effect("shows a label change at once and takes it back when the host refuses it", () =>
   Effect.scoped(
     Effect.gen(function* () {
