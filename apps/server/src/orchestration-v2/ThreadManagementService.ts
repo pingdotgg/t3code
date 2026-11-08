@@ -892,12 +892,20 @@ const make = Effect.gen(function* () {
       });
     }
     // A provider without interrupt-and-restart stops the turn and runs the
-    // restart as the next turn.
+    // restart as the next turn. Durable records only, so a replay agrees: an
+    // earlier run stopped once this message existed.
+    const isEarlierRun = (runId: RunId | null) =>
+      (projection.runs.find((candidate) => candidate.id === runId)?.ordinal ?? run.ordinal) <
+      run.ordinal;
     const restartedAsNextTurn =
       mode === "restart" &&
-      (run.status !== "queued" || run.queuePosition === 1) &&
+      (run.status !== "queued" || (run.queuePosition === 1 && run.queueHeld !== true)) &&
       projection.turnItems.some(
-        (item) => item.type === "run_interrupt_request" && item.runId === steerableRun?.id,
+        (item) =>
+          item.type === "run_interrupt_request" &&
+          item.startedAt !== null &&
+          DateTime.isGreaterThanOrEqualTo(item.startedAt, message.createdAt) &&
+          isEarlierRun(item.runId),
       );
     const delivery: ThreadManagementSendResult["delivery"] = restartedAsNextTurn
       ? "restarted"
