@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  RunAttemptId,
   ThreadId,
   TurnItemId,
   type ChatAttachment,
@@ -35,6 +36,7 @@ import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -613,7 +615,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   const layerRuntime = ProviderReplayHarness.layerWithRegistry(
     { name },
     ProviderAdapterRegistry.layerSingle(adapter),
-    { runEffectWorker: false, databaseLayer },
+    { runEffectWorker: false, runContinuationWorker: true, databaseLayer },
   );
   const layer = ThreadManagement.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
@@ -768,7 +770,7 @@ it.effect.each([
 );
 
 it.effect.each([
-  { createdBy: "user", activeSteeringInterruptsTools: true },
+  { createdBy: "user", activeSteeringInterruptsTools: false },
   { createdBy: "agent", activeSteeringInterruptsTools: false },
 ] as const)(
   "steers an update from $createdBy when steering is allowed (interruptsTools=$activeSteeringInterruptsTools)",
@@ -2077,6 +2079,569 @@ it.effect.each(["auto", "steer"] as const)(
           assert.deepEqual(steered, []);
           assert.equal(started.length, 1);
           assert.isFalse(projection.runs.some((run) => run.status === "queued"));
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+);
+
+it.effect.each(["receipt", "withdraw", "cancel", "retry", "resume"] as const)(
+  "keeps native boundary ownership through Stop and %s",
+  (settlement) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+          `native-boundary-${settlement}`,
+          false,
+          true,
+          Effect.void,
+          true,
+          true,
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const threadId = yield* startFirstTurn;
+          const first = started[0]!;
+          const sent = yield* sendUpdate(threadId, "user", "auto", [imageAttachment]);
+          const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+          assert.deepEqual(
+            yield* requests.claimAgentMessages!({
+              threadId,
+              runId: first.runId,
+              providerTurnId: ProviderTurnId.make("replaced-turn"),
+            }),
+            [],
+          );
+          let offers = yield* requests.claimAgentMessages!({
+            threadId,
+            runId: first.runId,
+            providerTurnId: turn.id,
+          });
+          assert.lengthOf(offers, 1);
+          assert.deepEqual(offers[0]?.attachments, [imageAttachment]);
+          assert.equal(offers[0]?.messageId, "message:update");
+          assert.equal(offers[0]?.createdBy, "user");
+          assert.equal(offers[0]?.text, "progress update");
+          assert.deepEqual(
+            yield* requests.claimAgentMessages!({
+              threadId,
+              runId: first.runId,
+              providerTurnId: turn.id,
+            }),
+            [],
+          );
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+              (run) => run.id === sent.run.id,
+            )?.status,
+            "queued",
+          );
+          const edit = yield* orchestrator
+            .dispatch({
+              type: "queued-run.edit",
+              commandId: CommandId.make("edit-offered"),
+              threadId,
+              runId: sent.run.id,
+              text: "changed",
+            })
+            .pipe(Effect.flip);
+          assert.equal(edit._tag, "OrchestratorCommandRejectedError");
+          const reordered = yield* orchestrator
+            .dispatch({
+              type: "queued-run.reorder",
+              commandId: CommandId.make("reorder-offered"),
+              threadId,
+              runId: sent.run.id,
+              beforeRunId: null,
+            })
+            .pipe(Effect.flip);
+          assert.equal(reordered._tag, "OrchestratorDispatchError");
+          if (settlement === "receipt") {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("late-queued"),
+              threadId,
+              messageId: MessageId.make("message:late-queued"),
+              text: "later",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const later = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+              (run) => run.userMessageId === "message:late-queued",
+            )!;
+            const crossed = yield* orchestrator
+              .dispatch({
+                type: "queued-run.reorder",
+                commandId: CommandId.make("cross-offered"),
+                threadId,
+                runId: later.id,
+                beforeRunId: sent.run.id,
+              })
+              .pipe(Effect.flip);
+            assert.equal(crossed._tag, "OrchestratorDispatchError");
+            const originalOffers = offers;
+            const agentRetry = yield* orchestrator
+              .dispatch({
+                type: "queued-message.promote-to-steer",
+                commandId: CommandId.make("agent-reoffer"),
+                threadId,
+                queuedRunId: sent.run.id,
+                targetRunId: first.runId,
+                requestedBy: "agent",
+              })
+              .pipe(Effect.flip);
+            assert.equal(agentRetry._tag, "OrchestratorDispatchError");
+            for (const commandId of ["human-reoffer", "human-reoffer-again"]) {
+              yield* orchestrator.dispatch({
+                type: "queued-message.promote-to-steer",
+                commandId: CommandId.make(commandId),
+                threadId,
+                queuedRunId: sent.run.id,
+                targetRunId: first.runId,
+              });
+            }
+            assert.isUndefined(
+              (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+                (run) => run.id === sent.run.id,
+              )?.boundaryOffer,
+            );
+            yield* requests.acknowledgeAgentMessages!({
+              threadId,
+              runId: first.runId,
+              offers: originalOffers,
+            });
+            offers = yield* requests.claimAgentMessages!({
+              threadId,
+              runId: first.runId,
+              providerTurnId: turn.id,
+            });
+            assert.lengthOf(offers, 1);
+            assert.notEqual(offers[0]!.id, originalOffers[0]!.id);
+          }
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make("stop"),
+            threadId,
+            runId: first.runId,
+            holdQueue: true,
+          });
+          const ended = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === first.runId &&
+                event.payload.status === "interrupted",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* worker.drain();
+          yield* Fiber.join(ended);
+          yield* worker.drain();
+          if (settlement === "withdraw") {
+            yield* requests.withdrawAgentMessages!({ threadId, runId: first.runId, offers });
+          } else if (settlement === "cancel") {
+            yield* orchestrator.dispatch({
+              type: "queued-run.cancel",
+              commandId: CommandId.make("cancel"),
+              threadId,
+              runId: sent.run.id,
+            });
+          } else if (settlement === "retry") {
+            const refused = yield* orchestrator
+              .dispatch({
+                type: "queued-run.start",
+                commandId: CommandId.make("agent-retry"),
+                threadId,
+                runId: sent.run.id,
+                requestedBy: "agent",
+              })
+              .pipe(Effect.flip);
+            assert.equal(refused._tag, "OrchestratorDispatchError");
+            yield* orchestrator.dispatch({
+              type: "queued-run.start",
+              commandId: CommandId.make("retry"),
+              threadId,
+              runId: sent.run.id,
+            });
+            yield* worker.drain();
+          } else if (settlement === "resume") {
+            yield* orchestrator.dispatch({
+              type: "queue.resume",
+              commandId: CommandId.make("resume"),
+              threadId,
+            });
+            yield* worker.drain();
+            yield* orchestrator.resumeQueuedRuns;
+            yield* worker.drain();
+          }
+          if (settlement !== "resume" && settlement !== "withdraw") {
+            yield* requests.acknowledgeAgentMessages!({ threadId, runId: first.runId, offers });
+            yield* requests.acknowledgeAgentMessages!({ threadId, runId: first.runId, offers });
+          }
+          const settled = yield* orchestrator.getThreadProjection(threadId);
+          const run = settled.runs.find((run) => run.id === sent.run.id)!;
+          const message = settled.messages.find((message) => message.id === "message:update")!;
+          if (settlement === "receipt") {
+            assert.equal(message.runId, first.runId);
+            const item = settled.turnItems.find(
+              (item) => item.type === "user_message" && item.messageId === message.id,
+            )!;
+            assert.equal(item.providerTurnId, turn.id);
+            assert.equal(item.nodeId, turn.nodeId);
+            assert.equal(message.createdBy, "user");
+            assert.deepEqual(message.attachments, [imageAttachment]);
+          } else {
+            assert.equal(message.runId, sent.run.id);
+          }
+          if (settlement === "resume" || settlement === "withdraw") {
+            assert.equal(run.status, "queued");
+            assert.equal(
+              run.boundaryOffer?.id,
+              settlement === "resume" ? offers[0]!.id : undefined,
+            );
+            assert.equal(run.queueHeld, settlement === "withdraw");
+          }
+          if (settlement === "retry") assert.notEqual(run.status, "queued");
+          assert.deepEqual(steered, []);
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+);
+
+it.effect(
+  "keeps forty simultaneous human and agent boundary updates in committed queue order",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { events, started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+          "native-boundary-mixed-batch",
+          false,
+          true,
+          Effect.void,
+          true,
+          true,
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const threadId = yield* startFirstTurn;
+          const projectId = (yield* orchestrator.getThreadProjection(threadId)).thread.projectId;
+          const first = started[0]!;
+          yield* Effect.forEach(
+            Array.from({ length: 40 }, (_, index) => index),
+            (index) =>
+              threads.sendToThread({
+                projectId,
+                threadId,
+                commandId: CommandId.make(`mixed:${index}`),
+                messageId: MessageId.make(`message:mixed:${index}`),
+                text: `mixed update ${index}`,
+                attachments: index === 17 ? [imageAttachment] : [],
+                mode: index % 3 === 0 ? "steer" : "auto",
+                createdBy: index % 2 === 0 ? "user" : "agent",
+                creationSource: index % 2 === 0 ? "web" : "mcp",
+              }),
+            { concurrency: "unbounded", discard: true },
+          );
+          const pending = yield* orchestrator.getThreadProjection(threadId);
+          const expected = pending.runs
+            .filter((run) => run.status === "queued")
+            .toSorted((left, right) => left.queuePosition! - right.queuePosition!)
+            .map((run) => pending.messages.find((message) => message.id === run.userMessageId)!);
+          assert.lengthOf(expected, 40);
+          const turn = pending.providerTurns[0]!;
+          const offers = yield* requests.claimAgentMessages!({
+            threadId,
+            runId: first.runId,
+            providerTurnId: turn.id,
+          });
+          assert.deepEqual(
+            offers.map((offer) => offer.messageId),
+            expected.map((message) => message.id),
+          );
+          assert.deepEqual(
+            offers.map((offer) => offer.createdBy),
+            expected.map((message) => message.createdBy),
+          );
+          assert.deepEqual(
+            offers.map((offer) => offer.text),
+            expected.map((message) => message.text),
+          );
+          assert.deepEqual(
+            offers.map((offer) => offer.attachments),
+            expected.map((message) => message.attachments),
+          );
+          assert.lengthOf(new Set(offers.map((offer) => offer.id)), 40);
+          const now = yield* DateTime.now;
+          const itemBase = {
+            threadId,
+            runId: first.runId,
+            nodeId: first.rootNodeId,
+            providerThreadId: turn.providerThreadId,
+            providerTurnId: turn.id,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 0,
+            status: "completed" as const,
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          };
+          const replyId = TurnItemId.make("native-batch-reply");
+          const replyCommitted = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) => event.type === "turn-item.updated" && event.payload.id === replyId,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          const received = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "message.updated" &&
+                event.payload.id === offers.at(-1)!.messageId &&
+                event.payload.runId === first.runId,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* Queue.offer(events, {
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              ...itemBase,
+              id: TurnItemId.make("native-batch-tool"),
+              type: "command_execution",
+              input: "synthetic noisy tool",
+              exitCode: 0,
+              output: Array.from({ length: 100 }, (_, index) => `noise ${index}`).join("\n"),
+            },
+          });
+          yield* Queue.offer(events, {
+            type: "boundary_messages.updated",
+            driver,
+            threadId,
+            runId: first.runId,
+            providerTurnId: turn.id,
+            step: "reserve",
+            offers,
+          });
+          yield* Queue.offer(events, {
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              ...itemBase,
+              id: replyId,
+              type: "assistant_message",
+              messageId: MessageId.make("message:native-batch-reply"),
+              text: "Received all forty human and agent updates in order.",
+              streaming: false,
+            },
+          });
+          yield* Fiber.join(replyCommitted);
+          yield* Queue.offer(events, {
+            type: "boundary_messages.updated",
+            driver,
+            threadId,
+            runId: first.runId,
+            providerTurnId: turn.id,
+            step: "receipt",
+            offers,
+          });
+          yield* Fiber.join(received);
+          yield* requests.acknowledgeAgentMessages!({ threadId, runId: first.runId, offers });
+          const settled = yield* orchestrator.getThreadProjection(threadId);
+          assert.isFalse(settled.runs.some((run) => run.status === "queued"));
+          assert.deepEqual(
+            settled.turnItems
+              .filter((item) => item.runId === first.runId)
+              .toSorted((left, right) => left.ordinal - right.ordinal)
+              .map((item) => (item.type === "user_message" ? item.messageId : item.id)),
+            [
+              MessageId.make("message:first"),
+              TurnItemId.make("native-batch-tool"),
+              ...offers.map((offer) => offer.messageId),
+              replyId,
+            ],
+          );
+          assert.deepEqual(
+            settled.turnItems
+              .filter((item) => item.type === "user_message" && item.runId === first.runId)
+              .toSorted((left, right) => left.ordinal - right.ordinal)
+              .map((item) => (item.type === "user_message" ? item.messageId : null)),
+            [MessageId.make("message:first"), ...offers.map((offer) => offer.messageId)],
+          );
+          for (const original of expected) {
+            const delivered = settled.messages.find((message) => message.id === original.id)!;
+            assert.equal(delivered.runId, first.runId);
+            assert.equal(delivered.createdBy, original.createdBy);
+            assert.equal(delivered.creationSource, original.creationSource);
+            assert.equal(delivered.text, original.text);
+            assert.deepEqual(delivered.attachments, original.attachments);
+          }
+          assert.deepEqual(steered, []);
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+);
+
+it.effect(
+  "a late native receipt uses the saved attempt after the run changes provider and node",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+          "native-boundary-restarted-identity",
+          false,
+          true,
+          Effect.void,
+          true,
+          true,
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const threadId = yield* startFirstTurn;
+          const first = started[0]!;
+          const sent = yield* sendUpdate(threadId, "agent", "auto");
+          const original = yield* orchestrator.getThreadProjection(threadId);
+          const originalRun = original.runs.find((run) => run.id === first.runId)!;
+          const originalTurn = original.providerTurns[0]!;
+          const originalAttempt = original.attempts.find(
+            (attempt) => attempt.id === originalRun.activeAttemptId,
+          )!;
+          const originalNode = original.nodes.find((node) => node.id === originalRun.rootNodeId)!;
+          const originalThread = original.providerThreads.find(
+            (thread) => thread.id === originalRun.providerThreadId,
+          )!;
+          const offers = yield* requests.claimAgentMessages!({
+            threadId,
+            runId: first.runId,
+            providerTurnId: originalTurn.id,
+          });
+          assert.lengthOf(offers, 1);
+          const providerInstanceId = ProviderInstanceId.make("replacement-provider");
+          const providerThreadId = ProviderThreadId.make("replacement-thread");
+          const providerTurnId = ProviderTurnId.make("replacement-turn");
+          const rootNodeId = NodeId.make("replacement-root");
+          const activeAttemptId = RunAttemptId.make("replacement-attempt");
+          const now = yield* DateTime.now;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("replacement-thread"),
+                type: "provider-thread.updated",
+                threadId,
+                providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...originalThread,
+                  id: providerThreadId,
+                  providerInstanceId,
+                  providerSessionId: null,
+                  nativeThreadRef: { driver, nativeId: "replacement-native", strength: "strong" },
+                },
+              },
+              {
+                id: EventId.make("replacement-node"),
+                type: "node.updated",
+                threadId,
+                runId: first.runId,
+                nodeId: rootNodeId,
+                providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...originalNode,
+                  id: rootNodeId,
+                  rootNodeId,
+                  providerThreadId,
+                  providerTurnId,
+                },
+              },
+              {
+                id: EventId.make("replacement-attempt"),
+                type: "run-attempt.updated",
+                threadId,
+                runId: first.runId,
+                nodeId: rootNodeId,
+                providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...originalAttempt,
+                  id: activeAttemptId,
+                  attemptOrdinal: originalAttempt.attemptOrdinal + 1,
+                  rootNodeId,
+                  providerThreadId,
+                  providerTurnId,
+                  providerInstanceId,
+                },
+              },
+              {
+                id: EventId.make("replacement-turn"),
+                type: "provider-turn.updated",
+                threadId,
+                runId: first.runId,
+                nodeId: rootNodeId,
+                providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...originalTurn,
+                  id: providerTurnId,
+                  nodeId: rootNodeId,
+                  providerThreadId,
+                  runAttemptId: activeAttemptId,
+                },
+              },
+              {
+                id: EventId.make("replacement-run"),
+                type: "run.updated",
+                threadId,
+                runId: first.runId,
+                nodeId: rootNodeId,
+                providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...originalRun,
+                  rootNodeId,
+                  activeAttemptId,
+                  providerThreadId,
+                  providerInstanceId,
+                  modelSelection: { ...originalRun.modelSelection, instanceId: providerInstanceId },
+                },
+              },
+            ],
+          });
+          const receipt = yield* orchestrator.dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: CommandId.make("late-native-receipt"),
+            threadId,
+            queuedRunId: sent.run.id,
+            targetRunId: first.runId,
+            boundaryOffer: { id: offers[0]!.id, step: "receipt" },
+          });
+          const settled = yield* orchestrator.getThreadProjection(threadId);
+          const message = settled.messages.find((message) => message.id === "message:update")!;
+          const item = settled.turnItems.find(
+            (item) => item.type === "user_message" && item.messageId === message.id,
+          )!;
+          assert.equal(message.nodeId, originalNode.id);
+          assert.equal(item.nodeId, originalNode.id);
+          assert.equal(item.providerTurnId, originalTurn.id);
+          assert.equal(item.providerThreadId, originalThread.id);
+          const savedMessage = receipt.storedEvents.find(
+            (event) => event.event.type === "message.updated",
+          );
+          assert.equal(savedMessage?.event.providerInstanceId, originalAttempt.providerInstanceId);
         }).pipe(Effect.provide(layer));
       }),
     ),

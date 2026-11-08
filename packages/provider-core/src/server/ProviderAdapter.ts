@@ -126,6 +126,17 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
   }),
+  Schema.Struct({
+    type: Schema.Literal("boundary_messages.updated"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    runId: RunId,
+    providerTurnId: ProviderTurnId,
+    step: Schema.Literals(["reserve", "receipt"]),
+    offers: Schema.Array(
+      Schema.Struct({ id: Schema.String, queuedRunId: RunId, messageId: MessageId }),
+    ),
+  }),
   // Start before the root terminal; clear only after the final covered projection.
   // Consumer lifetime cannot depend on a producer probe that runs ahead of its queue.
   Schema.Struct({

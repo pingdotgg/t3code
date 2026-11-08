@@ -44,6 +44,7 @@ import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
@@ -511,6 +512,13 @@ export function routeProviderEvent(
       ];
     case "background_work.updated":
       return [state.ownedProviderTurns.has(event.providerTurnId), state];
+    case "boundary_messages.updated":
+      return [
+        event.threadId === input.threadId &&
+          event.runId === input.runId &&
+          event.providerTurnId === state.rootProviderTurnId,
+        state,
+      ];
     case "command_output.delta":
       // The session manager hands live output to the command output hub; runs never see it.
       return [false, state];
@@ -614,6 +622,7 @@ export const layer: Layer.Layer<
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const previewAgentActivity = yield* PreviewAgentActivity.PreviewAgentActivity;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
 
@@ -1405,6 +1414,32 @@ export const layer: Layer.Layer<
           accepted: boolean;
         }) {
           if (!accepted) return;
+          if (event.type === "boundary_messages.updated") {
+            for (const offer of event.offers) {
+              yield* turnItemPositions.reserveBoundary({
+                threadId: event.threadId,
+                turnItemId: IdAllocator.derive.userTurnItem({ messageId: offer.messageId }),
+                runId: event.runId,
+                runOrdinal: input.run.ordinal,
+                queuedRunId: offer.queuedRunId,
+                offerId: offer.id,
+                providerTurnId: event.providerTurnId,
+              });
+            }
+            if (event.step === "receipt") {
+              // The control-event barrier commits earlier items before a saved receipt joins its slot.
+              const acknowledge = continuationRequests.acknowledgeAgentMessages;
+              if (acknowledge === undefined) {
+                return yield* Effect.die("Native message receipt handler is not installed.");
+              }
+              yield* acknowledge({
+                threadId: event.threadId,
+                runId: event.runId,
+                offers: event.offers,
+              });
+            }
+            return;
+          }
           if (
             event.type === "provider_turn.updated" &&
             event.providerTurn.runAttemptId === input.attempt.id &&

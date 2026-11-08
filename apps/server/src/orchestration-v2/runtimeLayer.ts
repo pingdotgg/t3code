@@ -3,6 +3,7 @@ import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
+import * as Effect from "effect/Effect";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -43,6 +44,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
+import { makeClaudeBoundaryReceiptRecovery } from "./ClaudeBoundaryReceipts.ts";
 import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
@@ -158,6 +160,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
       IdAllocator.layer,
       layerProviderEventIngestorProvided,
       TurnItemPositionStore.layer,
+      ProviderContinuationRequests.layer,
     ),
   ),
 );
@@ -332,7 +335,29 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
 const layerEffectWorkerProvided = EffectWorker.layer.pipe(
   Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
 );
-const layerProviderRuntimeRecoveryProvided = ProviderRuntimeRecoveryService.layer.pipe(
+const layerProviderRuntimeRecoveryProvided = Layer.effect(
+  ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService,
+  Effect.gen(function* () {
+    const recovery = yield* ProviderRuntimeRecoveryService.make;
+    const recoverReceipts = yield* makeClaudeBoundaryReceiptRecovery;
+    return {
+      ...recovery,
+      recover: recovery.recover.pipe(
+        Effect.tap(() =>
+          recoverReceipts.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryError({
+                  operation: "reconcile",
+                  cause,
+                }),
+            ),
+          ),
+        ),
+      ),
+    };
+  }),
+).pipe(
   Layer.provide(
     Layer.mergeAll(
       layerEffectWorkerProvided,
@@ -340,6 +365,8 @@ const layerProviderRuntimeRecoveryProvided = ProviderRuntimeRecoveryService.laye
       layerEventSink,
       IdAllocator.layer,
       ProjectionStore.layer,
+      layerThreadManagementProvided,
+      TurnItemPositionStore.layer,
     ),
   ),
 );

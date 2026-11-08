@@ -46,8 +46,10 @@ import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
@@ -184,6 +186,26 @@ it.effect("routes shared-runtime events only to their owning root run", () =>
     assert.isFalse(
       RunExecutionService.routeProviderEvent(terminalEvent, second, secondAfterTurn)[0],
     );
+    for (const step of ["reserve", "receipt"] as const) {
+      const boundary: ProviderAdapter.ProviderAdapterV2Event = {
+        type: "boundary_messages.updated",
+        driver,
+        threadId: first.threadId,
+        runId: first.runId,
+        providerTurnId: firstTurnId,
+        step,
+        offers: [],
+      };
+      assert.isTrue(RunExecutionService.routeProviderEvent(boundary, first, firstAfterTurn)[0]);
+      assert.isFalse(RunExecutionService.routeProviderEvent(boundary, second, secondAfterTurn)[0]);
+      assert.isFalse(
+        RunExecutionService.routeProviderEvent(
+          { ...boundary, providerTurnId: ProviderTurnId.make("provider-turn:replacement") },
+          first,
+          firstAfterTurn,
+        )[0],
+      );
+    }
   }),
 );
 
@@ -3134,6 +3156,153 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+it.effect(
+  "reserves boundary message slots after committed tools and before a delayed receipt",
+  () =>
+    Effect.gen(function* () {
+      const commitStarted = yield* Deferred.make<void>();
+      const releaseCommit = yield* Deferred.make<void>();
+      const positions = new Map<TurnItemId, number>();
+      const sequence: string[] = [];
+      const messageIds = [MessageId.make("boundary:first"), MessageId.make("boundary:second")];
+      const messageItemIds = messageIds.map((messageId) =>
+        IdAllocator.derive.userTurnItem({ messageId }),
+      );
+      let firstCommit = true;
+      let toolsCommitted = false;
+      const coordinator = yield* ProviderCommitBatch.make(
+        (work) =>
+          Effect.gen(function* () {
+            if (firstCommit) {
+              firstCommit = false;
+              yield* Deferred.succeed(commitStarted, undefined);
+              yield* Deferred.await(releaseCommit);
+            }
+            yield* work;
+            toolsCommitted = true;
+          }),
+        true,
+      );
+      const allocate = (
+        input: Parameters<TurnItemPositionStore.TurnItemPositionStoreV2["Service"]["allocate"]>[0],
+      ) =>
+        Effect.sync(() => {
+          if (messageItemIds.includes(input.turnItemId)) {
+            assert.isTrue(toolsCommitted);
+          }
+          const prior = positions.get(input.turnItemId);
+          if (prior !== undefined) return prior;
+          const ordinal = positions.size + 1;
+          positions.set(input.turnItemId, ordinal);
+          sequence.push(input.turnItemId);
+          return ordinal;
+        });
+      yield* captureRootRunTermination({
+        key: "boundary-placement",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        consumeProviderEvents: coordinator.consume,
+        turnItemPositions: {
+          allocate,
+          reserveBoundary: (input) =>
+            Effect.gen(function* () {
+              assert.equal(
+                input.providerTurnId,
+                ProviderTurnId.make("provider-turn:boundary-placement"),
+              );
+              yield* allocate(input);
+            }),
+          normalize: (item) =>
+            allocate({ threadId: item.threadId, turnItemId: item.id, runId: item.runId }).pipe(
+              Effect.map((ordinal) => ({ ...item, ordinal })),
+            ),
+        },
+        ingestNormalized: ({ event }) =>
+          event.type === "turn_item.updated"
+            ? allocate({
+                threadId: event.turnItem.threadId,
+                turnItemId: event.turnItem.id,
+                runId: event.turnItem.runId,
+              }).pipe(Effect.as([]))
+            : Effect.succeed([]),
+        events: (ids) => {
+          const offers = messageIds.map((messageId, index) => ({
+            id: `offer:${index}`,
+            queuedRunId: RunId.make(`queued:${index}`),
+            messageId,
+          }));
+          const boundary = {
+            type: "boundary_messages.updated",
+            driver,
+            threadId: ids.threadId,
+            runId: ids.runId,
+            providerTurnId: ids.rootProviderTurnId,
+            offers,
+          } as const;
+          return Stream.make(
+            backgroundTurnItemEvent(ids, "command_execution", "completed", 1),
+            { ...boundary, step: "reserve" },
+            {
+              type: "turn_item.updated",
+              driver,
+              turnItem: {
+                id: TurnItemId.make("assistant-after-boundary"),
+                threadId: ids.threadId,
+                runId: ids.runId,
+                nodeId: ids.rootNodeId,
+                providerThreadId: ids.providerThreadId,
+                providerTurnId: ids.rootProviderTurnId,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "completed",
+                title: "Reply",
+                startedAt: DateTime.makeUnsafe("2026-11-08T15:00:00Z"),
+                completedAt: DateTime.makeUnsafe("2026-11-08T15:00:00Z"),
+                updatedAt: DateTime.makeUnsafe("2026-11-08T15:00:00Z"),
+                type: "assistant_message",
+                messageId: MessageId.make("assistant-after-boundary"),
+                text: "After both updates",
+                streaming: false,
+              },
+            },
+            { ...boundary, step: "receipt" },
+            rootTerminalEvent(ids, "completed"),
+          );
+        },
+        afterStart: () =>
+          Effect.gen(function* () {
+            yield* Deferred.await(commitStarted);
+            assert.equal(positions.size, 0);
+            yield* Deferred.succeed(releaseCommit, undefined);
+          }),
+      }).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Effect.void,
+          take: Effect.never,
+          acknowledgeAgentMessages: ({ offers }) =>
+            Effect.sync(() => {
+              assert.deepEqual(
+                offers.map((offer) => offer.id),
+                ["offer:0", "offer:1"],
+              );
+              assert.deepEqual(
+                messageItemIds.map((itemId) => positions.get(itemId)),
+                [2, 3],
+              );
+              assert.equal(positions.get(TurnItemId.make("assistant-after-boundary")), 4);
+              sequence.push("receipt");
+            }),
+        }),
+      );
+      assert.deepEqual(sequence, [
+        "turn-item:boundary-placement",
+        ...messageItemIds,
+        "assistant-after-boundary",
+        "receipt",
+      ]);
+    }).pipe(Effect.scoped),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
@@ -3159,6 +3328,8 @@ function captureRootRunTermination(input: {
   readonly shouldStartProviderTurn?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["shouldStartProviderTurn"];
   readonly appContext?: ReturnType<McpAppModelContext.McpAppModelContext["Service"]["forThread"]>;
   readonly ingestNormalized?: ProviderEventIngestor.ProviderEventIngestorV2["Service"]["ingestNormalized"];
+  readonly turnItemPositions?: TurnItemPositionStore.TurnItemPositionStoreV2["Service"];
+  readonly consumeProviderEvents?: EventSink.EventSinkV2["Service"]["consumeProviderEvents"];
   readonly beforeTerminalWrite?: (
     request: Parameters<EventSink.EventSinkV2["Service"]["writeIfRunCurrent"]>[0],
   ) => Effect.Effect<boolean, EventSink.EventSinkV2Error>;
@@ -3203,8 +3374,13 @@ function captureRootRunTermination(input: {
             forThread: () => input.appContext ?? Effect.succeed([]),
           }),
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
-          layerTurnItemPositionsTest,
+          input.turnItemPositions === undefined
+            ? layerTurnItemPositionsTest
+            : Layer.succeed(TurnItemPositionStore.TurnItemPositionStoreV2, input.turnItemPositions),
           mockEventSink({
+            ...(input.consumeProviderEvents === undefined
+              ? {}
+              : { consumeProviderEvents: input.consumeProviderEvents }),
             write: (payload) =>
               Effect.gen(function* () {
                 for (const event of payload.events) {

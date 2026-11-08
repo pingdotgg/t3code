@@ -1,12 +1,20 @@
-import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  CommandId,
+  parseGoalCommand,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
@@ -233,6 +241,159 @@ export const layer = Layer.effectDiscard(
         );
       },
     );
+
+    const claimAgentMessages: ProviderContinuationRequests.ClaimAgentMessages = Effect.fn(
+      "ProviderContinuationService.claimAgentMessages",
+    )(
+      function* (input) {
+        const unhanded: Array<ProviderContinuationRequests.AgentMessageOfferRef> = [];
+        return yield* Effect.gen(function* () {
+          const { runs } = yield* threads.getThreadRecords(input.threadId, ["runs"], {
+            runStatuses: ["queued"],
+          });
+          if (runs.length === 0) return [];
+          const { messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {
+            messageIds: runs.map((run) => run.userMessageId),
+          });
+          const offers: Array<ProviderContinuationRequests.AgentMessageOffer> = [];
+          for (const run of queuedRunsInDeliveryOrder({ runs, messages })) {
+            const message = messages.find((row) => row.id === run.userMessageId);
+            if (
+              message?.atToolBoundary !== true ||
+              run.boundaryOffer !== undefined ||
+              run.queueHeld === true ||
+              run.freshContext === true ||
+              run.delegatedTaskId !== undefined ||
+              isNativeMaintenanceCommand(message) ||
+              parseGoalCommand(message) !== null
+            )
+              continue;
+            const offerId = yield* randomUuidV4;
+            unhanded.push({ id: offerId, queuedRunId: run.id });
+            const offered = yield* Effect.gen(function* () {
+              yield* threads.dispatch({
+                type: "queued-message.promote-to-steer",
+                commandId: CommandId.make(`tool-boundary-offer:${offerId}`),
+                threadId: input.threadId,
+                queuedRunId: run.id,
+                targetRunId: input.runId,
+                boundaryOffer: { id: offerId, step: "offer", providerTurnId: input.providerTurnId },
+              });
+              const current = yield* threads.getThreadRecords(input.threadId, ["messages"], {
+                messageIds: [message.id],
+              });
+              const committed = current.messages.find((row) => row.id === message.id)!;
+              return {
+                id: offerId,
+                queuedRunId: run.id,
+                messageId: committed.id,
+                text: projectComposerContextForProvider({
+                  text: committed.text,
+                  records: committed.context?.records ?? [],
+                }),
+                attachments: committed.attachments,
+                createdBy: committed.createdBy,
+                creationSource: committed.creationSource,
+              };
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.gen(function* () {
+                  yield* Effect.logWarning(
+                    "orchestration-v2.provider-continuation.agent-message-offer-failed",
+                    {
+                      threadId: input.threadId,
+                      offerId,
+                      cause,
+                    },
+                  );
+                  // No transport has received this offer; undo it before returning the earlier batch.
+                  yield* threads
+                    .dispatch({
+                      type: "queued-message.promote-to-steer",
+                      commandId: CommandId.make(`tool-boundary-withdraw:${offerId}`),
+                      threadId: input.threadId,
+                      queuedRunId: run.id,
+                      targetRunId: input.runId,
+                      boundaryOffer: { id: offerId, step: "withdraw" },
+                    })
+                    .pipe(
+                      Effect.catch((withdrawCause) =>
+                        Effect.logWarning(
+                          "orchestration-v2.provider-continuation.agent-message-withdraw-failed",
+                          {
+                            threadId: input.threadId,
+                            offerId,
+                            cause: withdrawCause,
+                          },
+                        ),
+                      ),
+                    );
+                  return undefined;
+                }),
+              ),
+            );
+            if (offered === undefined) break;
+            offers.push(offered);
+          }
+          return offers;
+        }).pipe(
+          Effect.onInterrupt(() =>
+            settleAgentMessages("withdraw")({
+              threadId: input.threadId,
+              runId: input.runId,
+              offers: unhanded,
+            }),
+          ),
+        );
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("orchestration-v2.provider-continuation.agent-message-claim-failed", {
+              threadId: input.threadId,
+              cause,
+            }).pipe(Effect.as([])),
+          ),
+        ),
+    );
+
+    const settleAgentMessages = (
+      step: "receipt" | "withdraw",
+    ): ProviderContinuationRequests.AcknowledgeAgentMessages =>
+      Effect.fn(`ProviderContinuationService.${step}AgentMessages`)(function* (input) {
+        for (const offer of input.offers) {
+          yield* threads
+            .dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId: CommandId.make(`tool-boundary-${step}:${offer.id}`),
+              threadId: input.threadId,
+              queuedRunId: offer.queuedRunId,
+              targetRunId: input.runId,
+              boundaryOffer: { id: offer.id, step },
+            })
+            .pipe(
+              Effect.tapError((cause) =>
+                Effect.logWarning(
+                  "orchestration-v2.provider-continuation.agent-message-settlement-failed",
+                  {
+                    threadId: input.threadId,
+                    offerId: offer.id,
+                    step,
+                    cause,
+                  },
+                ),
+              ),
+              Effect.orDie,
+            );
+        }
+      });
+    if (requests.serveAgentMessages !== undefined) {
+      yield* requests.serveAgentMessages({
+        claim: claimAgentMessages,
+        acknowledge: settleAgentMessages("receipt"),
+        withdraw: settleAgentMessages("withdraw"),
+      });
+    }
 
     yield* requests.take.pipe(
       Effect.flatMap((request) =>

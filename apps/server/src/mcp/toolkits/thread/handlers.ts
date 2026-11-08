@@ -320,6 +320,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               type: "queued-message.promote-to-steer",
               queuedRunId: runId,
               targetRunId,
+              requestedBy: "agent",
             }));
           }
           default:

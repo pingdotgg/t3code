@@ -298,6 +298,103 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
 );
 
 it.effect.each([
+  { case: "a CLI that cancels queued input", capabilities: ["interrupt_cancel_queued_v1"] },
+  { case: "an older CLI", capabilities: undefined },
+])("Stop cancels input the CLI still has queued: $case", ({ capabilities }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const interrupt = vi.fn(async (_options?: { readonly cancelQueued: true }) => undefined);
+      const frames = [{ type: "system", subtype: "init", capabilities }];
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            close: vi.fn(),
+            interrupt,
+            next: async () =>
+              frames.length > 0
+                ? { done: false, value: frames.shift() }
+                : { done: true, value: undefined },
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+      const session = yield* runner.open({ ...resumedMcpQueryInput, options });
+      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+      yield* Stream.runDrain(session.messages);
+      yield* session.interrupt;
+      assert.deepEqual(interrupt.mock.calls, [
+        capabilities === undefined ? [] : [{ cancelQueued: true }],
+      ]);
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
+it.effect("Stop fences the input producer before cancelling a partly written batch", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const interrupt = vi.fn(async () => undefined);
+      const querySpy = vi
+        .spyOn(ClaudeSdk, "query")
+        .mockImplementation(() => ({ close: vi.fn(), interrupt }) as unknown as ClaudeSdk.Query);
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+      const session = yield* runner.open({ ...resumedMcpQueryInput, options });
+      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+      const prompt = querySpy.mock.calls[0]![0].prompt;
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      const input = prompt[Symbol.asyncIterator]();
+      const discarded = Promise.withResolvers<void>();
+      const consumed: string[] = [];
+      const pulled: string[] = [];
+      const message = (content: string): ClaudeSdk.SDKUserMessage => ({
+        type: "user",
+        message: { role: "user", content },
+        parent_tool_use_id: null,
+        session_id: FORK_SESSION_ID,
+      });
+      const handoff = (id: string) => ({
+        isCurrent: () => true,
+        onPulled: () => {
+          pulled.push(id);
+        },
+        onConsumed: () => {
+          consumed.push(id);
+        },
+        onDiscarded: () => {
+          discarded.resolve();
+        },
+      });
+      yield* session.offer(message("first"), undefined, handoff("first"));
+      yield* session.offer(message("second"), undefined, handoff("second"));
+      yield* session.offer(message("third"), undefined, handoff("third"));
+      assert.equal((yield* Effect.promise(() => input.next())).value.message.content, "first");
+      assert.deepEqual(pulled, ["first"]);
+      assert.deepEqual(consumed, []);
+      assert.equal((yield* Effect.promise(() => input.next())).value.message.content, "second");
+      assert.deepEqual(consumed, ["first"]);
+      const stopping = yield* session.interrupt.pipe(Effect.forkChild);
+      yield* Effect.promise(() => discarded.promise);
+      assert.lengthOf(interrupt.mock.calls, 0);
+      const nextInput = yield* Effect.promise(() => input.next()).pipe(Effect.forkChild);
+      yield* Fiber.join(stopping);
+      assert.deepEqual(consumed, ["first", "second"]);
+      assert.lengthOf(interrupt.mock.calls, 1);
+      const afterStop = vi.fn();
+      yield* session.offer(message("fourth"), undefined, {
+        ...handoff("fourth"),
+        onDiscarded: afterStop,
+      });
+      assert.equal(afterStop.mock.calls.length, 1);
+      yield* session.close;
+      assert.isTrue((yield* Fiber.join(nextInput)).done);
+      assert.deepEqual(pulled, ["first", "second"]);
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
+it.effect.each([
   { case: "a readable rule list", errors: undefined, readable: true },
   { case: "a settings file Claude skipped", errors: [{ file: "settings.json" }], readable: false },
   { case: "a reply without a rule list", response: {}, readable: false },

@@ -686,6 +686,14 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  /** Native input may already be saved; an outstanding offer must never automatically execute. */
+  boundaryOffer: Schema.optional(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      targetRunId: RunId,
+      providerTurnId: ProviderTurnId,
+    }),
+  ),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1307,6 +1315,8 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
    * the workflow's opening instead and keep the script behind a disclosure.
    */
   workflowScript: Schema.optional(Schema.Boolean),
+  /** Eligible for native delivery at a root tool boundary instead of interrupting tools. */
+  atToolBoundary: Schema.optional(Schema.Literal(true)),
   id: MessageId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -3253,6 +3263,20 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     queuedRunId: RunId,
     targetRunId: RunId,
+    boundaryOffer: Schema.optional(
+      Schema.Union([
+        Schema.Struct({
+          id: TrimmedNonEmptyString,
+          step: Schema.Literal("offer"),
+          providerTurnId: ProviderTurnId,
+        }),
+        Schema.Struct({
+          id: TrimmedNonEmptyString,
+          step: Schema.Literals(["receipt", "withdraw"]),
+        }),
+      ]),
+    ),
+    requestedBy: Schema.optional(Schema.Literal("agent")),
   }),
   Schema.Struct({
     type: Schema.Literal("queue.resume"),
@@ -3264,6 +3288,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+    requestedBy: Schema.optional(Schema.Literal("agent")),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.reorder"),

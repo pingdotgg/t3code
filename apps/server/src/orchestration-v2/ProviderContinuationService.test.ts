@@ -1,10 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CommandId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
@@ -13,6 +15,7 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -23,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const threadId = ThreadId.make("thread-provider-continuation");
@@ -581,4 +585,191 @@ describe("ProviderContinuationService", () => {
       );
     });
   });
+  it.effect("an aborted boundary hook commits no further promotions", () =>
+    Effect.gen(function* () {
+      // Three queued agent updates. The fake dispatch stands in for the SQLite
+      // commit: the first promotion commits, the second blocks until the hook
+      // is aborted, and the third must never run.
+      const runs = [1, 2, 3].map((ordinal) => ({
+        id: RunId.make(`run-boundary-${ordinal}`),
+        status: "queued",
+        ordinal,
+        queuePosition: ordinal,
+        userMessageId: MessageId.make(`message-boundary-${ordinal}`),
+      }));
+      const messages = runs.map((run) => ({
+        id: run.userMessageId,
+        text: "update",
+        atToolBoundary: true,
+        attachments: [],
+        createdBy: "agent",
+        creationSource: "mcp",
+      }));
+      const committed: Array<unknown> = [];
+      const withdrawn: Array<unknown> = [];
+      const blocked = yield* Deferred.make<void>();
+      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            ...projection,
+            runs,
+            messages,
+          } as unknown as OrchestrationV2ThreadProjection),
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            if (command.type !== "queued-message.promote-to-steer") return {} as never;
+            if (command.boundaryOffer?.step === "withdraw") {
+              withdrawn.push(command.queuedRunId);
+              return { sequence: 1, storedEvents: [] };
+            }
+            if (committed.length === 1) {
+              yield* Deferred.succeed(blocked, undefined);
+              return yield* Effect.never;
+            }
+            committed.push(command.queuedRunId);
+            return { sequence: 1, storedEvents: [] };
+          }),
+      });
+      const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests.pipe(
+        Effect.provide(
+          ProviderContinuationService.layer.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+            ),
+          ),
+        ),
+      );
+      // The Claude adapter runs the claim with the hook's AbortSignal, which
+      // interrupts the claim fiber when Claude aborts the hook.
+      const claim = yield* requests.claimAgentMessages!({
+        threadId,
+        runId: RunId.make("run-boundary-active"),
+        providerTurnId: ProviderTurnId.make("provider-turn-boundary-active"),
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(blocked);
+      yield* Fiber.interrupt(claim);
+      assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(claim)));
+      assert.deepEqual(committed, [runs[0]!.id]);
+      assert.deepEqual(withdrawn, [runs[0]!.id, runs[1]!.id]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a receipt that fails to commit fails the transcript mirror so Claude retries it", () =>
+    Effect.gen(function* () {
+      const commandIds: Array<string> = [];
+      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            commandIds.push(command.commandId);
+            if (commandIds.length === 1) {
+              return yield* new Orchestrator.OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: "database is locked",
+              });
+            }
+            return { sequence: 1, storedEvents: [] };
+          }),
+      });
+      const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests.pipe(
+        Effect.provide(
+          ProviderContinuationService.layer.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+            ),
+          ),
+        ),
+      );
+      const receipt = requests.acknowledgeAgentMessages!({
+        threadId,
+        runId: RunId.make("run-boundary-active"),
+        offers: [{ id: "offer-1", queuedRunId: RunId.make("run-boundary-1") }],
+      });
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(receipt)));
+      yield* receipt;
+      // The retry reuses the receipt's command id, so a commit that did land replays.
+      assert.deepEqual(commandIds, [
+        "tool-boundary-receipt:offer-1",
+        "tool-boundary-receipt:offer-1",
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["offer", "read"] as const)(
+    "returns the earlier boundary offers and withdraws the failed %s before later messages",
+    (stage) =>
+      Effect.gen(function* () {
+        const runs = [1, 2, 3].map((ordinal) => ({
+          id: RunId.make(`run-partial-${ordinal}`),
+          status: "queued",
+          ordinal,
+          queuePosition: ordinal,
+          userMessageId: MessageId.make(`message-partial-${ordinal}`),
+        }));
+        const messages = runs.map((run, index) => ({
+          id: run.userMessageId,
+          text: `update ${index}`,
+          atToolBoundary: true,
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "mcp",
+        }));
+        const commands: Array<{ readonly runId: string; readonly step: string | undefined }> = [];
+        let reads = 0;
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () =>
+            Effect.gen(function* () {
+              reads++;
+              if (stage === "read" && reads === 4) {
+                return yield* new Orchestrator.OrchestratorDispatchError({
+                  commandId: CommandId.make("failed-read"),
+                  commandType: "queued-message.promote-to-steer",
+                  cause: "database is locked",
+                });
+              }
+              return {
+                ...projection,
+                runs,
+                messages,
+              } as unknown as OrchestrationV2ThreadProjection;
+            }),
+          dispatch: (command) =>
+            Effect.gen(function* () {
+              if (command.type !== "queued-message.promote-to-steer") return {} as never;
+              commands.push({ runId: command.queuedRunId, step: command.boundaryOffer?.step });
+              if (stage === "offer" && commands.length === 2) {
+                return yield* new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "database is locked",
+                });
+              }
+              return { sequence: 1, storedEvents: [] };
+            }),
+        });
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests.pipe(
+          Effect.provide(
+            ProviderContinuationService.layer.pipe(
+              Layer.provideMerge(
+                Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+              ),
+            ),
+          ),
+        );
+        const claimed = yield* requests.claimAgentMessages!({
+          threadId,
+          runId: RunId.make("active-run"),
+          providerTurnId: ProviderTurnId.make("active-turn"),
+        });
+        assert.deepEqual(
+          claimed.map((offer) => offer.messageId),
+          [runs[0]!.userMessageId],
+        );
+        assert.deepEqual(commands, [
+          { runId: runs[0]!.id, step: "offer" },
+          { runId: runs[1]!.id, step: "offer" },
+          { runId: runs[1]!.id, step: "withdraw" },
+        ]);
+      }).pipe(Effect.scoped),
+  );
 });

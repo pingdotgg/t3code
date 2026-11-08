@@ -5,6 +5,7 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { UNCONFIRMED_DELIVERY_HINT } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -149,9 +150,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     if (busyRef.current) return;
     const index = queuedRuns.findIndex(({ run }) => run.id === runId);
     if (index < 0) return;
+    const entry = queuedRuns[index]!;
     if (action === "edit") {
-      if (editBlockedReason !== null) return;
-      const entry = queuedRuns[index]!;
+      if (editBlockedReason !== null || entry.editBlockedReason !== null) return;
       void Haptics.selectionAsync();
       beginQueuedRunEdit(
         threadKey,
@@ -175,6 +176,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       return;
     }
     if (action !== "steer" && action !== "remove") return;
+    if (action === "steer" && entry.automatic && workflow?.canSendNow !== true) return;
     busyRef.current = true;
     setBusyRunId(runId);
     void Haptics.selectionAsync();
@@ -225,20 +227,26 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       {editBlockedReason !== null && queuedRuns.length > 0 ? (
         <Text className="py-3 text-sm text-foreground-muted">{editBlockedReason}</Text>
       ) : null}
+      {queuedRuns.some((entry) => entry.delivery === "unconfirmed") ? (
+        <Text className="py-3 text-sm text-foreground-muted">{UNCONFIRMED_DELIVERY_HINT}</Text>
+      ) : null}
       {queuedRuns.length === 0 ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
+      {queuedRuns.map((entry, index) => {
+        const { run, text, attachments, context, message } = entry;
+        const rowEditBlockedReason = editBlockedReason ?? entry.editBlockedReason;
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
           // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
           canPromoteToSteer:
+            !entry.automatic &&
             (workflow?.canPromoteToSteer ?? false) &&
             (run.freshContext !== true || workflow?.promoteSkipsCompaction === true),
           canSendNow: workflow?.canSendNow ?? false,
-          editBlocked: editBlockedReason !== null,
+          editBlocked: rowEditBlockedReason !== null,
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
           text,
@@ -290,7 +298,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     accessibilityHint={
                       controls.canEdit
                         ? "Opens this message in the composer for editing"
-                        : (editBlockedReason ?? undefined)
+                        : (rowEditBlockedReason ?? undefined)
                     }
                     disabled={!controls.canEdit}
                     onPress={() => void act(run.id, "edit")}
@@ -319,6 +327,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         )}
                         {title}
                       </Text>
+                      {entry.delivery !== "queued" ? (
+                        <Text className="text-2xs text-foreground-muted">
+                          {entry.deliveryLabel}
+                        </Text>
+                      ) : null}
                     </View>
                     {controls.isEditing ? (
                       <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">

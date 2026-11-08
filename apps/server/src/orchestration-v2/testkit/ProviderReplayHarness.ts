@@ -409,6 +409,7 @@ export function layerWithRegistry<Error>(
         IdAllocator.layer,
         layerProviderEventIngestorProvided,
         layerServerSettings,
+        layerContinuationRequests,
         layerStores,
       ),
     ),
@@ -539,6 +540,7 @@ export function layerWithRegistry<Error>(
     layerEffectWorkerProvided,
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
+    layerContinuationRequests,
     layerCommandOutputHubProvided,
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer),

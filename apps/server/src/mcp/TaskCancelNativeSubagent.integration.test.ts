@@ -249,7 +249,7 @@ const delegatedClaudeHarness = Effect.fn("delegatedClaudeHarness")(function* (na
 });
 
 // A delegated Claude child ends its turn while a background native subagent it
-// started keeps running (#17154).
+// started keeps running.
 
 it.effect("task_cancel ends a delegated child's background native subagent", () =>
   Effect.scoped(

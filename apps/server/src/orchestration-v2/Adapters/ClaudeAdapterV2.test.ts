@@ -105,6 +105,7 @@ import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
 import { provideDeterministicTestRuntime } from "../testkit/DeterministicRuntime.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { runOrchestratorV2Scenario } from "../testkit/OrchestratorScenario.ts";
 import { layerProviderReplay } from "../testkit/ProviderReplayHarness.ts";
 import {
@@ -3159,6 +3160,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
+    readonly claimAgentMessages?: ProviderContinuationRequests.ClaimAgentMessages;
+    readonly withdrawAgentMessages?: ProviderContinuationRequests.AcknowledgeAgentMessages;
+    readonly onHandoff?: (
+      handoff: NonNullable<Parameters<ClaudeAdapterV2.ClaudeAgentSdkQuerySession["offer"]>[2]>,
+    ) => void;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3181,6 +3187,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       const changes = yield* makeChangeSignal;
       const offeredMessages: Array<SDKUserMessage> = [];
+      const offerPrompt: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["offer"] = (
+        message,
+        onQueued,
+        handoff,
+      ) =>
+        Effect.sync(() => {
+          offeredMessages.push(message);
+          onQueued?.();
+          if (handoff !== undefined) {
+            if (options?.onHandoff !== undefined) options.onHandoff(handoff);
+            else if (handoff.isCurrent()) {
+              handoff.onPulled();
+              handoff.onConsumed();
+            } else handoff.onDiscarded();
+          }
+        }).pipe(Effect.andThen(changes.notify));
       const permissionModeChanges: Array<string> = [];
       const liveSelectionChanges: Array<unknown> = [];
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
@@ -3223,6 +3245,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         random: yield* SecureRandom.SecureRandom,
         idAllocator,
         continuationRequests: {
+          ...(options?.claimAgentMessages === undefined
+            ? {}
+            : { claimAgentMessages: options.claimAgentMessages }),
+          ...(options?.withdrawAgentMessages === undefined
+            ? {}
+            : { withdrawAgentMessages: options.withdrawAgentMessages }),
           offer: (request) =>
             Effect.sync(() => {
               continuationRequests.push(request);
@@ -3262,10 +3290,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 processQueues.push(processMessages);
                 return {
                   messages,
-                  offer: (message: SDKUserMessage) =>
-                    Effect.sync(() => {
-                      offeredMessages.push(message);
-                    }).pipe(Effect.andThen(changes.notify)),
+                  offer: offerPrompt,
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: (mode) =>
@@ -3287,10 +3312,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               processQueues.push(sdkMessages);
               return {
                 messages,
-                offer: (message) =>
-                  Effect.sync(() => {
-                    offeredMessages.push(message);
-                  }).pipe(Effect.andThen(changes.notify)),
+                offer: offerPrompt,
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
@@ -3409,6 +3431,303 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect(
+    "hands off a mixed boundary batch before returning and reserves before early receipts",
+    () =>
+      Effect.gen(function* () {
+        const image = ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make("boundary-image"),
+          name: "diagram.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+        });
+        const offers: ProviderContinuationRequests.AgentMessageOffer[] = Array.from(
+          { length: 40 },
+          (_, index) => ({
+            id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+            queuedRunId: RunId.make(`queued-boundary-${index}`),
+            messageId: MessageId.make(`boundary-message-${index}`),
+            text: `UPDATE_${index}`,
+            attachments: index === 2 ? [image] : [],
+            createdBy: index % 2 === 0 ? "user" : "agent",
+            creationSource: index % 2 === 0 ? "web" : "server",
+          }),
+        );
+        const handoffs: Array<
+          NonNullable<Parameters<ClaudeAdapterV2.ClaudeAgentSdkQuerySession["offer"]>[2]>
+        > = [];
+        const claims: Parameters<ProviderContinuationRequests.ClaimAgentMessages>[0][] = [];
+        const withdrawals: Parameters<ProviderContinuationRequests.AcknowledgeAgentMessages>[0][] =
+          [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          claimAgentMessages: (claim) =>
+            Effect.sync(() => {
+              claims.push(claim);
+              return offers;
+            }),
+          withdrawAgentMessages: (withdrawal) =>
+            Effect.sync(() => {
+              withdrawals.push(withdrawal);
+            }),
+          onHandoff: (handoff) => {
+            handoffs.push(handoff);
+          },
+        });
+        yield* (yield* FileSystem.FileSystem).writeFile(
+          (yield* Path.Path).join(harness.attachmentsDir, attachmentRelativePath(image)!),
+          new Uint8Array([137, 80, 78, 71]),
+        );
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mixed-boundary-attempt"),
+          text: "Work with tools.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            capabilities: ["interrupt_cancel_queued_v1"],
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const options = harness.getOpenedOptions();
+        const hook = options?.hooks?.PostToolBatch?.[0]?.hooks[0];
+        const store = options?.sessionStore;
+        assert.isDefined(hook);
+        assert.isDefined(store);
+        if (hook === undefined || store === undefined) return;
+        const signal = yield* Effect.abortSignal;
+        const hookInput = {
+          hook_event_name: "PostToolBatch" as const,
+          session_id: WAKE_NATIVE_SESSION,
+          transcript_path: "/repo/session.jsonl",
+          cwd: "/repo",
+          tool_calls: [],
+        };
+        yield* Effect.promise(() => hook(hookInput, undefined, { signal }));
+        assert.lengthOf(claims, 0);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: null,
+            user_message_uuid: harness.promptUuid(0),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Effect.promise(() =>
+          hook({ ...hookInput, agent_id: "child" }, undefined, { signal }),
+        );
+        assert.lengthOf(claims, 0);
+        let returned = false;
+        const pendingHook = yield* Effect.promise(() =>
+          hook(hookInput, undefined, { signal }).then((result) => {
+            returned = true;
+            return result;
+          }),
+        ).pipe(Effect.forkChild);
+        yield* Effect.raceFirst(
+          harness.until(() => handoffs.length === 40),
+          Fiber.join(pendingHook).pipe(
+            Effect.andThen(Effect.die("Hook returned before input handoff")),
+          ),
+        );
+        assert.isFalse(returned);
+        assert.deepEqual(
+          harness.offeredMessages.slice(1).map((message) => message.uuid),
+          offers.map((offer) => offer.id),
+        );
+        assert.isTrue(
+          harness.offeredMessages.slice(1).every((message) => message.priority === "next"),
+        );
+        assert.deepEqual(
+          harness.offeredMessages.slice(1, 3).map((message) => message.message.content),
+          ["UPDATE_0", "From another agent:\nUPDATE_1"],
+        );
+        const imageContent = harness.offeredMessages[3]!.message.content;
+        assert.isArray(imageContent);
+        if (Array.isArray(imageContent)) assert.equal(imageContent[0]?.type, "image");
+        for (const handoff of handoffs.slice(0, -1)) {
+          handoff.onPulled();
+          handoff.onConsumed();
+        }
+        assert.isFalse(returned);
+        handoffs.at(-1)!.onPulled();
+        handoffs.at(-1)!.onConsumed();
+        assert.deepEqual(yield* Fiber.join(pendingHook), {});
+        assert.lengthOf(claims, 1);
+        assert.deepEqual(
+          withdrawals.flatMap((withdrawal) => withdrawal.offers),
+          [],
+        );
+        const receipt = (id: string) => ({
+          type: "attachment",
+          isSidechain: false,
+          sessionId: WAKE_NATIVE_SESSION,
+          attachment: { type: "queued_command", source_uuid: id },
+        });
+        const key = { projectKey: "-repo", sessionId: WAKE_NATIVE_SESSION };
+        yield* Effect.promise(() =>
+          store.append({ ...key, sessionId: "foreign" }, [receipt(offers[0]!.id)]),
+        );
+        yield* Effect.promise(() =>
+          store.append({ ...key, subpath: "subagents/child" }, [receipt(offers[0]!.id)]),
+        );
+        yield* Effect.promise(() => store.append(key, [receipt(offers[0]!.id)]));
+        assert.lengthOf(
+          harness.events.filter((event) => event.type === "boundary_messages.updated"),
+          0,
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "command_lifecycle",
+            command_uuid: offers[0]!.id,
+            state: "started",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.until(
+          () =>
+            harness.events.filter((event) => event.type === "boundary_messages.updated").length >=
+            2,
+        );
+        yield* Effect.promise(() =>
+          store.append(
+            key,
+            offers.map((offer) => receipt(offer.id)),
+          ),
+        );
+        yield* harness.until(
+          () =>
+            harness.events.filter((event) => event.type === "boundary_messages.updated").length >=
+            3,
+        );
+        yield* Effect.promise(() =>
+          store.append(
+            key,
+            offers.map((offer) => receipt(offer.id)),
+          ),
+        );
+        const deliveryEvents = harness.events.filter(
+          (event) => event.type === "boundary_messages.updated",
+        );
+        assert.deepEqual(
+          deliveryEvents.map((event) => event.step),
+          ["reserve", "receipt", "receipt"],
+        );
+        assert.deepEqual(
+          deliveryEvents[0]!.offers.map((offer) => offer.messageId),
+          offers.map((offer) => offer.messageId),
+        );
+        assert.deepEqual(
+          deliveryEvents.slice(1).flatMap((event) => event.offers.map((offer) => offer.id)),
+          offers.map((offer) => offer.id),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect("withdraws a never-pulled input discarded after its hook aborts", () =>
+    Effect.gen(function* () {
+      const offers: ProviderContinuationRequests.AgentMessageOffer[] = [0, 1].map((index) => ({
+        id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        queuedRunId: RunId.make(`abort-queued-${index}`),
+        messageId: MessageId.make(`abort-message-${index}`),
+        text: `UPDATE_${index}`,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      }));
+      const handoffs: Array<
+        NonNullable<Parameters<ClaudeAdapterV2.ClaudeAgentSdkQuerySession["offer"]>[2]>
+      > = [];
+      const withdrawals =
+        yield* Queue.unbounded<
+          Parameters<ProviderContinuationRequests.AcknowledgeAgentMessages>[0]
+        >();
+      const harness = yield* makeWakeHarnessWithOptions({
+        claimAgentMessages: () => Effect.succeed(offers),
+        withdrawAgentMessages: (withdrawal) =>
+          Queue.offer(withdrawals, withdrawal).pipe(Effect.asVoid),
+        onHandoff: (handoff) => {
+          handoffs.push(handoff);
+        },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("abort-boundary-attempt"),
+          text: "Work.",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          capabilities: ["interrupt_cancel_queued_v1"],
+          user_message_uuid: harness.promptUuid(0),
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      const hook = harness.getOpenedOptions()?.hooks?.PostToolBatch?.[0]?.hooks[0];
+      assert.isDefined(hook);
+      if (hook === undefined) return;
+      const finished = Promise.withResolvers<void>();
+      const pending = yield* Effect.promise((signal) =>
+        hook(
+          {
+            hook_event_name: "PostToolBatch",
+            session_id: WAKE_NATIVE_SESSION,
+            transcript_path: "/repo/session.jsonl",
+            cwd: "/repo",
+            tool_calls: [],
+          },
+          undefined,
+          { signal },
+        ).finally(() => {
+          finished.resolve();
+        }),
+      ).pipe(Effect.forkChild);
+      yield* harness.until(() => handoffs.length === 2);
+      handoffs[0]!.onPulled();
+      handoffs[0]!.onConsumed();
+      yield* Fiber.interrupt(pending);
+      yield* Effect.promise(() => finished.promise);
+      assert.isFalse(handoffs[1]!.isCurrent());
+      handoffs[1]!.onDiscarded();
+      const withdrawal = yield* Queue.take(withdrawals);
+      assert.deepEqual(
+        withdrawal.offers.map((offer) => offer.id),
+        [offers[1]!.id],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",
@@ -9309,7 +9628,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         driver: ProviderDriverKind.make("claudeAgent"),
         modelSelection: CLAUDE_MODEL_SELECTION,
       }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
-      const scenario = { name: transcript.scenario, transcript, ...materialized };
+      const scenario = {
+        name: transcript.scenario,
+        transcript,
+        ...materialized,
+        runtimePolicyOverride: { cwd: yield* checkpointWorkspace(transcript.scenario) },
+      };
       yield* Effect.gen(function* () {
         const result = yield* runOrchestratorV2Scenario(scenario);
         assertBaseProjection({ result, transcript, runCount: 1, runStatuses: ["completed"] });
@@ -9330,7 +9654,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         provideDeterministicTestRuntime,
         Effect.scoped,
       );
-    }),
+    }).pipe(Effect.scoped),
   );
 
   it.effect(

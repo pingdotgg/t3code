@@ -87,11 +87,19 @@ it("previews assistant quotes as readable text and preserves the citation when e
     queuedRuns: [
       {
         run: { id: "run:quote-only", userMessageId: "message:quote-only" },
+        delivery: "queued",
+        deliveryLabel: "Queued",
+        automatic: false,
+        editBlockedReason: null,
         text: quote,
         attachments: [],
       },
       {
         run: { id: "run:quote-and-text", userMessageId: "message:quote-and-text" },
+        delivery: "queued",
+        deliveryLabel: "Queued",
+        automatic: false,
+        editBlockedReason: null,
         text: quoteAndText,
         attachments: [],
       },
@@ -151,6 +159,10 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
       ],
     ].map(([runId, text, fields]) => ({
       run: { id: runId, userMessageId: `${runId}:message` },
+      delivery: "queued",
+      deliveryLabel: "Queued",
+      automatic: false,
+      editBlockedReason: null,
       text,
       attachments: [],
       message: message(`${runId}:message`, { text, ...(fields as object) }),
@@ -183,6 +195,10 @@ it("stays inside the timeline scroller instead of growing the chat column", asyn
     queuedRuns: [
       {
         run: { id: "run:queued", userMessageId: "message:queued" },
+        delivery: "queued",
+        deliveryLabel: "Queued",
+        automatic: false,
+        editBlockedReason: null,
         text: "Later",
         attachments: [],
       },
