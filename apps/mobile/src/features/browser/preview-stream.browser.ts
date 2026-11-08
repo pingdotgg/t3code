@@ -1,4 +1,5 @@
 import {
+  createPreviewCursor,
   createPreviewFramePainter,
   createPreviewStreamClient,
   previewStreamModifiers,
@@ -139,8 +140,10 @@ export function start(configuration: PreviewStreamConfiguration) {
     if (!streaming && !stopped) reportStatus("streaming");
     sendPictureInPictureFrame();
   });
+  const cursor = createPreviewCursor(canvas);
   const send = (message: PreviewStreamInput) => client?.send(message) ?? false;
   const clearInput = () => {
+    cursor.show(false);
     if (wheelFrame !== null) cancelAnimationFrame(wheelFrame);
     if (mouseFrame !== null) cancelAnimationFrame(mouseFrame);
     wheelFrame = mouseFrame = null;
@@ -172,6 +175,7 @@ export function start(configuration: PreviewStreamConfiguration) {
       {
         onFrame: (jpeg) => painter.paint(jpeg),
         onPointer: showAgentCursor,
+        onCursor: cursor.set,
         onClipboard: (text) => post({ type: "clipboard", text }),
         onDownload: (download) => post({ type: "download", ...download }),
         onFileChooser: (chooser) => post({ type: "fileChooser", chooser }),
@@ -403,6 +407,7 @@ export function start(configuration: PreviewStreamConfiguration) {
     if (control?.controller !== "you") return;
     if (event.pointerType !== "touch") {
       const point = pagePoint(event.clientX, event.clientY, mouseButtons !== 0);
+      cursor.show(point !== null);
       if (!point) return;
       // Chorded presses and releases arrive as pointermove while another button is held.
       const changed = mouseButtons ^ (event.buttons & 7);

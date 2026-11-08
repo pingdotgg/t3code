@@ -36,6 +36,7 @@ import {
   type PreviewAutomationWaitForInput,
   PreviewClearProfileError,
   type PreviewEvent,
+  PREVIEW_STREAM_CURSORS,
   type PreviewNavStatus,
   type PreviewSessionSnapshot,
   type PreviewViewportSetting,
@@ -108,21 +109,36 @@ const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
 
-const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
+const ELEMENT_AT_POINT_SCRIPT = `(x, y) => {
   let element = document.elementFromPoint(x, y);
   while (element && element.shadowRoot) {
     const inner = element.shadowRoot.elementFromPoint(x, y);
     if (!inner || inner === element) break;
     element = inner;
   }
-  if (element && element.tagName === "LABEL" && element.control) element = element.control;
-  if (!element) return false;
-  if (element.tagName === "IFRAME" || element.tagName === "FRAME") return true;
+  return element;
+}`;
+const TEXT_ENTRY_SCRIPT = `(element) => {
   if (element.isContentEditable) return true;
   if (element.tagName === "TEXTAREA") return !element.disabled && !element.readOnly;
   if (element.tagName !== "INPUT") return false;
   const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
   return !nonText.includes(element.type) && !element.disabled && !element.readOnly;
+}`;
+const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
+  let element = (${ELEMENT_AT_POINT_SCRIPT})(x, y);
+  if (element && element.tagName === "LABEL" && element.control) element = element.control;
+  if (!element) return false;
+  if (element.tagName === "IFRAME" || element.tagName === "FRAME") return true;
+  return (${TEXT_ENTRY_SCRIPT})(element);
+}`;
+// Chromium resolves `auto` by hit-testing; only its I-beam over text fields is reproduced.
+const CURSOR_AT_POINT_SCRIPT = `(x, y) => {
+  const element = (${ELEMENT_AT_POINT_SCRIPT})(x, y);
+  if (!element) return "default";
+  const cursor = getComputedStyle(element).cursor.split(",").pop().trim();
+  if (cursor !== "auto") return cursor;
+  return (${TEXT_ENTRY_SCRIPT})(element) ? "text" : "default";
 }`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
@@ -190,6 +206,7 @@ export type ServerBrowserViewerOutput =
       readonly editable: boolean;
     }
   | { readonly _tag: "clipboard"; readonly text: string }
+  | { readonly _tag: "cursor"; readonly cursor: string }
   | {
       readonly _tag: "pointer";
       readonly phase: "move" | "click";
@@ -268,6 +285,9 @@ interface ViewerState {
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
   scrolledAt: number;
+  cursor: string;
+  cursorPoint: { x: number; y: number } | null;
+  cursorSampling: boolean;
 
   requestedSize: { width: number; height: number; order: number } | null;
 }
@@ -2382,6 +2402,33 @@ const make = Effect.gen(function* () {
     viewer.requestedSize = null;
   };
 
+  // One sample in flight per viewer; an answer for a superseded point is dropped.
+  const sampleCursor = (viewer: ViewerState, session: CDPSession, x: number, y: number) => {
+    viewer.cursorPoint = { x, y };
+    if (viewer.cursorSampling) return;
+    viewer.cursorSampling = true;
+    void (async () => {
+      for (let point = viewer.cursorPoint; point; point = viewer.cursorPoint) {
+        viewer.cursorPoint = null;
+        const value: unknown = await session
+          .send("Runtime.evaluate", {
+            expression: `(${CURSOR_AT_POINT_SCRIPT})(${point.x}, ${point.y})`,
+            returnByValue: true,
+          })
+          .then(
+            (result) => result.result.value,
+            () => null,
+          );
+        if (viewer.cursorPoint || typeof value !== "string") continue;
+        const cursor = PREVIEW_STREAM_CURSORS.has(value) ? value : "default";
+        if (cursor === viewer.cursor) continue;
+        viewer.cursor = cursor;
+        viewer.push({ _tag: "cursor", cursor });
+      }
+      viewer.cursorSampling = false;
+    })();
+  };
+
   const dispatchViewerInput = async (
     tab: ServerTab,
     session: CDPSession,
@@ -2413,6 +2460,7 @@ const make = Effect.gen(function* () {
             viewer.pressedButtons.set(button, { x: num(message.x), y: num(message.y) });
           else if (action === "up") viewer.pressedButtons.delete(button);
         }
+        sampleCursor(viewer, session, num(message.x), num(message.y));
         return;
       }
       case "wheel":
@@ -2425,6 +2473,7 @@ const make = Effect.gen(function* () {
           deltaY: num(message.deltaY),
           modifiers,
         });
+        sampleCursor(viewer, session, num(message.x), num(message.y));
         return;
       case "key": {
         const key = typeof message.key === "string" ? message.key : "";
@@ -2575,17 +2624,20 @@ const make = Effect.gen(function* () {
         if (next._tag === "frame") runFork(next.ack);
         // State a stalled viewer cannot miss compacts its backlog. It runs
         // synchronously so an older compaction can never land after a newer one.
-        else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
+        else if (
+          ["gone", "reconnect", "control", "viewport", "cursor", "fileChooser"].includes(next._tag)
+        ) {
           const dropped = runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           const items = [...dropped.value, next];
           // Without its latest size and control the viewer cannot map input at all.
-          const state = (["control", "viewport"] as const).flatMap(
+          const stateTags: ReadonlyArray<string> = ["control", "viewport", "cursor"];
+          const state = stateTags.flatMap(
             (tag) => items.findLast((item) => item._tag === tag) ?? [],
           );
           // Everything else is one-time; if it no longer fits, the oldest goes first.
           const rest = items.filter(
-            (item) => item._tag !== "frame" && item._tag !== "control" && item._tag !== "viewport",
+            (item) => item._tag !== "frame" && !stateTags.includes(item._tag),
           );
           for (const item of [...rest.slice(state.length - VIEWER_OUTPUT_LIMIT), ...state])
             Queue.offerUnsafe(output, item);
@@ -2600,6 +2652,9 @@ const make = Effect.gen(function* () {
       },
       resume: () => startScreencast(screencastScale),
       scrolledAt: 0,
+      cursor: "default",
+      cursorPoint: null,
+      cursorSampling: false,
       requestedSize: null,
     };
     yield* Effect.acquireRelease(
