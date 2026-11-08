@@ -1872,12 +1872,40 @@ describe("queued messages keep a settled thread active", () => {
   });
 
   it("keeps a queued thread with an attention request in Active", () => {
+    const running = {
+      status: "running" as const,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: NOW,
+    };
     const layout = buildThreadListV2Items({
       threads: [
         makeThread({
           id: ThreadId.make("queued-approval"),
           title: "Queued with approval",
           hasPendingApprovals: true,
+        }),
+        makeThread({
+          id: ThreadId.make("queued-guest"),
+          title: "Queued with guest request",
+          runtime: running,
+          pendingGuestMessageCount: 1,
+        }),
+        makeThread({
+          id: ThreadId.make("queued-plan"),
+          title: "Queued with proposed plan",
+          interactionMode: "plan",
+          hasActionableProposedPlan: true,
+          latestRun: {
+            runId: RunId.make("queued-plan-run"),
+            status: "completed",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            assistantMessageId: null,
+          },
         }),
         makeThread({ id: ThreadId.make("ready-queued"), title: "Ready with outbox" }),
       ],
@@ -1886,16 +1914,17 @@ describe("queued messages keep a settled thread active", () => {
       now: NOW,
       queuedThreadKeys: new Set([
         `${environmentId}:queued-approval`,
+        `${environmentId}:queued-guest`,
+        `${environmentId}:queued-plan`,
         `${environmentId}:ready-queued`,
       ]),
       workingShelfEnabled: true,
       workingShelfExpanded: true,
     });
-    expect(layout.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
-      ["queued-approval", "card"],
-      ["ready-queued", "card"],
-    ]);
+    const ids = layout.items.map((item) => item.thread.id);
+    expect(ids.slice(0, 3).sort()).toEqual(["queued-approval", "queued-guest", "queued-plan"]);
+    expect(ids.slice(3)).toEqual(["ready-queued"]);
     expect(layout.workingCount).toBe(1);
-    expect(layout.workingShelfHeaderIndex).toBe(1);
+    expect(layout.workingShelfHeaderIndex).toBe(3);
   });
 });

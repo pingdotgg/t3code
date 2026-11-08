@@ -757,19 +757,36 @@ export function buildThreadListV2Items(input: {
     }
     const hasQueuedMessages =
       queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
-    // Match isThreadWorking: attention stays in Active so a collapsed Working shelf
-    // cannot hide an approval, question, or subagent request behind a queued send.
+    // Keep attention visible in Active when Working is collapsed. Guest requests are
+    // also blocked on both Working paths while a send is queued, since isThreadWorking
+    // can still be true for a running guest-request thread.
+    const hasGuestRequest = (thread.pendingGuestMessageCount ?? 0) > 0;
     const hasAttentionRequest =
       thread.hasPendingApprovals ||
       thread.hasPendingUserInput ||
-      thread.pendingSubagentRequest != null;
+      thread.pendingSubagentRequest != null ||
+      hasGuestRequest;
+    const run = thread.latestRun;
+    const runSettled =
+      run !== null &&
+      run.status !== "preparing" &&
+      run.status !== "queued" &&
+      run.status !== "starting" &&
+      run.status !== "running" &&
+      run.status !== "waiting" &&
+      thread.runtime?.activeRunId !== run.runId;
+    const hasActionablePlanReview =
+      thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled;
+    const countsQueuedAsWorking =
+      hasQueuedMessages && !hasAttentionRequest && !hasActionablePlanReview;
     if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
     } else if (
       workingShelfEnabled &&
-      ((hasQueuedMessages && !hasAttentionRequest) || (input.isWorking ?? isThreadWorking)(thread))
+      !(hasQueuedMessages && hasGuestRequest) &&
+      (countsQueuedAsWorking || (input.isWorking ?? isThreadWorking)(thread))
     ) {
       working.push(thread);
     } else {
