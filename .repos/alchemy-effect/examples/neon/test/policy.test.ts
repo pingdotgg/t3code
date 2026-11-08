@@ -82,9 +82,7 @@ describe("upload request policy", () => {
   });
   test("normalizes deployed URLs with trailing slashes", () => {
     expect(
-      corsHeaders("https://app.example", "https://app.example/")?.[
-        "access-control-allow-origin"
-      ],
+      corsHeaders("https://app.example", "https://app.example/")?.["access-control-allow-origin"],
     ).toBe("https://app.example");
     expect(corsHeaders("null", "not-a-url")).toBeUndefined();
   });
@@ -94,16 +92,12 @@ describe("upload request policy", () => {
     expect(headers?.["access-control-allow-credentials"]).toBeUndefined();
   });
   test("rejects unexpected origins", () => {
-    expect(
-      corsHeaders("https://attacker.example", "https://app.example"),
-    ).toBeUndefined();
+    expect(corsHeaders("https://attacker.example", "https://app.example")).toBeUndefined();
     expect(corsHeaders("https://app.example", undefined)).toBeUndefined();
   });
   test("permits the configured browser origin without credentials", () => {
     const headers = corsHeaders("https://app.example", "https://app.example");
-    expect(headers?.["access-control-allow-origin"]).toBe(
-      "https://app.example",
-    );
+    expect(headers?.["access-control-allow-origin"]).toBe("https://app.example");
     expect(headers?.["access-control-allow-credentials"]).toBeUndefined();
     expect(headers?.vary).toBe("Origin");
   });
