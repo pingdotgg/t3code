@@ -24,7 +24,13 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
-import { request, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import {
+  request,
+  subscribe,
+  subscribeVcsBranch,
+  refreshVcsBranch,
+  type EnvironmentRpcInput,
+} from "../rpc/client.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import {
@@ -298,11 +304,12 @@ export function createVcsEnvironmentAtoms<R, E>(
       label: "environment-data:vcs:branch",
       idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsBranch>) =>
-        subscribe(WS_METHODS.subscribeVcsBranch, input),
+        subscribeVcsBranch(input),
     }),
     refreshBranch: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:refresh-branch",
       tag: WS_METHODS.vcsRefreshBranch,
+      execute: refreshVcsBranch,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
     }),

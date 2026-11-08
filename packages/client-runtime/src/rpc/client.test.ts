@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   type RelayClientInstallProgressEvent,
+  type ServerConfig,
   type ServerLifecycleStreamEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -26,7 +27,7 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { runStream, subscribe, subscribeDynamicWithSession } from "./client.ts";
+import { runStream, subscribe, subscribeDynamicWithSession, refreshVcsBranch } from "./client.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -414,3 +415,29 @@ describe("environment RPC", () => {
       }),
   );
 });
+
+it.effect.each([true, false])(
+  "refreshes branches using the connected server capability (%s)",
+  (supported) =>
+    Effect.gen(function* () {
+      const { activeSession, supervisor } = yield* makeHarness();
+      const client = {
+        [supported ? WS_METHODS.vcsRefreshBranch : WS_METHODS.vcsRefreshStatus]: () =>
+          Effect.succeed({ refName: "external" }),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some({
+          ...session(client),
+          initialConfig: Effect.succeed({
+            environment: { capabilities: supported ? { vcsBranchStatus: true } : {} },
+          } as ServerConfig),
+        }),
+      );
+      expect(
+        yield* refreshVcsBranch({ cwd: "/repo" }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        ),
+      ).toEqual({ refName: "external" });
+    }).pipe(Effect.scoped),
+);

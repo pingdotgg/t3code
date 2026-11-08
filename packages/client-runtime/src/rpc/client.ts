@@ -301,7 +301,10 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         method: tag,
                         input,
                       });
-                      const stream = mapStream(session, method(input)).pipe(
+                      const stream = mapStream(
+                        session,
+                        Stream.suspend(() => method(input)),
+                      ).pipe(
                         Stream.onFirst(() =>
                           Effect.sync(() => {
                             expectedFailureRetries = 0;
@@ -436,6 +439,59 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
 > {
   return subscribeDynamic(tag, () => Effect.succeed(input), options);
 }
+
+export const subscribeVcsBranch = (
+  input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsBranch>,
+) =>
+  subscribeDynamicMapped(
+    WS_METHODS.subscribeVcsBranch,
+    () => Effect.succeed(input),
+    (session, stream) =>
+      Stream.unwrap(
+        session.initialConfig.pipe(
+          Effect.mapError(
+            (error) =>
+              new RpcClientError.RpcClientError({
+                reason: new RpcClientError.RpcClientDefect({
+                  message: error.message,
+                  cause: error,
+                }),
+              }),
+          ),
+          Effect.map((config) =>
+            config.environment.capabilities.vcsBranchStatus === true
+              ? stream
+              : session.client[WS_METHODS.subscribeVcsStatus]({
+                  ...input,
+                  includeRemote: false,
+                }).pipe(
+                  Stream.filter((event) => event._tag !== "remoteUpdated"),
+                  Stream.map((event) => ({ refName: event.local.refName })),
+                ),
+          ),
+        ),
+      ),
+  );
+
+export const refreshVcsBranch = Effect.fn("EnvironmentRpc.refreshVcsBranch")(function* (
+  input: EnvironmentRpcInput<typeof WS_METHODS.vcsRefreshBranch>,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const config = yield* getInitialServerConfig().pipe(
+    Effect.mapError(
+      (error) =>
+        new EnvironmentRpcUnavailableError({
+          environmentId: supervisor.target.environmentId,
+          message: error.message,
+        }),
+    ),
+  );
+  if (config.environment.capabilities.vcsBranchStatus === true) {
+    return yield* request(WS_METHODS.vcsRefreshBranch, input);
+  }
+  const status = yield* request(WS_METHODS.vcsRefreshStatus, input);
+  return { refName: status.refName };
+});
 
 export const request = <TTag extends Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>>(
   tag: TTag,
