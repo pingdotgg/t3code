@@ -425,9 +425,6 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
 });
 export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInput.Type;
 
-/** A `beforePosition` past every item, so the read starts at the newest. */
-export const THREAD_READ_NEWEST_POSITION = Number.MAX_SAFE_INTEGER;
-
 export const OrchestratorMcpThreadDetail = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,

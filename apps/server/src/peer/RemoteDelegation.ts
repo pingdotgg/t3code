@@ -12,7 +12,6 @@ import {
   type ProviderInstanceId,
   ProviderDriverKind,
   type RunId,
-  THREAD_READ_NEWEST_POSITION,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -445,43 +444,26 @@ const make = Effect.gen(function* () {
   ) {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
-    const isReply = (item: OrchestratorMcpThreadTimelineItem) =>
-      item.type === "assistant_message" && (runId === null || item.runId === runId);
-    const isError = (item: OrchestratorMcpThreadTimelineItem) =>
-      failed && item.type === "error" && (runId === null || item.runId === runId);
-    const read = (position: {
-      readonly afterPosition?: number;
-      readonly beforePosition?: number;
-    }) =>
-      forwarding.readThread(scope, remote.environmentId, {
+    let afterPosition: number | undefined;
+    while (true) {
+      const read = yield* forwarding.readThread(scope, remote.environmentId, {
         threadId: remote.threadId,
         view: failed ? "activity" : "messages",
         limit: 100,
-        ...position,
+        ...(afterPosition === undefined ? {} : { afterPosition }),
       });
-    // A peer that predates `beforePosition` rejects it and is read forward instead;
-    // a forward read fails again on any other cause, as it did before.
-    const newest = yield* read({ beforePosition: THREAD_READ_NEWEST_POSITION }).pipe(
-      Effect.orElseSucceed(() => null),
-    );
-    if (newest !== null && newest.previousPosition !== undefined) {
-      let page = newest;
-      while (true) {
-        reply ??= page.items.findLast(isReply);
-        error ??= page.items.findLast(isError);
-        const previous = page.previousPosition ?? null;
-        if ((failed ? error : reply) !== undefined || previous === null) break;
-        page = yield* read({ beforePosition: previous });
+      reply =
+        read.items.findLast(
+          (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
+        ) ?? reply;
+      if (failed) {
+        error =
+          read.items.findLast(
+            (item) => item.type === "error" && (runId === null || item.runId === runId),
+          ) ?? error;
       }
-    } else {
-      let afterPosition: number | undefined;
-      while (true) {
-        const page = yield* read(afterPosition === undefined ? {} : { afterPosition });
-        reply = page.items.findLast(isReply) ?? reply;
-        error = page.items.findLast(isError) ?? error;
-        if (!page.hasMore || page.nextPosition === null) break;
-        afterPosition = page.nextPosition;
-      }
+      if (!read.hasMore || read.nextPosition === null) break;
+      afterPosition = read.nextPosition;
     }
     reply = error ?? reply;
     if (reply === undefined) return undefined;

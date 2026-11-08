@@ -6,7 +6,6 @@ import {
   OrchestratorMcpThreadWaitResult,
   ProjectId,
   RunId,
-  THREAD_READ_NEWEST_POSITION,
   ThreadId,
   TrimmedNonEmptyString,
   type OrchestratorMcpThreadListItem,
@@ -44,6 +43,8 @@ import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
  */
 const WAIT_SLICE_MS = 15_000;
 const READ_PAGE_LIMIT = 100;
+/** A `beforePosition` past every item, so the read starts at the newest. */
+const NEWEST_POSITION = Number.MAX_SAFE_INTEGER;
 const TITLE_MAX_CHARS = 80;
 
 export class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
@@ -365,7 +366,7 @@ const readBackward = Effect.fn("cli.thread.readBackward")(function* (
       { threadId, view, limit: nextLimit(), runLimit: 1, beforePosition },
       OrchestratorMcpThreadReadResult,
     );
-  const newest = yield* read(THREAD_READ_NEWEST_POSITION).pipe(
+  const newest = yield* read(NEWEST_POSITION).pipe(
     Effect.catchTags({ ThreadToolFailedError: () => Effect.succeed(null) }),
   );
   if (newest === null || newest.previousPosition === undefined) return undefined;
