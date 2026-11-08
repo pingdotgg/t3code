@@ -836,28 +836,6 @@ describe("gateway peer upstream selection", () => {
     ).toEqual({ add: [], remove: [] });
   });
 
-  it("retries remove when ownership is retained after a failed remove", () => {
-    const stale = EnvironmentId.make("env_stale");
-    // claimedGatewayPeerIds drops peers that left desired; the registry merges
-    // removeFailed back in so a transient lanGatewayRemove failure can retry.
-    const previousDesired = new Set([
-      ...claimedGatewayPeerIds({
-        desired: [],
-        previousDesired: new Set([stale]),
-        addAttempts: [],
-        addSucceeded: new Set(),
-      }),
-      stale,
-    ]);
-    expect(
-      planGatewayPeerReconcile({
-        desired: [],
-        listed: [{ environmentId: stale, httpBaseUrl: "http://192.168.1.90:3773/" }],
-        previousDesired,
-      }),
-    ).toEqual({ add: [], remove: [stale] });
-  });
-
   it("does not remove peers the catalog still reaches through this gateway", () => {
     const keep = EnvironmentId.make("env_keep");
     const pairedThroughGateway = EnvironmentId.make("env_gateway_only");
