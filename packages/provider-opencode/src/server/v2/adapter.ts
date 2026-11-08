@@ -2746,10 +2746,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         for (const session of sessions.toReversed()) yield* syncRoster(session);
       }
       // A shell's end may have been lost with the stream, and backfill may re-add an ended one.
-      for (const state of threads.values()) {
-        if (state.shells.size === 0) continue;
-        for (const [id, shell] of state.shells) {
-          const running = yield* client.shell
+      const tracked = [...threads.values()].filter((state) => state.shells.size > 0);
+      // Concurrent, so stalled checks cost one timeout, not one each, within RECONCILE_TIMEOUT.
+      yield* Effect.forEach(
+        tracked.flatMap((state) => [...state.shells].map(([id, shell]) => ({ state, id, shell }))),
+        ({ state, id, shell }) =>
+          client.shell
             .get({ id: Shell.ID.make(id), location: { directory: shell.directory } })
             .pipe(
               Effect.map(({ data }) => data.status === "running"),
@@ -2764,11 +2766,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   Effect.as(true),
                 ),
               ),
-            );
-          if (!running) state.shells.delete(id);
-        }
-        yield* syncRosterAncestors(state);
-      }
+              Effect.map((running) => {
+                if (!running) state.shells.delete(id);
+              }),
+            ),
+        { concurrency: "unbounded", discard: true },
+      );
+      for (const state of tracked) yield* syncRosterAncestors(state);
       // Stopped off the lock this reconcile holds; one still running waits for a Stop.
       for (const thread of new Set([...strays.values()].map(rootOf))) {
         yield* Effect.forkIn(stopStrays(thread), sessionScope);
