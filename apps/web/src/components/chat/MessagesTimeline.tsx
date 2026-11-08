@@ -818,6 +818,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         };
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
+  const [minimapAtEnd, setMinimapAtEnd] = useState(false);
   const handleAnchorReady = (info: { anchorIndex: number | undefined }) => {
     if (anchorMessageId !== null && info.anchorIndex !== undefined) {
       onAnchorReady(anchorMessageId, info.anchorIndex);
@@ -889,6 +890,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
     );
+    setMinimapAtEnd(resolveTimelineIsAtEnd(state) ?? false);
   });
 
   const minimapRefreshFrameRef = useRef<number | null>(null);
@@ -1370,6 +1372,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               hasPersistentGutter={minimapHasPersistentGutter}
               hitStripWidth={minimapHitStripWidth}
               currentIndex={minimapCurrentIndex}
+              atEnd={minimapAtEnd}
               stripMap={minimapStripMap}
               onWheel={forwardMinimapWheel}
               onSelect={(item) => {
