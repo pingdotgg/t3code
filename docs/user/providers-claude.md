@@ -86,9 +86,10 @@ over 200,000 tokens. Each Claude provider's settings can override it:
 **Dynamic workflow size** in the Claude provider settings sets how many agents Claude
 aims for when it writes a workflow: Small (under 5), Medium (under 10), Large
 (under 50), or Unrestricted. It is a guideline, not a hard limit. **Use default**
-leaves the size to Claude Code: a value in its settings files, otherwise your `/config`
-choice, which starts at Medium, or Small on Pro plans. Any other choice overrides both
-for that Claude instance. Organization-managed Claude Code settings still win.
+leaves the size to Claude Code: a `--settings` value in **Launch arguments**, then its
+settings files, otherwise your `/config` choice, which starts at Medium, or Small on Pro
+plans. Any other choice overrides all of these for that Claude instance.
+Organization-managed Claude Code settings still win.
 
 ## Usage limits
 

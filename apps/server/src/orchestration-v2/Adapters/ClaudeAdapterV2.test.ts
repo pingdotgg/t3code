@@ -424,7 +424,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.equal(requestedModel, "opus");
   });
 
-  it("sends the workflow size guideline only when one is chosen", () => {
+  it("a chosen workflow size overrides the one from launch arguments", () => {
     const sentSize = (workflowSizeGuideline: ClaudeSettings["workflowSizeGuideline"]) =>
       (
         ClaudeAdapterV2.makeClaudeQueryOptions({
@@ -432,11 +432,12 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           nativeThreadId: "native-workflow-size",
           resume: false,
           cwd: "/workspace",
+          sdkSettings: { workflowSizeGuideline: "small" },
           settings: { ...DEFAULT_CLAUDE_SETTINGS, workflowSizeGuideline },
         }).settings as { workflowSizeGuideline?: string } | undefined
       )?.workflowSizeGuideline;
     assert.equal(sentSize("large"), "large");
-    assert.isUndefined(sentSize("default"));
+    assert.equal(sentSize("default"), "small");
   });
 
   it("projects AskUserQuestion input with question text as the answer key", () => {
