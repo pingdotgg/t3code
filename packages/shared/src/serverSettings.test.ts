@@ -23,6 +23,7 @@ import {
   resolveModelPreferences,
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
+  resolveProjectIconModelSelection,
   resolveSourceControlWriterModelSelection,
   resolveSpeechPostProcessingModelSelection,
 } from "./serverSettings.ts";
@@ -344,6 +345,32 @@ describe("serverSettings helpers", () => {
       instanceId: "opencode",
       model: "openai/gpt-5",
     });
+  });
+
+  it("falls back from a project icon provider that cannot generate application text", () => {
+    const instanceId = ProviderInstanceId.make("icon_writer");
+    const projectIconModelSelection = createModelSelection(instanceId, "gpt-5.4-mini");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: {},
+        },
+      },
+      projectIconModelSelection,
+    };
+    expect(resolveProjectIconModelSelection(settings, undefined, null)).toBe(
+      projectIconModelSelection,
+    );
+    expect(
+      resolveProjectIconModelSelection(
+        { ...settings, projectIconModelSelection: null },
+        undefined,
+        null,
+      ),
+    ).toBe(settings.textGenerationModelSelection);
   });
 
   it("falls back from a disabled source control writer provider without clearing its selection", () => {

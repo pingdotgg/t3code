@@ -4,6 +4,7 @@ import {
   CommandId,
   MessageId,
   NodeId,
+  ProjectId,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -116,6 +117,10 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     ]),
   }),
   Schema.Struct({
+    type: Schema.Literal("project-icon.autofill"),
+    projectId: ProjectId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("delegated-tasks.stop"),
     reason: Schema.optional(Schema.String),
   }),
@@ -132,6 +137,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "preview.cleanup",
   "attachment.cleanup",
   "thread-title.generate",
+  "project-icon.autofill",
   "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 

@@ -21,6 +21,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -170,6 +171,8 @@ const layerRuntime = (dbPath: string) => {
         pruneWorktrees: () => Effect.void,
       }),
     ),
+    // Text generation is not under test here; the mock satisfies the autofill/title leaf.
+    Layer.provide(Layer.mock(TextGeneration.TextGeneration)({})),
     Layer.provide(layerPlatform),
   );
 };

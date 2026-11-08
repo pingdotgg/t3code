@@ -1,11 +1,13 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
+  type ProviderInstanceId,
   type WorktreeSubmodules,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveProjectIconModelSelection } from "@t3tools/shared/serverSettings";
 import { useNavigate } from "@tanstack/react-router";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -128,6 +130,185 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     }
     updateSettings({ defaultModelSelection: value });
   };
+
+  const textGenerationProviders = providers.filter(
+    (provider) => provider.supportsTextGeneration !== false,
+  );
+  const iconInstanceEntries = providerInstanceEntriesFor(
+    textGenerationProviders,
+    settings,
+    target?.projectId ?? null,
+  );
+  const mixedIconAutofill = useScopedSettingsMixed(["projectIconAutoFillEnabled"]);
+  const mixedIconModel = useScopedSettingsMixed(["projectIconModelSelection"]);
+  const usesIconModel = settings.projectIconModelSelection !== null;
+  const activeIconSelection = resolveProjectIconModelSelection(
+    settings,
+    textGenerationProviders,
+    target?.projectId ?? null,
+  );
+  const iconSelection = resolveEffectiveDefaultModelSelection(
+    settings,
+    textGenerationProviders,
+    activeIconSelection,
+  );
+  const iconModelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    textGenerationProviders,
+    iconSelection?.instanceId,
+    iconSelection?.model,
+  );
+  const iconInstanceEntry = iconInstanceEntries.find(
+    (entry) => entry.instanceId === iconSelection?.instanceId,
+  );
+  const canEnableIconModel = iconInstanceEntries.some(
+    (entry) => entry.enabled && entry.isAvailable,
+  );
+  const iconModelDisabledReason = useScopedModelDisabledReason(settings, iconInstanceEntries);
+
+  const iconAutofillRow = (
+    <SettingsRow
+      serverScoped
+      settingKeys={["projectIconAutoFillEnabled"]}
+      mixed={mixedIconAutofill}
+      {...searchableSetting("project-icon-autofill")}
+      description={
+        isProjectScope
+          ? "Every third new thread checks whether this project needs an icon and picks one when it has none."
+          : "Every third new thread checks whether a project needs an icon and picks one when it has none. Projects can override it."
+      }
+      resetAction={
+        settings.projectIconAutoFillEnabled !==
+        DEFAULT_SERVER_SETTINGS.projectIconAutoFillEnabled ? (
+          <SettingResetButton
+            label="project icon autofill"
+            onClick={() =>
+              updateSettings({
+                projectIconAutoFillEnabled: DEFAULT_SERVER_SETTINGS.projectIconAutoFillEnabled,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          mixed={mixedIconAutofill}
+          checked={mixedIconAutofill ? false : settings.projectIconAutoFillEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ projectIconAutoFillEnabled: Boolean(checked) })
+          }
+          aria-label="Automatically pick a project icon"
+        />
+      }
+    />
+  );
+
+  const iconModelRow = (
+    <SettingsRow
+      serverScoped
+      settingKeys={["projectIconModelSelection"]}
+      mixed={mixedIconModel}
+      {...searchableSetting("project-icon-model")}
+      description={
+        isProjectScope
+          ? "Model that picks the project icon. When off, the text generation model picks it."
+          : "Model that picks project icons. Projects can override it. When off, the text generation model picks it."
+      }
+      control={
+        unavailable ? (
+          <span className="text-sm text-muted-foreground">
+            Connect an environment to choose its project icon model.
+          </span>
+        ) : (
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            {usesIconModel && !canEnableIconModel ? (
+              <span className="text-sm text-muted-foreground">
+                No text generation providers available.
+              </span>
+            ) : null}
+            {usesIconModel && canEnableIconModel && iconSelection ? (
+              <ProviderModelPicker
+                environmentId={representative?.environmentId ?? null}
+                activeInstanceId={iconSelection.instanceId}
+                model={iconSelection.model}
+                lockedProvider={null}
+                instanceEntries={iconInstanceEntries}
+                modelOptionsByInstance={iconModelOptionsByInstance}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                triggerAriaLabel="Project icon model"
+                {...(mixedIconModel ? { triggerLabel: "Mixed" } : {})}
+                getModelDisabledReason={iconModelDisabledReason}
+                onOpenProviderSetup={(instanceId: ProviderInstanceId) => {
+                  if (representative)
+                    void navigate({
+                      to: "/settings/providers",
+                      search: { environmentId: representative.environmentId, instanceId },
+                    });
+                }}
+                onInstanceModelChange={(instanceId, model) => {
+                  const reason = iconModelDisabledReason(instanceId, model);
+                  if (reason) {
+                    toastManager.add({
+                      type: "error",
+                      title: "Project icon model not saved",
+                      description: reason,
+                    });
+                    return;
+                  }
+                  updateSettings({
+                    projectIconModelSelection: createModelSelection(instanceId, model),
+                  });
+                }}
+              />
+            ) : null}
+            {usesIconModel &&
+            canEnableIconModel &&
+            !mixedIconModel &&
+            iconInstanceEntry &&
+            iconSelection ? (
+              <TraitsPicker
+                provider={iconInstanceEntry.driverKind}
+                models={iconInstanceEntry.models}
+                model={iconSelection.model}
+                modelOptions={iconSelection.options ?? []}
+                allowPromptInjectedEffort={false}
+                planModeEnabled={settings.planModeEnabled}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onModelOptionsChange={(options) =>
+                  updateSettings({
+                    projectIconModelSelection: createModelSelection(
+                      iconSelection.instanceId,
+                      iconSelection.model,
+                      options,
+                    ),
+                  })
+                }
+              />
+            ) : null}
+            <Switch
+              mixed={mixedIconModel}
+              checked={mixedIconModel ? false : usesIconModel}
+              disabled={!usesIconModel && !canEnableIconModel}
+              onCheckedChange={(checked) => {
+                if (!checked) {
+                  updateSettings({ projectIconModelSelection: null });
+                  return;
+                }
+                updateSettings({
+                  projectIconModelSelection: createModelSelection(
+                    activeIconSelection.instanceId,
+                    activeIconSelection.model,
+                    activeIconSelection.options,
+                  ),
+                });
+              }}
+              aria-label="Use a separate project icon model"
+            />
+          </div>
+        )
+      }
+    />
+  );
 
   const modelRow = (
     <SettingsRow
@@ -334,11 +515,15 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           {modelRow}
           {fallbackRow}
           {workspaceRow}
+          {iconAutofillRow}
+          {iconModelRow}
         </>
       ) : category === "general" ? (
         <>
           {modelRow}
           {fallbackRow}
+          {iconAutofillRow}
+          {iconModelRow}
           <SettingsRow
             serverScoped
             settingKeys={["defaultRuntimeMode"]}

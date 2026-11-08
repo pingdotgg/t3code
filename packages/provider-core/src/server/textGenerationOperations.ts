@@ -10,12 +10,15 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildProjectIconPrompt,
   buildReviewGuidePrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeProjectIconColor,
+  sanitizeProjectIconName,
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
 
@@ -180,12 +183,34 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  const generateProjectIcon: ProviderTextGeneration["generateProjectIcon"] = Effect.fn(
+    `${name}.generateProjectIcon`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generateProjectIcon",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildProjectIconPrompt({
+        projectTitle: input.projectTitle,
+        threadTitles: input.threadTitles,
+        topLevelEntries: input.topLevelEntries,
+        readmeExcerpt: input.readmeExcerpt,
+        packageJsonExcerpt: input.packageJsonExcerpt,
+      }),
+    });
+    return {
+      name: sanitizeProjectIconName(generated.name),
+      color: sanitizeProjectIconColor(generated.color),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateProjectIcon,
     generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
 }

@@ -54,6 +54,44 @@ export function sanitizePrTitle(raw: string): string {
   return "Update project changes";
 }
 
+export const PROJECT_ICON_COLORS: ReadonlyArray<string> = [
+  "gray",
+  "red",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+  "rose",
+];
+
+export function sanitizeProjectIconName(raw: string): string {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(normalized) && normalized.length <= 64
+    ? normalized
+    : "folder-code";
+}
+
+export function sanitizeProjectIconColor(raw: string): string {
+  const normalized = raw.trim().toLowerCase();
+  return (PROJECT_ICON_COLORS as ReadonlyArray<string>).includes(normalized) ? normalized : "blue";
+}
+
 const MAX_THREAD_TITLE_CHARS = 120;
 
 export function sanitizeThreadTitle(raw: string): string {

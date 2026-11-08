@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import { limitTitleMessage } from "./threadTitleContext.ts";
 import type { BranchNamingOptions, ChatAttachment } from "@t3tools/contracts";
 
-import { limitSection } from "./textGenerationUtils.ts";
+import { PROJECT_ICON_COLORS, limitSection } from "./textGenerationUtils.ts";
 import type { ReviewGuideStackLayer } from "./textGeneration.ts";
 import type { TextGenerationPolicy } from "@t3tools/provider-core/server/textGenerationPolicy";
 
@@ -465,6 +465,76 @@ function threadTitlePromptSuffix(input: ThreadTitlePromptInput): string {
     suffix += `\n\nAttachment metadata:\n${limitSection(attachmentLines.join("\n"), 4_000)}`;
   }
   return suffix;
+}
+
+export interface ProjectIconPromptInput {
+  projectTitle: string;
+  threadTitles: ReadonlyArray<string>;
+  topLevelEntries: ReadonlyArray<string>;
+  readmeExcerpt?: string | undefined;
+  packageJsonExcerpt?: string | undefined;
+}
+
+const PROJECT_ICON_NAME_HINTS: ReadonlyArray<string> = [
+  "folder-code",
+  "code-2",
+  "terminal",
+  "globe-2",
+  "server",
+  "database",
+  "bot",
+  "sparkles",
+  "smartphone",
+  "monitor",
+  "cloud-cog",
+  "package",
+  "book-open",
+  "flask-conical",
+  "shield-check",
+  "rocket",
+  "gamepad-2",
+  "music",
+  "image",
+  "shopping-bag",
+  "git-branch",
+  "workflow",
+  "wrench",
+  "layers-3",
+];
+
+export function buildProjectIconPrompt(input: ProjectIconPromptInput) {
+  const prompt = [
+    "You pick a Lucide icon and color that represent a software project.",
+    'Return a JSON object with keys: name, color. Example: {"name": "folder-code", "color": "blue"}.',
+    "Rules:",
+    "- name must be a lowercase hyphenated Lucide icon name (a-z, 0-9, hyphens only).",
+    `- Prefer one of: ${PROJECT_ICON_NAME_HINTS.join(", ")}. Use another real Lucide icon only when none of these fits.`,
+    `- color must be exactly one of: ${PROJECT_ICON_COLORS.join(", ")}.`,
+    "- Match the project's domain (web, mobile, backend, data, game, docs, infra, media).",
+    "- Never invent icon names; a wrong name renders as a generic folder.",
+    "",
+    `Project: ${input.projectTitle}`,
+    input.threadTitles.length > 0
+      ? `Recent threads:\n${input.threadTitles
+          .slice(0, 3)
+          .map((title) => `- ${title}`)
+          .join("\n")}`
+      : "Recent threads: none yet",
+    input.topLevelEntries.length > 0
+      ? `Top-level files:\n${limitSection(input.topLevelEntries.slice(0, 40).join("\n"), 2_000)}`
+      : "Top-level files: unavailable",
+    ...(input.readmeExcerpt?.trim()
+      ? [`README excerpt:\n${limitSection(input.readmeExcerpt.trim(), 2_000)}`]
+      : []),
+    ...(input.packageJsonExcerpt?.trim()
+      ? [`package.json excerpt:\n${limitSection(input.packageJsonExcerpt.trim(), 2_000)}`]
+      : []),
+  ].join("\n");
+  const outputSchema = Schema.Struct({
+    name: Schema.String,
+    color: Schema.String,
+  });
+  return { prompt, outputSchema };
 }
 
 export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {

@@ -35,6 +35,7 @@ import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -126,6 +127,8 @@ const layerTest = Layer.mergeAll(
     }),
   ),
   Layer.provide(ProviderTurnStartServiceTestkit.layer),
+  // Text generation is not under test here; the mock satisfies the autofill/title leaf.
+  Layer.provide(Layer.mock(TextGeneration.TextGeneration)({})),
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService.ProjectEnrichmentService, {
       peek: () =>

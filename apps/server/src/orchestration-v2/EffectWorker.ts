@@ -25,6 +25,7 @@ import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
+import * as ProjectIconAutofillService from "./ProjectIconAutofillService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
@@ -78,6 +79,7 @@ export const layerExecutor: Layer.Layer<
   | ProviderTurnStartService.ProviderTurnStartServiceV2
   | RuntimeRequestService.RuntimeRequestServiceV2
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
+  | ProjectIconAutofillService.ProjectIconAutofillService
   | ThreadManagementService.ThreadManagementService
   | ServerSettings.ServerSettingsService
 > = Layer.effect(
@@ -92,6 +94,7 @@ export const layerExecutor: Layer.Layer<
     const runtimeRequests = yield* RuntimeRequestService.RuntimeRequestServiceV2;
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
+    const projectIconAutofill = yield* ProjectIconAutofillService.ProjectIconAutofillService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
     return OrchestrationEffectExecutorV2.of({
@@ -544,6 +547,25 @@ export const layerExecutor: Layer.Layer<
                 threadId: effect.threadId,
                 requestId: effect.commandId,
                 kind: effect.request.kind,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
+          case "project-icon.autofill":
+            // Autofill never fails a thread: the service logs and swallows its own
+            // failures, so only a defect in the wiring can surface here.
+            return projectIconAutofill
+              .execute({
+                threadId: effect.threadId,
+                commandId: effect.commandId,
+                projectId: effect.request.projectId,
               })
               .pipe(
                 Effect.mapError(

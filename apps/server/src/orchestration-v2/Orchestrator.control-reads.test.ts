@@ -1667,3 +1667,35 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("plans a project-icon autofill effect on every third thread of a project", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const projectId = ProjectId.make("project:icon-autofill-trigger");
+    for (let index = 1; index <= 6; index += 1) {
+      const commandId = CommandId.make(`create-icon-autofill-${index}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId,
+        threadId: ThreadId.make(`thread:icon-autofill-${index}`),
+        projectId,
+        title: `Thread ${index}`,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const planned = (yield* outbox.listByCommandId(commandId)).filter(
+        (effect) => effect.request.type === "project-icon.autofill",
+      );
+      assert.equal(planned.length, index % 3 === 0 ? 1 : 0);
+      if (planned.length === 1) {
+        assert.deepEqual(planned[0]?.request, { type: "project-icon.autofill", projectId });
+      }
+    }
+  }).pipe(Effect.provide(layerTest)),
+);

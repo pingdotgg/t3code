@@ -29,6 +29,7 @@ import {
   MessageId,
   type NodeId,
   type ModelSelection,
+  type ProjectId,
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2LimitRecoveryUpdate,
@@ -459,6 +460,9 @@ export interface OrchestratorV2Shape {
     OrchestratorV2Error
   >;
   readonly countThreads: () => Effect.Effect<number, OrchestratorV2Error>;
+  readonly countProjectThreads: (
+    projectId: ProjectId,
+  ) => Effect.Effect<number, OrchestratorV2Error>;
   readonly listActiveShellIndex: () => Effect.Effect<
     ReadonlyArray<ActiveShellIndexEntry>,
     OrchestratorV2Error
@@ -638,6 +642,19 @@ const decodeUserInputAnswers = Schema.decodeUnknownEffect(
     ]),
   ),
 );
+
+function pendingProjectIconAutofillEffect(
+  commandId: CommandId,
+  threadId: ThreadId,
+  projectId: ProjectId,
+): PendingOrchestrationEffectV2 {
+  return {
+    id: `effect:${commandId}:project-icon.autofill`,
+    commandId,
+    threadId,
+    request: { type: "project-icon.autofill", projectId },
+  };
+}
 
 function pendingThreadTitleGenerationEffect(
   commandId: CommandId,
@@ -2920,6 +2937,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchThreadCreate = Effect.fn("orchestrationV2.dispatch.threadCreate")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -2987,6 +3005,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: thread,
     });
+    // The new thread is not committed yet, so the stored count excludes it.
+    const storedProjectThreadCount = yield* projectionStore
+      .countProjectThreads(command.projectId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    // Every third thread is a cheap heuristic for "the project has a shape now".
+    if ((storedProjectThreadCount + 1) % 3 === 0) {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        pendingProjectIconAutofillEffect(command.commandId, command.threadId, command.projectId),
+      ]);
+    }
     if (command.importedNativeThread !== undefined) {
       yield* emitEvent({
         type: "provider-thread.updated",
@@ -13378,7 +13411,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let updateDelegatedCompletionOnlyRunId: RunId | undefined;
     switch (command.type) {
       case "thread.create":
-        yield* dispatchThreadCreate(command, events);
+        yield* dispatchThreadCreate(command, events, effects);
         break;
       case "thread.visit":
         yield* dispatchThreadVisit(command, events);
@@ -14513,6 +14546,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
     countThreads: Effect.fn("OrchestratorV2.countThreads")(function () {
       return projectionStore.countThreads().pipe(Effect.mapError(shellProjectionError));
+    }),
+    countProjectThreads: Effect.fn("OrchestratorV2.countProjectThreads")(function (projectId) {
+      return projectionStore
+        .countProjectThreads(projectId)
+        .pipe(Effect.mapError(shellProjectionError));
     }),
     listActiveShellIndex: Effect.fn("OrchestratorV2.listActiveShellIndex")(function () {
       return projectionStore.listActiveShellIndex().pipe(Effect.mapError(shellProjectionError));

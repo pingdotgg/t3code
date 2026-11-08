@@ -11,7 +11,8 @@
     "voice-cleanup": "node --env-file-if-exists=../.env voice-cleanup/run.ts",
     "test-signal": "node --env-file-if-exists=../.env test-signal/run.ts",
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run --config ../vite.config.ts --dir ."
+    "test": "vp test run --config ../vite.config.ts --dir .",
+    "project-icon": "node --env-file-if-exists=../.env project-icon/run.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

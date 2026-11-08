@@ -133,6 +133,30 @@ export function resolveSourceControlWriterModelSelection(
     : settings.textGenerationModelSelection;
 }
 
+export function resolveProjectIconModelSelection(
+  settings: ServerSettings,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  projectId: ProjectId | null,
+): ModelSelection {
+  const selection = settings.projectIconModelSelection;
+  if (
+    !selection ||
+    !resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
+  ) {
+    return settings.textGenerationModelSelection;
+  }
+  if (providers === undefined) {
+    return selection;
+  }
+
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  return provider?.enabled === true &&
+    isProviderAvailable(provider) &&
+    isProviderTextGenerationCapable(provider)
+    ? selection
+    : settings.textGenerationModelSelection;
+}
+
 export function resolveReviewGuideModelSelection(
   settings: ServerSettings,
   providers: ReadonlyArray<ServerProvider> | undefined,

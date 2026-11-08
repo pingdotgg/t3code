@@ -809,6 +809,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles prompt custom style naming rename regenerate"],
   },
   {
+    id: "project-icon-autofill",
+    title: "Project icon autofill",
+    to: "/settings/threads",
+    scope: "project-defaults",
+    searchTerms: ["automatically pick choose project icon color every third new chat"],
+  },
+  {
+    id: "project-icon-model",
+    title: "Project icon model",
+    to: "/settings/threads",
+    scope: "project-defaults",
+    searchTerms: ["override model picks chooses project icon color provider"],
+  },
+  {
     id: "app-version",
     title: "Version",
     to: "/settings/about",

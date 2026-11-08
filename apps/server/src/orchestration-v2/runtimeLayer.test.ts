@@ -56,6 +56,7 @@ import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -127,6 +128,8 @@ const layerGitWorkflowTest = Layer.mock(GitWorkflow.GitWorkflowService)({
 const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
   getById: () => Effect.succeedNone,
 });
+// Text generation is not under test here; the mock satisfies the autofill/title leaf.
+const layerTextGenerationTest = Layer.mock(TextGeneration.TextGeneration)({});
 
 const driver = ProviderDriverKind.make("codex");
 const orchestrationAdapter = {
@@ -308,6 +311,7 @@ const layerTest = Layer.mergeAll(
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerTextGenerationTest),
   Layer.provide(layerProjectServiceTest),
   Layer.provide(layerPlatformTest),
 );
@@ -321,6 +325,7 @@ const layerLegacyImportTest = Layer.merge(RuntimeLayer.layer, layerProjectionRep
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerTextGenerationTest),
   Layer.provide(layerProjectServiceTest),
   Layer.provide(layerPlatformTest),
 );
@@ -387,6 +392,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerTextGenerationTest),
   Layer.provide(layerPlatformTest),
 );
 
@@ -873,6 +879,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerTextGenerationTest),
   Layer.provide(layerPlatformTest),
 );
 
@@ -8816,6 +8823,7 @@ const layerQueueResumeDisabledInstanceTest = Layer.mergeAll(
   ),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerTextGenerationTest),
   Layer.provide(layerProjectServiceTest),
   Layer.provide(layerPlatformTest),
 );

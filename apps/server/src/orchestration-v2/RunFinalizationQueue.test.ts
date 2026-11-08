@@ -21,6 +21,7 @@ import * as RunFinalization from "./RunFinalizationService.ts";
 import * as RuntimeRequests from "./RuntimeRequestService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitles from "./ThreadTitleRegenerationService.ts";
+import * as ProjectIconAutofill from "./ProjectIconAutofillService.ts";
 
 it.effect.each([
   ["starts the next turn after a post-capture Git status failure", false],
@@ -89,6 +90,7 @@ it.effect.each([
         Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({}),
         Layer.mock(RuntimeRequests.RuntimeRequestServiceV2)({}),
         Layer.mock(ThreadTitles.ThreadTitleRegenerationService)({}),
+        Layer.mock(ProjectIconAutofill.ProjectIconAutofillService)({ execute: () => Effect.void }),
         Layer.mock(ThreadManagement.ThreadManagementService)({}),
         ServerSettings.layerTest(),
         Layer.mock(ProviderTurnStart.ProviderTurnStartServiceV2)({

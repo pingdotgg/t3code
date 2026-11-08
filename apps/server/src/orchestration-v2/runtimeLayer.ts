@@ -38,6 +38,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
+import * as ProjectIconAutofillService from "./ProjectIconAutofillService.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -315,6 +316,17 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
     Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, TextGeneration.layer),
   ),
 );
+const layerProjectIconAutofillProvided = ProjectIconAutofillService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerThreadManagementProvided,
+      ProjectStore.layer,
+      layerEventSink,
+      IdAllocator.layer,
+      TextGeneration.layer,
+    ),
+  ),
+);
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -325,6 +337,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerProviderTurnStartServiceProvided,
       layerRuntimeRequestServiceProvided,
       layerThreadTitleRegenerationProvided,
+      layerProjectIconAutofillProvided,
       layerThreadManagementProvided,
     ),
   ),

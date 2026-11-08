@@ -245,6 +245,12 @@ T3 Code detect an icon again.
 
 Choose **Monogram** in the icon picker to set one or two letters or numbers and a color.
 
+In Threads, enable **Project icon autofill** to let T3 Code pick an icon for projects that have
+none. Every third new thread checks the project, and the model picks a Lucide icon and color
+from the project name, recent thread titles, and top-level files. It never replaces an icon
+you chose. The setting is off everywhere by default and can be overridden per project; an
+optional **Project icon model** falls back to the text generation model.
+
 When no image is found, web and desktop show a two-character monogram with a color
 from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.

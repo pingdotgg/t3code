@@ -518,6 +518,20 @@ describe("voice settings", () => {
     expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("speechProjectCustomWords");
   });
 
+  it("keeps project icon auto-fill off by default and overridable per project", () => {
+    expect(DEFAULT_SERVER_SETTINGS.projectIconAutoFillEnabled).toBe(false);
+    expect(DEFAULT_SERVER_SETTINGS.projectIconModelSelection).toBeNull();
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("projectIconAutoFillEnabled");
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("projectIconModelSelection");
+    const projectId = ProjectId.make("project-a");
+    const decoded = decodeServerSettings({
+      projectIconAutoFillEnabled: true,
+      projectSettingsOverrides: { [projectId]: { projectIconAutoFillEnabled: false } },
+    });
+    expect(decoded.projectIconAutoFillEnabled).toBe(true);
+    expect(decoded.projectSettingsOverrides[projectId]?.projectIconAutoFillEnabled).toBe(false);
+  });
+
   it("stores the transcription model and resources on the environment", () => {
     expect(DEFAULT_SERVER_SETTINGS).toMatchObject({
       speechModelId: "handy-computer/parakeet-unified-en-0.6b-gguf",

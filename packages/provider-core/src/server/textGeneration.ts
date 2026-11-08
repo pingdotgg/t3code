@@ -72,6 +72,22 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface ProjectIconGenerationInput {
+  cwd: string;
+  projectTitle: string;
+  threadTitles: ReadonlyArray<string>;
+  topLevelEntries: ReadonlyArray<string>;
+  readmeExcerpt?: string | undefined;
+  packageJsonExcerpt?: string | undefined;
+  modelSelection: ModelSelection;
+}
+
+export interface ProjectIconGenerationResult {
+  /** Lowercase hyphenated lucide icon name, e.g. "folder-code". */
+  name: string;
+  color: string;
+}
+
 export interface ReviewGuideStackLayer {
   readonly number: number;
   readonly title: string | null;
@@ -131,4 +147,8 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  readonly generateProjectIcon: (
+    input: ProjectIconGenerationInput,
+  ) => Effect.Effect<ProjectIconGenerationResult, TextGenerationError>;
 }

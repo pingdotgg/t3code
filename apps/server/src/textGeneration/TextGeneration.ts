@@ -14,7 +14,11 @@ import {
   fallbackTextGenerationModelSelection,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import type {
+  ProjectIconGenerationInput,
+  ProjectIconGenerationResult,
+  ProviderTextGeneration,
+} from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
@@ -31,6 +35,8 @@ export type {
   PrContentGenerationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
+  ProjectIconGenerationInput,
+  ProjectIconGenerationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
   TranscriptionPostProcessingInput,
@@ -47,6 +53,7 @@ type TextGenerationOp =
   | "generateBranchName"
   | "generateThreadTitle"
   | "generateReviewGuide"
+  | "generateProjectIcon"
   | "generateTranscriptionPostProcessing";
 
 const resolveInstance = (
@@ -150,6 +157,13 @@ export const make = Effect.gen(function* () {
     generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function (input) {
       return generate("generateReviewGuide", input.modelSelection, (service, modelSelection) =>
         service.generateReviewGuide({ ...input, modelSelection }),
+      );
+    }),
+    generateProjectIcon: Effect.fn("TextGeneration.generateProjectIcon")(function (
+      input: ProjectIconGenerationInput,
+    ): Effect.Effect<ProjectIconGenerationResult, TextGenerationError> {
+      return generate("generateProjectIcon", input.modelSelection, (service, modelSelection) =>
+        service.generateProjectIcon({ ...input, modelSelection }),
       );
     }),
     generateTranscriptionPostProcessing: Effect.fn(
