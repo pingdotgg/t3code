@@ -1792,7 +1792,7 @@ export default function ThreadTerminalDrawer({
 
   const resizeHandle = isPanel ? null : (
     <div
-      className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize touch-none pointer-coarse:h-4"
+      className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize touch-none any-pointer-coarse:h-4"
       onPointerDown={handleResizePointerDown}
       onPointerMove={handleResizePointerMove}
       onPointerUp={handleResizePointerEnd}
@@ -1921,9 +1921,9 @@ export default function ThreadTerminalDrawer({
 
           {hasTerminalSidebar && (
             <aside className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
-              {/* Sits above the taller touch resize handle so its buttons keep their taps. */}
-              <div className="flex h-[22px] items-stretch justify-end border-b border-border/70 pointer-coarse:relative pointer-coarse:z-30">
-                <div className="inline-flex h-full items-stretch">
+              <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
+                {/* Sits above the taller touch resize handle so its buttons keep their taps. */}
+                <div className="inline-flex h-full items-stretch any-pointer-coarse:relative any-pointer-coarse:z-30">
                   <TerminalActionButton
                     disabled={!canOperateTerminal}
                     className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
