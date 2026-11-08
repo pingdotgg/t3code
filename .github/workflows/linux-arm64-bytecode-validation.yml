@@ -1,0 +1,102 @@
+name: Linux ARM64 bytecode validation
+on:
+  push:
+    branches: [t3/linux-arm64-bytecode-prep]
+    paths:
+      [
+        .github/workflows/linux-arm64-bytecode-validation.yml,
+        scripts/prepare-server-compile-cache.cjs,
+      ]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  bundle:
+    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+      - run: vp test run scripts/lib/server-compile-cache.test.ts
+      - run: vp run build:desktop:bundle
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          retention-days: 3
+  package:
+    needs: bundle
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      label: Linux ARM64 bytecode validation
+      runner: blacksmith-16vcpu-ubuntu-2404-arm
+      platform: linux
+      target: AppImage
+      arch: arm64
+      rust_target: aarch64-unknown-linux-gnu
+      resource_key: linux-arm64
+      version: 0.0.0-bytecode-test.1
+      ref: ${{ github.sha }}
+      release_channel: preview
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+  verify:
+    needs: package
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: desktop-linux-arm64
+          path: artifact
+      - name: Verify prepared bytecode with packaged ARM64 Electron
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x artifact/*.AppImage
+          artifact/*.AppImage --appimage-extract >/dev/null
+          cat > "$RUNNER_TEMP/verify.cjs" <<'JS'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { pathToFileURL } = require('node:url');
+          const resources = path.resolve('squashfs-root/resources');
+          const manifest = JSON.parse(fs.readFileSync(path.join(resources, 'server-compile-cache/manifest.json'), 'utf8'));
+          assert.equal(process.platform, 'linux');
+          assert.equal(process.arch, 'arm64');
+          assert(manifest.runtime.includes('-linux-arm64-'), manifest.runtime);
+          const helper = require(path.join(resources, 'app.asar/apps/desktop/dist-electron/serverCompileCache.cjs'));
+          const entries = manifest.entries.filter(e => /\/(binCli|server)-[^/]+\.mjs$/.test(e.module));
+          assert.equal(entries.length, 2);
+          process.env.APPIMAGE = 'bytecode-validation';
+          assert(helper.enablePreparedServerCache(path.join(resources, entries[0].module), path.join(process.env.T3CODE_HOME, 'cache')));
+          assert.equal(Reflect.get(globalThis, Symbol.for('t3code.preparedServerCache')), true);
+          (async () => {
+            for (const entry of entries) await import(pathToFileURL(path.join(resources, entry.module)).href);
+            console.log(JSON.stringify({ runtime: manifest.runtime, entries: manifest.entries.length, verified: entries.map(e => e.module) }));
+          })().catch(e => { console.error(e); process.exitCode = 1; });
+          JS
+          export T3CODE_HOME="$RUNNER_TEMP/bytecode-home"
+          export ELECTRON_RUN_AS_NODE=1 NODE_DEBUG_NATIVE=COMPILE_CACHE
+          squashfs-root/t3code "$RUNNER_TEMP/verify.cjs" > verification.log 2>&1
+          grep -E '(binCli|server)-.*was accepted|"runtime"' verification.log
+          grep -E 'binCli-.*was accepted' verification.log
+          grep -E 'server-.*was accepted' verification.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: bytecode-verification-log
+          path: verification.log
+          retention-days: 3
