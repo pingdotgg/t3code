@@ -117,8 +117,17 @@ function orderByImports(
   return ordered;
 }
 
-function testedBaseName(path: string): string {
-  return (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "").replace(/\.[^.]+$/, "");
+// `a.logic.test.ts` covers `a.logic.ts` while `a.browser.test.ts` covers `a.ts`, so the longest
+// dotted prefix that names a source file wins.
+function testedSourcePosition(path: string, sourcePositions: ReadonlyMap<string, number>): number {
+  let name = (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "");
+  while (true) {
+    const position = sourcePositions.get(name);
+    if (position !== undefined) return position;
+    const dot = name.lastIndexOf(".");
+    if (dot <= 0) return Number.MAX_SAFE_INTEGER;
+    name = name.slice(0, dot);
+  }
 }
 
 export function orderDiffFiles(
@@ -159,9 +168,10 @@ export function orderDiffFiles(
   const orderedTests = [...byPath.keys()]
     .filter((path) => tiers.get(path) === "test")
     .sort((left, right) => {
-      const leftPosition = sourcePositions.get(testedBaseName(left)) ?? Number.MAX_SAFE_INTEGER;
-      const rightPosition = sourcePositions.get(testedBaseName(right)) ?? Number.MAX_SAFE_INTEGER;
-      return leftPosition - rightPosition || left.localeCompare(right);
+      return (
+        testedSourcePosition(left, sourcePositions) -
+          testedSourcePosition(right, sourcePositions) || left.localeCompare(right)
+      );
     });
 
   const orderedGenerated = [...byPath.keys()]

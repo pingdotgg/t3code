@@ -205,6 +205,10 @@ function remoteRefreshFailureDelay(
 export class VcsStatusBroadcaster extends Context.Service<
   VcsStatusBroadcaster,
   {
+    readonly streamBranchChanges: Stream.Stream<{
+      readonly cwd: string;
+      readonly refName: string | null;
+    }>;
     readonly getStatus: (
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
@@ -245,6 +249,10 @@ export const make = Effect.gen(function* () {
     PubSub.unbounded<VcsStatusChange>(),
     (pubsub) => PubSub.shutdown(pubsub),
   );
+  const branchChangesPubSub = yield* Effect.acquireRelease(
+    PubSub.unbounded<{ readonly cwd: string; readonly refName: string | null }>(),
+    (pubsub) => PubSub.shutdown(pubsub),
+  );
   const broadcasterScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
@@ -266,14 +274,21 @@ export const make = Effect.gen(function* () {
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
       const nextLocal = { fingerprint: fingerprintStatusPart(local), value: local };
-      const [localChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
+      const [localChanged, branchChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
         const remote = previous.remote?.branch === local.refName ? previous.remote : null;
         return [
-          [previous.local?.fingerprint !== nextLocal.fingerprint, previous.remote !== remote],
+          [
+            previous.local?.fingerprint !== nextLocal.fingerprint,
+            previous.local?.value.refName !== local.refName,
+            previous.remote !== remote,
+          ],
           new Map(cache).set(cwd, { local: nextLocal, remote }),
         ] as const;
       });
+      if (branchChanged && local.isRepo) {
+        yield* PubSub.publish(branchChangesPubSub, { cwd, refName: local.refName });
+      }
       if (options?.publish && remoteCleared) {
         yield* PubSub.publish(changesPubSub, {
           cwd,
@@ -322,7 +337,9 @@ export const make = Effect.gen(function* () {
   ) {
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local) {
-      return cached.local.value;
+      const branch = yield* workflow.currentBranch(cwd);
+      if (branch === cached.local.value.refName) return cached.local.value;
+      return yield* refreshLocalStatusCore(cwd);
     }
     return yield* loadLocalStatus(cwd);
   });
@@ -341,11 +358,11 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.getStatus",
   )(function* (input) {
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+    yield* getOrLoadLocalStatus(cwd);
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local && cached.remote) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
-    yield* getOrLoadLocalStatus(cwd);
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
@@ -477,23 +494,14 @@ export const make = Effect.gen(function* () {
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
-        const previousRemote = (yield* getCachedStatus(cwd))?.remote?.value;
         const remoteRead = yield* readRemoteStatus(cwd, options);
-        const remote = remoteRead?.value;
         const pulled =
           options?.refreshUpstream === false
             ? null
             : yield* maybeAutoPull(cwd, remoteRead, options?.policyCwds ?? [cwd]);
         if (pulled !== null) return pulled.remote;
-        if (
-          remote &&
-          (!previousRemote ||
-            previousRemote.aheadCount !== remote.aheadCount ||
-            previousRemote.behindCount !== remote.behindCount ||
-            previousRemote.aheadOfDefaultCount !== remote.aheadOfDefaultCount)
-        ) {
-          yield* refreshLocalStatusCore(cwd);
-        }
+        // Base refs and merge bases can move without changing divergence counts.
+        yield* refreshLocalStatusCore(cwd);
         return yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
       }),
     );
@@ -530,8 +538,7 @@ export const make = Effect.gen(function* () {
         yield* workflow.invalidateStatus(cwd);
         const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
         // Fetch can move the base used for local Changes totals.
-        const local = yield* workflow.localStatus({ cwd });
-        yield* updateCachedLocalStatus(cwd, local, { publish: true });
+        yield* refreshLocalStatusCore(cwd);
         // Without a fetch, the cached behind count cannot justify an automatic pull.
         const pulled = refreshUpstream ? yield* maybeAutoPull(cwd, remoteRead, [rawCwd]) : null;
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
@@ -550,15 +557,7 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const cached = yield* getCachedStatus(cwd);
           if (!cached?.local || cached.remote?.value === null) return null;
-          const poller = (yield* SynchronizedRef.get(pollersRef)).get(cwd);
-          const demandCwds = poller ? [...(yield* Ref.get(poller.demandCwds)).keys()] : [rawCwd];
-          const shouldRefresh = (yield* Effect.forEach(
-            demandCwds,
-            (demandCwd) =>
-              backgroundPolicy.shouldRunScopeWork({ type: "vcs-status", cwd: demandCwd }),
-            { concurrency: "unbounded" },
-          )).some(Boolean);
-          if (!shouldRefresh) return null;
+          // Turn completion must update divergence even when background polling is paused.
           const remoteRead = yield* readRemoteStatus(cwd, {
             refreshUpstream: false,
             refreshMissingPullRequest: true,
@@ -770,6 +769,7 @@ export const make = Effect.gen(function* () {
     );
 
   return VcsStatusBroadcaster.of({
+    streamBranchChanges: Stream.fromPubSub(branchChangesPubSub),
     getStatus,
     refreshLocalStatus,
     refreshStatus,

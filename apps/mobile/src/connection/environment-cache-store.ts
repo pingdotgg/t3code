@@ -54,13 +54,13 @@ function mapDatabaseError(operation: CacheOperation) {
   return (error: MobileDatabase.MobileDatabaseError) => persistenceError(operation, error);
 }
 
-function loadDecodedCache<A, B>(input: {
+function loadDecodedCache<A, B, E>(input: {
   readonly database: MobileDatabase.MobileDatabase["Service"];
   readonly environmentId: EnvironmentId;
   readonly kind: MobileDatabase.ClientCacheKind;
   readonly cacheKey: string;
   readonly operation: CacheOperation;
-  readonly decode: (raw: string) => Effect.Effect<A, unknown>;
+  readonly decode: (raw: string) => Effect.Effect<A, E>;
   readonly select: (value: A) => Option.Option<B>;
 }): Effect.Effect<Option.Option<B>, Persistence.ConnectionPersistenceError> {
   return input.database.loadCache(input.environmentId, input.kind, input.cacheKey).pipe(
@@ -81,7 +81,7 @@ function loadDecodedCache<A, B>(input: {
                 Effect.andThen(
                   input.database
                     .removeCache(input.environmentId, input.kind, input.cacheKey)
-                    .pipe(Effect.catch(() => Effect.void)),
+                    .pipe(Effect.ignore),
                 ),
                 Effect.as(Option.none<B>()),
               ),
