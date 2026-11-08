@@ -33,10 +33,11 @@ function ThreadNowLine({
   return (
     <div
       role={announce ? "alert" : undefined}
-      className={cn(lineClassName, "items-baseline")}
+      // A title can take two lines; the icon and buttons stay on its first.
+      className={cn(lineClassName, "items-start")}
       data-thread-now-line="true"
     >
-      <span aria-hidden className="flex size-3.5 shrink-0 self-center items-center justify-center">
+      <span aria-hidden className="flex h-lh w-3.5 shrink-0 items-center justify-center">
         {item.icon}
       </span>
       <span className="min-w-0 truncate">
