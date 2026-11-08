@@ -331,17 +331,23 @@ it("tests the selected model after download and preserves its transcript across 
           const result = screen.getByRole("status", { name: "Test transcript" });
           await expect.element(result).toHaveTextContent(transcript);
 
-          const search = screen.getByRole("textbox", { name: "Search transcription models" });
+          const search = screen.getByRole("searchbox", { name: "Search transcription models" });
           await userEvent.fill(search, "no matching model");
           await expect.element(screen.getByText("No models match.")).toBeVisible();
           await userEvent.clear(search);
+          const languages = screen.getByRole("button", { name: /^Filter by language/ });
+          await userEvent.click(languages);
           await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
-          const french = screen.getByRole("button", { name: "French", exact: true });
+          const french = screen.getByRole("menuitemcheckbox", { name: "French", exact: true });
           await userEvent.click(french);
+          await userEvent.keyboard("{Escape}");
           await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
           await expect.element(screen.getByText("B+", { exact: true })).toBeVisible();
           expect(screen.container.querySelector("#transcription-test")).toHaveAttribute("hidden");
+          await userEvent.click(languages);
+          await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
           await userEvent.click(french);
+          await userEvent.keyboard("{Escape}");
           await expect.element(result).toBeVisible();
           await vi.waitFor(() =>
             expect(

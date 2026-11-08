@@ -1,12 +1,14 @@
 import { MICROPHONE_PERMISSION_ERROR } from "@t3tools/client-runtime/voice-input";
-import { CheckIcon, MicIcon, PauseIcon, PlayIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import { MicIcon, PauseIcon, PlayIcon, RotateCcwIcon, SquareIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import workletUrl from "../../speech/pcmWorklet.ts?worker&url";
-import { VoiceInputErrorPill } from "../chat/VoiceInputErrorPill";
-import { VoiceInputPill, VoiceWaveform } from "../chat/VoiceInputPill";
+import { VoiceWaveform } from "../chat/VoiceInputPill";
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { SettingsRow } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 const LOOPBACK_SECONDS = 10;
 const formatTime = (seconds: number) =>
@@ -181,70 +183,11 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
     setError(null);
   };
 
-  if (error) {
-    return (
-      <VoiceInputErrorPill
-        error={error}
-        errorAction="retry"
-        onRetry={() => void start()}
-        onDismiss={cancel}
-      />
-    );
-  }
-  if (phase === "idle") {
-    return (
-      <Button size="sm" variant="outline" onClick={() => void start()}>
-        <MicIcon />
-        Test microphone
-      </Button>
-    );
-  }
-  if (phase === "ready" && recording) {
-    return (
-      <MicrophonePlayback
-        key={recording.url}
-        src={recording.url}
-        duration={recording.duration}
-        onRetry={() => void start()}
-        onDone={cancel}
-      />
-    );
-  }
-  return (
-    <VoiceInputPill>
+  const control =
+    phase === "recording" || phase === "starting" ? (
       <Button
-        size="icon-sm-pill"
-        variant="ghost"
-        aria-label="Cancel microphone test"
-        onClick={cancel}
-      >
-        <XIcon />
-      </Button>
-      {phase === "recording" ? (
-        <>
-          <VoiceWaveform level={level} />
-          <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
-          <span
-            className="shrink-0 text-xs tabular-nums text-muted-foreground"
-            aria-label="Recording time"
-          >
-            {formatTime(elapsed)} / {formatTime(LOOPBACK_SECONDS)}
-          </span>
-          <meter
-            aria-label="Microphone input level"
-            min={0}
-            max={1}
-            value={level}
-            className="sr-only"
-          />
-        </>
-      ) : (
-        <span role="status" className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          Opening microphone…
-        </span>
-      )}
-      <Button
-        size="icon-sm-pill"
+        size="sm"
+        variant="outline"
         aria-label="Stop recording"
         disabled={phase !== "recording"}
         onClick={() => {
@@ -252,23 +195,77 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
           if (recorder && recorder.state !== "inactive") recorder.stop();
         }}
       >
-        <CheckIcon />
+        <SquareIcon />
+        Stop
       </Button>
-    </VoiceInputPill>
+    ) : (
+      <Button size="sm" variant="outline" onClick={() => void start()}>
+        {phase === "ready" ? <RotateCcwIcon /> : <MicIcon />}
+        {phase === "ready" ? "Record again" : "Record"}
+      </Button>
+    );
+  const panel = error ? (
+    <p role="alert" className="min-w-0 flex-1 text-xs text-destructive">
+      {error}
+    </p>
+  ) : phase === "starting" ? (
+    <span role="status" className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+      Opening microphone…
+    </span>
+  ) : phase === "recording" ? (
+    <>
+      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-destructive" />
+      <div className="flex w-36 min-w-0">
+        <VoiceWaveform level={level} />
+      </div>
+      <span
+        className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground"
+        aria-label="Recording time"
+      >
+        {formatTime(elapsed)} / {formatTime(LOOPBACK_SECONDS)}
+      </span>
+      <meter
+        aria-label="Microphone input level"
+        min={0}
+        max={1}
+        value={level}
+        className="sr-only"
+      />
+    </>
+  ) : phase === "ready" && recording ? (
+    <MicrophonePlayback key={recording.url} src={recording.url} duration={recording.duration} />
+  ) : null;
+
+  return (
+    <SettingsRow
+      {...searchableSetting("microphone-test")}
+      title="Test microphone"
+      description="Record ten seconds and play it back. The audio stays on this device."
+      control={control}
+    >
+      {panel ? (
+        <div
+          className={cn(
+            "mt-3 mb-2 flex min-h-10 items-center gap-3 rounded-lg border border-border/60 bg-muted/30 py-1 pe-1",
+            phase === "ready" && !error ? "ps-1" : "ps-3",
+          )}
+        >
+          {panel}
+          <Button
+            size="icon-sm"
+            variant="ghost-muted"
+            aria-label={phase === "ready" ? "Discard recording" : "Cancel microphone test"}
+            onClick={cancel}
+          >
+            <XIcon />
+          </Button>
+        </div>
+      ) : null}
+    </SettingsRow>
   );
 }
 
-function MicrophonePlayback({
-  src,
-  duration,
-  onRetry,
-  onDone,
-}: {
-  src: string;
-  duration: number;
-  onRetry(): void;
-  onDone(): void;
-}) {
+function MicrophonePlayback({ src, duration }: { src: string; duration: number }) {
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
@@ -292,7 +289,7 @@ function MicrophonePlayback({
   };
 
   return (
-    <div className="flex flex-col gap-1">
+    <>
       <audio
         ref={audio}
         src={src}
@@ -303,15 +300,19 @@ function MicrophonePlayback({
         onTimeUpdate={() => setPosition(audio.current?.currentTime ?? 0)}
         onError={() => setFailed(true)}
       />
-      <VoiceInputPill>
-        <Button
-          size="icon-sm-pill"
-          variant="ghost"
-          aria-label={playing ? "Pause recording" : "Play recording"}
-          onClick={() => void togglePlayback()}
-        >
-          {playing ? <PauseIcon /> : <PlayIcon />}
-        </Button>
+      <Button
+        size="icon-sm-pill"
+        variant="outline"
+        aria-label={playing ? "Pause recording" : "Play recording"}
+        onClick={() => void togglePlayback()}
+      >
+        {playing ? <PauseIcon /> : <PlayIcon />}
+      </Button>
+      {failed ? (
+        <p role="alert" className="min-w-0 flex-1 text-xs text-destructive">
+          Could not play this recording. Try recording again.
+        </p>
+      ) : (
         <input
           type="range"
           aria-label="Recording playback position"
@@ -330,21 +331,10 @@ function MicrophonePlayback({
           }}
           className="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-muted accent-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring [&::-webkit-slider-thumb]:size-2.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-moz-range-thumb]:size-2.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-primary"
         />
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-          {formatTime(position)}
-        </span>
-        <Button size="icon-sm-pill" variant="ghost" aria-label="Record again" onClick={onRetry}>
-          <RotateCcwIcon />
-        </Button>
-        <Button size="icon-sm-pill" aria-label="Done" onClick={onDone}>
-          <CheckIcon />
-        </Button>
-      </VoiceInputPill>
-      {failed ? (
-        <p role="alert" className="text-xs text-destructive">
-          Could not play this recording. Try recording again.
-        </p>
-      ) : null}
-    </div>
+      )}
+      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+        {formatTime(position)} / {formatTime(duration)}
+      </span>
+    </>
   );
 }
