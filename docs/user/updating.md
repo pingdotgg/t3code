@@ -48,13 +48,13 @@ Settings → About. Run `t3 update` with the app open, then review its confirmat
 the confirmation starts no update. Another update cannot start while that confirmation or run is active.
 The command reports when the run starts; follow its progress and restart result in the app.
 If the interface reloads during a run, another update stays blocked. Check the affected
-machines before restarting T3 Code and retrying; a reload does not cancel their updates.
+machines before restarting T3 Code and retrying. A reload does not cancel their updates.
 
 Desktop updates use the app's update track and confirmation. Exact versions, `--channel`,
 `--allow-downgrade`, and `--yes` are refused for this command; switch tracks in Settings → About.
 If the desktop app is closed or too old to coordinate the request, open or update it and try again.
 The deprecated `t3 service update` command follows the same routing. For a standalone CLI, it
-selects the newest release on its channel; use `t3 service install` to install the invoking CLI version.
+selects the newest release on its channel. Use `t3 service install` to install the invoking CLI version.
 
 Run `t3 update --check --json` to inspect cached update availability without changing the installation.
 Use the normal update action for a fresh check.

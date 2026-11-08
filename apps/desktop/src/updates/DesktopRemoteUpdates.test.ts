@@ -672,6 +672,39 @@ describe("DesktopRemoteUpdates", () => {
     );
   });
 
+  it.effect("waits for a background check before preparing a remote update", () => {
+    const checkStarted = Deferred.makeUnsafe<void>();
+    const releaseCheck = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseCheck)),
+      ),
+    });
+    return runRemoteUpdatesTest(harness, ({ reports, requests }) =>
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        const background = yield* updates.check("poll").pipe(Effect.forkChild);
+        yield* Deferred.await(checkStarted);
+        yield* Queue.offer(requests, request("prepare-during-poll"));
+        yield* settle;
+        assert.isEmpty(terminalReports(reports));
+        yield* Deferred.succeed(releaseCheck, undefined);
+        yield* Fiber.join(background);
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+        yield* TestClock.adjust(Duration.millis(300));
+        yield* settle;
+        assert.deepEqual(
+          terminalReports(reports).map((report) => report.outcome),
+          ["ready-to-install"],
+        );
+        assert.equal(harness.quitAndInstalls(), 0);
+      }),
+    );
+  });
+
   it.effect("waits for a background check before installing a prepared update", () => {
     const backgroundCheckStarted = Deferred.makeUnsafe<void>();
     const releaseBackgroundCheck = Deferred.makeUnsafe<void>();

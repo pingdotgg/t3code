@@ -259,9 +259,13 @@ it.effect(
         yield* command.setReady(true, "replacement");
         assert.isNull(yield* command.reserve);
         assert.isNull(yield* command.reserveForRenderer);
-        assert.isFalse(
-          (yield* command.request({ version: 1, requestId: "overlapping", type: "update" })).ok,
-        );
+        const refused = yield* command.request({
+          version: 1,
+          requestId: "overlapping",
+          type: "update",
+        });
+        assert.isFalse(refused.ok);
+        if (!refused.ok) assert.include(refused.message, "outlived its interface");
         assert.equal((yield* command.inspect).state, "busy");
         yield* Deferred.succeed(releaseRemote, undefined);
         yield* Fiber.join(remoteRun);

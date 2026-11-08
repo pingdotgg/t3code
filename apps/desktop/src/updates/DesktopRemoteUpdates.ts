@@ -138,7 +138,7 @@ export const listen: Effect.Effect<
   const handleRequest = (request: DesktopTelemetryRequestDesktopUpdate): Effect.Effect<void> =>
     Effect.scoped(
       Effect.gen(function* () {
-        const reservation = yield* command.reserve;
+        const reservation = yield* command.reserveForRemoteUpdate;
         if (reservation === null) {
           const prepared = yield* Ref.get(preparedUpdateRef);
           yield* publishReport(
@@ -510,7 +510,7 @@ export const listen: Effect.Effect<
         });
         return;
       }
-      const reservation = yield* command.reserveForPreparedInstall;
+      const reservation = yield* command.reserveForRemoteUpdate;
       if (reservation === null) {
         const reason = "A desktop update or confirmation is already in progress.";
         yield* recordPreparedFailure(commit.requestId, reason);

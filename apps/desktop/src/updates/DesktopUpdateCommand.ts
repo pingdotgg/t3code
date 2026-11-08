@@ -25,7 +25,7 @@ export class DesktopUpdateCommand extends Context.Service<
     readonly cancel: (callerId: string) => Effect.Effect<void>;
     readonly complete: (response: DesktopUpdateCommandResponse) => Effect.Effect<boolean>;
     readonly reserve: Effect.Effect<string | null>;
-    readonly reserveForPreparedInstall: Effect.Effect<string | null>;
+    readonly reserveForRemoteUpdate: Effect.Effect<string | null>;
     readonly reserveForRenderer: Effect.Effect<string | null>;
     readonly finish: (reservation: string) => Effect.Effect<void>;
   }
@@ -117,7 +117,7 @@ const make = Effect.gen(function* () {
     });
   });
   const reserve = reserveOwned(null);
-  const reserveForPreparedInstall = reserveOwned(null, "running", true);
+  const reserveForRemoteUpdate = reserveOwned(null, "running", true);
   const reserveForRenderer = Effect.gen(function* () {
     const rendererId = yield* Ref.get(ready);
     return rendererId === null ? null : yield* reserveOwned(rendererId);
@@ -151,7 +151,7 @@ const make = Effect.gen(function* () {
         ? "Open or update T3 Code so its coordinated updater is available."
         : occupied
           ? reservation.phase === "running" && isAbandoned(reservation, registeredRenderer)
-            ? "A coordinated update outlived its interface. Check the affected machines before restarting T3 Code; the run cannot be safely reclaimed."
+            ? "A coordinated update outlived its interface. Check affected machines before restarting T3 Code and trying again."
             : "A T3 Code update or confirmation is already in progress."
           : !state.enabled
             ? (state.message ?? "Desktop updates are disabled.")
@@ -163,7 +163,7 @@ const make = Effect.gen(function* () {
   return DesktopUpdateCommand.of({
     inspect,
     reserve,
-    reserveForPreparedInstall,
+    reserveForRemoteUpdate,
     reserveForRenderer,
     finish,
     complete,
@@ -204,11 +204,15 @@ const make = Effect.gen(function* () {
         );
       const rendererId = yield* Ref.get(ready);
       const reservation = yield* reserveOwned(rendererId, "confirming");
-      if (reservation === null)
+      if (reservation === null) {
+        const status = yield* inspect;
         return failure(
           request.requestId,
-          "A T3 Code update or confirmation is already in progress.",
+          status.state === "busy" && status.reason
+            ? status.reason
+            : "A T3 Code update or confirmation is already in progress.",
         );
+      }
       const main = yield* windows.main;
       if (Option.isNone(main) || main.value.webContents.isDestroyed()) {
         yield* finish(reservation);
