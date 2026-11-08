@@ -86,6 +86,7 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -157,6 +158,8 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
+/** Codex never times out its own `willRetry` wait; T3 gives up on a silent retry after this long. */
+const CODEX_RETRY_WAIT_CAP = Duration.minutes(10);
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
@@ -1926,6 +1929,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const providerRetries = yield* Ref.make(
           new Map<ProviderTurnId, ActiveCodexProviderRetry>(),
         );
+        const providerRetryTimers = new Map<ProviderTurnId, Fiber.Fiber<void>>();
+        const cancelProviderRetryTimer = (providerTurnId: ProviderTurnId) =>
+          Effect.suspend(() => {
+            const fiber = providerRetryTimers.get(providerTurnId);
+            if (fiber === undefined) return Effect.void;
+            providerRetryTimers.delete(providerTurnId);
+            return Fiber.interrupt(fiber);
+          });
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingCodexRuntimeRequest>(),
@@ -2092,6 +2103,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (providerRetry === undefined) {
             return;
           }
+          yield* cancelProviderRetryTimer(context.providerTurnId);
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CODEX_PROVIDER,
@@ -4700,6 +4712,44 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(turnTerminalizationPermit.withPermits(1)),
         );
 
+        // Codex reports `willRetry` and then may go quiet for hours when the upstream
+        // connection keeps failing. Fail the turn ourselves once the retry shows no progress.
+        const failStalledProviderRetry = Effect.fn("CodexAdapterV2.failStalledProviderRetry")(
+          function* (
+            context: ActiveCodexTurnContext,
+            state: ActiveCodexProviderRetry,
+            nativeThreadId: string,
+          ) {
+            yield* Effect.sleep(CODEX_RETRY_WAIT_CAP);
+            if (
+              (yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context ||
+              (yield* Ref.get(providerRetries)).get(context.providerTurnId) !== state
+            )
+              return;
+            context.latestProviderFailure = {
+              nativeMessage: state.nativeMessage,
+              nativeCode: state.nativeCode,
+              failure: makeProviderFailure({
+                message: `Codex reported no retry progress for 10 minutes after: ${state.nativeMessage}`,
+                code: state.nativeCode,
+                class:
+                  state.failure.class === "transport_error" ? "transport_error" : "provider_error",
+                retryable: false,
+              }),
+            };
+            yield* client
+              .request("turn/interrupt", { threadId: nativeThreadId, turnId: context.nativeTurnId })
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration-v2.codex-stalled-retry-interrupt-failed", {
+                    providerTurnId: context.providerTurnId,
+                    cause,
+                  }),
+                ),
+              );
+          },
+        );
+
         yield* client.handleServerNotification("error", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
@@ -4767,6 +4817,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               updated.set(context.providerTurnId, state);
               return updated;
             });
+            yield* cancelProviderRetryTimer(context.providerTurnId);
+            providerRetryTimers.set(
+              context.providerTurnId,
+              yield* failStalledProviderRetry(context, state, payload.threadId).pipe(
+                Effect.forkIn(scope),
+              ),
+            );
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CODEX_PROVIDER,
@@ -6137,6 +6194,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 updated.delete(input.context.providerTurnId);
                 return [retry, updated] as const;
               });
+              yield* cancelProviderRetryTimer(input.context.providerTurnId);
               if (
                 providerRetry !== undefined &&
                 !input.continueRun &&
@@ -6573,11 +6631,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const nativeStatus = mapCodexTurnStatus(payload.turn.status);
+            const interrupting = (yield* Ref.get(interruptingNativeTurns)).has(payload.turn.id);
+            // An interrupt nobody asked for after a recorded failure is the stalled-retry cap firing.
             const status =
-              nativeStatus === "completed" &&
-              (yield* Ref.get(interruptingNativeTurns)).has(payload.turn.id)
+              nativeStatus === "completed" && interrupting
                 ? "interrupted"
-                : nativeStatus;
+                : nativeStatus === "interrupted" &&
+                    !interrupting &&
+                    context.latestProviderFailure !== undefined
+                  ? "failed"
+                  : nativeStatus;
             const terminal = {
               context,
               nativeTurnId: payload.turn.id,

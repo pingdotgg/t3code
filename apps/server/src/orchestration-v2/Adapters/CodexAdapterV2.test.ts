@@ -3490,7 +3490,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
+        const interrupts: unknown[] = [];
+        const harness = yield* makeCodexReplayHarness(transcript, undefined, (method, params) =>
+          Effect.sync(() => {
+            if (method === "turn/interrupt") interrupts.push(params);
+          }),
+        );
         const now = yield* DateTime.now;
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -3502,6 +3507,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }),
         );
         yield* harness.awaitTerminal(1);
+        // Recovery cancels the stalled-retry cap.
+        yield* TestClock.adjust("11 minutes");
+        assert.lengthOf(interrupts, 0);
 
         const retryItems = harness.events.flatMap((event) =>
           event.type === "turn_item.updated" &&
@@ -3549,6 +3557,126 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
     ),
+  );
+
+  // regression: a Codex run sat 8.5 hours at "attempt 2 of 5" with no further notification.
+  it.effect.each(["single", "renewed"] as const)(
+    "fails a Codex turn whose %s retry shows no progress for the wait cap",
+    (mode) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = `codex-retry-wait-cap-${mode}`;
+          const nativeThreadId = `native-${scenario}-thread`;
+          const nativeTurnId = `native-${scenario}-turn`;
+          const retryError = (message: string, afterMs?: number) =>
+            ({
+              type: "emit_inbound",
+              label: "error/retry",
+              ...(afterMs === undefined ? {} : { afterMs }),
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: {
+                    message,
+                    codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+                  },
+                },
+              },
+            }) satisfies CodexReplay.CodexAppServerReplayEntry;
+          const interrupts: unknown[] = [];
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario,
+              entries: [
+                ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+                retryError("Connection failed: error sending request"),
+                ...(mode === "renewed" ? [retryError("Reconnecting... 2/5", 5 * 60_000)] : []),
+                {
+                  type: "expect_outbound",
+                  label: "turn/interrupt",
+                  frame: {
+                    id: 4,
+                    method: "turn/interrupt",
+                    params: { threadId: nativeThreadId, turnId: nativeTurnId },
+                  },
+                },
+                { type: "emit_inbound", label: "turn/interrupt", frame: { id: 4, result: {} } },
+                {
+                  type: "emit_inbound",
+                  label: "turn/completed",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                    },
+                  },
+                },
+              ],
+            }),
+            undefined,
+            (method, params) =>
+              Effect.sync(() => {
+                if (method === "turn/interrupt") interrupts.push(params);
+              }),
+          );
+          const retryItems = () =>
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.status === "running"
+                ? [event.turnItem]
+                : [],
+            );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
+              text: "Continue.",
+            }),
+          );
+          yield* harness.until(() => retryItems().length >= 1);
+          if (mode === "renewed") {
+            yield* TestClock.adjust("5 minutes");
+            yield* harness.until(() => retryItems().length >= 2);
+            assert.equal(retryItems()[1]?.retry?.attempt, 2);
+          }
+          // One second past the cap measured from the first notification.
+          yield* TestClock.adjust(mode === "renewed" ? "301 seconds" : "9 minutes");
+          assert.lengthOf(interrupts, 0);
+          assert.lengthOf(harness.terminalEvents(), 0);
+          yield* TestClock.adjust(mode === "renewed" ? "5 minutes" : "1 minute");
+          yield* harness.firstTerminal;
+          assert.lengthOf(interrupts, 1);
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          if (terminal?.status !== "failed") return;
+          assert.equal(terminal.failure.class, "transport_error");
+          assert.equal(terminal.failure.retryable, false);
+          assert.equal(
+            terminal.failure.message,
+            mode === "renewed"
+              ? "Codex reported no retry progress for 10 minutes after: Reconnecting... 2/5"
+              : "Codex reported no retry progress for 10 minutes after: Connection failed: error sending request",
+          );
+          assert.equal(terminal.retry?.attempt, mode === "renewed" ? 2 : 1);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
   );
 
   it.effect.each(["completed", "interrupted"] as const)(
