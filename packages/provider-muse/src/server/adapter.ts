@@ -261,6 +261,12 @@ const INFORMATIONAL_NOTIFICATIONS = new Set([
   "usage/changed",
 ]);
 const TOOLS_WITH_NATIVE_ROWS = new Set(["write_todos", "request_user_input", "workflow"]);
+const UNANSWERED_QUESTION_OUTCOMES = new Set<unknown>([
+  "cancelled",
+  "interrupted",
+  "timedOut",
+  "aborted",
+]);
 const responseAnswerSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
 
 export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
@@ -1300,7 +1306,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   ? museApprovalDecision({ decision: params.decision, scope: "once" })
                   : undefined;
               if (!entry.response && native) entry.response = { decision: native };
-              yield* resolvePending(entry, "resolved");
+              yield* resolvePending(
+                entry,
+                method === "userInput/settled" && UNANSWERED_QUESTION_OUTCOMES.has(params.outcome)
+                  ? "cancelled"
+                  : "resolved",
+              );
             }
             if (![...pending.values()].some((candidate) => candidate.shown))
               yield* updateSession(active ? "running" : "ready");
