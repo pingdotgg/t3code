@@ -1,3 +1,4 @@
+import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -39,6 +40,7 @@ export const makeUpdateInstall = Effect.fn("desktop.updates.makeInstall")(functi
   const installRunningBackendsRef = yield* Ref.make<
     ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>
   >([]);
+  const installCleanupBlockedRef = yield* Ref.make(false);
   const resetInstallAction = Effect.all(
     [
       finishUpdateAction("install"),
@@ -53,6 +55,7 @@ export const makeUpdateInstall = Effect.fn("desktop.updates.makeInstall")(functi
   const recoverFailedInstall = Effect.fn("desktop.updates.recoverFailedInstall")(function* (
     message: string,
   ) {
+    if (yield* Ref.get(installCleanupBlockedRef)) return;
     const ownsRecovery = yield* Ref.modify(activeUpdateActionRef, (activeAction) =>
       Option.isSome(activeAction) && activeAction.value === "install"
         ? ([true, Option.some<UpdateAction>("install-recovery")] as const)
@@ -99,6 +102,7 @@ export const makeUpdateInstall = Effect.fn("desktop.updates.makeInstall")(functi
                 (expectedVersion === undefined || state.downloadedVersion === expectedVersion);
               if (
                 (yield* Ref.get(desktopState.quitting)) ||
+                (yield* Ref.get(installCleanupBlockedRef)) ||
                 !(yield* Ref.get(updaterConfiguredRef)) ||
                 !hasExpectedDownload
               ) {
@@ -158,6 +162,27 @@ export const makeUpdateInstall = Effect.fn("desktop.updates.makeInstall")(functi
           });
           return { accepted: true, completed: false, failed: false };
         }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              const error = ElectronUpdater.findUnconfirmedInstallerCleanup(cause);
+              if (error === undefined) return yield* Effect.failCause(cause);
+              yield* Ref.set(installCleanupBlockedRef, true);
+              yield* Ref.set(desktopState.quitting, false);
+              yield* updateState((current) => ({
+                ...current,
+                status: "error",
+                message: error.message,
+                errorContext: "install",
+                canRetry: false,
+              }));
+              yield* logUpdaterError(error.message, {
+                errorTag: error._tag,
+                cause: describeUpdateErrorCause(error.cause),
+                terminationConfirmed: false,
+              });
+              return { accepted: true, completed: false, failed: true };
+            }).pipe(Effect.uninterruptible),
+          ),
           Effect.catchTags({
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
@@ -173,7 +198,11 @@ export const makeUpdateInstall = Effect.fn("desktop.updates.makeInstall")(functi
               },
             ),
           }),
-          Effect.onInterrupt(() => resetInstallAction),
+          Effect.onInterrupt(() =>
+            Ref.get(installCleanupBlockedRef).pipe(
+              Effect.flatMap((blocked) => (blocked ? Effect.void : resetInstallAction)),
+            ),
+          ),
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
               if (Cause.hasInterruptsOnly(cause)) {

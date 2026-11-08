@@ -217,6 +217,13 @@ describe("ElectronUpdater install handoff", () => {
                 fiber.pollUnsafe(),
                 "a missing exit event cannot block cleanup forever",
               );
+              const result = fiber.pollUnsafe();
+              assert.equal(result?._tag, "Failure");
+              if (result?._tag === "Failure") {
+                const error = ElectronUpdater.findUnconfirmedInstallerCleanup(result.cause);
+                assert.equal(error?.terminationConfirmed, false);
+                assert.include(error?.message ?? "", "recovery");
+              }
             }
             yield* Fiber.join(stopping!);
             assert.equal(child.stdout.destroy.mock.calls.length, 1);

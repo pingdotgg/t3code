@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -51,13 +52,29 @@ export class ElectronUpdaterQuitAndInstallError extends Schema.TaggedError<Elect
     isSilent: Schema.Boolean,
     isForceRunAfter: Schema.Boolean,
     stage: Schema.optionalKey(Schema.Literals(["validation", "handoff", "shutdown"])),
+    terminationConfirmed: Schema.optionalKey(Schema.Boolean),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
+    if (this.terminationConfirmed === false)
+      return "External update installer termination is unconfirmed. Manual recovery is required.";
     return `Electron updater failed to quit and install the update on channel ${this.channel ?? "default"} (silent: ${this.isSilent}, force run after: ${this.isForceRunAfter}).`;
   }
 }
+
+const isQuitAndInstallError = Schema.is(ElectronUpdaterQuitAndInstallError);
+
+export const findUnconfirmedInstallerCleanup = (
+  cause: Cause.Cause<unknown>,
+): ElectronUpdaterQuitAndInstallError | undefined => {
+  for (const reason of cause.reasons) {
+    const error =
+      reason._tag === "Die" ? reason.defect : reason._tag === "Fail" ? reason.error : undefined;
+    if (isQuitAndInstallError(error) && error.terminationConfirmed === false) return error;
+  }
+  return undefined;
+};
 
 export const ElectronUpdaterError = Schema.Union([
   ElectronUpdaterCheckForUpdatesError,
@@ -181,13 +198,14 @@ export const make = Effect.gen(function* () {
         let closed: Promise<void> | undefined;
         let committed = false;
         let ownedStage: string | undefined;
-        const installError = (cause: unknown) =>
+        const installError = (cause: unknown, terminationConfirmed?: boolean) =>
           new ElectronUpdaterQuitAndInstallError({
             channel,
             isSilent,
             isForceRunAfter,
             stage,
             cause,
+            ...(terminationConfirmed === undefined ? {} : { terminationConfirmed }),
           });
         return Effect.gen(function* () {
           if (installer === undefined) {
@@ -301,7 +319,7 @@ export const make = Effect.gen(function* () {
                           throw cause;
                       }
                     },
-                    catch: installError,
+                    catch: (cause) => installError(cause, false),
                   });
                 yield* signalGroup("SIGTERM");
                 const stopped = yield* Effect.promise(() => closed!).pipe(
@@ -311,7 +329,7 @@ export const make = Effect.gen(function* () {
                   yield* signalGroup("SIGKILL");
                   yield* Effect.promise(() => exited!).pipe(
                     Effect.timeout("5 seconds"),
-                    Effect.mapError(installError),
+                    Effect.mapError((cause) => installError(cause, false)),
                   );
                 }
               }

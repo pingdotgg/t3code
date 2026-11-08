@@ -14,35 +14,67 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
 describe("DesktopUpdates", () => {
-  it.effect("keeps windows and restarts backends when quitAndInstall fails", () => {
-    const harness = makeHarness({
-      quitAndInstall: Effect.fail(
-        new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
-          channel: "latest",
-          isSilent: true,
-          isForceRunAfter: true,
-          cause: new Error("installer refused"),
+  it.effect.each(["ordinary", "confirmed", "unconfirmed", "mixed", "interrupted"] as const)(
+    "handles %s installer termination without unsafe recovery",
+    (mode) => {
+      const unsafe = !["ordinary", "confirmed"].includes(mode);
+      const ordinary = new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+        channel: "latest",
+        isSilent: true,
+        isForceRunAfter: true,
+        cause: new Error("installer refused"),
+      });
+      const error = new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+        channel: "latest",
+        isSilent: true,
+        isForceRunAfter: true,
+        terminationConfirmed: !unsafe,
+        cause: new Error("helper exit unconfirmed"),
+      });
+      const failure =
+        mode === "ordinary"
+          ? Effect.fail(ordinary)
+          : mode === "confirmed"
+            ? Effect.fail(error)
+            : mode === "unconfirmed"
+              ? Effect.die(error)
+              : (mode === "mixed" ? Effect.fail(ordinary) : Effect.interrupt).pipe(
+                  Effect.ensuring(Effect.die(error)),
+                );
+      const harness = makeHarness({ quitAndInstall: failure });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const desktopState = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+          const result = yield* updates.install;
+          assert.isTrue(result.accepted);
+          assert.isFalse(yield* Ref.get(desktopState.quitting));
+          assert.deepEqual(
+            harness.installSteps,
+            unsafe ? ["quitAndInstall"] : ["quitAndInstall", "startBackend"],
+          );
+          assert.equal(harness.updateRestartMarkers.size, unsafe ? 1 : 0);
+          assert.equal(harness.installRecords.size, unsafe ? 1 : 0);
+          if (unsafe) {
+            const state = yield* updates.getState;
+            assert.equal(state.status, "error");
+            assert.equal(state.canRetry, false);
+            assert.include(state.message ?? "", "recovery");
+            harness.emit("error", new Error("late updater error"));
+            yield* flushCallbacks;
+            assert.isFalse((yield* updates.install).accepted);
+            assert.equal(harness.quitAndInstalls(), 1);
+            assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+            assert.equal(harness.updateRestartMarkers.size, 1);
+            assert.equal(harness.installRecords.size, 1);
+          }
         }),
-      ),
-    });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const desktopState = yield* DesktopState.DesktopState;
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        const result = yield* updates.install;
-        assert.isTrue(result.accepted);
-        assert.isFalse(yield* Ref.get(desktopState.quitting));
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
-        assert.equal(harness.updateRestartMarkers.size, 0);
-        assert.equal(harness.installRecords.size, 0);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
 
   it.effect("keeps the disabled primary stopped when quitAndInstall fails", () => {
     const harness = makeHarness({
