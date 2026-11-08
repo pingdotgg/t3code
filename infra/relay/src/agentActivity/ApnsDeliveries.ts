@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import {
@@ -661,7 +662,11 @@ const make = Effect.gen(function* () {
     readonly kind: RelayDeliveryKind;
     readonly result: ApnsSendResult;
   }) {
-    yield* attempts.releaseSourceJob({ sourceJobId: input.sourceJobId });
+    // A claim left in place blocks redelivery until its lease ends, and the signed
+    // job expires by then, so a failed release would drop the alert.
+    yield* attempts
+      .releaseSourceJob({ sourceJobId: input.sourceJobId })
+      .pipe(Effect.retry({ times: 3, schedule: Schedule.exponential("100 millis") }));
     return yield* new ApnsDeliveryJobRetryableFailure({
       sourceJobId: input.sourceJobId,
       kind: input.kind,
