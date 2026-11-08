@@ -194,6 +194,7 @@ import {
   countComposerDraftAttachmentsAfterSelection,
   getComposerDraftAfterSelection,
   archiveCloudComposerDrafts,
+  applyNativeComposerDraftText,
   clearComposerDraftContent,
   clearComposerDraftContentState,
   releaseClearedComposerDraftText,
@@ -2125,17 +2126,26 @@ describe("mobile composer drafts", () => {
     });
   });
 
-  it("keeps a cleared send empty when the exact sent text is written back", async () => {
+  it("keeps a cleared send empty when native rewrites the exact sent text", async () => {
     const draftKey = "environment-1:thread-1";
     setComposerDraftText(draftKey, "Ship the release notes");
     clearComposerDraftContent(draftKey);
     expect(getComposerDraftSnapshot(draftKey).text).toBe("");
 
-    setComposerDraftText(draftKey, "Ship the release notes");
+    applyNativeComposerDraftText(draftKey, "Ship the release notes");
     expect(getComposerDraftSnapshot(draftKey).text).toBe("");
 
-    setComposerDraftText(draftKey, "Ship the release notes!");
+    applyNativeComposerDraftText(draftKey, "Ship the release notes!");
     expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes!");
+  });
+
+  it("still fills a linked prompt that matches the just-sent text", () => {
+    const draftKey = "environment-1:thread-1";
+    setComposerDraftText(draftKey, "Ship the release notes");
+    clearComposerDraftContent(draftKey);
+    // Prompt-link fill is intentional, not a late native event.
+    setComposerDraftText(draftKey, "Ship the release notes");
+    expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes");
   });
 
   it("allows restoring a cleared send after a failed outbox write", async () => {
@@ -2151,7 +2161,7 @@ describe("mobile composer drafts", () => {
     setComposerDraftText(draftKey, "Ship the release notes");
     clearComposerDraftContent(draftKey);
     releaseClearedComposerDraftText(draftKey);
-    setComposerDraftText(draftKey, "Ship the release notes");
+    applyNativeComposerDraftText(draftKey, "Ship the release notes");
     expect(getComposerDraftSnapshot(draftKey).text).toBe("Ship the release notes");
   });
 

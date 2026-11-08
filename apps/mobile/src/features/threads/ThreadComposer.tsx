@@ -57,6 +57,7 @@ import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
+  applyNativeComposerDraftText,
   getComposerDraftSnapshot,
   composerDraftsAtom,
   releaseClearedComposerDraftText,
@@ -967,7 +968,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   skills={composerMenu.skills}
                   selection={composerMenu.selection}
                   onChangeText={(text) => {
-                    if (!isSubmissionLocked) props.onChangeDraftMessage(text);
+                    if (!isSubmissionLocked) applyNativeComposerDraftText(composerDraftKey, text);
                   }}
                   onSelectionChange={composerMenu.onSelectionChange}
                   onPasteImages={(uris) => {

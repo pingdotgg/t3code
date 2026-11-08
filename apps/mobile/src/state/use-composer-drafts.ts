@@ -1353,18 +1353,23 @@ export function setStickyComposerModelSelection(modelSelection: ModelSelection):
   schedulePersistComposerState();
 }
 
-export function setComposerDraftText(draftKey: string, value: string): void {
-  // A send clear and a late IME/dictation/autocorrect event must not diverge: once the
-  // draft is empty after that clear, the exact sent text cannot come back through this path.
+/**
+ * Native editor changes only. After a send clear, the exact sent string is dropped so a late
+ * IME/dictation/autocorrect event cannot refill an empty draft. Intentional fills (prompt links,
+ * voice, slash commands) use {@link setComposerDraftText} and are not blocked.
+ */
+export function applyNativeComposerDraftText(draftKey: string, value: string): void {
   if (
     isClearedComposerDraftText(draftKey, value) &&
     getComposerDraftSnapshot(draftKey).text === ""
   ) {
     return;
   }
-  if (value !== clearedComposerDraftText.get(draftKey)) {
-    clearedComposerDraftText.delete(draftKey);
-  }
+  setComposerDraftText(draftKey, value);
+}
+
+export function setComposerDraftText(draftKey: string, value: string): void {
+  clearedComposerDraftText.delete(draftKey);
   let removed: ReadonlyArray<DraftComposerAttachment> = [];
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);
