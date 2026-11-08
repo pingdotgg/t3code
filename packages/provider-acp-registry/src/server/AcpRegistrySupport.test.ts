@@ -9,6 +9,7 @@ import {
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -357,11 +358,52 @@ describe("AcpRegistrySupport", () => {
         "/workspace",
       );
 
-      expect(resolved.spawn.command).toBe(commandPath);
+      expect(yield* fileSystem.realPath(resolved.spawn.command)).toBe(
+        yield* fileSystem.realPath(commandPath),
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
     ),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "launches the executable that `..` after a symlink resolves to",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-symlink-" });
+        yield* fileSystem.makeDirectory(path.join(root, "actual", "child"), { recursive: true });
+        yield* fileSystem.symlink(path.join(root, "actual", "child"), path.join(root, "link"));
+        yield* fileSystem.writeFileString(
+          path.join(root, "actual", "agent"),
+          "#!/bin/sh\n# actual\n",
+        );
+        yield* fileSystem.chmod(path.join(root, "actual", "agent"), 0o755);
+        yield* fileSystem.writeFileString(path.join(root, "agent"), "#!/bin/sh\n# decoy\n");
+        yield* fileSystem.chmod(path.join(root, "agent"), 0o755);
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: root,
+          toolsDir: `${root}/tools`,
+          registryUrl,
+        });
+        const resolved = yield* resolver.resolve(
+          decodeAcpRegistrySettings({
+            source: "local",
+            commandPath: `${root}${path.sep}link${path.sep}..${path.sep}agent`,
+          }),
+          "/workspace",
+        );
+
+        // Node's realpath collapses `..` lexically; reading follows the kernel's resolution like exec.
+        expect(yield* fileSystem.readFileString(resolved.spawn.command)).toBe(
+          "#!/bin/sh\n# actual\n",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
+      ),
   );
 
   it.effect("reports missing or non-executable local commands without registry fallback", () =>

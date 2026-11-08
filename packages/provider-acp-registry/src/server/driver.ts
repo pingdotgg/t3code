@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -507,19 +508,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const host = yield* ProviderHost.ProviderHost;
     // Agents may index their cwd on startup, so driver-owned spawns run in an empty directory.
     const fileSystem = yield* FileSystem.FileSystem;
-    const backgroundCwd = yield* fileSystem
-      .makeTempDirectoryScoped({ prefix: "t3-acp-registry-" })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Failed to create the ACP Registry background working directory.",
-              cause,
-            }),
-        ),
-      );
+    const path = yield* Path.Path;
+    const backgroundCwd = path.join(host.paths.stateDir, "acp-registry", "background-cwd");
+    yield* fileSystem.makeDirectory(backgroundCwd, { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: "Failed to create the ACP Registry background working directory.",
+            cause,
+          }),
+      ),
+    );
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,

@@ -1699,6 +1699,12 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
+  // Node fs resolved a relative command from process.cwd(); normalizing `..` could pick another file past a symlink.
+  const anchorToProcessCwd = (command: string) =>
+    path.isAbsolute(command) || (platform === "win32" && /^[a-z]:/iu.test(command))
+      ? command
+      : `${process.cwd()}${path.sep}${command}`;
+
   const validateLocalExecutable = (command: string) =>
     platform === "win32" && /\.(?:cmd|bat)$/iu.test(command)
       ? Effect.fail(
@@ -1842,7 +1848,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             detail: "Local ACP executable is not available on this environment's PATH.",
           });
         }
-        const command = path.resolve(resolvedExecutable);
+        const command = anchorToProcessCwd(resolvedExecutable);
         yield* validateLocalExecutable(command);
         return {
           distribution: "local",
@@ -1873,7 +1879,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             detail: `ACP Registry agent ${agent.id} requires '${commandOverride}', but it is not available on this provider instance's PATH.`,
           });
         }
-        command = path.resolve(resolvedOverride);
+        command = anchorToProcessCwd(resolvedOverride);
         args = distribution.args;
       } else if (distribution.kind === "npx" || distribution.kind === "uvx") {
         const installed = yield* withInstallPermit(agent.id)(
