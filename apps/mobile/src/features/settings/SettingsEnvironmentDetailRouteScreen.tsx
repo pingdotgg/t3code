@@ -26,6 +26,7 @@ import { serverEnvironment } from "../../state/server";
 import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { CloudSandboxesSection } from "../connection/CloudSandboxesSection";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { OutdatedServerUpdateSection } from "./OutdatedServerUpdateSection";
@@ -203,6 +204,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 navigation.navigate("SettingsEnvironmentNew", { routeFor: environmentId })
               }
             />
+            <CloudSandboxesSection environmentId={environmentId} />
             {outdated ? (
               <OutdatedServerUpdateSection
                 environmentId={environmentId}

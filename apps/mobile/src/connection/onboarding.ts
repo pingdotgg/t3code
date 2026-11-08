@@ -44,3 +44,16 @@ export const updateBearerConnection = createRuntimeCommand(connectionAtomRuntime
       Effect.flatMap((onboarding) => onboarding.updateBearer(input)),
     ),
 });
+
+export const connectCloudSandboxEnvironment = createRuntimeCommand(connectionAtomRuntime, {
+  label: "mobile:connection:connect-cloud-sandbox",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: ConnectionOnboarding.CloudSandboxConnectionInput) => input.resourceId,
+  },
+  execute: (input: ConnectionOnboarding.CloudSandboxConnectionInput) =>
+    ConnectionOnboarding.ConnectionOnboarding.pipe(
+      Effect.flatMap((onboarding) => onboarding.registerCloudSandbox(input)),
+    ),
+});
