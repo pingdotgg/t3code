@@ -41,9 +41,12 @@ export function SubagentRow(props: {
   readonly elapsed: ReactNode;
   /** The task runs in a linked environment this app is connected to. */
   readonly canOpenRemote?: boolean;
+  /** When false, the open-thread chevron is omitted so a parent can place it after trailing actions. */
+  readonly showOpenChevron?: boolean;
 }) {
   const presentation = resolveSubagentRowPresentation(props.subagent, props.canOpenRemote);
   const detail = subagentCardDetail(presentation.detail);
+  const showOpenChevron = props.showOpenChevron ?? true;
   return (
     <View className="flex-row gap-3">
       <View className="h-5 justify-center">
@@ -80,7 +83,7 @@ export function SubagentRow(props: {
             ) : null}
           </View>
           {props.elapsed}
-          {presentation.canOpenThread ? (
+          {showOpenChevron && presentation.canOpenThread ? (
             <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
           ) : null}
         </View>

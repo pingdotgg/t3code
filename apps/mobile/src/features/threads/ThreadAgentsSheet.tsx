@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { environmentThreadDetails } from "../../state/threads";
 import { useEnvironments } from "../../state/environments";
 import { SubagentRow } from "./SubagentRow";
@@ -151,6 +152,7 @@ function AgentRow(props: {
         environmentId={props.environmentId}
         subagent={subagent}
         canOpenRemote={target !== null}
+        showOpenChevron={false}
         elapsed={<AgentElapsed subagent={subagent} tickSeconds={props.tickSeconds} />}
       />
     </View>
@@ -184,6 +186,17 @@ function AgentRow(props: {
     <View className="flex-row items-center gap-2">
       {content}
       <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />
+      {target === null ? null : (
+        <Pressable
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+          onPress={() => props.onOpen(target)}
+          className="active:opacity-70"
+          hitSlop={8}
+        >
+          <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
+        </Pressable>
+      )}
     </View>
   );
 }

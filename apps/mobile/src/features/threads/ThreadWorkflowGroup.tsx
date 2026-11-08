@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs, formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useState, type ReactNode } from "react";
-import { ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -61,7 +61,7 @@ export function ThreadWorkflowGroup(props: {
   return (
     <View className="my-2">
       <ListSection>
-        <View className="flex-row items-center gap-2">
+        <View className="flex-row items-center gap-2 pr-2">
           <RowPressable
             accessibilityRole="button"
             accessibilityLabel={`${label} workflow, ${statusLabel}`}
@@ -71,26 +71,24 @@ export function ThreadWorkflowGroup(props: {
             onPress={() => setSelected(nextWorkflowSelection(rail, selected))}
             className="min-w-0 flex-1 active:opacity-70"
           >
-            <WorkflowHeaderLayout
-              label={label}
-              statusLabel={statusLabel}
-              timing={group.workflow}
-              accessory={
-                rail.length > 0 ? (
-                  <SymbolView
-                    name={open ? "chevron.up" : "chevron.down"}
-                    size={12}
-                    tintColorClassName="accent-icon-subtle"
-                  />
-                ) : null
-              }
-            />
+            <WorkflowHeaderLayout label={label} statusLabel={statusLabel} timing={group.workflow} />
           </RowPressable>
-          <SubagentStopButton
-            environmentId={props.environmentId}
-            subagent={props.subagent}
-            className="mr-2"
-          />
+          <SubagentStopButton environmentId={props.environmentId} subagent={props.subagent} />
+          {rail.length > 0 ? (
+            <Pressable
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+              onPress={() => setSelected(nextWorkflowSelection(rail, selected))}
+              className="active:opacity-70"
+              hitSlop={8}
+            >
+              <SymbolView
+                name={open ? "chevron.up" : "chevron.down"}
+                size={12}
+                tintColorClassName="accent-icon-subtle"
+              />
+            </Pressable>
+          ) : null}
         </View>
         {rail.length > 0 ? (
           <ScrollView
@@ -256,7 +254,7 @@ function WorkflowHeaderLayout(props: {
   readonly label: string;
   readonly statusLabel: string;
   readonly timing: ElapsedTiming;
-  readonly accessory: ReactNode;
+  readonly accessory?: ReactNode;
 }) {
   const elapsed = useElapsedLabel(props.timing);
   return (
