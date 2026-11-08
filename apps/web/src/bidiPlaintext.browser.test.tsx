@@ -34,9 +34,8 @@ it("leaves explicit dir, code and editors alone", () => {
     `<div dir="ltr"><p id="dir">שלום</p><span id="inline">שלום</span></div><pre><span id="pre">// הערה</span></pre>` +
       `<code id="code">x</code><div contenteditable><span id="edit">שלום</span></div>`,
   );
-  for (const id of ["dir", "pre", "code", "edit"]) {
+  for (const id of ["dir", "inline", "pre", "code", "edit"]) {
     expect(getComputedStyle(host.querySelector(`#${id}`)!).unicodeBidi, id).not.toBe("plaintext");
   }
-  expect(getComputedStyle(host.querySelector("#inline")!).unicodeBidi).toBe("plaintext");
   host.remove();
 });
