@@ -13,7 +13,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { deriveEffectiveComposerModelState, useComposerDraftStore } from "../../composerDraftStore";
 import { useComposerSelection } from "./useComposerSelection";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -99,5 +99,16 @@ it("switches back to the thread's stored model while the session runs on another
       .getState()
       .getComposerDraft(scopeThreadRef(environmentId, thread.id));
     expect(draft?.activeProvider).toBe(cursor);
+    expect(
+      deriveEffectiveComposerModelState({
+        draft,
+        providers,
+        selectedProvider: ProviderDriverKind.make("cursor"),
+        selectedInstanceId: cursor,
+        threadModelSelection: thread.modelSelection,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      }),
+    ).toEqual({ selectedModel: stored.model, modelOptions: { [cursor]: stored.options } });
   });
 });
