@@ -176,6 +176,8 @@ jobs:
           T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
           T3CODE_DESKTOP_VERSION: ${{ needs.sync.outputs.version }}
         run: |
+          # Windows' own tar first: Git's GNU tar reads "C:\..." as a remote host.
+          export PATH="/c/Windows/System32:$PATH"
           [ -f .env ] || cp .env.example .env
           node scripts/update-release-package-versions.ts "$VERSION"
           npx -y "$(node -p 'require("./package.json").packageManager')" dist:desktop:win:x64
