@@ -1509,7 +1509,8 @@ export function useComposerSend(input: ComposerSendInput) {
         }
       }
       let failureToastShown = false;
-      if (!isAtomCommandInterrupted(failure)) {
+      const interrupted = isAtomCommandInterrupted(failure);
+      if (!interrupted) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(
           threadIdForSend,
@@ -1545,9 +1546,19 @@ export function useComposerSend(input: ComposerSendInput) {
       if (!restoresDraft && !failureToastShown) {
         toastManager.add(
           stackedThreadToast({
-            type: "error",
-            title: "Message not sent",
-            description: "Your new draft was kept.",
+            // An interrupted request may still have reached the server.
+            ...(interrupted
+              ? {
+                  type: "warning",
+                  title: "Send not confirmed",
+                  description:
+                    "Check the conversation before sending again. Your new draft was kept.",
+                }
+              : {
+                  type: "error",
+                  title: "Message not sent",
+                  description: "Your new draft was kept.",
+                }),
             timeout: 0,
             ...(copyFailedMessage ? { actionProps: copyFailedMessage } : {}),
           }),

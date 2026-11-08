@@ -23,8 +23,11 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   answerRpc,
+  emitThreadEvent,
   installFakeEnvironment,
+  runningRun,
   threadWithHistory,
+  userItem,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -108,6 +111,7 @@ it.each([
       new OrchestrationDispatchCommandError({ message: "Provider is unavailable." }),
     ),
     banner: "Provider is unavailable.",
+    toast: "Message not sent",
     failedText: "first message that will fail",
   },
   // A dropped connection interrupts the request and shows no thread error.
@@ -115,13 +119,20 @@ it.each([
     failure: "interrupted",
     end: Effect.interrupt,
     banner: null,
+    toast: "Send not confirmed",
     failedText: "first message that will fail",
   },
   // An image alone leaves no text to copy, but the failure still needs a toast.
-  { failure: "interrupted image", end: Effect.interrupt, banner: null, failedText: "" },
+  {
+    failure: "interrupted image",
+    end: Effect.interrupt,
+    banner: null,
+    toast: "Send not confirmed",
+    failedText: "",
+  },
 ])(
   "a failed send ($failure) drops its message from the timeline and keeps the draft typed meanwhile",
-  async ({ failure, end, banner, failedText }) => {
+  async ({ failure, end, banner, toast, failedText }) => {
     // Drafts persist per thread, so each case gets its own.
     const thread = threadWithHistory(`thread-${failure.replace(" ", "-")}-send`, 1);
     using _environment = installFakeEnvironment([thread]);
@@ -133,8 +144,13 @@ it.each([
     const dispatchHeld = new Promise<void>((resolve) => {
       failDispatch = resolve;
     });
-    using _dispatch = answerRpc(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, () =>
-      Effect.promise(() => dispatchHeld).pipe(Effect.andThen(end)),
+    const dispatched: string[] = [];
+    using _dispatch = answerRpc(
+      ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+      (command: { readonly messageId: string }) => {
+        dispatched.push(command.messageId);
+        return Effect.promise(() => dispatchHeld).pipe(Effect.andThen(end));
+      },
     );
     const router = getRouter(
       createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
@@ -174,8 +190,24 @@ it.each([
     failDispatch();
 
     await vi.waitFor(() => expect(sentMessages()).toEqual(onlyHistory));
-    await expect.element(page.getByText("Message not sent")).toBeVisible();
-    if (banner) await expect.element(page.getByText(banner)).toBeVisible();
+    await expect.element(page.getByText(toast)).toBeVisible();
+    if (banner) {
+      await expect.element(page.getByText(banner)).toBeVisible();
+    } else {
+      // The server can still take an interrupted send. Its copy then shows, and nothing resends.
+      const messageId = dispatched[0]!;
+      const late = runningRun(thread.id, "late-run", 2, messageId);
+      await emitThreadEvent(thread.id, { type: "run.created", payload: late });
+      await emitThreadEvent(thread.id, {
+        type: "turn-item.updated",
+        payload: userItem(thread.id, late.id, messageId, 2, failedText),
+      });
+      await vi.waitFor(() =>
+        expect(sentMessages()).toEqual([...onlyHistory, expect.stringContaining(failedText)]),
+      );
+      expect(page.getByText("Message not sent").query()).toBeNull();
+    }
+    expect(dispatched).toHaveLength(1);
     await expect.element(editor).toHaveTextContent("next draft");
     // By text, since each timeline row has an icon button labelled the same.
     const copyAction = page.getByText("Copy message", { exact: true });
