@@ -164,7 +164,10 @@ it("readThread preserves caller access errors and prefers activity-run status ov
               ? Effect.die("A failed caller read must not reach the target")
               : Effect.succeed(
                   threadId === parentThreadId
-                    ? (projection.thread as unknown as OrchestrationV2ThreadShell)
+                    ? ({
+                        ...projection.thread,
+                        pinnedAt: now,
+                      } as unknown as OrchestrationV2ThreadShell)
                     : null,
                 ),
           getProjectThreadRecords: (input) =>
@@ -196,6 +199,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    expect(result.thread.pinned).toBe(true);
 
     callerUnavailable = true;
     const denied = yield* service
