@@ -60,6 +60,24 @@ describe("contextWindowSegments", () => {
     ]);
   });
 
+  it("shows a provider's own categories largest first, without empty ones", () => {
+    expect(
+      breakdown({
+        ...usage,
+        breakdown: [
+          { kind: "system_prompt", tokens: 300 },
+          { kind: "skills", tokens: 0 },
+          { kind: "messages", tokens: 500 },
+          { kind: "t3_tools", tokens: 200 },
+        ],
+      }),
+    ).toEqual([
+      ["Messages", 500],
+      ["System prompt", 300],
+      ["T3 Code tools", 200],
+    ]);
+  });
+
   it("caps subsets at their parent and total context", () => {
     expect(
       breakdown({ ...usage, usedTokens: 900, cachedInputTokens: 900, reasoningOutputTokens: 300 }),
