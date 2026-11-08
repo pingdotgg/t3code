@@ -394,7 +394,11 @@ default `messages` view returns user messages, assistant
 messages, and proposed plans. The `activity` view also returns summarized tool,
 reasoning, checkpoint, handoff, and runtime-request items. Large item text is
 bounded and reports whether it was truncated. `afterPosition` and
-`nextPosition` support incremental reads.
+`nextPosition` support incremental reads; `beforePosition` and
+`previousPosition` read back from the newest items, so a caller that wants the
+end of a long thread does not page through all of it. Every page still builds
+the thread's whole visible index, so each call costs time in proportion to the
+thread's length: read only the pages you need.
 
 Thread and message results include required `createdBy` and `creationSource`
 provenance. MCP-created threads and user-role messages use `createdBy: "agent"`

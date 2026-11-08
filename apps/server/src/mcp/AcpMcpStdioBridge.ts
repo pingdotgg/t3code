@@ -13,8 +13,16 @@ import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpRespon
 
 export class AcpMcpBridgeError extends Schema.TaggedError<AcpMcpBridgeError>()(
   "AcpMcpBridgeError",
-  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    /** The JSON-RPC error code, when the server answered with an error. */
+    code: Schema.optional(Schema.Number),
+  },
 ) {}
+
+/** JSON-RPC's code for arguments the server's schema rejects. */
+export const JSON_RPC_INVALID_PARAMS = -32602;
 
 const isAcpMcpBridgeError = Schema.is(AcpMcpBridgeError);
 
@@ -127,8 +135,10 @@ export const mcpToolSession = (
     const responses = yield* send({ jsonrpc: "2.0", id, method, params });
     const envelope = asEnvelope(responses.find((entry) => asEnvelope(entry)?.id === id));
     if (envelope === null || envelope.error !== undefined) {
+      const code = (envelope?.error as { readonly code?: unknown } | null | undefined)?.code;
       return yield* new AcpMcpBridgeError({
         message: `T3 Code MCP ${method} failed${envelope?.error === undefined ? "." : `: ${JSON.stringify(envelope.error)}`}`,
+        ...(typeof code === "number" ? { code } : {}),
       });
     }
     return envelope;

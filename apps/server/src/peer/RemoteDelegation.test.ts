@@ -120,6 +120,8 @@ interface BoxThread {
   readonly finished: Deferred.Deferred<void>;
   /** While set, reading the thread there waits: completed once a read starts, released by `releaseRead`. */
   readonly holdRead: Ref.Ref<boolean>;
+  /** Reads there refuse `beforePosition`, as a box from before it does. */
+  readonly forwardReadsOnly: Ref.Ref<boolean>;
   readonly readStarted: Deferred.Deferred<void>;
   readonly releaseRead: Deferred.Deferred<void>;
   readonly holdFirstStop: Ref.Ref<boolean>;
@@ -156,6 +158,7 @@ const makeBoxThread = Effect.gen(function* () {
     interruptedOnce: yield* Deferred.make<void>(),
     finished: yield* Deferred.make<void>(),
     holdRead: yield* Ref.make(false),
+    forwardReadsOnly: yield* Ref.make(false),
     readStarted: yield* Deferred.make<void>(),
     releaseRead: yield* Deferred.make<void>(),
     holdFirstStop: yield* Ref.make(false),
@@ -306,6 +309,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
           yield* Deferred.succeed(thread.readStarted, undefined);
           yield* Deferred.await(thread.releaseRead);
         }
+        if (options.beforePosition !== undefined && (yield* Ref.get(thread.forwardReadsOnly))) {
+          return yield* Effect.die("Unknown key beforePosition");
+        }
         const reply = yield* Ref.get(thread.reply);
         const later = yield* Ref.get(thread.laterReply);
         const error = yield* Ref.get(thread.error);
@@ -352,9 +358,13 @@ const boxToolkitLayer = (thread: BoxThread) => {
                 (entry) => options.view === "activity" || entry.type === "assistant_message",
               )
             : replies.filter((entry) => entry.id === options.itemId);
-        const matching = visible
-          .filter((entry) => entry.position > (options.afterPosition ?? -1))
-          .slice(0, 1);
+        const inRange = visible.filter(
+          (entry) =>
+            entry.position > (options.afterPosition ?? -1) &&
+            entry.position < (options.beforePosition ?? Number.POSITIVE_INFINITY),
+        );
+        const matching =
+          options.beforePosition === undefined ? inRange.slice(0, 1) : inRange.slice(-1);
         return {
           items: matching.map(({ id, runId: itemRunId, text, position, type }) => ({
             position,
@@ -391,6 +401,8 @@ const boxToolkitLayer = (thread: BoxThread) => {
             options.itemId === undefined &&
             matching.length > 0 &&
             visible.some((entry) => entry.position > matching.at(-1)!.position),
+          hasEarlier:
+            matching.length > 0 && visible.some((entry) => entry.position < matching[0]!.position),
         };
       }),
     interruptThread: (input) =>
@@ -1234,47 +1246,50 @@ it.effect("fails the task when the box revokes the link, and cancel interrupts i
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a task's result is its own run's whole last reply, not a later run's", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* linkTo(a.links, b, "full-access");
-      yield* seedParent(a);
+it.effect.each([false, true])(
+  "a task's result is its own run's whole last reply, not a later run's (forward reads only: %s)",
+  (forwardReadsOnly) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        yield* Ref.set(thread.forwardReadsOnly, forwardReadsOnly);
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
 
-      const result = yield* a.call("delegate_task", {
-        task: "Review the diff.",
-        role: "review",
-        target: { environmentId: box.environmentId },
-        clientRequestId: "review-on-box",
-      });
-      expect(result.isError, JSON.stringify(result.content)).toBe(false);
-      const { taskId } = result.structuredContent as { taskId: NodeId };
-      // The role reaches the thread there, as it does a child here.
-      expect(yield* Ref.get(thread.message)).toBe(
-        "Act as the review sub-agent for this task.\n\nReview the diff.",
-      );
+        const result = yield* a.call("delegate_task", {
+          task: "Review the diff.",
+          role: "review",
+          target: { environmentId: box.environmentId },
+          clientRequestId: "review-on-box",
+        });
+        expect(result.isError, JSON.stringify(result.content)).toBe(false);
+        const { taskId } = result.structuredContent as { taskId: NodeId };
+        // The role reaches the thread there, as it does a child here.
+        expect(yield* Ref.get(thread.message)).toBe(
+          "Act as the review sub-agent for this task.\n\nReview the diff.",
+        );
 
-      // A reply longer than one read, then a later run's reply on the same thread.
-      const long = "x".repeat(45_000);
-      yield* Ref.set(thread.reply, long);
-      yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
-      yield* Ref.set(thread.status, "completed");
-      yield* Deferred.succeed(thread.finished, undefined);
-      const task = yield* taskResult(a, taskId);
-      expect(task?.status).toBe("completed");
-      expect(task?.result).toBe(long);
-      // Every wait was for the run the launch started.
-      const waits = yield* Ref.get(thread.waitedFor);
-      expect(waits.length).toBeGreaterThan(0);
-      expect(waits.every((runId) => runId === boxRunId)).toBe(true);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        // A reply longer than one read, then a later run's reply on the same thread.
+        const long = "x".repeat(45_000);
+        yield* Ref.set(thread.reply, long);
+        yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
+        yield* Ref.set(thread.status, "completed");
+        yield* Deferred.succeed(thread.finished, undefined);
+        const task = yield* taskResult(a, taskId);
+        expect(task?.status).toBe("completed");
+        expect(task?.result).toBe(long);
+        // Every wait was for the run the launch started.
+        const waits = yield* Ref.get(thread.waitedFor);
+        expect(waits.length).toBeGreaterThan(0);
+        expect(waits.every((runId) => runId === boxRunId)).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task whose thread there waits on its own task ends with the answer after it", () =>

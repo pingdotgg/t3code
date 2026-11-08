@@ -147,7 +147,8 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          getTimelinePage: () =>
+            Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
           getThreadRecords: (threadId) =>
             callerUnavailable
               ? Effect.fail(
@@ -252,6 +253,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
               items: [row] as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
               totalItems: 1,
               hasMore: false,
+              hasEarlier: false,
             }),
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
@@ -384,7 +386,8 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          getTimelinePage: () =>
+            Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);
             if (threadId === childThreadId) return Effect.succeed(childProjection);
@@ -503,6 +506,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
               items: foreignProjection(threadId).visibleTurnItems,
               totalItems: 1,
               hasMore: false,
+              hasEarlier: false,
             }),
           getProjectThreadRecords: (input) =>
             input.threadId === foreignThreadId && input.projectId === foreignProjectId

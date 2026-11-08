@@ -3041,6 +3041,7 @@ const make = Effect.gen(function* () {
           afterPosition,
           limit,
           view,
+          ...(input.beforePosition === undefined ? {} : { beforePosition: input.beforePosition }),
           ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
         })
         .pipe(Effect.mapError(threadManagementFailure));
@@ -3138,6 +3139,7 @@ const make = Effect.gen(function* () {
         ),
         nextPosition: page.at(-1)?.position ?? null,
         hasMore: timeline.hasMore,
+        previousPosition: timeline.hasEarlier ? (page[0]?.position ?? null) : null,
       } satisfies OrchestratorMcpThreadReadResult;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
