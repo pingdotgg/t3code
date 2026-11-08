@@ -9,6 +9,7 @@ import {
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -336,52 +337,56 @@ describe("AcpRegistrySupport", () => {
     ),
   );
 
-  it.live("launches the checked executable through symlinks and parent components", () => {
-    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const root = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
-      const targetDirectory = path.join(root, "actual");
-      yield* fileSystem.makeDirectory(path.join(targetDirectory, "child"), { recursive: true });
-      yield* fileSystem.symlink(path.join(targetDirectory, "child"), path.join(root, "link"));
-      for (const [directory, output] of [
-        [targetDirectory, "checked"],
-        [root, "decoy"],
-      ] as const) {
-        const executable = path.join(directory, "agent");
-        yield* fileSystem.writeFileString(executable, `#!/bin/sh\nprintf '${output}\\n'\n`);
-        yield* fileSystem.chmod(executable, 0o755);
-      }
-      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir: root,
-        toolsDir: path.join(root, "tools"),
-        registryUrl,
-      });
-      for (const source of ["local", "registry"] as const) {
-        for (const prefix of [root, path.relative(process.cwd(), root)]) {
-          const commandPath = `${prefix}/link/../agent`;
-          const resolved = yield* resolver.resolve(settings({ source, commandPath }), root);
-          const output = yield* spawner.string(
-            ChildProcess.make(resolved.spawn.command, resolved.spawn.args, {
-              cwd: resolved.spawn.cwd,
-              env: resolved.spawn.env,
-              shell: false,
-            }),
-          );
-          expect(output, `${source}: ${commandPath}`).toBe("checked\n");
+  // quarantine: #19681 This POSIX shell fixture requires symlink support.
+  it.live.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
+    "launches the checked executable through symlinks and parent components",
+    () => {
+      const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+        const targetDirectory = path.join(root, "actual");
+        yield* fileSystem.makeDirectory(path.join(targetDirectory, "child"), { recursive: true });
+        yield* fileSystem.symlink(path.join(targetDirectory, "child"), path.join(root, "link"));
+        for (const [directory, output] of [
+          [targetDirectory, "checked"],
+          [root, "decoy"],
+        ] as const) {
+          const executable = path.join(directory, "agent");
+          yield* fileSystem.writeFileString(executable, `#!/bin/sh\nprintf '${output}\\n'\n`);
+          yield* fileSystem.chmod(executable, 0o755);
         }
-      }
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        layerResolver((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: root,
+          toolsDir: path.join(root, "tools"),
+          registryUrl,
+        });
+        for (const source of ["local", "registry"] as const) {
+          for (const prefix of [root, path.relative(process.cwd(), root)]) {
+            const commandPath = `${prefix}/link/../agent`;
+            const resolved = yield* resolver.resolve(settings({ source, commandPath }), root);
+            const output = yield* spawner.string(
+              ChildProcess.make(resolved.spawn.command, resolved.spawn.args, {
+                cwd: resolved.spawn.cwd,
+                env: resolved.spawn.env,
+                shell: false,
+              }),
+            );
+            expect(output, `${source}: ${commandPath}`).toBe("checked\n");
+          }
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   it.effect("reports missing or non-executable local commands without registry fallback", () =>
     Effect.gen(function* () {
