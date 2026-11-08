@@ -1,3 +1,4 @@
+import { createScheduledTaskBaseRefAtomFamily } from "@t3tools/client-runtime/scheduled-task-base-ref";
 import {
   createVcsActionManager,
   createVcsEnvironmentAtoms,
@@ -19,3 +20,7 @@ export const vcsStatusRevalidation = createVcsStatusRevalidationAtomFamily({
   subscribeWake: subscribeDocumentReturn,
   wakeDebounceMs: 250,
 });
+
+export const scheduledTaskBaseRefAtom = createScheduledTaskBaseRefAtomFamily(
+  vcsEnvironment.listRefs,
+);

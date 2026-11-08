@@ -68,6 +68,7 @@ import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentat
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
+import { useScheduledTaskBaseRef } from "./useScheduledTaskBaseRef";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
@@ -665,6 +666,12 @@ function TaskForm({
           project.id === draft.task?.projectId),
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
+  const { baseRef, pending: baseRefPending } = useScheduledTaskBaseRef({
+    environmentId,
+    cwd: projects.find((project) => project.id === draft.projectId)?.workspaceRoot ?? null,
+    chosen: draft.baseRef,
+    worktree: draft.workspace === "worktree",
+  });
   const config = useEnvironmentServerConfig(environmentId);
   const destinationLabel = useScheduledTaskDestinationLabel(environmentId, draft.threadId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
@@ -705,7 +712,8 @@ function TaskForm({
       saving ||
       dictationPending ||
       taskMissing ||
-      environmentUnavailable
+      environmentUnavailable ||
+      baseRefPending
     )
       return;
     // Preserve signatures edited on other clients by sending the task's current value.
@@ -779,7 +787,7 @@ function TaskForm({
             ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
             : {
                 type: "worktree",
-                baseRef: draft.baseRef.trim() || "main",
+                baseRef: baseRef.trim() || "main",
                 startFromOrigin: draft.startFromOrigin,
               },
       // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
@@ -992,7 +1000,7 @@ function TaskForm({
             <PickerRow
               label="Base branch"
               value={resolveNewTaskBranchLabel({
-                branchName: draft.baseRef,
+                branchName: baseRef,
                 startFromOrigin: draft.startFromOrigin,
                 workspaceMode: "worktree",
               })}
@@ -1303,6 +1311,7 @@ function TaskForm({
           dictationPending ||
           taskMissing ||
           environmentUnavailable ||
+          baseRefPending ||
           // The server refuses an enabled webhook task under this policy.
           (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
         }

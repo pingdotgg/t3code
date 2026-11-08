@@ -9,6 +9,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { defaultWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-base-ref";
 
 import type {
   SidebarProjectGroupMember,
@@ -164,11 +165,31 @@ const legacyTask: ScheduledTask = {
   runCount: 0,
 };
 
+describe("scheduled task automatic base branch", () => {
+  const current = { name: "feature", current: true, isDefault: false };
+  const defaultRef = { name: "develop", current: false, isDefault: true };
+
+  it("prefers an existing main over the repository default and current branch", () => {
+    for (const name of ["main", "origin/main"]) {
+      expect(
+        defaultWorktreeBaseRef([current, defaultRef, { name, current: false, isDefault: false }]),
+      ).toBe("main");
+    }
+  });
+
+  it("uses the repository default, then current branch, without inventing main", () => {
+    expect(defaultWorktreeBaseRef([current, defaultRef])).toBe("develop");
+    expect(defaultWorktreeBaseRef([current])).toBe("feature");
+    expect(defaultWorktreeBaseRef([])).toBe("");
+  });
+});
+
 describe("editing scheduled task branch settings", () => {
   it("keeps an omitted origin flag on the local base branch", () => {
     const draft = taskToDraft(legacyTask);
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
+    expect(taskToDraft({ ...legacyTask, workspaceStrategy: { type: "root" } }).baseRef).toBe("");
   });
 });
 

@@ -7,6 +7,7 @@ import {
   ProjectId,
 } from "@t3tools/contracts";
 import {
+  createDraft,
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
@@ -107,6 +108,12 @@ describe("scheduleFromDraft", () => {
       ).toBeNull();
     },
   );
+});
+
+it("leaves a new task's base branch automatic while defaulting to origin", () => {
+  const draft = createDraft(null, null);
+  expect(draft.baseRef).toBe("");
+  expect(draft.startFromOrigin).toBe(true);
 });
 
 describe("scheduled task model defaults", () => {

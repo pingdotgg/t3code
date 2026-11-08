@@ -11,6 +11,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -35,6 +36,8 @@ import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createGitEnvironmentAtoms } from "./git.ts";
+
+import { createScheduledTaskBaseRefAtomFamily } from "../scheduledTaskBaseRef.ts";
 
 import {
   commitVcsRefsRefresh,
@@ -123,6 +126,74 @@ function cacheWithRefs(
     ...overrides,
   });
 }
+
+it("waits for later main search pages and isolates automatic bases by project and environment", () => {
+  const pages = Atom.family((_key: string) =>
+    Atom.make<AsyncResult.AsyncResult<VcsListRefsResult, Error>>(AsyncResult.initial(false)),
+  );
+  const listRefs = (target: { environmentId: EnvironmentId; input: VcsListRefsInput }) =>
+    pages(JSON.stringify(target));
+  const baseRef = createScheduledTaskBaseRefAtomFamily(listRefs);
+  const registry = AtomRegistry.make();
+  const target = { environmentId: TARGET.environmentId, cwd: "/repo" };
+  const setPage = (
+    input: VcsListRefsInput,
+    result: AsyncResult.AsyncResult<VcsListRefsResult, Error>,
+  ) => registry.set(listRefs({ environmentId: target.environmentId, input }), result);
+  try {
+    expect(registry.get(baseRef(target))).toEqual({ baseRef: "", pending: true });
+    setPage({ cwd: "/repo", limit: 100 }, AsyncResult.success(LIVE_REFS));
+    setPage(
+      { cwd: "/repo", query: "main", limit: 100 },
+      AsyncResult.success({
+        ...LIVE_REFS,
+        refs: [{ name: "domain", current: false, isDefault: false, worktreePath: null }],
+        nextCursor: 100,
+      }),
+    );
+    expect(registry.get(baseRef(target))).toEqual({ baseRef: "", pending: true });
+    setPage(
+      { cwd: "/repo", query: "main", cursor: 100, limit: 100 },
+      AsyncResult.success({
+        ...LIVE_REFS,
+        refs: [
+          {
+            name: "origin/main",
+            current: false,
+            isDefault: false,
+            isRemote: true,
+            worktreePath: null,
+          },
+        ],
+      }),
+    );
+    expect(registry.get(baseRef(target))).toEqual({ baseRef: "main", pending: false });
+
+    const otherProject = { ...target, cwd: "/other-repo" };
+    expect(registry.get(baseRef(otherProject))).toEqual({ baseRef: "", pending: true });
+    setPage({ cwd: "/other-repo", limit: 100 }, AsyncResult.success(LIVE_REFS));
+    setPage(
+      { cwd: "/other-repo", query: "main", limit: 100 },
+      AsyncResult.failure(Cause.fail(new Error("refs unavailable"))),
+    );
+    expect(registry.get(baseRef(otherProject))).toEqual({ baseRef: "release", pending: false });
+    expect(
+      registry.get(baseRef({ ...target, environmentId: EnvironmentId.make("other-environment") })),
+    ).toEqual({ baseRef: "", pending: true });
+    expect(registry.get(baseRef({ ...target, cwd: null }))).toEqual({
+      baseRef: "",
+      pending: false,
+    });
+    setPage(
+      { cwd: "/other-repo", query: "main", limit: 100 },
+      AsyncResult.success({ ...LIVE_REFS, refs: [] }),
+    );
+    setPage({ cwd: "/other-repo", limit: 100 }, AsyncResult.success({ ...LIVE_REFS, refs: [] }));
+    expect(registry.get(baseRef(otherProject))).toEqual({ baseRef: "", pending: false });
+  } finally {
+    registry.dispose();
+  }
+});
 
 describe("cached VCS refs", () => {
   it("invalidates all ref streams in the mutated environment", () => {
