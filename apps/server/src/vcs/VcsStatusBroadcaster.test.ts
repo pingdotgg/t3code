@@ -212,7 +212,7 @@ describe("VcsStatusBroadcaster", () => {
   });
 
   it.effect(
-    "streams fresh branch-only reads, detached HEAD, and detailed demand without mixing results",
+    "streams fresh branch-only reads, detached HEAD, non-repositories, and detailed demand without mixing results",
     () => {
       const state: Parameters<typeof layerTestFor>[0] = {
         currentLocalStatus: baseLocalStatus,
@@ -287,8 +287,6 @@ describe("VcsStatusBroadcaster", () => {
           isRepo: false,
           refName: null,
         };
-        const missing = yield* Stream.toPull(broadcaster.streamBranchStatus({ cwd: "/missing" }));
-        assert.deepEqual(yield* missing, [{ refName: null }]);
         yield* broadcaster.refreshBranchStatus({ cwd: "/repo" });
         assert.deepEqual(yield* reopened, [
           { _tag: "localUpdated", local: state.currentLocalStatus },

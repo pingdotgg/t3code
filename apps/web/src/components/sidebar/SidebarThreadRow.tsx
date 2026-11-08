@@ -688,21 +688,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     thread.pullRequests,
     thread.branchPullRequest,
   );
-  const gitStatus = useEnvironmentQuery(
+  const branchTarget =
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
-      ? vcsEnvironment.branch({
-          environmentId: thread.environmentId,
-          input: { cwd: gitCwd },
-        })
-      : null,
+      ? { environmentId: thread.environmentId, cwd: gitCwd }
+      : null;
+  const gitStatus = useEnvironmentQuery(
+    branchTarget === null
+      ? null
+      : vcsEnvironment.branch({
+          environmentId: branchTarget.environmentId,
+          input: { cwd: branchTarget.cwd },
+        }),
   );
-  useAtomMount(
-    vcsBranchRevalidation(
-      leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
-        ? { environmentId: thread.environmentId, cwd: gitCwd }
-        : null,
-    ),
-  );
+  useAtomMount(vcsBranchRevalidation(branchTarget));
   const visibleGitStatus = useRetainedValue(
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,
@@ -1648,21 +1646,19 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     props.isHighlighted || props.isRouteActive,
   );
   const gitCwd = thread.worktreePath ?? props.project?.workspaceRoot ?? null;
-  const gitStatus = useEnvironmentQuery(
+  const branchTarget =
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
-      ? vcsEnvironment.branch({
-          environmentId: thread.environmentId,
-          input: { cwd: gitCwd },
-        })
-      : null,
+      ? { environmentId: thread.environmentId, cwd: gitCwd }
+      : null;
+  const gitStatus = useEnvironmentQuery(
+    branchTarget === null
+      ? null
+      : vcsEnvironment.branch({
+          environmentId: branchTarget.environmentId,
+          input: { cwd: branchTarget.cwd },
+        }),
   );
-  useAtomMount(
-    vcsBranchRevalidation(
-      leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
-        ? { environmentId: thread.environmentId, cwd: gitCwd }
-        : null,
-    ),
-  );
+  useAtomMount(vcsBranchRevalidation(branchTarget));
   const visibleGitStatus = useRetainedValue(
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,

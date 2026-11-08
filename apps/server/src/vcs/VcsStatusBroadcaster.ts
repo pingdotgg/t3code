@@ -269,7 +269,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     refName: string | null,
   ) {
-    if (branches.has(cwd) && branches.get(cwd) === refName) return;
+    if (branches.get(cwd) === refName) return;
     branches.set(cwd, refName);
     yield* PubSub.publish(branchChangesPubSub, { cwd, refName });
   });
@@ -291,21 +291,15 @@ export const make = Effect.gen(function* () {
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
       const nextLocal = { fingerprint: fingerprintStatusPart(local), value: local };
-      const [localChanged, branchChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
+      const [localChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
         const remote = previous.remote?.branch === local.refName ? previous.remote : null;
         return [
-          [
-            previous.local?.fingerprint !== nextLocal.fingerprint,
-            previous.local?.value.refName !== local.refName,
-            previous.remote !== remote,
-          ],
+          [previous.local?.fingerprint !== nextLocal.fingerprint, previous.remote !== remote],
           new Map(cache).set(cwd, { local: nextLocal, remote }),
         ] as const;
       });
-      if (branchChanged) {
-        yield* publishBranch(cwd, local.refName);
-      }
+      yield* publishBranch(cwd, local.refName);
       if (options?.publish && remoteCleared) {
         yield* PubSub.publish(changesPubSub, {
           cwd,
@@ -797,25 +791,32 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const refreshBranchStatus = Effect.fn("VcsStatusBroadcaster.refreshBranchStatus")(function* (
-    input: VcsStatusInput,
-  ) {
-    const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
-    if (!detailedSubscribers.has(cwd)) {
-      const refName = yield* workflow.currentBranch(cwd);
-      // Branch reads cannot certify cached Changes totals, even if HEAD did not move.
-      yield* workflow.invalidateLocalStatus(cwd);
+  // Without detailed subscribers only HEAD is read; otherwise the full local refresh runs and
+  // publishes the branch with it. Demand is rechecked so a joining subscriber gets fresh totals.
+  const refreshBranchStatusCore = Effect.fn("VcsStatusBroadcaster.refreshBranchStatusCore")(
+    function* (cwd: string) {
       if (!detailedSubscribers.has(cwd)) {
-        yield* Ref.update(cacheRef, (cache) => {
-          const previous = cache.get(cwd);
-          return previous ? new Map(cache).set(cwd, { ...previous, local: null }) : cache;
-        });
-        yield* publishBranch(cwd, refName);
-        return { refName };
+        const refName = yield* workflow.currentBranch(cwd);
+        if (!detailedSubscribers.has(cwd)) {
+          // Branch reads cannot certify cached Changes totals, even if HEAD did not move.
+          yield* workflow.invalidateLocalStatus(cwd);
+          yield* Ref.update(cacheRef, (cache) => {
+            const previous = cache.get(cwd);
+            return previous ? new Map(cache).set(cwd, { ...previous, local: null }) : cache;
+          });
+          yield* publishBranch(cwd, refName);
+          return { refName };
+        }
       }
-    }
-    const local = yield* refreshLocalStatusCore(cwd);
-    return { refName: local.refName };
+      const local = yield* refreshLocalStatusCore(cwd);
+      return { refName: local.refName };
+    },
+  );
+
+  const refreshBranchStatus: VcsStatusBroadcaster["Service"]["refreshBranchStatus"] = Effect.fn(
+    "VcsStatusBroadcaster.refreshBranchStatus",
+  )(function* (input) {
+    return yield* refreshBranchStatusCore(yield* withFileSystem(normalizeCwd(input.cwd)));
   });
 
   const streamBranchStatus: VcsStatusBroadcaster["Service"]["streamBranchStatus"] = (input) =>
@@ -823,7 +824,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(branchChangesPubSub);
-        const branch = yield* refreshBranchStatus({ cwd });
+        const branch = yield* refreshBranchStatusCore(cwd);
         return Stream.concat(
           Stream.make(branch),
           Stream.fromSubscription(subscription).pipe(

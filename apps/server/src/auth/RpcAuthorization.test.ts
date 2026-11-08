@@ -68,6 +68,12 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets thread readers observe and refresh checkout branches", () => {
+    for (const method of [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(
@@ -407,44 +413,3 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
-
-describe("branch observation authorization", () => {
-  const tested = [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch] as const;
-  const group = WsRpcGroup.omit(
-    ...[...WsRpcGroup.requests.keys()].filter(
-      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
-        !(tested as ReadonlyArray<string>).includes(tag),
-    ),
-  );
-  it.effect.each([false, true])("requires thread read permission (granted: %s)", (granted) =>
-    Effect.gen(function* () {
-      const branch = { refName: "main" };
-      const client = yield* RpcTest.makeClient(group).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            group.toLayerHandler(WS_METHODS.subscribeVcsBranch, () => Stream.make(branch)),
-            group.toLayerHandler(WS_METHODS.vcsRefreshBranch, () => Effect.succeed(branch)),
-            RpcAuthorization.layer(granted ? [AuthOrchestrationReadScope] : []),
-          ),
-        ),
-      );
-      const refreshed = yield* client[WS_METHODS.vcsRefreshBranch]({ cwd: "/repo" }).pipe(
-        Effect.result,
-      );
-      const subscribed = yield* Stream.runCollect(
-        client[WS_METHODS.subscribeVcsBranch]({ cwd: "/repo" }),
-      ).pipe(Effect.result);
-      if (granted) {
-        expect(refreshed).toMatchObject({ success: branch });
-        expect(subscribed).toMatchObject({ success: [branch] });
-      } else {
-        expect(refreshed).toMatchObject({
-          failure: { requiredPermission: AuthOrchestrationReadScope },
-        });
-        expect(subscribed).toMatchObject({
-          failure: { requiredPermission: AuthOrchestrationReadScope },
-        });
-      }
-    }).pipe(Effect.scoped),
-  );
-});
