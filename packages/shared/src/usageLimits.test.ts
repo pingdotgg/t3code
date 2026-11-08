@@ -647,6 +647,54 @@ describe("pools", () => {
     ]);
   });
 
+  it("reports unreadable hub accounts alongside usable limits", () => {
+    const account = {
+      id: "claude.json",
+      driver: claude,
+      email: "account@example.com",
+      workspaceId: "org-a",
+      usageLimits: { checkedAt, windows: [window] },
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [{ ...source, accounts: [account] }],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitNotices(input)).toEqual([]);
+    for (const unavailable of [
+      { reason: "probeFailed" as const, message: "The hub could not read this account's usage." },
+      { reason: "probeFailed" as const },
+    ]) {
+      const failed = {
+        ...account,
+        usageLimits: { checkedAt, windows: [], unavailable },
+      };
+      input.set(EnvironmentId.make("env-b"), {
+        entry: { target: { label: "Desktop" } },
+        serverConfig: {
+          providers: [],
+          usageLimitSources: [
+            {
+              ...source,
+              accounts: [failed, { ...failed, id: "other.json", workspaceId: "org-b" }],
+            },
+          ],
+        },
+      });
+      expect(collectLimitAccounts(input)).toHaveLength(1);
+      expect(collectLimitNotices(input)).toEqual([
+        `Desktop · hub · account@example.com: ${unavailable.message ?? "Could not read limits."}`,
+      ]);
+    }
+  });
+
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
     const seat = {
       id: "claude-team-seat.json",
