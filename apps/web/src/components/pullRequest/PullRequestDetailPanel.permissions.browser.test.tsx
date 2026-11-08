@@ -7,11 +7,13 @@ import {
   type PullRequestDetailView,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { act, render } from "../../../test/render";
 
-const { permissions } = vi.hoisted(() => ({
+const { permissions, reads } = vi.hoisted(() => ({
   permissions: { checkout: true, operate: true },
+  reads: { detailPending: false, diff: [] as unknown[] },
 }));
 
 vi.mock(import("~/state/session"), async (original) => ({
@@ -33,7 +35,7 @@ vi.mock(import("./usePullRequestDetail"), async (original) => ({
   ...(await original()),
   usePullRequestDetail: (() => ({
     canWriteSourceControl: permissions.checkout,
-    detailQuery: { isPending: false, refresh: vi.fn() },
+    detailQuery: { isPending: reads.detailPending, refresh: vi.fn() },
     activityQuery: { isPending: false, refresh: vi.fn(), error: null },
     activity: null,
     sharedSummary: detail,
@@ -51,6 +53,19 @@ vi.mock(import("~/state/usePullRequestStack"), async (original) => ({
     refresh: vi.fn(),
   })) as never,
 }));
+vi.mock(import("~/state/pullRequests"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    pullRequestEnvironment: {
+      ...actual.pullRequestEnvironment,
+      diff: ((target: unknown) => {
+        reads.diff.push(target);
+        return actual.pullRequestEnvironment.diff(target as never);
+      }) as never,
+    },
+  };
+});
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => vi.fn()) as never,
@@ -133,6 +148,8 @@ const panel = (attach = false) => (
 function setup() {
   permissions.checkout = true;
   permissions.operate = true;
+  reads.detailPending = false;
+  reads.diff = [];
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
 
@@ -161,4 +178,28 @@ it("can still add conflict resolution to an existing composer without checkout s
   const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
   expect(draft?.prompt).toContain("conflicts");
   expect(draft?.prompt).toContain(detail.url);
+});
+
+it("keeps the actions menu still while a shown pull request is read again in the background", async () => {
+  setup();
+  reads.detailPending = true;
+  await using screen = await render(panel());
+  await expect.element(screen.getByRole("button", { name: "Resolve conflicts" })).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Refreshing / }).query()).toBeNull();
+  await expect.element(screen.getByRole("button", { name: /^More .* actions$/ })).toBeVisible();
+});
+
+it("reads the first diff page once the pointer rests on the Code tab", async () => {
+  setup();
+  await using screen = await render(panel());
+  const code = screen.getByRole("button", { name: "Code", exact: true });
+  await expect.element(code).toBeVisible();
+  expect(reads.diff).toEqual([]);
+
+  await userEvent.hover(code);
+  // The page the Code tab reads first, keyed as the tab keys it, so a click paints from it.
+  expect(reads.diff).toContainEqual({
+    environmentId,
+    input: { projectId: detail.projectId, repository: detail.repository, number: detail.number },
+  });
 });
