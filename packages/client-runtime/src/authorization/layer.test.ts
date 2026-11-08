@@ -860,6 +860,52 @@ describe("RemoteEnvironmentAuthorization", () => {
       }),
   );
 
+  it.effect("starts a fresh renewal for a connection attempt that replaces a stalled one", () =>
+    Effect.gen(function* () {
+      const stalled = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const bootstraps = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        beforeBootstrap: Ref.getAndUpdate(bootstraps, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 0
+              ? Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.void,
+          ),
+        ),
+        responses: [
+          Response.json(DESCRIPTOR),
+          accessToken("fresh-token"),
+          websocketTicket("fresh-ticket"),
+          Response.json(DESCRIPTOR),
+          accessToken("late-token"),
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const stalledAttempt = yield* remote
+          .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(stalled);
+        const request = yield* remote
+          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.forkChild);
+        yield* Queue.takeN(harness.tokenReads, 2);
+        yield* Fiber.interrupt(stalledAttempt);
+
+        const authorized = yield* remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+        expect(authorized.socketUrl).toContain("wsTicket=fresh-ticket");
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+
+        yield* Deferred.succeed(release, undefined);
+        const late = yield* Fiber.join(request);
+        expect(late.httpAuthorization.accessToken, "a request that joined it keeps waiting").toBe(
+          "late-token",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("does not block another environment behind a pending renewal", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();

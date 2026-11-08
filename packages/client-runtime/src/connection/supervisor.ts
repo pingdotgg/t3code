@@ -608,8 +608,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           if (next.reason === "application-active-long") {
             return true;
           }
-          // A reconnect that started while a web tab was hidden can stall on
-          // a request that never settles, so returning to the tab restarts it.
+          // A reconnect may have stalled while the tab was hidden, so returning restarts it.
           if (next.reason === "application-active" && reconnecting) {
             return true;
           }
