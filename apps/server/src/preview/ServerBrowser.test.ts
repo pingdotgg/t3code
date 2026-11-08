@@ -1898,6 +1898,8 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
     Effect.gen(function* () {
       const { broker } = yield* ready;
       const manager = yield* Manager.PreviewManager;
+      const failReads = () => Promise.reject(new Error("Cannot find context with specified id"));
+      desktopSizeAnswer = failReads;
       desktopRendersNext = true;
       const opened = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
@@ -1926,12 +1928,20 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
           return (yield* Fiber.join(result)).viewport;
         });
 
+      // A size no read measured after the resize is unknown, never a default or the last one.
+      expect(
+        yield* resize({ mode: "freeform", width: 900, height: 600 }, 900, 600),
+      ).toBeUndefined();
+      desktopSizeAnswer = null;
       expect(yield* resize({ mode: "freeform", width: 1280, height: 760 }, 1280, 760)).toEqual({
         width: 1280,
         height: 760,
       });
-      desktopSizeAnswer = () => Promise.reject(new Error("Cannot find context with specified id"));
+      desktopSizeAnswer = failReads;
       expect(yield* status).toEqual({ width: 1280, height: 760 });
+      expect(
+        yield* resize({ mode: "freeform", width: 1000, height: 700 }, 1000, 700),
+      ).toBeUndefined();
       desktopSizeAnswer = null;
       // A page can keep another size than the fixed one asked for; both report the page's.
       expect(yield* resize({ mode: "freeform", width: 844, height: 390 }, 560, 760)).toEqual({
@@ -1955,27 +1965,47 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
         Queue.offerUnsafe(pending, read);
         return read.promise;
       };
-      const refill = yield* broker
+      const answer = (width: number, height: number) => ({ result: { value: { width, height } } });
+      const refill = broker
         .invoke<PreviewAutomationResizeResult>({
           scope,
           tabId,
           operation: "resize",
           input: { mode: "fill" },
         })
-        .pipe(Effect.forkScoped);
-      const read = yield* Queue.take(pending);
+        .pipe(
+          Effect.map((result) => result.viewport),
+          Effect.forkScoped,
+        );
       // Status reads the URL just before it picks the size.
-      const statusStarted = Promise.withResolvers<void>();
       const url = context.page.url();
-      using _url = vi.spyOn(context.page, "url").mockImplementationOnce(() => {
-        statusStarted.resolve();
-        return url;
+      using urlRead = vi.spyOn(context.page, "url");
+      const startStatus = Effect.gen(function* () {
+        const started = Promise.withResolvers<void>();
+        urlRead.mockImplementationOnce(() => {
+          started.resolve();
+          return url;
+        });
+        const fiber = yield* Effect.forkScoped(status);
+        yield* Effect.promise(() => started.promise);
+        return fiber;
       });
-      const during = yield* Effect.forkScoped(status);
-      yield* Effect.promise(() => statusStarted.promise);
-      read.resolve({ result: { value: { width: 1100, height: 650 } } });
+      const filled = yield* refill;
+      const read = yield* Queue.take(pending);
+      const during = yield* startStatus;
+      read.resolve(answer(1100, 650));
       expect(yield* Fiber.join(during)).toEqual({ width: 1100, height: 650 });
-      expect((yield* Fiber.join(refill)).viewport).toEqual({ width: 1100, height: 650 });
+      expect(yield* Fiber.join(filled)).toEqual({ width: 1100, height: 650 });
+      // A page resize during that read makes its answer old: status reads again, and the
+      // resize result has no size.
+      const outdated = yield* refill;
+      const oldRead = yield* Queue.take(pending);
+      const later = yield* startStatus;
+      yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
+      desktopSizeAnswer = async () => answer(1000, 600);
+      oldRead.resolve(answer(1100, 650));
+      expect(yield* Fiber.join(later)).toEqual({ width: 1000, height: 600 });
+      expect(yield* Fiber.join(outdated)).toBeUndefined();
     }),
   ).pipe(Effect.provide(layer)),
 );

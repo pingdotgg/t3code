@@ -646,7 +646,7 @@ const make = Effect.gen(function* () {
   };
 
   // Desktop pages have no Playwright viewport; an isolated world keeps page script
-  // from overriding the CSS size, and failed reads preserve the last usable size.
+  // from overriding the CSS size. A failed read answers null and keeps the last usable size.
   const readDesktopViewport = async (tab: ServerTab) => {
     const readSize = async () => {
       const { frameTree } = await tab.cdp.send("Page.getFrameTree");
@@ -671,9 +671,9 @@ const make = Effect.gen(function* () {
     const width = size?.width;
     const height = size?.height;
     if (typeof width === "number" && width > 0 && typeof height === "number" && height > 0)
-      tab.desktopViewport = { width, height };
-    else tab.desktopViewportStale = true;
-    return tab.desktopViewport;
+      return (tab.desktopViewport = { width, height });
+    tab.desktopViewportStale = true;
+    return null;
   };
 
   // Reads run one at a time, and callers that arrive during a read share the next one.
@@ -686,13 +686,26 @@ const make = Effect.gen(function* () {
 
   const layoutSize = async (tab: ServerTab) => {
     // A dialog blocks page script; its close measures again.
-    if (tab.desktop) return tab.dialog ? tab.desktopViewport : measureDesktopViewport(tab);
+    if (tab.desktop) {
+      return tab.dialog
+        ? tab.desktopViewport
+        : ((await measureDesktopViewport(tab)) ?? tab.desktopViewport);
+    }
     const size = tab.page.viewportSize();
     if (!size) return size;
     return {
       width: Math.max(1, Math.round(size.width / tab.zoomFactor)),
       height: Math.max(1, Math.round(size.height / tab.zoomFactor)),
     };
+  };
+
+  // Page resizes and loads mark the size stale; only then does status read the page. A page
+  // resize during the read it waits for can leave that answer old, so it reads once more.
+  const desktopStatusViewport = async (tab: ServerTab) => {
+    const resizes = tab.desktopResize;
+    await (tab.desktopViewportStale || tab.dialog ? layoutSize(tab) : tab.desktopViewportRead);
+    if (tab.desktopResize !== resizes) await layoutSize(tab);
+    return tab.desktopViewport;
   };
 
   const applyZoom = async (tab: ServerTab) => {
@@ -1634,12 +1647,7 @@ const make = Effect.gen(function* () {
       };
     }
     const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
-    // Page resizes and loads mark the size stale; only then does status read the page.
-    const viewport = tab.desktop
-      ? tab.desktopViewportStale || tab.dialog
-        ? await layoutSize(tab)
-        : await tab.desktopViewportRead
-      : tab.page.viewportSize();
+    const viewport = tab.desktop ? await desktopStatusViewport(tab) : tab.page.viewportSize();
     const status = {
       available: true,
       visible: tab.viewers.size > 0,
@@ -2271,11 +2279,13 @@ const make = Effect.gen(function* () {
         // Half the time left keeps room for the read, which runs even if nothing was drawn,
         // because a page can keep another size than the one asked for.
         if (changed) await within(drawn, Math.min(DESKTOP_RESIZE_WAIT_MS, remainingMs() / 2));
-        const measured = await within(layoutSize(tab), remainingMs());
+        const resizes = tab.desktopResize;
+        const measured = await within(measureDesktopViewport(tab), remainingMs());
+        // Only a read after the draw, with no page resize during it, measures this resize.
         return {
           tabId: tab.tabId,
           setting,
-          viewport: measured ?? tab.desktopViewport ?? UNATTACHED_FILL_VIEWPORT,
+          ...(measured && tab.desktopResize === resizes ? { viewport: measured } : {}),
         };
       }
       case "setColorScheme": {
