@@ -6,7 +6,7 @@ import * as NodeURL from "node:url";
 import { expect, it } from "vite-plus/test";
 import { cacheKey, seedPreparedCache } from "./server-compile-cache.ts";
 
-it.each(["x64", "arm64"])("skips prepared bytecode generation on Linux %s", async (arch) => {
+it.each(["x64", "arm64"])("skips prepared bytecode generation on FreeBSD %s", async (arch) => {
   const { spawnSync } = await import("node:child_process");
   const hook = NodeURL.fileURLToPath(
     new URL("../prepare-server-compile-cache.cjs", import.meta.url),
@@ -15,29 +15,33 @@ it.each(["x64", "arm64"])("skips prepared bytecode generation on Linux %s", asyn
     process.execPath,
     [
       "-e",
-      `Object.defineProperty(process, "platform", { value: "linux" });
+      `Object.defineProperty(process, "platform", { value: "freebsd" });
        Object.defineProperty(process, "arch", { value: ${JSON.stringify(arch)} });
-       require(${JSON.stringify(hook)})({ electronPlatformName: "linux", arch: ${arch === "x64" ? 1 : 3} }).catch(error => { console.error(error); process.exitCode = 1; });`,
+       require(${JSON.stringify(hook)})({ electronPlatformName: "freebsd", arch: ${arch === "x64" ? 1 : 3} }).catch(error => { console.error(error); process.exitCode = 1; });`,
     ],
     { encoding: "utf8" },
   );
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain("Skipping unsupported target linux");
+  expect(result.stdout).toContain("Skipping unsupported target freebsd");
 });
 
-it("prepares macOS x64 cache on an ARM64 build host", async () => {
+it.each(["darwin", "linux"] as const)("prepares %s x64 cache", async (platform) => {
   const { spawnSync } = await import("node:child_process");
   const root = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-rosetta-cache-")),
   );
   try {
-    const resources = NodePath.join(root, "Fixture.app", "Contents", "Resources");
+    const resources =
+      platform === "darwin"
+        ? NodePath.join(root, "Fixture.app", "Contents", "Resources")
+        : NodePath.join(root, "resources");
     const archive = NodePath.join(resources, "app.asar");
     const dist = NodePath.join(archive, "apps/server/dist");
     const helper = NodePath.join(archive, "apps/desktop/dist-electron/serverCompileCache.cjs");
     NodeFS.mkdirSync(dist, { recursive: true });
     NodeFS.mkdirSync(NodePath.dirname(helper), { recursive: true });
     NodeFS.writeFileSync(NodePath.join(dist, "binCli-fixture.mjs"), "export const answer = 42;");
+    NodeFS.writeFileSync(NodePath.join(dist, "server-fixture.mjs"), "export const answer = 43;");
     NodeFS.writeFileSync(
       helper,
       `module.exports = require(${JSON.stringify(NodeURL.fileURLToPath(new URL("./server-compile-cache.ts", import.meta.url)))});`,
@@ -45,7 +49,7 @@ it("prepares macOS x64 cache on an ARM64 build host", async () => {
     const hook = NodeURL.fileURLToPath(
       new URL("../prepare-server-compile-cache.cjs", import.meta.url),
     );
-    // The fixture uses Node for generation; the hook still sees an ARM64 macOS build host.
+    // Node stands in for the packaged engine; macOS still exercises the Rosetta build-host check.
     const result = spawnSync(
       process.execPath,
       [
@@ -54,14 +58,14 @@ it("prepares macOS x64 cache on an ARM64 build host", async () => {
       const childProcess = require("node:child_process");
       const spawn = childProcess.spawnSync;
       childProcess.spawnSync = (executable, args, options) => {
-        require("node:assert/strict").equal(executable, ${JSON.stringify(NodePath.join(root, "Fixture.app", "Contents", "MacOS", "Fixture"))});
+        require("node:assert/strict").equal(executable, ${JSON.stringify(platform === "darwin" ? NodePath.join(root, "Fixture.app", "Contents", "MacOS", "Fixture") : NodePath.join(root, "fixture"))});
         return spawn(process.execPath, args, options);
       };
-      Object.defineProperty(process, "platform", { value: "darwin" });
-      Object.defineProperty(process, "arch", { value: "arm64" });
+      Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });
+      Object.defineProperty(process, "arch", { value: ${JSON.stringify(platform === "darwin" ? "arm64" : "x64")} });
       require(${JSON.stringify(hook)})({
-        appOutDir: ${JSON.stringify(root)}, electronPlatformName: "darwin", arch: 1,
-        packager: { appInfo: { productFilename: "Fixture" } }
+        appOutDir: ${JSON.stringify(root)}, electronPlatformName: ${JSON.stringify(platform)}, arch: 1,
+        packager: { appInfo: { productFilename: "Fixture" }, executableName: "fixture" }
       }).catch(error => { console.error(error); process.exitCode = 1; });
     `,
       ],
@@ -74,6 +78,10 @@ it("prepares macOS x64 cache on an ARM64 build host", async () => {
     expect(manifest.entries).toEqual([
       {
         module: "app.asar/apps/server/dist/binCli-fixture.mjs",
+        file: expect.stringMatching(/^[a-f0-9]{8}$/),
+      },
+      {
+        module: "app.asar/apps/server/dist/server-fixture.mjs",
         file: expect.stringMatching(/^[a-f0-9]{8}$/),
       },
     ]);
@@ -158,21 +166,33 @@ it.each(["app", "server"])(
       const consumer = NodePath.join(root, "relocated", "resources");
       const relative = `${archive}.asar/apps/server/dist/binCli-fixture.mjs`;
       NodeFS.mkdirSync(NodePath.dirname(NodePath.join(producer, relative)), { recursive: true });
-      NodeFS.writeFileSync(NodePath.join(producer, relative), "export const answer = 42;");
+      NodeFS.writeFileSync(
+        NodePath.join(producer, relative),
+        "export const answer = 42; export const loadServer = () => import('./server-fixture.mjs');",
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(producer, `${archive}.asar/apps/server/dist/server-fixture.mjs`),
+        "export const answer = 43;",
+      );
       run(
         `import {generatePreparedServerCache} from ${JSON.stringify(helper)}; await generatePreparedServerCache(${JSON.stringify(producer)});`,
       );
       NodeFS.cpSync(producer, consumer, { recursive: true });
       const consume = (home: string, appImage = false) =>
         run(
-          `if (${appImage}) process.env.APPIMAGE = "fixture"; import {enablePreparedServerCache} from ${JSON.stringify(helper)}; import {pathToFileURL} from 'node:url'; if(!enablePreparedServerCache(${JSON.stringify(NodePath.join(consumer, relative))},${JSON.stringify(NodePath.join(root, home))})) throw Error('cache disabled'); const m = await import(pathToFileURL(${JSON.stringify(NodePath.join(consumer, relative))}).href); if(m.answer!==42) throw Error('source fallback failed');`,
+          `if (${appImage}) process.env.APPIMAGE = "fixture"; import {enablePreparedServerCache} from ${JSON.stringify(helper)}; import {pathToFileURL} from 'node:url'; if(!enablePreparedServerCache(${JSON.stringify(NodePath.join(consumer, relative))},${JSON.stringify(NodePath.join(root, home))})) throw Error('cache disabled'); const m = await import(pathToFileURL(${JSON.stringify(NodePath.join(consumer, relative))}).href); if(m.answer!==42 || (await m.loadServer()).answer!==43) throw Error('source fallback failed');`,
         );
       const prepared = NodePath.join(consumer, "server-compile-cache");
       NodeFS.chmodSync(prepared, 0o555);
-      expect(consume("first-user")).toContain("was accepted");
-      expect(consume("appimage-user", true)).toContain("was accepted");
-      expect(NodeFS.readdirSync(NodePath.join(root, "appimage-user", "server"))).toEqual([]);
-      NodeFS.chmodSync(prepared, 0o755);
+      try {
+        const first = consume("first-user");
+        expect(first).toMatch(/binCli-fixture\.mjs was accepted/);
+        expect(first).toMatch(/server-fixture\.mjs was accepted/);
+        expect(consume("appimage-user", true)).toContain("was accepted");
+        expect(NodeFS.readdirSync(NodePath.join(root, "appimage-user", "server"))).toEqual([]);
+      } finally {
+        NodeFS.chmodSync(prepared, 0o755);
+      }
       for (const file of NodeFS.readdirSync(prepared).filter((file) => file !== "manifest.json")) {
         NodeFS.writeFileSync(NodePath.join(prepared, file), "broken");
       }

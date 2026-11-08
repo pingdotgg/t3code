@@ -113,12 +113,17 @@ export async function generatePreparedServerCache(resourcesInput: string): Promi
   const result = NodeModule.enableCompileCache({ directory: prepared, portable: true });
   if (result.status !== NodeModule.constants.compileCacheStatus.ENABLED)
     throw new Error("Cannot enable release compile cache");
-  const cli = NodeFS.readdirSync(dist).find((file) => /^binCli-.*\.mjs$/.test(file));
+  const files = NodeFS.readdirSync(dist);
+  const cli = files.find((file) => /^binCli-.*\.mjs$/.test(file));
   if (!cli) throw new Error("Missing bundled server CLI");
+  const server = files.find((file) => /^server-.*\.mjs$/.test(file));
+  if (!server) throw new Error("Missing bundled server entry");
   await import(NodeURL.pathToFileURL(NodePath.join(dist, cli)).href);
+  // The CLI loads the server dynamically; importing its declarative layers does not launch them.
+  await import(NodeURL.pathToFileURL(NodePath.join(dist, server)).href);
   NodeModule.flushCompileCache();
   const active = NodeModule.getCompileCacheDir()!;
-  const entries = NodeFS.readdirSync(dist)
+  const entries = files
     .filter((file) => file.endsWith(".mjs"))
     .flatMap((file) => {
       const key = cacheKey(active, NodePath.join(dist, file));
