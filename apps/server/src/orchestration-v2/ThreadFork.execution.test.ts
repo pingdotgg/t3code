@@ -1365,8 +1365,7 @@ it.effect("cancelling a pending merge-back withdraws it and frees the target", (
         targetThreadId: parentId,
         createdBy: "user",
         creationSource: "web",
-        // TODO(#32763): drop this cast once the contract defines thread.merge_back.cancel.
-      } as unknown as Parameters<typeof orchestrator.dispatch>[0])
+      })
       .pipe(Effect.exit);
     assert.isTrue(Exit.isSuccess(cancelled), "thread.merge_back.cancel was not accepted");
 

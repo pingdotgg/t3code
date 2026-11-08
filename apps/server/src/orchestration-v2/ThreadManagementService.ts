@@ -87,6 +87,7 @@ export function withCreationProvenance(
     case "message.dispatch":
     case "thread.fork":
     case "thread.merge_back":
+    case "thread.merge_back.cancel":
     case "delegated_task.request":
       return { ...command, ...provenance };
     default:
@@ -110,6 +111,7 @@ function existingThreadIdsForCommand(
     case "thread.fork":
       return [command.sourceThreadId];
     case "thread.merge_back":
+    case "thread.merge_back.cancel":
       return command.sourceThreadId === command.targetThreadId
         ? [command.sourceThreadId]
         : [command.sourceThreadId, command.targetThreadId];

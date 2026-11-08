@@ -2045,7 +2045,9 @@ export const layerWsRpc = (
             "orchestration_v2.command_id": command.commandId,
             "orchestration_v2.command_type": command.type,
             "orchestration_v2.thread_id":
-              command.type === "thread.fork" || command.type === "thread.merge_back"
+              command.type === "thread.fork" ||
+              command.type === "thread.merge_back" ||
+              command.type === "thread.merge_back.cancel"
                 ? command.targetThreadId
                 : command.type === "delegated_task.request" ||
                     command.type === "delegated_task.wake-policy" ||
@@ -2054,7 +2056,9 @@ export const layerWsRpc = (
                     command.type === "thread.created.record"
                   ? command.parentThreadId
                   : command.threadId,
-            ...(command.type === "thread.fork" || command.type === "thread.merge_back"
+            ...(command.type === "thread.fork" ||
+            command.type === "thread.merge_back" ||
+            command.type === "thread.merge_back.cancel"
               ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
               : {}),
           }).pipe(

@@ -1,6 +1,9 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
-import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  hasPendingMergeBack,
+  resolveLatestMergeBackRun,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -48,41 +51,59 @@ export default function SideChatPane(props: {
   const parent = useQuietThreadShell(parentRef);
   const snapshotLoaded = useEnvironmentShellHasSnapshot(parentRef.environmentId);
   const projection = useQuietThreadProjection(shell === null ? null : threadRef)?.projection;
+  const parentProjection = useQuietThreadProjection(parentRef)?.projection;
   const canOperate = useEnvironmentScope(parentRef.environmentId, AuthOrchestrationOperateScope);
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, { reportFailure: false });
+  const cancelMergeBack = useAtomCommand(threadEnvironment.cancelMergeBack, {
+    reportFailure: false,
+  });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const [bringingBack, setBringingBack] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const mergeRun = projection ? resolveLatestMergeBackRun(projection) : null;
+  const broughtBack = hasPendingMergeBack(parentProjection, threadId);
   // A pending merge-back would fail the main thread's queued message, so the server refuses it.
   const bringBackBlockedReason = !canOperate
     ? "This connection cannot change threads."
-    : threadRuntimeIsActive(parent?.runtime)
-      ? "Available when the main thread is idle."
-      : mergeRun === null
-        ? "Available after a finished reply."
-        : null;
+    : broughtBack
+      ? null
+      : threadRuntimeIsActive(parent?.runtime)
+        ? "Available when the main thread is idle."
+        : mergeRun === null
+          ? "Available after a finished reply."
+          : null;
 
-  const bringBack = async () => {
-    if (bringBackBlockedReason !== null || mergeRun === null || bringingBack) return;
+  const toggleBringBack = async () => {
+    if (bringBackBlockedReason !== null || bringingBack) return;
+    const { environmentId } = parentRef;
+    const target = { sourceThreadId: threadId, targetThreadId: parentRef.threadId };
+    const request = broughtBack
+      ? () => cancelMergeBack({ environmentId, input: target })
+      : mergeRun === null
+        ? null
+        : () => mergeBack({ environmentId, input: { ...target, runId: mergeRun.id } });
+    if (request === null) return;
     setBringingBack(true);
-    const result = await mergeBack({
-      environmentId: parentRef.environmentId,
-      input: { sourceThreadId: threadId, targetThreadId: parentRef.threadId, runId: mergeRun.id },
-    });
+    const result = await request();
     setBringingBack(false);
     if (result._tag === "Success") {
-      toastManager.add({
-        type: "success",
-        title: "Brought back",
-        description: "The main thread gets this side chat with your next message there.",
-      });
+      toastManager.add(
+        broughtBack
+          ? { type: "success", title: "Bring back cancelled" }
+          : {
+              type: "success",
+              title: "Brought back",
+              description: "The main thread gets this side chat with your next message there.",
+            },
+      );
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Could not bring back the side chat",
+        title: broughtBack
+          ? "Could not cancel bringing back the side chat"
+          : "Could not bring back the side chat",
         ...(error instanceof Error ? { description: error.message } : {}),
       });
     }
@@ -132,17 +153,21 @@ export default function SideChatPane(props: {
           <TooltipTrigger
             render={
               <Button
-                variant="ghost"
+                variant={broughtBack ? "secondary" : "ghost"}
                 size="xs"
+                aria-pressed={broughtBack}
                 aria-disabled={bringBackBlockedReason !== null || bringingBack || undefined}
-                onClick={() => void bringBack()}
+                onClick={() => void toggleBringBack()}
               >
-                Bring back
+                {broughtBack ? "Brought back" : "Bring back"}
               </Button>
             }
           />
           <TooltipPopup side="bottom">
-            {bringBackBlockedReason ?? "Adds this side chat to the main thread's next message."}
+            {bringBackBlockedReason ??
+              (broughtBack
+                ? "The main thread's next message includes this side chat. Click to cancel."
+                : "Adds this side chat to the main thread's next message.")}
           </TooltipPopup>
         </Tooltip>
         <Button

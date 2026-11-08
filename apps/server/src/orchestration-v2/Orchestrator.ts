@@ -623,6 +623,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
+    case "thread.merge_back.cancel":
       return command.targetThreadId;
   }
 }
@@ -4867,6 +4868,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: transfer,
     });
   });
+
+  // Idempotent: a double click or a race with the target consuming the transfer cancels nothing.
+  const dispatchThreadMergeBackCancel = Effect.fn("orchestrationV2.dispatch.threadMergeBackCancel")(
+    function* (
+      command: Extract<OrchestrationV2Command, { readonly type: "thread.merge_back.cancel" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.command_id": command.commandId,
+        "orchestration_v2.command_type": command.type,
+        "orchestration_v2.source_thread_id": command.sourceThreadId,
+        "orchestration_v2.target_thread_id": command.targetThreadId,
+      });
+      const targetProjection = yield* projectionStore
+        .getThreadRecords(command.targetThreadId, ["contextTransfers"])
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorProjectionError({
+                threadId: command.targetThreadId,
+                cause,
+              }),
+          ),
+        );
+      const now = command.createdAt ?? (yield* DateTime.now);
+      const emitEvent = emit(events, command);
+      for (const transfer of targetProjection.contextTransfers) {
+        if (
+          transfer.type !== "merge_back" ||
+          transfer.status !== "pending" ||
+          transfer.sourceThreadId !== command.sourceThreadId ||
+          transfer.targetThreadId !== command.targetThreadId
+        ) {
+          continue;
+        }
+        yield* emitEvent({
+          type: "context-transfer.updated",
+          threadId: command.targetThreadId,
+          providerInstanceId:
+            transfer.sourceProviderInstanceId ?? targetProjection.thread.modelSelection.instanceId,
+          occurredAt: now,
+          payload: { ...transfer, status: "superseded", error: "Cancelled.", updatedAt: now },
+        });
+      }
+    },
+  );
 
   const dispatchSteerIntoRun = Effect.fn("Orchestrator.dispatchSteerIntoRun")(function* (input: {
     readonly command: Extract<
@@ -13718,6 +13765,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
+        break;
+      case "thread.merge_back.cancel":
+        yield* dispatchThreadMergeBackCancel(command, events);
         break;
       case "delegated_task.request":
         yield* dispatchDelegatedTaskRequest(command, events, effects);

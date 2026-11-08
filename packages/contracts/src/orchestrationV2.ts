@@ -3333,6 +3333,14 @@ export const OrchestrationV2Command = Schema.Union([
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.merge_back.cancel"),
+    ...OrchestrationV2CreationFields,
+    commandId: CommandId,
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    createdAt: Schema.optional(Schema.DateTimeUtc),
+  }),
+  Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,

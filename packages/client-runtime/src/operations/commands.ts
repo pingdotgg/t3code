@@ -237,6 +237,8 @@ export interface MergeThreadBackInput extends CommandMetadata {
   readonly runId: RunId;
 }
 
+export type CancelMergeBackInput = Omit<MergeThreadBackInput, "runId">;
+
 export interface ResumeThreadQueueInput extends ThreadCommandInput {
   readonly runId?: RunId;
 }
@@ -1023,6 +1025,19 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
     sourceThreadId: input.sourceThreadId,
     targetThreadId: input.targetThreadId,
     sourcePoint: { type: "run", runId: input.runId },
+  });
+});
+
+export const cancelMergeBack = Effect.fn("EnvironmentCommands.cancelMergeBack")(function* (
+  input: CancelMergeBackInput,
+) {
+  return yield* dispatch({
+    type: "thread.merge_back.cancel",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
   });
 });
 

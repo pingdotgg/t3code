@@ -68,6 +68,22 @@ export function resolveLatestMergeBackRun(projection: Projection): Run | null {
   return hasNewerActiveRun ? null : latestProviderFinishedRun;
 }
 
+/** Merge-back transfers live on the target, whose stream carries their updates. */
+export function hasPendingMergeBack(
+  target: Pick<Projection, "thread" | "contextTransfers"> | null | undefined,
+  sourceThreadId: Projection["thread"]["id"],
+): boolean {
+  return (
+    target?.contextTransfers.some(
+      (transfer) =>
+        transfer.type === "merge_back" &&
+        transfer.status === "pending" &&
+        transfer.sourceThreadId === sourceThreadId &&
+        transfer.targetThreadId === target.thread.id,
+    ) ?? false
+  );
+}
+
 function resolveThreadProviderSession(projection: Projection): ProviderSession | null {
   const activeRun = resolveActiveThreadRun(projection);
   const providerThreadId = activeRun?.providerThreadId ?? projection.thread.activeProviderThreadId;

@@ -192,6 +192,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
       return [command.parentThreadId];
     case "thread.fork":
     case "thread.merge_back":
+    case "thread.merge_back.cancel":
       return [command.sourceThreadId, command.targetThreadId];
   }
 }
