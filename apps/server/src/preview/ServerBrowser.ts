@@ -60,6 +60,7 @@ import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
+import * as HttpServer from "effect/http/HttpServer";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -73,11 +74,14 @@ import type {
   Page,
 } from "playwright-core";
 
+import * as AssetAccess from "../assets/AssetAccess.ts";
+import type * as AssetSigner from "../assets/AssetSigner.ts";
 import { PENDING_ATTACHMENT_THREAD_SEGMENT } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
+import { loopbackUrlHostForAddress } from "../startupAccess.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as PreviewManager from "./Manager.ts";
@@ -480,6 +484,17 @@ const make = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const runSyncExit = Effect.runSyncExitWith(yield* Effect.context<never>());
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
+  const runAssetPromise = Effect.runPromiseWith(yield* Effect.context<AssetSigner.AssetSigner>());
+  const { address } = yield* HttpServer.HttpServer;
+  const loopbackOrigin =
+    typeof address === "string" || !("port" in address)
+      ? null
+      : `http://${loopbackUrlHostForAddress(address)}:${address.port}`;
+  // Clients resolve this server's file links on their own origin, which this machine may not reach.
+  const reachableUrl = (tab: ServerTab, url: string) =>
+    tab.desktop !== null || loopbackOrigin === null
+      ? Promise.resolve(url)
+      : runAssetPromise(AssetAccess.rebaseSignedAssetUrl(url, loopbackOrigin));
   // sudo resets the environment, so the command has to name this server's home.
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND, [
     "--base-dir",
@@ -1032,7 +1047,7 @@ const make = Effect.gen(function* () {
       tab.initialNavigation = (
         (desktop || adopted) && page.url() === snapshot.navStatus.url
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
+          : reachableUrl(tab, snapshot.navStatus.url).then((url) => page.goto(url, options))
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });
@@ -1679,15 +1694,17 @@ const make = Effect.gen(function* () {
     readiness: "load" | "domContentLoaded" | "none",
     timeout: number,
   ) => {
-    const navigation = tab.page.goto(url, {
-      timeout,
-      waitUntil:
-        readiness === "domContentLoaded"
-          ? "domcontentloaded"
-          : readiness === "none"
-            ? "commit"
-            : "load",
-    });
+    const navigation = reachableUrl(tab, url).then((reachable) =>
+      tab.page.goto(reachable, {
+        timeout,
+        waitUntil:
+          readiness === "domContentLoaded"
+            ? "domcontentloaded"
+            : readiness === "none"
+              ? "commit"
+              : "load",
+      }),
+    );
     if (readiness === "none") {
       tab.control.track(navigation);
       return;
@@ -2490,7 +2507,11 @@ const make = Effect.gen(function* () {
       case "navigate":
         if (typeof message.url === "string") {
           const url = normalizePreviewUrl(message.url);
-          tab.control.trackUntilHandoff(tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS));
+          tab.control.trackUntilHandoff(
+            reachableUrl(tab, url).then((reachable) =>
+              tab.page.goto(reachable, VIEWER_NAVIGATION_OPTIONS),
+            ),
+          );
         }
         return;
       case "history":

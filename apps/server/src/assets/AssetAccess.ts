@@ -875,10 +875,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   };
 });
 
-export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
-  token: string,
-  relativePath: string,
-) {
+const verifyAssetToken = Effect.fn("AssetAccess.verifyAssetToken")(function* (token: string) {
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) return null;
 
@@ -890,7 +887,36 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   if (!verified) return null;
 
   const claims = decodeClaims(encodedPayload);
-  if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+  return claims && claims.expiresAt > (yield* Clock.currentTimeMillis) ? claims : null;
+});
+
+/** Moves `url` to `origin` when it is an asset URL this server signed; returns others as-is. */
+export const rebaseSignedAssetUrl = Effect.fn("AssetAccess.rebaseSignedAssetUrl")(function* (
+  url: string,
+  origin: string,
+) {
+  const parsed = URL.parse(url);
+  if (
+    !parsed ||
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    !parsed.pathname.startsWith(`${ASSET_ROUTE_PREFIX}/`)
+  ) {
+    return url;
+  }
+  const suffix = parsed.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+  const separatorIndex = suffix.indexOf("/");
+  if (separatorIndex <= 0 || !(yield* verifyAssetToken(suffix.slice(0, separatorIndex)))) {
+    return url;
+  }
+  return `${origin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+});
+
+export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
+  token: string,
+  relativePath: string,
+) {
+  const claims = yield* verifyAssetToken(token);
+  if (!claims) return null;
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;

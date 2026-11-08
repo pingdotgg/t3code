@@ -21,7 +21,9 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as HttpServer from "effect/http/HttpServer";
 import * as Layer from "effect/Layer";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -414,6 +416,9 @@ const dependencies = Layer.mergeAll(
   PreviewAgentActivity.layer,
   WorkspacePaths.layer,
   AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer)),
+  Layer.mock(HttpServer.HttpServer)({
+    address: NetAddress.inetAddressFromIpStringUnsafe("0.0.0.0", 3773),
+  }),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
 ).pipe(
@@ -1075,7 +1080,7 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("a server tab opens this server's file link on an origin the server cannot reach", () =>
+it.effect("a server tab opens this server's file link on an origin the server cannot reach", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const manager = yield* Manager.PreviewManager;
