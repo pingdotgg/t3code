@@ -53,6 +53,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import {
   type CardPurpose,
   cardReplyProblem,
+  foldCardReply,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
@@ -1375,9 +1376,21 @@ export const t3Default = (
         message: HTML_RENDERED,
       };
     case "quiz_card":
-      return { quizCard: input, message: QUIZ_CARD_SHOWN };
+      return {
+        quizCard: {
+          ...input,
+          reply: foldCardReply(valueText(input.reply), valueText(input.source)),
+        },
+        message: QUIZ_CARD_SHOWN,
+      };
     case "question_card":
-      return { questionCard: input, message: QUESTION_CARD_SHOWN };
+      return {
+        questionCard: {
+          ...input,
+          reply: foldCardReply(valueText(input.reply), valueText(input.source)),
+        },
+        message: QUESTION_CARD_SHOWN,
+      };
     case "preview_status":
       return {
         available: false,
@@ -1725,6 +1738,9 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       const reply = typeof input.reply === "string" ? input.reply.trim() : "";
       if (reply === "")
         return failed(`Invalid parameters for tool '${name}': Missing key at ["reply"]`);
+      if (typeof input.source !== "string" || input.source.length > 500)
+        return failed(`Invalid parameters for tool '${name}': Missing key at ["source"]`);
+      const shownReply = foldCardReply(reply, input.source);
       const quiz = name === "quiz_card" ? readQuizCard(input) : undefined;
       const problem =
         name === "quiz_card"
@@ -1742,8 +1758,8 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       });
       if (replyProblem !== undefined) return failed(replyProblem);
       // The app shows a card's reply as the tutor's message text.
-      sample.said.push(reply);
-      sample.shownSinceLastUser += reply.length;
+      sample.said.push(shownReply);
+      sample.shownSinceLastUser += shownReply.length;
     }
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
@@ -2311,7 +2327,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         call.failed !== true &&
         isRecord(call.input) &&
         typeof call.input.reply === "string"
-          ? [call.input.reply]
+          ? [foldCardReply(call.input.reply, valueText(call.input.source))]
           : [],
       );
       finalText = [...replies, ...texts].join("\n\n");

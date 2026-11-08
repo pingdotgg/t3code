@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import {
   type CardPurpose,
   cardReplyProblem,
+  foldCardReply,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
@@ -74,8 +75,16 @@ const handlers = {
         });
       }
       yield* refuseThinReply(input.reply, input.purpose);
+      const shownReply = foldCardReply(input.reply, input.source);
+      const shownCard = readQuizCard({ ...card, reply: shownReply });
+      if (shownCard === undefined || quizCardProblem(shownCard) !== undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Invalid quiz card: the reply and source make the card too long.",
+        });
+      }
       return {
-        quizCard: { ...card, reply: input.reply.trim() },
+        quizCard: { ...shownCard, reply: shownReply, source: input.source },
         message: QUIZ_CARD_SHOWN,
       };
     }),
@@ -91,8 +100,16 @@ const handlers = {
         });
       }
       yield* refuseThinReply(input.reply, input.purpose);
+      const shownReply = foldCardReply(input.reply, input.source);
+      const shownCard = readQuestionCard({ ...card, reply: shownReply });
+      if (shownCard === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Invalid question card: the reply and source make the card too long.",
+        });
+      }
       return {
-        questionCard: { ...card, reply: input.reply.trim() },
+        questionCard: { ...shownCard, reply: shownReply, source: input.source },
         message: QUESTION_CARD_SHOWN,
       };
     }),
