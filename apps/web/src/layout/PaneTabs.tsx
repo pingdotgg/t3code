@@ -44,7 +44,6 @@ import { contextMenuShortcutFields, shortcutLabelForCommand } from "../keybindin
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { isElectron } from "../env";
-import { cn } from "../lib/utils";
 import { textDirection } from "../textDirection";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { toastManager } from "../components/ui/toast";
@@ -317,17 +316,13 @@ export function closeLayoutTabOnMiddleClick(event: ReactMouseEvent, tabId: strin
   closeLayoutTabByUser(tabId);
 }
 
-/**
- * Holds a notch tab and its close button. The other tabs add `shrink-[2]`,
- * so when the notch runs out of room the tab on screen keeps its title
- * longest.
- */
+/** Holds a notch tab and its close button. */
 export const LAYOUT_TAB_SLOT_CLASS =
-  "group/tab relative inline-flex min-w-0 items-center has-[[data-tab-close]:hover,[data-tab-close]:focus-visible]:[--tab-icon-visibility:hidden]";
+  "group/tab relative inline-flex max-w-full shrink-0 items-center hover:[--tab-icon-visibility:hidden] has-[[data-tab-close]:focus-visible]:[--tab-icon-visibility:hidden]";
 
 /**
  * Wraps a notch tab's icon so the close button can take its place: the icon
- * hides while the button over it is hovered or focused. The slot sets the
+ * hides while the tab is hovered or the button has keyboard focus. The slot sets the
  * variable; a `:has()` here, above the icon, would restyle every element
  * below each tab on any DOM change.
  */
@@ -335,7 +330,7 @@ export const LAYOUT_TAB_ICON_CLASS = "contents [visibility:var(--tab-icon-visibi
 
 /**
  * A notch tab's close button: a 12px x over the tab's icon, shown while the
- * pointer is on the icon or the button has keyboard focus. Render it after
+ * pointer is on the tab or the button has keyboard focus. Render it after
  * the tab inside `LAYOUT_TAB_SLOT_CLASS`, with the tab's icon wrapped in
  * `LAYOUT_TAB_ICON_CLASS`.
  */
@@ -381,9 +376,7 @@ export const LayoutPaneTab = memo(function LayoutPaneTab({ tab }: { tab: LayoutT
     void showLayoutTabMenu(tab.id, { x: event.clientX, y: event.clientY }, keybindings);
   };
   return (
-    // Clipped to its box, so a squeezed tab never slides under its neighbor;
-    // it keeps at least its icon, so a Settings or side tab stays findable.
-    <span className={cn(LAYOUT_TAB_SLOT_CLASS, "min-w-8.5 shrink-[2] overflow-hidden")}>
+    <span className={LAYOUT_TAB_SLOT_CLASS}>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -403,10 +396,7 @@ export const LayoutPaneTab = memo(function LayoutPaneTab({ tab }: { tab: LayoutT
           }
         >
           <span className={LAYOUT_TAB_ICON_CLASS}>{label.icon}</span>
-          <span
-            className={cn("min-w-[4ch]", PANE_INACTIVE_TAB_TITLE_CLASS)}
-            dir={textDirection(label.title)}
-          >
+          <span className={PANE_INACTIVE_TAB_TITLE_CLASS} dir={textDirection(label.title)}>
             {label.title}
           </span>
         </TooltipTrigger>
