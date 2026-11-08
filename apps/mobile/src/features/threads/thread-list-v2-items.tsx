@@ -86,6 +86,7 @@ import {
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
+import { RegeneratingTitleText } from "./regenerating-title-text";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -1200,15 +1201,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
           </View>
         ) : null}
-        <Text
-          className={cn(
-            "flex-1 text-base",
-            !recede && "font-t3-medium",
+        <RegeneratingTitleText
+          regenerating={isRegeneratingTitle}
+          title={thread.title}
+          containerClassName="flex-1"
+          className={cn("text-base", !recede && "font-t3-medium")}
+          colorClassName={
             selected
               ? selectedThreadRowColors.foregroundClassName
-              : rowAppearance.foregroundClassName,
-            isRegeneratingTitle && "opacity-55",
-          )}
+              : rowAppearance.foregroundClassName
+          }
+          mutedColorClassName={
+            selected
+              ? selectedThreadRowColors.mutedForegroundClassName
+              : rowAppearance.mutedForegroundClassName
+          }
           numberOfLines={2}
           onTextLayout={
             Platform.OS === "android"
@@ -1220,9 +1227,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 }
               : undefined
           }
-        >
-          {thread.title}
-        </Text>
+        />
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
@@ -1519,18 +1524,27 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             </View>
           ) : null}
           <View className="min-w-0 flex-1">
-            <Text
-              className={cn(
-                "text-base",
+            <RegeneratingTitleText
+              regenerating={isRegeneratingTitle}
+              title={thread.title}
+              className="text-base"
+              colorClassName={
                 selected
                   ? selectedThreadRowColors.foregroundClassName
-                  : rowAppearance.mutedForegroundClassName,
-                isRegeneratingTitle && "opacity-55",
-              )}
+                  : rowAppearance.mutedForegroundClassName
+              }
+              mutedColorClassName={
+                selected
+                  ? selectedThreadRowColors.mutedForegroundClassName
+                  : rowAppearance.mutedForegroundClassName
+              }
+              shineColorClassName={
+                selected
+                  ? selectedThreadRowColors.foregroundClassName
+                  : rowAppearance.foregroundClassName
+              }
               numberOfLines={1}
-            >
-              {thread.title}
-            </Text>
+            />
             {providerNameLabel ? (
               <Text
                 className={cn(

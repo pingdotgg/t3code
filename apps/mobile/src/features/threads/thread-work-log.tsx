@@ -17,12 +17,9 @@ import {
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
-import { MaskedView } from "@expo/ui/community/masked-view";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { useIsFocused } from "@react-navigation/native";
 import {
-  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -32,13 +29,11 @@ import {
   type ReactNode,
 } from "react";
 import {
-  Animated as NativeAnimated,
   type ColorValue,
   Pressable,
   ScrollView,
   StyleSheet,
   Text as RNText,
-  useAnimatedValue,
   View,
 } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -65,7 +60,6 @@ import {
 import { AppText as Text } from "../../components/ui/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { BrowserAppIcon } from "./BrowserAppIcon";
-import { useAppActive, useReduceMotionEnabled } from "../../lib/appState";
 import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 import {
@@ -109,9 +103,8 @@ import Animated, {
 import { useAssetUrl } from "../../state/assets";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
-import { startShimmerSteps } from "./work-shimmer-steps";
+import { WorkShine } from "./work-shine";
 
-const SHIMMER_WIDTH = 72;
 const SHIMMER_ICON_AND_GAP_WIDTH = 30;
 export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
@@ -267,113 +260,27 @@ export function ShimmeringWorkContent(props: {
   readonly themeAppearance?: "light" | "dark";
   readonly toolIcon?: ToolActivityIcon;
 }) {
-  const [availableWidth, setAvailableWidth] = useState(0);
-  const [textWidth, setTextWidth] = useState(0);
-  const appIsActive = useAppActive();
-  const reducedMotion = useReduceMotionEnabled();
-  const screenIsFocused = useIsFocused();
-  // Native from creation, so each setValue updates the view without a React render.
-  const progress = useAnimatedValue(0, { useNativeDriver: true });
-  const gradientId = `work-shimmer-${useId().replaceAll(":", "")}`;
-  const contentWidth = Math.min(
-    availableWidth,
-    (props.showIcon ? SHIMMER_ICON_AND_GAP_WIDTH : 0) + Math.ceil(textWidth),
-  );
-
-  // Uses a native Animated value instead of Reanimated, whose per-frame commits
-  // starve React's while commit pausing is disabled (package.json). See
-  // docs/internals/performance-regressions.md.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- steps the native shimmer value on timers while visible and active, and stops them on cleanup
-  useEffect(() => {
-    progress.setValue(0);
-    if (contentWidth <= 0 || reducedMotion || !appIsActive || !screenIsFocused) return;
-    return startShimmerSteps(progress);
-  }, [appIsActive, contentWidth, progress, reducedMotion, screenIsFocused]);
-
-  // The React Compiler memoizes these, so re-renders don't rebuild the native
-  // animation nodes.
-  const sweepTranslateX = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-SHIMMER_WIDTH, contentWidth],
-  });
-  const counterSweepTranslateX = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [SHIMMER_WIDTH, -contentWidth],
-  });
-
   return (
-    <View
-      className={cn("min-w-0 flex-1 overflow-hidden", props.className)}
-      onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
+    <WorkShine
+      className={cn("flex-1", props.className)}
+      leadingWidth={props.showIcon ? SHIMMER_ICON_AND_GAP_WIDTH : 0}
     >
-      <ShimmerWorkContent
-        textClassName={props.textClassName}
-        compact={props.compact}
-        environmentId={props.environmentId}
-        highlighted={false}
-        icon={props.icon}
-        iconSubtleColor={props.iconSubtleColor}
-        label={props.label}
-        showIcon={props.showIcon}
-        themeAppearance={props.themeAppearance}
-        toolIcon={props.toolIcon}
-        onTextLayout={(event) => setTextWidth(event.nativeEvent.lines[0]?.width ?? 0)}
-      />
-      {!reducedMotion && appIsActive && screenIsFocused && contentWidth > 0 ? (
-        <NativeAnimated.View
-          pointerEvents="none"
-          accessible={false}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          style={{
-            position: "absolute",
-            top: 0,
-            bottom: 0,
-            left: 0,
-            overflow: "hidden",
-            width: SHIMMER_WIDTH,
-            transform: [{ translateX: sweepTranslateX }],
-          }}
-        >
-          <MaskedView
-            style={StyleSheet.absoluteFill}
-            maskElement={
-              <Svg width="100%" height="100%">
-                <Defs>
-                  <LinearGradient id={gradientId} x1="0%" x2="100%" y1="0%" y2="0%">
-                    <Stop offset="0" stopColor="white" stopOpacity={0} />
-                    <Stop offset="0.15" stopColor="white" stopOpacity={0.12} />
-                    <Stop offset="0.35" stopColor="white" stopOpacity={0.55} />
-                    <Stop offset="0.5" stopColor="white" stopOpacity={1} />
-                    <Stop offset="0.65" stopColor="white" stopOpacity={0.55} />
-                    <Stop offset="0.85" stopColor="white" stopOpacity={0.12} />
-                    <Stop offset="1" stopColor="white" stopOpacity={0} />
-                  </LinearGradient>
-                </Defs>
-                <Rect width="100%" height="100%" fill={`url(#${gradientId})`} />
-              </Svg>
-            }
-          >
-            <NativeAnimated.View
-              style={{ width: availableWidth, transform: [{ translateX: counterSweepTranslateX }] }}
-            >
-              <ShimmerWorkContent
-                textClassName={props.textClassName}
-                compact={props.compact}
-                environmentId={props.environmentId}
-                highlighted
-                icon={props.icon}
-                iconSubtleColor={props.iconSubtleColor}
-                label={props.label}
-                showIcon={props.showIcon}
-                themeAppearance={props.themeAppearance}
-                toolIcon={props.toolIcon}
-              />
-            </NativeAnimated.View>
-          </MaskedView>
-        </NativeAnimated.View>
-      ) : null}
-    </View>
+      {(layer) => (
+        <ShimmerWorkContent
+          textClassName={props.textClassName}
+          compact={props.compact}
+          environmentId={props.environmentId}
+          highlighted={layer.highlighted}
+          icon={props.icon}
+          iconSubtleColor={props.iconSubtleColor}
+          label={props.label}
+          showIcon={props.showIcon}
+          themeAppearance={props.themeAppearance}
+          toolIcon={props.toolIcon}
+          onTextLayout={layer.onTextLayout}
+        />
+      )}
+    </WorkShine>
   );
 }
 

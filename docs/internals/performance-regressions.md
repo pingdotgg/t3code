@@ -142,4 +142,4 @@ the screen freezes, and back does nothing. Release builds retry forever; dev bui
 `ShadowTree.cpp: assertion failed (attempts < 1024)`. Looping animations that stay on screen while
 heavy content renders should use React Native's `Animated` with `useNativeDriver: true`, which
 updates views without commits, not Reanimated's `withRepeat`. The running-thread shimmer in
-`thread-work-log.tsx` is the example.
+`apps/mobile/src/features/threads/work-shine.tsx` is the example.
