@@ -162,7 +162,7 @@ export function SurfaceIcon({
 }
 
 /** What a side chat tab's dot shows and its title's accessible name says. */
-export function sideChatTabState(shell: EnvironmentThreadShell | null) {
+function sideChatTabState(shell: EnvironmentThreadShell | null) {
   if (shell === null) return null;
   if (shell.hasPendingApprovals || shell.pendingSubagentRequest === "approval") {
     return "needs approval";
