@@ -173,6 +173,13 @@ export interface ProviderListCursor {
   readonly resumeAfter?: string | undefined;
 }
 
+export interface ProviderBatchedListCursor extends Omit<ProviderListCursor, "seenAt"> {
+  /** `ProviderListCursor.seenAt` by repository: a number names a pull request only within one. */
+  readonly seenAt?:
+    | ReadonlyArray<{ readonly repository: string; readonly number: number }>
+    | undefined;
+}
+
 export interface ProviderBatchedChangeRequest extends ProviderChangeRequest {
   readonly repository: string;
 }
@@ -350,7 +357,7 @@ export interface PullRequestProviderApi {
     readonly viewer: string;
     readonly limit: number;
     readonly query?: string | undefined;
-    readonly cursor?: ProviderListCursor | undefined;
+    readonly cursor?: ProviderBatchedListCursor | undefined;
     readonly filters?: PullRequestListFilters | undefined;
   }) => Effect.Effect<ProviderBatchedChangeRequestPage, PullRequestProviderError>;
 

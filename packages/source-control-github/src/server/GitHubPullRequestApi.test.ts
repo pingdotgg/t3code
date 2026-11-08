@@ -1523,6 +1523,108 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("reads past rows already sent, asking again only when they fill the page", () =>
+    Effect.gen(function* () {
+      const at = "2026-07-02T00:00:00Z";
+      const before = "2026-07-01T00:00:00Z";
+      const web = (number: number, updatedAt = at) => searchItem(number, "acme/web", updatedAt);
+      const answer = (first: ReadonlyArray<unknown>, second: ReadonlyArray<unknown>) => {
+        mockedExecute.mockClear();
+        mockedExecute.mockImplementation((call) =>
+          Effect.succeed(
+            call.kind === "graphql" && call.variables?.["after"] === "next"
+              ? searchPage(second)
+              : searchPage(first, true),
+          ),
+        );
+      };
+      const read = {
+        cwd: "/w",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 3,
+      } as const;
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      answer(
+        [web(100), web(99), web(98), searchItem(99, "pingdotgg/t3code", at)],
+        [web(97), web(96), web(10, before)],
+      );
+      const searched = yield* cli.searchPullRequests({
+        ...read,
+        repositories: ["acme/web", "pingdotgg/t3code"],
+        cursor: {
+          updatedBefore: at,
+          delivered: 3,
+          seenAt: [100, 99, 98].map((number) => ({ repository: "Acme/Web", number })),
+        },
+      });
+      assert.deepStrictEqual(
+        searched.items.map((item) => [item.repository, item.number]),
+        [
+          ["pingdotgg/t3code", 99],
+          ["acme/web", 97],
+          ["acme/web", 96],
+        ],
+      );
+      assert.isTrue(searched.truncated);
+      assert.deepStrictEqual(
+        variablesOf("PullRequestSearch").map(({ first, after }) => [first, after]),
+        [
+          [7, null],
+          [3, "next"],
+        ],
+      );
+
+      answer([web(100), web(99), web(98), web(97)], [web(96), web(10, before), web(9, before)]);
+      const listed = yield* cli.listPullRequests({
+        ...read,
+        repository: "acme/web",
+        cursor: { updatedBefore: at, delivered: 3, seenAt: [100, 99, 98] },
+      });
+      assert.deepStrictEqual(
+        listed.items.map((item) => item.number),
+        [97, 96, 10],
+      );
+      assert.isTrue(listed.truncated);
+      assert.deepStrictEqual(
+        variablesOf("PullRequestSearch").map(({ first, after }) => [first, after]),
+        [
+          [7, null],
+          [3, "next"],
+        ],
+      );
+
+      // Only the boundary row was sent before, as on most pages: one request still fills it.
+      const cursor = { updatedBefore: at, delivered: 3 };
+      for (const once of [
+        () =>
+          cli.searchPullRequests({
+            ...read,
+            repositories: ["acme/web"],
+            cursor: { ...cursor, seenAt: [{ repository: "acme/web", number: 98 }] },
+          }),
+        () =>
+          cli.listPullRequests({
+            ...read,
+            repository: "acme/web",
+            cursor: { ...cursor, seenAt: [98] },
+          }),
+      ]) {
+        answer([web(98), web(97), web(96), web(95)], []);
+        const batch = yield* once();
+        assert.deepStrictEqual(
+          batch.items.map((item) => item.number),
+          [97, 96, 95],
+        );
+        assert.isTrue(batch.truncated);
+        assert.strictEqual(variablesOf("PullRequestSearch").length, 1);
+      }
+    }),
+  );
+
   it.effect("keeps a searched-for qualifier inside the phrase", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(searchPage([])));

@@ -120,6 +120,7 @@ import {
   IMMEDIATELY_MERGEABLE,
 } from "./gitHubPullRequestJson.ts";
 import type {
+  ProviderBatchedListCursor,
   ProviderChangeRequestSummary,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -455,7 +456,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly viewer: string;
       readonly limit: number;
       readonly query?: string | undefined;
-      readonly cursor?: ProviderListCursor | undefined;
+      readonly cursor?: ProviderBatchedListCursor | undefined;
       readonly filters?: PullRequestListFilters | undefined;
     }) => Effect.Effect<GitHubPullRequestSearchBatch, GitHubPullRequestApiError>;
 
@@ -847,7 +848,7 @@ function searchQuery(input: {
   readonly involvement: PullRequestInvolvement;
   readonly viewer: string;
   readonly query?: string | undefined;
-  readonly cursor?: ProviderListCursor | undefined;
+  readonly cursor?: Pick<ProviderListCursor, "updatedBefore"> | undefined;
   readonly filters?: PullRequestListFilters | undefined;
 }): string | null {
   if (input.repositories.length === 0) return null;
@@ -1786,14 +1787,21 @@ export const make = Effect.gen(function* () {
         );
       }
       const target = { cwd: input.cwd, host: input.host, operation: "listPullRequests" };
+      const sentAt = (item: GitHubPullRequestListItem) =>
+        item.updatedAt === input.cursor?.updatedBefore &&
+        (input.cursor.seenAt?.includes(item.number) ?? false);
       const toPage = (
         page: ReturnType<typeof toPullRequestRows>,
-      ): GitHubPullRequestListPage & { readonly pageInfo: GraphQLClient.PageInfo } => ({
-        items: page.rows.map((row) => row.item),
-        rawCount: page.rawCount,
-        endCursor: page.endCursor,
-        pageInfo: { hasNextPage: page.endCursor !== null, endCursor: page.endCursor },
-      });
+      ): GitHubPullRequestListPage & { readonly pageInfo: GraphQLClient.PageInfo } => {
+        // Rows already sent must not fill the page, or it never reads past them.
+        const items = page.rows.map((row) => row.item).filter((item) => !sentAt(item));
+        return {
+          items,
+          rawCount: page.rawCount - (page.rows.length - items.length),
+          endCursor: page.endCursor,
+          pageInfo: { hasNextPage: page.endCursor !== null, endCursor: page.endCursor },
+        };
+      };
       /**
        * Pages of up to a hundred until `rows` have arrived or GitHub has no more. Each page asks
        * for only the rows still missing, so the last one does not overshoot.
@@ -1805,6 +1813,9 @@ export const make = Effect.gen(function* () {
           rows: number,
         ) => Effect.Effect<GitHubPullRequestListPage, GitHubPullRequestApiError>,
       ) {
+        // Past a cursor (search only: the fallback runs without one), `limit` rows and a next page
+        // show the cut as well as the extra row does.
+        const enough = input.cursor === undefined ? rows : Math.min(rows, input.limit);
         const countRows = (pages: ReadonlyArray<GitHubPullRequestListPage>) =>
           pages.reduce((total, read) => total + read.rawCount, 0);
         const pages: GitHubPullRequestListPage[] = [];
@@ -1817,7 +1828,7 @@ export const make = Effect.gen(function* () {
           const next = read.endCursor;
           if (next === null) break;
           // `truncated` also covers a cursor GitHub repeated before `rows` arrived.
-          if (seen.has(next) || countRows(pages) >= rows) {
+          if (seen.has(next) || countRows(pages) >= enough) {
             truncated = true;
             break;
           }
@@ -1840,7 +1851,10 @@ export const make = Effect.gen(function* () {
             ? client
                 .PullRequestSearch({
                   q: query,
-                  first: pageRows(rows),
+                  // Room for the rows already sent, which come back first and are dropped.
+                  first: pageRows(
+                    rows + (after === null ? (input.cursor?.seenAt?.length ?? 0) : 0),
+                  ),
                   after,
                   // Stack badges come from their own batched read below, for the rows that stay.
                   stacks: false,
@@ -1961,26 +1975,56 @@ export const make = Effect.gen(function* () {
         });
       }
       const rows = Math.min(input.limit + 1, PULL_REQUEST_SEARCH_MAX_ROWS);
-      return yield* client
-        .PullRequestSearch({
-          q: query,
-          first: rows,
-          stacks: input.host.toLowerCase() === "github.com",
-          stats: false,
-        })
-        .pipe(
-          graphql({ ...input, operation: "searchPullRequests" }),
-          Effect.map(({ search }) => {
-            const page = toPullRequestRows(search);
-            const items = page.rows.flatMap(({ item, repository }) =>
-              repository === null ? [] : [{ ...item, repository }],
-            );
-            return {
-              items: items.slice(0, input.limit),
-              truncated: page.rawCount > input.limit || page.hasNextPage,
-            };
-          }),
-        );
+      const sentKey = (repository: string, number: number) =>
+        `${repository.trim().toLowerCase()}#${number}`;
+      const sent = new Set(
+        (input.cursor?.seenAt ?? []).map(({ repository, number }) => sentKey(repository, number)),
+      );
+      const stacks = input.host.toLowerCase() === "github.com";
+      const items: GitHubPullRequestSearchItem[] = [];
+      const cursors = new Set<string>();
+      let counted = 0;
+      let after: string | null = null;
+      while (true) {
+        const { search } = yield* client
+          .PullRequestSearch({
+            q: query,
+            first: pageRows(rows - counted + (after === null ? sent.size : 0)),
+            after,
+            stacks,
+            stats: false,
+          })
+          .pipe(graphql({ ...input, operation: "searchPullRequests" }));
+        const page = toPullRequestRows(search);
+        let dropped = 0;
+        for (const { item, repository } of page.rows) {
+          if (repository === null) continue;
+          if (
+            item.updatedAt === input.cursor?.updatedBefore &&
+            sent.has(sentKey(repository, item.number))
+          ) {
+            dropped += 1;
+          } else {
+            items.push({ ...item, repository });
+          }
+        }
+        counted += page.rawCount - dropped;
+        // Read on only to replace rows the cursor already sent; past `limit`, a next page is
+        // as good as the extra row for knowing the list goes on.
+        if (
+          dropped === 0 ||
+          counted >= Math.min(input.limit, rows) ||
+          page.endCursor === null ||
+          cursors.has(page.endCursor)
+        ) {
+          return {
+            items: items.slice(0, input.limit),
+            truncated: counted > input.limit || page.hasNextPage,
+          };
+        }
+        cursors.add(page.endCursor);
+        after = page.endCursor;
+      }
     }),
 
     listPullRequestStats: Effect.fn("GitHubPullRequestApi.listPullRequestStats")(
