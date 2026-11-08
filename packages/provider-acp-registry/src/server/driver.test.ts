@@ -126,6 +126,57 @@ describe("acpRegistrySnapshotReadiness", () => {
     ).toBe("unknown");
   });
 
+  it("offers sign-in for an installed local command before its probe", () => {
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ source: "local", commandPath: "kimi", commandArgs: ["acp"] }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "kimi",
+        version: null,
+        distribution: "local",
+      },
+    });
+
+    expect(snapshot.installed).toBe(true);
+    expect(snapshot.setup?.canAuthenticate).toBe(true);
+  });
+
+  it("hides sign-in after a local probe advertises no auth methods", () => {
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({
+        source: "local",
+        commandPath: "dsh",
+        commandArgs: ["--profile", "acp"],
+      }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "dsh",
+        version: null,
+        distribution: "local",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [],
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+
+    expect(snapshot.setup?.canAuthenticate).toBe(false);
+  });
+
   it("overlays live configuration without dropping probe-owned session capabilities", () => {
     const provider = buildCheckedAcpRegistrySnapshot({
       ...identity,

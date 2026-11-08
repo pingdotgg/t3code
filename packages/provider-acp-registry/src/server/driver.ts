@@ -221,13 +221,13 @@ function baseSnapshot(
     setup: {
       canInstall: false,
       ...(input.documentationUrl ? { documentationUrl: input.documentationUrl } : {}),
+      // A finished probe with no auth methods is the only proof that sign-in is unavailable.
+      // Until then, an installed local command is offered the same account step as a registry agent.
       canAuthenticate:
         input.installed &&
         (input.probe
           ? input.probe.probe.authMethods.length > 0
-          : input.settings.source === "local"
-            ? (input.probeError?.authMethods?.length ?? 0) > 0
-            : input.settings.agentId.length > 0),
+          : input.settings.source === "local" || input.settings.agentId.length > 0),
     },
     ...(input.message ? { message: input.message } : {}),
     models: modelsFromDiscovery(input.probe?.probe, input.settings.customModels),

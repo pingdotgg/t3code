@@ -68,9 +68,12 @@ export function ProviderAuthenticationSection({
     !signedIn &&
     !query.error &&
     auth?.methods === undefined;
+  const hasAdvertisedSignIn = (auth?.methods?.length ?? 0) > 0;
   const needsExternalSetup =
     !active &&
     !signedIn &&
+    !isDiscovering &&
+    !hasAdvertisedSignIn &&
     (provider.setup?.canAuthenticate === false ||
       (provider.driver === "acpRegistry" && auth?.methods?.length === 0));
   const usesCredentials =
@@ -276,7 +279,9 @@ export function ProviderAuthenticationSection({
               >
                 Cancel
               </Button>
-            ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
+            ) : !active &&
+              !needsExternalSetup &&
+              (provider.setup?.canAuthenticate !== false || hasAdvertisedSignIn) ? (
               <Button
                 size="sm"
                 variant="outline"

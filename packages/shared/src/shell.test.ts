@@ -28,6 +28,7 @@ import {
   mergePathEntries,
   mergePathValues,
   npmShimExecutable,
+  npmShimScript,
   preferGitForWindowsBinary,
   readEnvironmentFromLoginShell,
   readEnvironmentFromWindowsShell,
@@ -1213,6 +1214,42 @@ describe("pathSetupCommand", () => {
     ).toBeUndefined();
     expect(
       pathSetup({ ...setup, platform: "linux", configHome: "/home/theo/my cfg" }),
+    ).toBeUndefined();
+  });
+});
+
+describe("npmShimScript", () => {
+  const shim =
+    '@ECHO off\nGOTO start\n:find_dp0\nSET dp0=%~dp0\nEXIT /b\n:start\nSETLOCAL\nCALL :find_dp0\n\nIF EXIST "%dp0%\\node.exe" (\n  SET "_prog=%dp0%\\node.exe"\n) ELSE (\n  SET "_prog=node"\n  SET PATHEXT=%PATHEXT:;.JS;=;%\n)\n\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*\n';
+  const command = "C:\\npm\\dsh.cmd";
+  it("resolves a Node shim while refusing shell additions and missing scripts", () => {
+    expect(
+      npmShimScript(
+        command,
+        () => shim,
+        () => true,
+      ),
+    ).toBe("C:\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js");
+    expect(
+      npmShimScript(
+        "/tmp/npm/dsh.cmd",
+        () => shim,
+        (filePath) => filePath === "/tmp/npm/node_modules/@deepseek-ai/dsh/lib/bin.js",
+      ),
+    ).toBe("/tmp/npm/node_modules/@deepseek-ai/dsh/lib/bin.js");
+    expect(
+      npmShimScript(
+        command,
+        () => shim + "echo unsafe\n",
+        () => true,
+      ),
+    ).toBeUndefined();
+    expect(
+      npmShimScript(
+        command,
+        () => shim,
+        () => false,
+      ),
     ).toBeUndefined();
   });
 });

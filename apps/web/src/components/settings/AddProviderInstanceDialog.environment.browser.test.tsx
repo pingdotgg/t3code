@@ -244,7 +244,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("creates a local command in the selected environment without a sign-in step", async () => {
+  it("creates a local command in the selected environment and opens sign-in", async () => {
     setup();
     await using _screen = await render(dialog());
     await click("Show more");
@@ -271,7 +271,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     await type('input[aria-label="Environment variable value 1"]', "work");
     await click("Next");
     await type("#add-provider-label", "Deepseek Harness");
-    await click("Add instance");
+    await click("Continue to sign-in");
 
     expect(settingsHooks.useMutation).toHaveBeenCalledWith(remoteEnvironmentId);
     expect(settingsHooks.mutate).toHaveBeenCalledWith({
@@ -287,8 +287,8 @@ describe("AddProviderInstanceDialog environment routing", () => {
         ],
       },
     });
-    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
-    expect(signInStep()).toBeNull();
+    expect(actions.onOpenChange).not.toHaveBeenCalled();
+    expect(signInStep()?.textContent).toContain("remote-device/acpRegistry_deepseek_harness");
   });
 
   it("rejects a queued save after the provider grant is revoked", async () => {

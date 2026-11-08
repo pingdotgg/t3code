@@ -174,9 +174,12 @@ function ProviderAccount({
     !signedIn &&
     !auth.error &&
     state?.methods === undefined;
+  const hasAdvertisedSignIn = (state?.methods?.length ?? 0) > 0;
   const needsExternalSetup =
     !active &&
     !signedIn &&
+    !isDiscovering &&
+    !hasAdvertisedSignIn &&
     (provider.setup?.canAuthenticate === false ||
       (provider.driver === "acpRegistry" && state?.methods?.length === 0));
   const url =
@@ -232,7 +235,7 @@ function ProviderAccount({
   const canSignIn =
     !active &&
     !needsExternalSetup &&
-    provider.setup?.canAuthenticate !== false &&
+    (provider.setup?.canAuthenticate !== false || hasAdvertisedSignIn) &&
     provider.enabled &&
     provider.installed;
   const signInDisabled = disabled || state === null;

@@ -286,6 +286,7 @@ describe("AcpRegistrySupport", () => {
   it.effect("resolves a local executable path and inherits the host environment", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-local-path-" });
       const commandPath = `${cacheDir}/dsh wrapper`;
       yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
@@ -309,6 +310,75 @@ describe("AcpRegistrySupport", () => {
         shell: false,
       });
       expect(resolved.agent).toBeUndefined();
+
+      const shimDir = path.join(cacheDir, "npm");
+      const scriptPath = path.join(shimDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+      const shimPath = path.join(shimDir, "dsh.cmd");
+      const nodePath = path.join(shimDir, "node.exe");
+      yield* fileSystem.makeDirectory(path.dirname(scriptPath), { recursive: true });
+      yield* fileSystem.writeFileString(scriptPath, "");
+      yield* fileSystem.writeFileString(nodePath, "");
+      yield* fileSystem.writeFileString(
+        shimPath,
+        [
+          "@ECHO off",
+          "GOTO start",
+          ":find_dp0",
+          "SET dp0=%~dp0",
+          "EXIT /b",
+          ":start",
+          "SETLOCAL",
+          "CALL :find_dp0",
+          'IF EXIST "%dp0%\\node.exe" (',
+          '  SET "_prog=%dp0%\\node.exe"',
+          ") ELSE (",
+          '  SET "_prog=node"',
+          "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+          ")",
+          'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*',
+          "",
+        ].join("\n"),
+      );
+      const windowsEnvironment = { PATH: shimDir, PATHEXT: ".EXE;.CMD" };
+      const npmResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Environment, windowsEnvironment),
+      );
+      const npmSettings = decodeAcpRegistrySettings({
+        source: "local",
+        commandPath: shimPath,
+        commandArgs: ["--profile", "acp"],
+      });
+      expect(yield* npmResolver.inspect(npmSettings, windowsEnvironment)).toMatchObject({
+        status: "ready",
+        distribution: "local",
+      });
+      expect(
+        yield* npmResolver.resolve(npmSettings, "/workspace", windowsEnvironment),
+      ).toMatchObject({
+        distribution: "local",
+        spawn: {
+          command: nodePath,
+          args: [scriptPath, "--profile", "acp"],
+          cwd: "/workspace",
+          env: windowsEnvironment,
+          shell: false,
+        },
+      });
+      yield* fileSystem.remove(nodePath);
+      for (const failure of [
+        yield* npmResolver.inspect(npmSettings, windowsEnvironment).pipe(Effect.flip),
+        yield* npmResolver.resolve(npmSettings, "/workspace", windowsEnvironment).pipe(Effect.flip),
+      ]) {
+        expect(failure).toMatchObject({
+          reason: "runner_unavailable",
+          detail: "Node.js is required to launch this npm ACP command.",
+        });
+      }
 
       for (const extension of [".cmd", ".BAT"]) {
         const windowsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({

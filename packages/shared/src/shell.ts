@@ -760,6 +760,46 @@ export function npmShimExecutable(
   return isFile(executable) ? executable : undefined;
 }
 
+const NPM_NODE_SHIM_BODY = [
+  'IF EXIST "%dp0%\\node.exe" (',
+  '  SET "_prog=%dp0%\\node.exe"',
+  ") ELSE (",
+  '  SET "_prog=node"',
+  "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+  ")",
+].join("\n");
+
+// Keep the shim directory's original prefix. win32.join turns a POSIX temp path into a drive-root path.
+function joinShimTarget(shimPath: string, target: string): string {
+  const separatorIndex = Math.max(shimPath.lastIndexOf("/"), shimPath.lastIndexOf("\\"));
+  const directory = separatorIndex >= 0 ? shimPath.slice(0, separatorIndex + 1) : "";
+  const separator = shimPath.includes("\\") ? "\\" : "/";
+  return `${directory}${target.replaceAll(/[\\/]/g, separator)}`;
+}
+
+export function npmShimScript(
+  shimPath: string,
+  readFile: (filePath: string) => string | undefined = readFileSyncOrUndefined,
+  isFile: (filePath: string) => boolean = isFileSync,
+): string | undefined {
+  if (NodePath.win32.extname(shimPath).toLowerCase() !== ".cmd") return undefined;
+  const lines = readFile(shimPath)
+    ?.split(/\r?\n/)
+    .filter((line) => line.length > 0);
+  if (!lines || NPM_EXECUTABLE_SHIM_PREFIX.some((expected, index) => lines[index] !== expected)) {
+    return undefined;
+  }
+  const body = lines.slice(NPM_EXECUTABLE_SHIM_PREFIX.length);
+  if (body.length !== 7 || body.slice(0, -1).join("\n") !== NPM_NODE_SHIM_BODY) return undefined;
+  const target =
+    /^endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & "%_prog%"  "%dp0%\\([^"%]+)" %\*$/.exec(
+      body.at(-1)!,
+    )?.[1];
+  if (!target) return undefined;
+  const script = joinShimTarget(shimPath, target);
+  return isFile(script) ? script : undefined;
+}
+
 export type XcodeGitLocator = (env: NodeJS.ProcessEnv) => string | undefined;
 
 // xcrun honors DEVELOPER_DIR and the `xcode-select` choice, as the shim does.

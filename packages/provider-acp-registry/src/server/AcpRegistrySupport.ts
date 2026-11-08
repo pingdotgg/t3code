@@ -17,6 +17,7 @@ import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   mergePathEntries,
+  npmShimScript,
   resolveSpawnCommand,
   SpawnExecutableResolution,
 } from "@t3tools/shared/shell";
@@ -32,6 +33,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
+import { SUPPLEMENTAL_ACP_AGENT_RECORDS, appendMissingAgents } from "./supplementalAgents.ts";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -187,6 +189,11 @@ export interface AcpRegistryIndex {
 
 const decodeRegistryIndexEnvelope = Schema.decodeUnknownEffect(AcpRegistryIndexEnvelope);
 const decodeRegistryAgent = Schema.decodeUnknownOption(AcpRegistryAgent);
+export const supplementalAcpAgents: ReadonlyArray<AcpRegistryAgent> =
+  SUPPLEMENTAL_ACP_AGENT_RECORDS.flatMap((candidate) => {
+    const decoded = decodeRegistryAgent(candidate);
+    return Option.isSome(decoded) ? [decoded.value] : [];
+  });
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeNpmPackageManifest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(NpmPackageManifest),
@@ -774,9 +781,17 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return { version: envelope.version, agents } satisfies AcpRegistryIndex;
   });
 
+  const supplementOfficialRegistry = (registry: AcpRegistryIndex): AcpRegistryIndex =>
+    registryUrl === ACP_REGISTRY_URL
+      ? { ...registry, agents: appendMissingAgents(registry.agents, supplementalAcpAgents) }
+      : registry;
   const readCachedRegistry = fileSystem
     .readFileString(registryCachePath)
-    .pipe(Effect.flatMap(decodeRegistryText), Effect.option);
+    .pipe(
+      Effect.flatMap(decodeRegistryText),
+      Effect.map(supplementOfficialRegistry),
+      Effect.option,
+    );
 
   const writeRegistryCache = (text: string) =>
     random.uuidV4().pipe(
@@ -851,7 +866,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         detail: "ACP Registry index is not valid UTF-8.",
       });
     }
-    const registry = yield* decodeRegistryText(collected.text);
+    const registry = supplementOfficialRegistry(yield* decodeRegistryText(collected.text));
     yield* writeRegistryCache(collected.text);
     return registry;
   });
@@ -1700,7 +1715,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   );
 
   const validateLocalExecutable = (command: string) =>
-    platform === "win32" && /\.(?:cmd|bat)$/iu.test(command)
+    platform === "win32" && /\.(?:cmd|bat)$/iu.test(command) && npmShimScript(command) === undefined
       ? Effect.fail(
           new AcpRegistryError({
             reason: "runner_unavailable",
@@ -1710,13 +1725,36 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         )
       : Effect.void;
 
+  const launchLocalExecutable = (
+    command: string,
+    args: ReadonlyArray<string>,
+    env: NodeJS.ProcessEnv,
+  ) => {
+    const script = platform === "win32" ? npmShimScript(command) : undefined;
+    if (script === undefined) return { command, args };
+    const node =
+      resolveExecutable(command.replace(/[^\\/]+$/u, "node.exe"), platform, env) ??
+      resolveExecutable("node", platform, env);
+    if (node === undefined) {
+      return new AcpRegistryError({
+        reason: "runner_unavailable",
+        detail: "Node.js is required to launch this npm ACP command.",
+      });
+    }
+    return { command: node, args: [script, ...args] };
+  };
+
   const inspect: AcpRegistryCatalog["Service"]["inspect"] = Effect.fn("AcpRegistryCatalog.inspect")(
     function* (settings, environment) {
       if (settings.source === "local") {
         const command = settings.commandPath.trim();
         if (!command) return { status: "unconfigured" } as const;
         const executable = resolveExecutable(command, platform, environment ?? hostEnvironment);
-        if (executable !== undefined) yield* validateLocalExecutable(executable);
+        if (executable !== undefined) {
+          yield* validateLocalExecutable(executable);
+          const launched = launchLocalExecutable(executable, [], environment ?? hostEnvironment);
+          if (launched instanceof AcpRegistryError) return yield* launched;
+        }
         return executable === undefined
           ? ({
               status: "missing_runner",
@@ -1843,9 +1881,17 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           });
         }
         yield* validateLocalExecutable(command);
+        const launched = launchLocalExecutable(command, settings.commandArgs, env);
+        if (launched instanceof AcpRegistryError) return yield* launched;
         return {
           distribution: "local",
-          spawn: { command, args: settings.commandArgs, cwd, env, shell: false },
+          spawn: {
+            command: launched.command,
+            args: launched.args,
+            cwd,
+            env,
+            shell: false,
+          },
         } satisfies ResolvedAcpRegistryAgent;
       }
       const agentId = settings.agentId.trim();

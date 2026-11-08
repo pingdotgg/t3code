@@ -28,16 +28,36 @@ provider instance's environment overrides to use ACP v1.
 Search only shows agents that can run on the connected server. Registry agents are third-party
 code; review an agent's source and license before adding it.
 
+Search also lists DeepSeek Harness and ZCode. T3 Code installs those itself:
+
+| Agent                                                               | What T3 Code runs                                       |
+| ------------------------------------------------------------------- | ------------------------------------------------------- |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `dsh --profile acp` from `@deepseek-ai/dsh`             |
+| [ZCode bridge](https://github.com/supermomonga/zcode-acp)           | the `zcode-acp` binary from the bridge's GitHub release |
+
+DeepSeek Harness is the `dsh` CLI. Its ACP mode is a profile, not a separate program. Credentials
+stay in the `dsh` profile, and the sign-in step can be skipped when the CLI advertises no login.
+ZCode still needs a compatible ZCode desktop installation. The bridge is unofficial. Select **Add**
+for either agent, then complete the sign-in step.
+
 ## Add a local command
 
 In **Settings → Providers → Add provider**, select **Show more**, then **Local ACP command**. Enter the executable
 name or path on the selected environment, add one literal argument per row, and choose a display
-name. For DeepSeek Harness, use `dsh` with arguments `--profile` and `acp`.
+name.
+
+Available models and session controls follow each agent's advertised capabilities. DeepSeek's
+automation ACP profile does not provide transcript replay or session forking. Existing instances
+can also be used from mobile.
 
 Local commands require no registry entry or download. Environment overrides apply to the command;
 credentials and skills remain managed by the installed agent or its wrapper. Models and reasoning
 options come from ACP, including model IDs that contain JSON. T3 Code launches the executable directly
 without expanding shell expressions.
+
+On Windows, standard npm Node.js launchers (such as `dsh.cmd`) are resolved to their
+Node.js script and launched directly. Custom batch scripts still require an explicit underlying
+executable and literal arguments.
 
 ## Where agents run
 
@@ -53,9 +73,10 @@ but keeps package installs. To use an existing local binary, set **Executable ov
 
 ## Signing in
 
-Open the agent's account section in **Settings → Providers** on web or desktop. Choose
-**Sign in** and, if the agent offers several methods, select one. For an installed, configured
-provider, mobile also offers **Settings → Providers**.
+Open the agent's account section in **Settings → Providers** on web or desktop, or finish the
+sign-in step shown after adding the instance. Choose **Sign in** and, if the agent offers several
+methods, select one. Local commands use this same account section once they advertise a login.
+For an installed, configured provider, mobile also offers **Settings → Providers**.
 
 Browser sign-in shows the agent's URL and waits for you to open or copy it before telling the
 agent to proceed. The page opens on your device, while the agent runs on the environment.
