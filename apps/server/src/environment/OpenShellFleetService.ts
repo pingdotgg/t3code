@@ -59,27 +59,27 @@ const isDriverError = Schema.is(OpenShellGatewayDriverError);
 const offHere = "OpenShell fleet management is off here.";
 const fleetOperationFailed = "The fleet operation failed.";
 
-export class OpenShellFleetDisabled extends Schema.TaggedError<OpenShellFleetDisabled>()(
-  "OpenShellFleetDisabled",
-  { message: Schema.String },
-) {}
+export class OpenShellFleetDisabled extends Schema.TaggedError<
+  OpenShellFleetDisabled,
+  { readonly brand: unique symbol }
+>()("OpenShellFleetDisabled", { message: Schema.String }) {}
 
-export class OpenShellFleetSpawnRefused extends Schema.TaggedError<OpenShellFleetSpawnRefused>()(
-  "OpenShellFleetSpawnRefused",
-  {
-    reason: Schema.Literals(["runtime_mode_above_ceiling", "unknown_template"]),
-    message: Schema.String,
-  },
-) {}
+export class OpenShellFleetSpawnRefused extends Schema.TaggedError<
+  OpenShellFleetSpawnRefused,
+  { readonly brand: unique symbol }
+>()("OpenShellFleetSpawnRefused", {
+  reason: Schema.Literals(["runtime_mode_above_ceiling", "unknown_template"]),
+  message: Schema.String,
+}) {}
 
-export class OpenShellFleetOperationFailed extends Schema.TaggedError<OpenShellFleetOperationFailed>()(
-  "OpenShellFleetOperationFailed",
-  {
-    operation: Schema.Literals(["spawn", "remove", "list"]),
-    message: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
+export class OpenShellFleetOperationFailed extends Schema.TaggedError<
+  OpenShellFleetOperationFailed,
+  { readonly brand: unique symbol }
+>()("OpenShellFleetOperationFailed", {
+  operation: Schema.Literals(["spawn", "remove", "list"]),
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 export type OpenShellFleetError =
   | OpenShellFleetDisabled
