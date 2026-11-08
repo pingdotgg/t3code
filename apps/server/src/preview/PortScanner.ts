@@ -115,6 +115,12 @@ interface TerminalProcessOwner {
 
 type ServerOwner = Pick<DiscoveredLocalServer, "terminal" | "agent">;
 
+interface ListenerLaunch {
+  readonly threadId: ThreadId | null;
+  /** The title a macOS process set, which lsof's exec-time name never shows. */
+  readonly title: string | null;
+}
+
 const UNOWNED: ServerOwner = { terminal: null, agent: null };
 
 const isOwned = (server: DiscoveredLocalServer): boolean =>
@@ -214,6 +220,7 @@ const projectWebProbeSnapshot = (
 const parseLsofOutput = (
   raw: string,
   owners: ReadonlyMap<number, ServerOwner> = new Map(),
+  launches: ReadonlyMap<number, ListenerLaunch> = new Map(),
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<string, DiscoveredLocalServer>();
   let pid: number | null = null;
@@ -248,7 +255,7 @@ const parseLsofOutput = (
         host: "localhost",
         port: portMatch,
         url,
-        processName,
+        processName: (pid === null ? null : launches.get(pid)?.title) ?? processName,
         pid,
         ...(owner ?? UNOWNED),
       });
@@ -369,17 +376,22 @@ const parseProcEnvironThread = (raw: string): ThreadId | null => {
 
 /**
  * Reads macOS `ps -E -o pid=,command=`, which appends each process's launch environment to its
- * argv with spaces, so an argument that spells the assignment out also matches.
+ * argv with spaces, so an argument that spells the assignment out also matches. An argv[0] without
+ * a `/` is a title the process set; a path names its executable, as lsof does, and may hold spaces.
  */
-const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | null> => {
-  const threads = new Map<number, ThreadId | null>();
+const parsePsLaunches = (raw: string): ReadonlyMap<number, ListenerLaunch> => {
+  const launches = new Map<number, ListenerLaunch>();
   for (const line of raw.split("\n")) {
     const match = /^\s*(\d+)\s(.*)$/.exec(line);
     if (!match) continue;
     const value = AGENT_THREAD_ASSIGNMENT.exec(match[2]!)?.[1];
-    threads.set(Number(match[1]), value ? ThreadId.make(value) : null);
+    const argv0 = match[2]!.split(" ", 1)[0] ?? "";
+    launches.set(Number(match[1]), {
+      threadId: value ? ThreadId.make(value) : null,
+      title: argv0.length > 0 && !argv0.includes("/") ? argv0 : null,
+    });
   }
-  return threads;
+  return launches;
 };
 
 const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> => {
@@ -472,71 +484,80 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ReadonlyMap<string, { readonly pid: number; readonly processName: string | null }>
   >(new Map());
   const socketOwnerMissesRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
-  // Each current listener pid's agent thread, or null without one. A process keeps its launch
-  // environment, so a pid is read once while it listens. Cleared while no client retains the
+  // Each current listener pid's launch. A process keeps its launch environment, and its title once
+  // it listens, so a pid is read once while it listens. Cleared while no client retains the
   // scanner, since unscanned pids can be reused.
-  const agentThreadsRef = yield* Ref.make<ReadonlyMap<number, ThreadId | null>>(new Map());
+  const launchesRef = yield* Ref.make<ReadonlyMap<number, ListenerLaunch>>(new Map());
   let runningAgents = 0;
   // An agent that exited, or a cache cleared with a marked listener, owes one listener read: the
   // servers it left may still run. So does startup, for agents that ran before a restart.
   let agentScanPending = true;
+  // lsof on macOS reports the exec-time name, so the environment read there covers every listener.
+  const readsTitles = hostPlatform !== "linux";
 
-  const readAgentThreads = Effect.fn("PortDiscovery.readAgentThreads")(function* (
-    pids: ReadonlyArray<number>,
-  ) {
-    const cached = yield* Ref.get(agentThreadsRef);
+  // Runs on every macOS poll, so only an uncached read is traced.
+  const readLaunches = Effect.fnUntraced(function* (pids: ReadonlyArray<number>) {
+    const cached = yield* Ref.get(launchesRef);
     const unread = pids.filter((pid) => !cached.has(pid));
-    const read: ReadonlyMap<number, ThreadId | null> =
+    const read: ReadonlyMap<number, ListenerLaunch> =
       unread.length === 0
         ? new Map()
-        : hostPlatform === "linux"
-          ? new Map(
-              yield* Effect.forEach(
-                unread,
-                (pid) =>
-                  fileSystem.readFileString(`/proc/${pid}/environ`).pipe(
-                    Effect.map(parseProcEnvironThread),
-                    Effect.orElseSucceed(() => null),
-                    Effect.map((threadId) => [pid, threadId] as const),
-                  ),
-                { concurrency: 16 },
-              ),
-            )
-          : yield* processRunner
-              .run({
-                command: "ps",
-                args: ["-E", "-ww", "-o", "pid=,command=", "-p", unread.join(",")],
-                timeout: Duration.millis(PS_TIMEOUT_MS),
-                maxOutputBytes: PS_MAX_OUTPUT_BYTES,
-              })
-              .pipe(
-                Effect.map((result) => parsePsEnvironmentThreads(result.stdout)),
-                Effect.orElseSucceed(() => {
-                  agentScanPending = true;
-                  return new Map();
-                }),
-              );
-    const next = new Map<number, ThreadId | null>();
+        : yield* (
+            hostPlatform === "linux"
+              ? Effect.forEach(
+                  unread,
+                  (pid) =>
+                    fileSystem.readFileString(`/proc/${pid}/environ`).pipe(
+                      Effect.map(parseProcEnvironThread),
+                      Effect.orElseSucceed(() => null),
+                      Effect.map((threadId) => [pid, { threadId, title: null }] as const),
+                    ),
+                  { concurrency: 16 },
+                ).pipe(Effect.map((entries) => new Map(entries)))
+              : processRunner
+                  .run({
+                    command: "ps",
+                    args: ["-E", "-ww", "-o", "pid=,command=", "-p", unread.join(",")],
+                    timeout: Duration.millis(PS_TIMEOUT_MS),
+                    maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+                  })
+                  .pipe(
+                    Effect.map((result) => parsePsLaunches(result.stdout)),
+                    Effect.orElseSucceed(() => {
+                      agentScanPending = true;
+                      return new Map<number, ListenerLaunch>();
+                    }),
+                  )
+          ).pipe(Effect.withSpan("PortDiscovery.readLaunches"));
+    const next = new Map<number, ListenerLaunch>();
     for (const pid of pids) {
-      const threadId = cached.has(pid) ? cached.get(pid) : read.get(pid);
-      if (threadId !== undefined) next.set(pid, threadId);
+      const launch = cached.get(pid) ?? read.get(pid);
+      if (launch !== undefined) next.set(pid, launch);
     }
-    yield* Ref.set(agentThreadsRef, next);
+    yield* Ref.set(launchesRef, next);
     return next;
   });
 
-  const withAgentOwners = Effect.fn("PortDiscovery.withAgentOwners")(function* (
+  const resolveListeners = Effect.fnUntraced(function* (
     terminalOwners: ReadonlyMap<number, ServerOwner>,
     pids: ReadonlyArray<number>,
+    agentsPossible: boolean,
   ) {
-    // Runs only once a listener snapshot exists, so a failed read leaves the scan pending.
-    agentScanPending = false;
-    const threads = yield* readAgentThreads(pids.filter((pid) => !terminalOwners.has(pid)));
-    const owners = new Map(terminalOwners);
-    for (const [pid, threadId] of threads) {
-      if (threadId !== null) owners.set(pid, { terminal: null, agent: { threadId } });
+    if (!agentsPossible && !readsTitles) {
+      return { owners: terminalOwners, launches: new Map<number, ListenerLaunch>() };
     }
-    return owners;
+    // Runs only once a listener snapshot exists, so a failed read leaves the scan pending.
+    if (agentsPossible) agentScanPending = false;
+    const launches = yield* readLaunches(
+      readsTitles ? pids : pids.filter((pid) => !terminalOwners.has(pid)),
+    );
+    const owners = new Map(terminalOwners);
+    for (const [pid, { threadId }] of launches) {
+      if (threadId !== null && !terminalOwners.has(pid)) {
+        owners.set(pid, { terminal: null, agent: { threadId } });
+      }
+    }
+    return { owners, launches };
   });
 
   const findSocketOwners = Effect.fn("PortDiscovery.findSocketOwners")(function* (
@@ -813,12 +834,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       hostPlatform !== "win32" &&
       (runningAgents > 0 ||
         agentScanPending ||
-        [...(yield* Ref.get(agentThreadsRef)).values()].some((threadId) => threadId !== null));
+        [...(yield* Ref.get(launchesRef)).values()].some(({ threadId }) => threadId !== null));
     if (terminalOwners.size === 0 && configuredUrls.length === 0 && !agentsPossible) {
       return { discovered: [], configured: new Map() } satisfies WebProbeSnapshot;
     }
     const resolveOwners = (pids: ReadonlyArray<number>) =>
-      agentsPossible ? withAgentOwners(terminalOwners, pids) : Effect.succeed(terminalOwners);
+      resolveListeners(terminalOwners, pids, agentsPossible).pipe(
+        Effect.map(({ owners }) => owners),
+      );
     if (hostPlatform === "win32") {
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
       const listeners = yield* WindowsTcpListeners.queryWindowsTcpListeners(
@@ -854,8 +877,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       })
       .pipe(
         Effect.flatMap((result) =>
-          resolveOwners(lsofProcessIds(result.stdout)).pipe(
-            Effect.map((owners) => parseLsofOutput(result.stdout, owners)),
+          resolveListeners(terminalOwners, lsofProcessIds(result.stdout), agentsPossible).pipe(
+            Effect.map(({ owners, launches }) => parseLsofOutput(result.stdout, owners, launches)),
           ),
         ),
         Effect.catchTags({
@@ -943,8 +966,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       Effect.gen(function* () {
         yield* Ref.set(socketOwnersRef, new Map());
         yield* Ref.set(socketOwnerMissesRef, new Map());
-        const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
-        if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
+        const launches = yield* Ref.getAndSet(launchesRef, new Map());
+        if ([...launches.values()].some(({ threadId }) => threadId !== null)) {
+          agentScanPending = true;
+        }
       }),
     );
   });
@@ -1049,8 +1074,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     );
     // The pid comes from a client, so only a server this scan attributes to a thread is signaled,
     // from its environment as read now.
-    yield* Ref.update(agentThreadsRef, (threads) => {
-      const next = new Map(threads);
+    yield* Ref.update(launchesRef, (launches) => {
+      const next = new Map(launches);
       next.delete(input.pid);
       return next;
     });

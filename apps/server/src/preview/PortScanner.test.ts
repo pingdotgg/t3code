@@ -603,7 +603,7 @@ effectIt.effect.each([
         }),
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (input) => {
-            lsofSpawns += 1;
+            if (input.command === "lsof") lsofSpawns += 1;
             if (mode === "fd-budget-no-lsof") return processProbeFailure(input);
             return Effect.succeed(processOutput(`p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`));
           },
@@ -972,6 +972,37 @@ effectIt.effect("labels a terminal's servers on macOS by their process titles", 
       { port: 4321, processName: "api", terminalId: "scanner-terminal" },
       { port: 4322, processName: "web", terminalId: "scanner-terminal" },
     ]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect.each([
+  {
+    source: "an executable path with spaces",
+    ps: (() =>
+      Effect.succeed(
+        processOutput("1234 /Applications/Foo Bar.app/Contents/MacOS/Foo Bar HOME=/Users/dev\n"),
+      )) satisfies ProcessRunner.ProcessRunner["Service"]["run"],
+  },
+  { source: "a failed ps", ps: processProbeFailure },
+])("keeps lsof's name on macOS for $source", ({ ps }) => {
+  const layer = PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            input.command === "lsof"
+              ? Effect.succeed(processOutput(`p1234\ncFoo Bar\nn*:${LSOF_TEST_PORT}\n`))
+              : ps(input),
+        }),
+        Layer.succeed(HostProcess.Platform, "darwin"),
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner();
+    expect((yield* scanner.scan()).map(({ processName }) => processName)).toEqual(["Foo Bar"]);
   }).pipe(Effect.provide(layer));
 });
 
