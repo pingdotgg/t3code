@@ -32,6 +32,16 @@ const testCallName = (callee: unknown): Option.Option<string> => {
   return Option.some(`${object.value.name}.${property.value}`);
 };
 
+const eachSuiteName = (callee: unknown): Option.Option<string> => {
+  const call = unwrapExpression(callee);
+  if (Option.isNone(call) || call.value.type !== "CallExpression") return Option.none();
+  const member = unwrapExpression(call.value.callee);
+  if (Option.isNone(member) || member.value.type !== "MemberExpression") return Option.none();
+  const property = getPropertyName(member.value.property);
+  if (Option.isNone(property) || property.value !== "each") return Option.none();
+  return testCallName(member.value.object);
+};
+
 const isInsideLoop = (node: ESTree.Node): boolean => {
   let current = node.parent;
   while (current) {
@@ -57,12 +67,20 @@ export default defineRule({
     return {
       CallExpression(node) {
         const name = testCallName(node.callee);
-        if (Option.isNone(name)) return;
-        if (!isInsideLoop(node)) return;
+        if (Option.isSome(name)) {
+          if (!isInsideLoop(node)) return;
+          context.report({
+            node: node.callee,
+            message: `Do not call ${name.value}(…) inside a for loop. Use ${name.value}.each(cases)(name, …) instead.`,
+          });
+          return;
+        }
 
+        const each = eachSuiteName(node.callee);
+        if (Option.isNone(each) || !isInsideLoop(node)) return;
         context.report({
           node: node.callee,
-          message: `Do not call ${name.value}(…) inside a for loop. Use ${name.value}.each(cases)(name, …) instead.`,
+          message: `Do not call ${each.value}.each(…)(…) inside a for loop. Fold the loop into one ${each.value}.each(cases) list instead.`,
         });
       },
     };
