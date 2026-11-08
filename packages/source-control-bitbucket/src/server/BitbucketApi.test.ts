@@ -390,7 +390,14 @@ it.effect.each([false, true])(
 
     return Effect.gen(function* () {
       const bitbucket = yield* BitbucketApi.BitbucketApi;
-      for (const repository of ["t3code", "", " \t ", "pingdotgg/.git", "pingdotgg/.git/"]) {
+      for (const repository of [
+        "t3code",
+        "",
+        " \t ",
+        "pingdotgg/.git",
+        "pingdotgg/.git/",
+        "https://bitbucket.org/pingdotgg/.git/",
+      ]) {
         const error = yield* bitbucket
           .getRepositoryCloneUrls({
             cwd: "/repo",
