@@ -46,8 +46,9 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
 
 const TITLE_BAR_MARGIN = 32;
 const TITLE_BAR_BUTTON = 44;
-/** Liquid-glass trailing clusters sit wider than the 44pt hit target; keep a clear edge. */
-const TITLE_TRAILING_GAP = 24;
+/** Liquid-glass chrome extends past the 44pt hit target; trailing clusters need more. */
+const TITLE_LEADING_GLASS = 12;
+const TITLE_TRAILING_GLASS = 36;
 
 /** Custom title that long-presses open a menu without UIKit's title-menu chevron. */
 function AppBarTitleMenu(props: {
@@ -64,9 +65,10 @@ function AppBarTitleMenu(props: {
   const screenWidth = columnWidth ?? windowWidth;
   // Editor-style titleView sits after leading chrome (not bar-centered). Size to the remaining
   // gap so the label fills it and ellipsizes only against trailing actions.
-  const leadingWidth = TITLE_BAR_MARGIN / 2 + props.leadingButtons * TITLE_BAR_BUTTON;
+  const leadingWidth =
+    TITLE_BAR_MARGIN / 2 + props.leadingButtons * TITLE_BAR_BUTTON + TITLE_LEADING_GLASS;
   const trailingWidth =
-    TITLE_BAR_MARGIN / 2 + props.trailingButtons * TITLE_BAR_BUTTON + TITLE_TRAILING_GAP;
+    TITLE_BAR_MARGIN / 2 + props.trailingButtons * TITLE_BAR_BUTTON + TITLE_TRAILING_GLASS;
   const width = Math.max(TITLE_BAR_BUTTON, screenWidth - leadingWidth - trailingWidth);
   return (
     <View style={{ width, overflow: "hidden" }}>
