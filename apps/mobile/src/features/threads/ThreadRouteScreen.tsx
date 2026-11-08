@@ -437,7 +437,11 @@ function ThreadRouteContent(
       : null,
   );
   const mergedBack =
-    pendingMergeBack?.sourceThreadId === selectedThread?.id ? pendingMergeBack : null;
+    pendingMergeBack !== null &&
+    selectedThread !== null &&
+    pendingMergeBack.sourceThreadId === selectedThread.id
+      ? pendingMergeBack
+      : null;
   const mergeBackBusyRef = useRef(false);
   const handleMergeBack = async () => {
     if (mergeBackBusyRef.current || !selectedThread || mergeBackTargetThreadId === null) return;
