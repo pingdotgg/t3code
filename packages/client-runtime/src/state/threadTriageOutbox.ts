@@ -219,7 +219,10 @@ export function createThreadTriageOutbox<R, E>(input: {
     const entries = transform(document.entries);
     if (entries !== document.entries) registry.set(documentAtom, { entries });
   };
+  /** Counts removals, so a queue write that lands after one is undone. */
+  const removals = new Map<EnvironmentId, number>();
   const clearLocal = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
+    removals.set(environmentId, (removals.get(environmentId) ?? 0) + 1);
     if (registry.get(documentAtom) === null) return;
     setLocal(registry, (entries) =>
       entries.filter((entry) => entry.environmentId !== environmentId),
@@ -245,6 +248,8 @@ export function createThreadTriageOutbox<R, E>(input: {
     return removed;
   };
 
+  /** Answered this session; storage that failed to drop one must not make replay send it again. */
+  const answered = new Set<CommandId>();
   const replaying = new Set<EnvironmentId>();
   const replayAgain = new Set<EnvironmentId>();
   const isLive = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
@@ -275,7 +280,9 @@ export function createThreadTriageOutbox<R, E>(input: {
     // Storage decides what to send: another tab may have queued, replaced, or cancelled a change.
     const loaded = await store.run(registry, { _tag: "refresh" });
     if (lifetime.ended || !AsyncResult.isSuccess(loaded)) return;
-    const stored = loaded.value.entries.filter((entry) => entry.environmentId === environmentId);
+    const stored = loaded.value.entries.filter(
+      (entry) => entry.environmentId === environmentId && !answered.has(entry.commandId),
+    );
     setLocal(registry, (entries) => {
       const kept = entries.filter(
         (entry) =>
@@ -290,6 +297,7 @@ export function createThreadTriageOutbox<R, E>(input: {
         entry.action.type === "snooze" &&
         !(Date.parse(entry.action.snoozedUntil) > DateTime.toEpochMillis(DateTime.nowUnsafe()))
       ) {
+        answered.add(entry.commandId);
         await forget(registry, entry);
         if (lifetime.ended) return;
         continue;
@@ -305,6 +313,7 @@ export function createThreadTriageOutbox<R, E>(input: {
       const result = await input.replay(registry, entry);
       if (lifetime.ended) return;
       if (!AsyncResult.isSuccess(result) && isTransient(result.cause)) return;
+      answered.add(entry.commandId);
       await forget(registry, entry);
       if (lifetime.ended) return;
     }
@@ -360,6 +369,7 @@ export function createThreadTriageOutbox<R, E>(input: {
       run: async (registry, target) => {
         const { environmentId } = target;
         const key = { environmentId, threadId: target.input.threadId };
+        const removalsBefore = removals.get(environmentId) ?? 0;
         // The server compares against what the user saw when acting, not what arrives later.
         const snapshot = registry.get(input.sourceSnapshotAtom(environmentId));
         const thread = snapshot?.threads.find((candidate) => candidate.id === key.threadId);
@@ -424,6 +434,10 @@ export function createThreadTriageOutbox<R, E>(input: {
             : result;
         }
         const entry = queued.value.entries[0]!;
+        if ((removals.get(environmentId) ?? 0) !== removalsBefore) {
+          await forget(registry, entry);
+          return result;
+        }
         setLocal(registry, (entries) => [
           ...entries.filter((existing) => !sameThreadTriage(existing, entry)),
           entry,

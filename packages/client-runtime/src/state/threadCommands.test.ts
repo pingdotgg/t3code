@@ -1038,6 +1038,100 @@ describe("settle and snooze while the environment is offline", () => {
     }),
   );
 
+  it.effect("does not keep a change queued while its environment was being removed", () =>
+    Effect.gen(function* () {
+      const putStarted = yield* Deferred.make<void>();
+      const putReleased = yield* Deferred.make<void>();
+      const h = yield* makeHarness({
+        connected: false,
+        wrapStore: (store) => ({
+          ...store,
+          put: (entry) =>
+            Deferred.succeed(putStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(putReleased)),
+              Effect.andThen(store.put(entry)),
+            ),
+        }),
+      });
+      const pending = h.commands.pendingSyncAtom(ENVIRONMENT_ID);
+      h.registry.mount(pending);
+      const queued = h.commands.settle.run(h.registry, settle);
+      yield* Deferred.await(putStarted);
+      yield* h.store.clearEnvironment(ENVIRONMENT_ID);
+      yield* Deferred.succeed(putReleased, undefined);
+      expect((yield* Effect.promise(() => queued))._tag).toBe("Failure");
+      expect(h.registry.get(pending).size).toBe(0);
+      expect(stored(h.storage)).toEqual([]);
+    }),
+  );
+
+  it.effect("sends a replayed change once even when storage cannot drop it", () =>
+    Effect.gen(function* () {
+      const loads = yield* Queue.unbounded<void>();
+      const h = yield* makeHarness({
+        connected: false,
+        wrapStore: (store) => ({
+          ...store,
+          load: store.load.pipe(Effect.tap(() => Queue.offer(loads, undefined))),
+          remove: () => Effect.fail(new ThreadTriageOutboxStorageError({ cause: "disk full" })),
+        }),
+      });
+      const pending = h.commands.pendingSyncAtom(ENVIRONMENT_ID);
+      h.registry.mount(pending);
+      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
+      yield* h.reconnect();
+      const replay = yield* Queue.take(h.requests);
+      yield* Queue.clear(loads);
+      yield* Deferred.succeed(replay.reply, { sequence: 2 });
+      // Forgetting it locally starts another pass, which reads the entry storage kept.
+      yield* Queue.take(loads);
+      const next = yield* Effect.raceFirst(
+        Queue.take(h.requests).pipe(Effect.as("sent again" as const)),
+        h.disconnect.pipe(
+          Effect.andThen(h.reconnect()),
+          Effect.andThen(Queue.take(loads)),
+          Effect.as("quiet" as const),
+        ),
+      );
+      expect(next).toBe("quiet");
+      expect(h.registry.get(pending).size).toBe(0);
+    }),
+  );
+
+  it.effect("does not send a queued change it cannot record as sent", () =>
+    Effect.gen(function* () {
+      const markFailed = yield* Deferred.make<void>();
+      let failMark = true;
+      const h = yield* makeHarness({
+        connected: false,
+        wrapStore: (store) => ({
+          ...store,
+          markAttempted: (entry) =>
+            failMark
+              ? Deferred.succeed(markFailed, undefined).pipe(
+                  Effect.andThen(
+                    Effect.fail(new ThreadTriageOutboxStorageError({ cause: "disk full" })),
+                  ),
+                )
+              : store.markAttempted(entry),
+        }),
+      });
+      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
+      yield* h.reconnect();
+      const first = yield* Effect.raceFirst(
+        Deferred.await(markFailed).pipe(Effect.as("not sent" as const)),
+        Queue.take(h.requests).pipe(Effect.as("sent" as const)),
+      );
+      expect(first).toBe("not sent");
+      failMark = false;
+      // A second reconnect only replays after the first attempt finished.
+      yield* h.disconnect;
+      yield* h.reconnect();
+      const request = yield* Queue.take(h.requests);
+      expect(request.command.type).toBe("thread.settle");
+    }),
+  );
+
   it.effect("forgets an environment's queued changes in memory when it is removed", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ connected: false });
