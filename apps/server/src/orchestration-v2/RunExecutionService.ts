@@ -929,7 +929,7 @@ export const layer: Layer.Layer<
                   .responseStreamingMode,
             ),
           );
-          // Shared-workspace threads share a worktree; a snapshot would capture the parent's edits.
+          // Side chats and lessons share a checkout others edit; a snapshot would capture their edits.
           yield* (
             input.appThread.lineage.sideChat === true ||
             input.appThread.lesson !== undefined ||
