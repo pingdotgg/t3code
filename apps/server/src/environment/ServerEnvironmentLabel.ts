@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -42,6 +43,11 @@ export class ServerEnvironmentLabelCommandError extends Schema.TaggedError<Serve
     return `Failed to run environment-label probe '${this.probe}' with ${this.executable}.`;
   }
 }
+
+const configuredLabel = Config.String("T3CODE_ENVIRONMENT_LABEL").pipe(
+  Config.withDefault(""),
+  Effect.orDie,
+);
 
 function normalizeLabel(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
@@ -182,6 +188,11 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
+  const label = normalizeLabel(yield* configuredLabel);
+  if (label) {
+    return label;
+  }
+
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;

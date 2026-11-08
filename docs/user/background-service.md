@@ -68,6 +68,10 @@ T3CODE_PORT=3773
 T3CODE_HOST=127.0.0.1
 ```
 
+Clients name this server after the machine. When two macOS users on one Mac each
+run a server, both show the same name. Set `T3CODE_ENVIRONMENT_LABEL` to give
+this one its own name, for example `T3CODE_ENVIRONMENT_LABEL=Alex`.
+
 Use `KEY=VALUE` entries, quoting values that contain spaces or `#`. Values are
 literal: shell commands and variable expansion are not evaluated. Entries
 override the inherited service environment, except for `PATH`, `T3CODE_HOME`,
