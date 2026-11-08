@@ -23,12 +23,10 @@ export type PendingThreadTriage = typeof PendingThreadTriage.Type;
 
 const ThreadTriageOutboxDocument = Schema.Struct({
   entries: Schema.Array(PendingThreadTriage),
-  /** Environments whose last loaded session could change threads. */
-  operableEnvironmentIds: Schema.Array(EnvironmentId),
 });
 export type ThreadTriageOutboxDocument = typeof ThreadTriageOutboxDocument.Type;
 
-const EMPTY_DOCUMENT: ThreadTriageOutboxDocument = { entries: [], operableEnvironmentIds: [] };
+const EMPTY_DOCUMENT: ThreadTriageOutboxDocument = { entries: [] };
 const StoredDocument = Schema.fromJsonString(ThreadTriageOutboxDocument);
 const decodeStored = Schema.decodeUnknownExit(StoredDocument);
 const encodeStored = Schema.encodeSync(StoredDocument);
@@ -62,26 +60,18 @@ export const sameThreadTriage = (a: ThreadTriageKey, b: ThreadTriageKey) =>
  */
 export interface ThreadTriageOutboxStoreShape {
   readonly load: Effect.Effect<ThreadTriageOutboxDocument, ThreadTriageOutboxStorageError>;
-  /**
-   * Replaces any entry for the same thread, keeping its `attempted` mark. `stillCurrent` runs
-   * inside the store's lock, after any earlier removal, so a write for a removed environment is
-   * skipped.
-   */
+  /** Replaces any entry for the same thread, keeping its `attempted` mark. */
   readonly put: (
     entry: PendingThreadTriage,
-    stillCurrent?: () => boolean,
   ) => Effect.Effect<void, ThreadTriageOutboxStorageError | ThreadTriagePendingSettleError>;
   /** Only removes the entry if it still has this command id. */
   readonly remove: (
     entry: ThreadTriageKey & Pick<PendingThreadTriage, "commandId">,
   ) => Effect.Effect<void, ThreadTriageOutboxStorageError>;
-  /**
-   * Marks whatever is stored for the thread as sent and returns it, which may be another tab's
-   * replacement. Returns nothing when the thread has no stored change.
-   */
+  /** Marks the entry as sent; false when it was cancelled or replaced since it was read. */
   readonly markAttempted: (
-    key: ThreadTriageKey,
-  ) => Effect.Effect<PendingThreadTriage | undefined, ThreadTriageOutboxStorageError>;
+    entry: ThreadTriageKey & Pick<PendingThreadTriage, "commandId">,
+  ) => Effect.Effect<boolean, ThreadTriageOutboxStorageError>;
   /**
    * Removes the entry only if it still has this command id and was never sent. Otherwise it
    * reports whether the entry was sent or is gone, and leaves storage as it is.
@@ -89,11 +79,6 @@ export interface ThreadTriageOutboxStoreShape {
   readonly cancel: (
     entry: ThreadTriageKey & Pick<PendingThreadTriage, "commandId">,
   ) => Effect.Effect<"cancelled" | "attempted" | "gone", ThreadTriageOutboxStorageError>;
-  readonly setOperable: (
-    environmentId: EnvironmentId,
-    operable: boolean,
-    stillCurrent?: () => boolean,
-  ) => Effect.Effect<void, ThreadTriageOutboxStorageError | ThreadTriagePendingSettleError>;
   readonly clearEnvironment: (
     environmentId: EnvironmentId,
   ) => Effect.Effect<void, ThreadTriageOutboxStorageError>;
@@ -170,21 +155,19 @@ export function makeThreadTriageOutboxStore(storage: {
     );
   const updateEntries = (
     transform: (entries: ReadonlyArray<PendingThreadTriage>) => ReadonlyArray<PendingThreadTriage>,
-  ) => update((document) => ({ ...document, entries: transform(document.entries) }));
+  ) => update((document) => ({ entries: transform(document.entries) }));
   return {
     load: lock.withPermits(1)(load),
-    put: (entry, stillCurrent) =>
+    put: (entry) =>
       Effect.suspend(() => {
         let blocked = false;
         return update((document) => {
-          if (stillCurrent?.() === false) return null;
           const replaced = document.entries.find((current) => sameThreadTriage(current, entry));
           if (replaced?.action.type === "settle" && entry.action.type === "snooze") {
             blocked = true;
             return null;
           }
           return {
-            ...document,
             entries: [
               ...document.entries.filter((current) => current !== replaced),
               // The replaced change may have reached the server, so the server must undo this one.
@@ -203,21 +186,18 @@ export function makeThreadTriageOutboxStore(storage: {
           (current) => !sameThreadTriage(current, entry) || current.commandId !== entry.commandId,
         ),
       ),
-    markAttempted: (key) =>
+    markAttempted: (entry) =>
       Effect.suspend(() => {
-        let marked: PendingThreadTriage | undefined;
+        let marked = false;
         return update((document) => {
-          const stored = document.entries.find((current) => sameThreadTriage(current, key));
-          if (stored === undefined) return null;
-          if (stored.attempted === true) {
-            marked = stored;
-            return null;
-          }
-          const next = { ...stored, attempted: true as const };
-          marked = next;
+          const stored = document.entries.find((current) => sameThreadTriage(current, entry));
+          if (stored?.commandId !== entry.commandId) return null;
+          marked = true;
+          if (stored.attempted === true) return null;
           return {
-            ...document,
-            entries: document.entries.map((current) => (current === stored ? next : current)),
+            entries: document.entries.map((current) =>
+              current === stored ? { ...stored, attempted: true as const } : current,
+            ),
           };
         }).pipe(Effect.map(() => marked));
       }),
@@ -232,28 +212,13 @@ export function makeThreadTriageOutboxStore(storage: {
             return null;
           }
           outcome = "cancelled";
-          return { ...document, entries: document.entries.filter((current) => current !== stored) };
+          return { entries: document.entries.filter((current) => current !== stored) };
         }).pipe(Effect.map(() => outcome));
       }),
-    setOperable: (environmentId, operable, stillCurrent) =>
-      update((document) =>
-        stillCurrent?.() === false
-          ? null
-          : {
-              ...document,
-              operableEnvironmentIds: [
-                ...document.operableEnvironmentIds.filter((id) => id !== environmentId),
-                ...(operable ? [environmentId] : []),
-              ],
-            },
-      ),
     clearEnvironment: (environmentId) =>
       update(
         (document) => ({
           entries: document.entries.filter((entry) => entry.environmentId !== environmentId),
-          operableEnvironmentIds: document.operableEnvironmentIds.filter(
-            (id) => id !== environmentId,
-          ),
         }),
         // The environment is gone even if storage failed, so memory must not replay it.
         Effect.sync(() => {

@@ -122,8 +122,6 @@ export function createThreadEnvironmentAtoms<R, E>(
     readonly shellStatusAtom?: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellStatus>;
     /** Whether the loaded session can change threads; null until it loads. */
     readonly operateScopeAtom?: (environmentId: EnvironmentId) => Atom.Atom<boolean | null>;
-    /** Whether the environment is registered; null until the catalog loads. */
-    readonly registeredAtom?: (environmentId: EnvironmentId) => Atom.Atom<boolean | null>;
     /** Cached config; offline changes queue only for servers that can check them. */
     readonly serverConfigAtom?: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
   } = {},
@@ -433,7 +431,10 @@ export function createThreadEnvironmentAtoms<R, E>(
   const triage = createThreadTriageOutbox({
     runtime,
     sourceSnapshotAtom: snapshotAtom,
-    ...options,
+    ...(options.shellStatusAtom === undefined ? {} : { shellStatusAtom: options.shellStatusAtom }),
+    ...(options.serverConfigAtom === undefined
+      ? {}
+      : { serverConfigAtom: options.serverConfigAtom }),
     applySettle: (thread, queuedAt) => applySettle(thread, queuedAt, false),
     applySnooze: (thread, snoozedUntil, queuedAt) =>
       applySnooze(thread, snoozedUntil, queuedAt, false),
@@ -456,7 +457,13 @@ export function createThreadEnvironmentAtoms<R, E>(
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
     pendingSyncAtom: triage.pendingSyncAtom,
-    offlineTriagePermittedAtom: triage.offlineTriagePermittedAtom,
+    /** Until a session loads, offline settle and snooze stay available; replay is checked again. */
+    offlineTriagePermittedAtom: Atom.family((environmentId: EnvironmentId) =>
+      Atom.make((get) => {
+        const operateScopeAtom = options.operateScopeAtom?.(environmentId);
+        return operateScopeAtom === undefined || get(operateScopeAtom) !== false;
+      }),
+    ),
     settle: triage.queueWhenOffline(settle, () => ({ type: "settle" as const })),
     unsettle: triage.cancelQueued(
       optimistic.wrap(commands.unsettle, (thread, input, now) => ({

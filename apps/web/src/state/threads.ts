@@ -36,13 +36,6 @@ export const olderSettledThreads = createOlderSettledThreadAtoms(
   connectionAtomRuntime,
   environmentShell.stateAtom,
 );
-// Null until the catalog loads; a removed environment is false.
-const environmentRegisteredAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make((get) => {
-    const catalog = get(environmentCatalog.catalogValueAtom);
-    return catalog.isReady ? catalog.entries.has(environmentId) : null;
-  }),
-);
 export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   threadFamilies.snapshotAtom,
@@ -50,10 +43,9 @@ export const threadEnvironment = createThreadEnvironmentAtoms(
     shellStatusAtom: environmentShell.statusAtom,
     operateScopeAtom: environmentSession.operateScopeAtom,
     serverConfigAtom: serverEnvironment.configValueAtom,
-    registeredAtom: environmentRegisteredAtom,
   },
 );
-/** Settle, snooze and their undo can queue offline where the last session could operate. */
+/** Settle, snooze and their undo can queue offline unless a loaded session denies it. */
 export function readThreadTriageScope(environmentId: EnvironmentId): boolean {
   return (
     readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||

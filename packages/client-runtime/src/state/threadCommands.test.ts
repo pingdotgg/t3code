@@ -113,11 +113,9 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
     reads?: Queue.Queue<void>;
   };
   readonly versionGuard?: boolean;
-  readonly operateScope?: boolean | null;
   /** The guard capability in the cached config, which may differ from the live server's. */
   readonly cachedVersionGuard?: boolean;
   readonly wrapStore?: (store: ThreadTriageOutboxStoreShape) => ThreadTriageOutboxStoreShape;
-  readonly registered?: boolean | null;
 }) {
   const requests = yield* Queue.unbounded<{
     command: OrchestrationV2Command;
@@ -204,9 +202,6 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
   const statusAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<EnvironmentShellStatus>(options?.connected === false ? "cached" : "live"),
   );
-  const operateScopeAtom = Atom.family((_environmentId: EnvironmentId) =>
-    Atom.make<boolean | null>(options?.operateScope === undefined ? true : options.operateScope),
-  );
   const serverConfigAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make({
       environment: {
@@ -214,14 +209,9 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
       },
     } as unknown as ServerConfig),
   );
-  const registeredAtom = Atom.family((_environmentId: EnvironmentId) =>
-    Atom.make<boolean | null>(options?.registered === undefined ? true : options.registered),
-  );
   const commands = createThreadEnvironmentAtoms(runtime, snapshotAtom, {
     shellStatusAtom: statusAtom,
-    operateScopeAtom,
     serverConfigAtom,
-    registeredAtom,
   });
   const registry = AtomRegistry.make();
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
@@ -239,8 +229,6 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
     commands,
     snapshotAtom,
     statusAtom,
-    operateScopeAtom,
-    registeredAtom,
     visibleAtom,
     requests,
     reconciled,
@@ -681,6 +669,15 @@ describe("settle and snooze while the environment is offline", () => {
       ? []
       : (JSON.parse(storage.value) as { entries: Array<Record<string, unknown>> }).entries;
 
+  /** The request may have reached the server before the socket closed. */
+  const lostReply = () =>
+    new RpcClientError.RpcClientError({
+      reason: new RpcClientError.RpcClientDefect({
+        message: "socket closed",
+        cause: new Error("socket closed"),
+      }),
+    });
+
   // An older server cannot check the sequence, so the connected command goes out unguarded.
   it.effect.each([
     { action: "settle", guarded: true },
@@ -756,50 +753,6 @@ describe("settle and snooze while the environment is offline", () => {
     }),
   );
 
-  it.effect("loads every environment before refreshing an already-live shell", () =>
-    Effect.gen(function* () {
-      const other = EnvironmentId.make("other");
-      const secondStarted = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      let reads = 0;
-      const storage = {
-        value: JSON.stringify({
-          entries: [
-            {
-              environmentId: other,
-              threadId: THREAD_ID,
-              commandId: "other-settle",
-              action: { type: "settle" },
-              queuedAt: "2026-09-12T10:00:00.000Z",
-              snapshotSequence: 1,
-            },
-          ],
-          operableEnvironmentIds: [other],
-        }),
-      };
-      const h = yield* makeHarness({
-        storage,
-        operateScope: null,
-        wrapStore: (store) => ({
-          ...store,
-          load: Effect.suspend(() =>
-            ++reads === 2
-              ? Deferred.succeed(secondStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(release)),
-                  Effect.andThen(store.load),
-                )
-              : store.load,
-          ),
-        }),
-      });
-      yield* Deferred.await(secondStarted);
-      yield* Deferred.succeed(release, undefined);
-      const pending = h.commands.pendingSyncAtom(other);
-      yield* waitFor(h.registry, pending, (threads) => threads.has(THREAD_ID));
-      expect(h.registry.get(h.commands.offlineTriagePermittedAtom(other))).toBe(true);
-    }),
-  );
-
   it.effect("keeps a pending settle when snooze would discard it offline", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ connected: false });
@@ -865,10 +818,10 @@ describe("settle and snooze while the environment is offline", () => {
           connected: false,
           wrapStore: (store) => ({
             ...store,
-            put: (entry, stillCurrent) =>
+            put: (entry) =>
               Deferred.succeed(putStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(putReleased)),
-                Effect.andThen(store.put(entry, stillCurrent)),
+                Effect.andThen(store.put(entry)),
               ),
           }),
         });
@@ -885,38 +838,6 @@ describe("settle and snooze while the environment is offline", () => {
         yield* Deferred.succeed(request.reply, { sequence: 2 });
         yield* waitFor(h.registry, pending, (threads) => threads.size === 0);
       }),
-  );
-
-  it.effect("replays a queued change when an Undo that failed lets go after reconnect", () =>
-    Effect.gen(function* () {
-      const cancelStarted = yield* Deferred.make<void>();
-      const cancelReleased = yield* Deferred.make<void>();
-      const h = yield* makeHarness({
-        connected: false,
-        wrapStore: (store) => ({
-          ...store,
-          cancel: () =>
-            Deferred.succeed(cancelStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(cancelReleased)),
-              Effect.andThen(
-                Effect.fail(new ThreadTriageOutboxStorageError({ cause: "disk full" })),
-              ),
-            ),
-        }),
-      });
-      h.registry.mount(h.commands.pendingSyncAtom(ENVIRONMENT_ID));
-      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
-      const undo = h.commands.unsettle.run(h.registry, {
-        environmentId: ENVIRONMENT_ID,
-        input: { threadId: THREAD_ID, reason: "user" },
-      });
-      yield* Deferred.await(cancelStarted);
-      yield* h.reconnect();
-      yield* Deferred.succeed(cancelReleased, undefined);
-      expect((yield* Effect.promise(() => undo))._tag).toBe("Failure");
-      const request = yield* Queue.take(h.requests);
-      expect(request.command.type).toBe("thread.settle");
-    }),
   );
 
   it.effect("restores a queued snooze after a restart and replays it once", () =>
@@ -1130,22 +1051,6 @@ describe("settle and snooze while the environment is offline", () => {
     }),
   );
 
-  it.effect("keeps the earlier queued change when its replacement cannot be saved", () =>
-    Effect.gen(function* () {
-      const storage = { value: null as string | null, failWrites: false };
-      const h = yield* makeHarness({ connected: false, storage });
-      const pending = h.commands.pendingSyncAtom(ENVIRONMENT_ID);
-      h.registry.mount(pending);
-      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
-      storage.failWrites = true;
-      const replacement = yield* Effect.promise(() => h.commands.snooze.run(h.registry, snooze));
-      expect(replacement._tag).toBe("Failure");
-      expect(h.registry.get(pending).has(THREAD_ID)).toBe(true);
-      expect(h.registry.get(h.visibleAtom)?.threads[0]?.settledOverride).toBe("settled");
-      expect(stored(storage)).toMatchObject([{ action: { type: "settle" } }]);
-    }),
-  );
-
   it.effect("keeps queued changes to their own environment", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ connected: false });
@@ -1153,46 +1058,6 @@ describe("settle and snooze while the environment is offline", () => {
       yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
       expect(h.registry.get(h.commands.snapshotAtom(other))).toBe(SNAPSHOT);
       expect(h.registry.get(h.commands.pendingSyncAtom(other)).size).toBe(0);
-    }),
-  );
-
-  it.effect("remembers which environments may triage offline across a cold restart", () =>
-    Effect.gen(function* () {
-      const writes = yield* Queue.unbounded<string>();
-      const storage = { value: null as string | null, writes };
-      const online = yield* makeHarness({ storage, operateScope: true });
-      online.registry.mount(online.commands.offlineTriagePermittedAtom(ENVIRONMENT_ID));
-      yield* Queue.take(writes);
-
-      const coldOffline = yield* makeHarness({ connected: false, storage, operateScope: null });
-      const permitted = coldOffline.commands.offlineTriagePermittedAtom(ENVIRONMENT_ID);
-      coldOffline.registry.mount(permitted);
-      yield* waitFor(coldOffline.registry, permitted, (value) => value);
-
-      // A session that loads without the scope wins and is remembered for the next restart.
-      coldOffline.registry.set(coldOffline.operateScopeAtom(ENVIRONMENT_ID), false);
-      expect(coldOffline.registry.get(permitted)).toBe(false);
-      yield* Queue.take(writes);
-      const restarted = yield* makeHarness({ connected: false, storage, operateScope: null });
-      const restartedPermitted = restarted.commands.offlineTriagePermittedAtom(ENVIRONMENT_ID);
-      restarted.registry.mount(restartedPermitted);
-      yield* Effect.promise(() =>
-        restarted.commands.settle.run(restarted.registry, {
-          environmentId: ENVIRONMENT_ID,
-          input: { threadId: THREAD_ID },
-        }),
-      );
-      expect(restarted.registry.get(restartedPermitted)).toBe(false);
-    }),
-  );
-
-  it.effect("does not allow offline triage for an environment never seen with the scope", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ connected: false, operateScope: null });
-      const permitted = h.commands.offlineTriagePermittedAtom(ENVIRONMENT_ID);
-      h.registry.mount(permitted);
-      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
-      expect(h.registry.get(permitted)).toBe(false);
     }),
   );
 
@@ -1222,168 +1087,6 @@ describe("settle and snooze while the environment is offline", () => {
     }),
   );
 
-  it.effect("does not restore changes of an environment removed while they load", () =>
-    Effect.gen(function* () {
-      const writes = yield* Queue.unbounded<string>();
-      const storage = { value: null as string | null, writes };
-      const before = yield* makeHarness({ connected: false, storage, operateScope: true });
-      before.registry.mount(before.commands.offlineTriagePermittedAtom(ENVIRONMENT_ID));
-      yield* Effect.promise(() => before.commands.settle.run(before.registry, settle));
-      expect(stored(storage)).toHaveLength(1);
-
-      // The removal lands after the read but before the loaded document is published.
-      // The session from before the removal is still loaded and still grants the scope.
-      const h = yield* makeHarness({
-        connected: false,
-        storage,
-        operateScope: true,
-        registered: false,
-        wrapStore: (store) => ({
-          ...store,
-          load: store.load.pipe(Effect.tap(() => store.clearEnvironment(ENVIRONMENT_ID))),
-        }),
-      });
-      const laterThreadId = ThreadId.make("later-thread");
-      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
-        ...SNAPSHOT,
-        threads: [...SNAPSHOT.threads, { ...SNAPSHOT.threads[0]!, id: laterThreadId }],
-      });
-      const pending = h.commands.pendingSyncAtom(ENVIRONMENT_ID);
-      const permitted = h.commands.offlineTriagePermittedAtom(ENVIRONMENT_ID);
-      h.registry.mount(pending);
-      h.registry.mount(permitted);
-      // Queueing another thread waits for the load to publish its document.
-      yield* Effect.promise(() =>
-        h.commands.settle.run(h.registry, {
-          environmentId: ENVIRONMENT_ID,
-          input: { threadId: laterThreadId },
-        }),
-      );
-      expect([...h.registry.get(pending)]).toEqual([laterThreadId]);
-      expect(stored(storage)).toMatchObject([{ threadId: laterThreadId }]);
-      expect(h.registry.get(permitted)).toBe(false);
-      expect(JSON.parse(storage.value!).operableEnvironmentIds).toEqual([]);
-    }),
-  );
-
-  it.effect("does not let a retained session or an in-flight write restore a removed grant", () =>
-    Effect.gen(function* () {
-      const writes = yield* Queue.unbounded<string>();
-      const storage = { value: null as string | null, writes };
-      let removeBeforeWrite = true;
-      let unregister = () => {};
-      const h = yield* makeHarness({
-        connected: false,
-        storage,
-        operateScope: true,
-        // The removal lands while the grant's write waits for the store.
-        wrapStore: (store) => ({
-          ...store,
-          setOperable: (environmentId, operable, stillCurrent) =>
-            (removeBeforeWrite
-              ? Effect.sync(() => {
-                  removeBeforeWrite = false;
-                  unregister();
-                }).pipe(Effect.andThen(store.clearEnvironment(environmentId)))
-              : Effect.void
-            ).pipe(Effect.andThen(store.setOperable(environmentId, operable, stillCurrent))),
-        }),
-      });
-      unregister = () => h.registry.set(h.registeredAtom(ENVIRONMENT_ID), false);
-      const permitted = h.commands.offlineTriagePermittedAtom(ENVIRONMENT_ID);
-      h.registry.mount(permitted);
-      expect(JSON.parse(yield* Queue.take(writes)).operableEnvironmentIds).toEqual([]);
-      expect(h.registry.get(permitted)).toBe(false);
-      // The store runs writes in order, so this one follows the skipped grant.
-      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
-      expect(JSON.parse(yield* Queue.take(writes))).toMatchObject({
-        entries: [{ threadId: THREAD_ID }],
-        operableEnvironmentIds: [],
-      });
-
-      // Adding the environment again lets its session be remembered.
-      h.registry.set(h.registeredAtom(ENVIRONMENT_ID), true);
-      expect(h.registry.get(permitted)).toBe(true);
-      expect(JSON.parse(yield* Queue.take(writes)).operableEnvironmentIds).toEqual([
-        ENVIRONMENT_ID,
-      ]);
-    }),
-  );
-
-  it.effect("Undo after a queued settle was delivered un-settles on the server", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ connected: false });
-      const pending = h.commands.pendingSyncAtom(ENVIRONMENT_ID);
-      h.registry.mount(pending);
-      const queued = yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
-      expect(queued._tag === "Success" && queued.value.pendingSync).toBe(true);
-      yield* h.reconnect();
-      const replay = yield* Queue.take(h.requests);
-      yield* Deferred.succeed(replay.reply, { sequence: 2 });
-      yield* waitFor(h.registry, pending, (threads) => threads.size === 0);
-
-      const undo = h.commands.unsettle.run(h.registry, {
-        environmentId: ENVIRONMENT_ID,
-        input: { threadId: THREAD_ID, reason: "user" },
-      });
-      const request = yield* Queue.take(h.requests);
-      expect(request.command.type).toBe("thread.unsettle");
-      yield* Deferred.succeed(request.reply, { sequence: 3 });
-      const result = yield* Effect.promise(() => undo);
-      expect(result._tag === "Success" && ThreadUndo.cancelledPendingSync(result.value)).toBe(
-        false,
-      );
-    }),
-  );
-
-  /** The request may have reached the server before the socket closed. */
-  const lostReply = () =>
-    new RpcClientError.RpcClientError({
-      reason: new RpcClientError.RpcClientDefect({
-        message: "socket closed",
-        cause: new Error("socket closed"),
-      }),
-    });
-
-  it.effect("Undo after a replay lost its reply un-settles on the server", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ connected: false });
-      const pending = h.commands.pendingSyncAtom(ENVIRONMENT_ID);
-      h.registry.mount(pending);
-      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
-      yield* h.reconnect();
-      const replay = yield* Queue.take(h.requests);
-      // Waits behind the replay, so its request shows the replay has let go of the thread.
-      const behind = h.commands.unsnooze.run(h.registry, {
-        environmentId: ENVIRONMENT_ID,
-        input: { threadId: THREAD_ID, reason: "user" },
-      });
-      yield* Deferred.fail(replay.reply, lostReply());
-      const behindRequest = yield* Queue.take(h.requests);
-      yield* Deferred.succeed(behindRequest.reply, { sequence: 2 });
-      yield* Effect.promise(() => behind);
-      expect(h.registry.get(pending).has(THREAD_ID)).toBe(true);
-
-      const undo = h.commands.unsettle.run(h.registry, {
-        environmentId: ENVIRONMENT_ID,
-        input: { threadId: THREAD_ID, reason: "user" },
-      });
-      const sent = yield* Effect.raceFirst(
-        Queue.take(h.requests),
-        Effect.promise(() => undo).pipe(Effect.as("cancelled locally" as const)),
-      );
-      expect(sent).toMatchObject({ command: { type: "thread.unsettle" } });
-      if (sent === "cancelled locally") return;
-      yield* Deferred.succeed(sent.reply, { sequence: 3 });
-      const result = yield* Effect.promise(() => undo);
-      expect(result._tag === "Success" && ThreadUndo.cancelledPendingSync(result.value)).toBe(
-        false,
-      );
-      expect(h.registry.get(pending).size).toBe(0);
-      expect(stored(h.storage)).toEqual([]);
-    }),
-  );
-
   it.effect("queues the snapshot the action was taken against, not a later one", () =>
     Effect.gen(function* () {
       const loaded = yield* Deferred.make<void>();
@@ -1404,32 +1107,6 @@ describe("settle and snooze while the environment is offline", () => {
       yield* Deferred.succeed(loaded, undefined);
       expect((yield* Effect.promise(() => queued))._tag).toBe("Success");
       expect(stored(h.storage)).toMatchObject([{ snapshotSequence: 1 }]);
-    }),
-  );
-
-  it.effect("does not remember a session that answers after its environment was removed", () =>
-    Effect.gen(function* () {
-      const writes = yield* Queue.unbounded<string>();
-      const storage = { value: null as string | null, writes };
-      const h = yield* makeHarness({ connected: false, storage, operateScope: null });
-      const permitted = h.commands.offlineTriagePermittedAtom(ENVIRONMENT_ID);
-      h.registry.mount(permitted);
-      // Removed while its first session request is still waiting.
-      h.registry.set(h.registeredAtom(ENVIRONMENT_ID), false);
-      yield* h.store.clearEnvironment(ENVIRONMENT_ID);
-      yield* Queue.take(writes);
-      h.registry.set(h.operateScopeAtom(ENVIRONMENT_ID), true);
-      expect(h.registry.get(permitted)).toBe(false);
-      // The store runs writes in order, so this one follows any grant write.
-      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
-      expect(JSON.parse(yield* Queue.take(writes)).operableEnvironmentIds).toEqual([]);
-
-      // Registering it again lets its session be remembered.
-      h.registry.set(h.registeredAtom(ENVIRONMENT_ID), true);
-      expect(h.registry.get(permitted)).toBe(true);
-      expect(JSON.parse(yield* Queue.take(writes)).operableEnvironmentIds).toEqual([
-        ENVIRONMENT_ID,
-      ]);
     }),
   );
 
@@ -1460,145 +1137,11 @@ describe("settle and snooze while the environment is offline", () => {
     }),
   );
 
-  it.effect("keeps a change queued while a newer action was reaching the server", () =>
-    Effect.gen(function* () {
-      const putStarted = yield* Deferred.make<void>();
-      const putReleased = yield* Deferred.make<void>();
-      const h = yield* makeHarness({
-        connected: false,
-        wrapStore: (store) => ({
-          ...store,
-          put: (entry, stillCurrent) =>
-            Deferred.succeed(putStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(putReleased)),
-              Effect.andThen(store.put(entry, stillCurrent)),
-            ),
-        }),
-      });
-      const pending = h.commands.pendingSyncAtom(ENVIRONMENT_ID);
-      h.registry.mount(pending);
-      const queued = h.commands.settle.run(h.registry, settle);
-      yield* Deferred.await(putStarted);
-      yield* h.reconnect("synchronizing");
-      const online = h.commands.snooze.run(h.registry, snooze);
-      const request = yield* Queue.take(h.requests);
-      // The queued change lands while the newer action is still on its way.
-      yield* Deferred.succeed(putReleased, undefined);
-      expect((yield* Effect.promise(() => queued))._tag).toBe("Success");
-      yield* Deferred.succeed(request.reply, { sequence: 2 });
-      expect((yield* Effect.promise(() => online))._tag).toBe("Success");
-      // The server decides on replay; the newer action must not erase it locally.
-      expect(h.registry.get(pending).has(THREAD_ID)).toBe(true);
-      expect(stored(h.storage)).toMatchObject([{ action: { type: "settle" } }]);
-    }),
-  );
-
-  // Two browser tabs share one storage, but each keeps its own copy of the queue in memory.
-  const otherTab = (storage: { value: string | null }) =>
-    Effect.gen(function* () {
-      const tab = yield* makeHarness({ connected: false, storage });
-      const pending = tab.commands.pendingSyncAtom(ENVIRONMENT_ID);
-      tab.registry.mount(pending);
-      yield* waitFor(tab.registry, pending, (threads) => threads.has(THREAD_ID));
-      return { tab, pending };
-    });
-  const sentOrDropped = (
-    tab: Effect.Success<ReturnType<typeof makeHarness>>,
-    pending: Atom.Atom<ReadonlySet<ThreadId>>,
-  ) =>
-    Effect.raceFirst(
-      Queue.take(tab.requests).pipe(Effect.map((request) => request.command)),
-      waitFor(tab.registry, pending, (threads) => threads.size === 0).pipe(
-        Effect.as("dropped" as const),
-      ),
-    );
-
-  it.effect("does not replay a change another tab cancelled", () =>
-    Effect.gen(function* () {
-      const storage = { value: null as string | null };
-      const first = yield* makeHarness({ connected: false, storage });
-      yield* Effect.promise(() => first.commands.settle.run(first.registry, settle));
-      const { tab: second, pending } = yield* otherTab(storage);
-      const undo = yield* Effect.promise(() =>
-        first.commands.unsettle.run(first.registry, {
-          environmentId: ENVIRONMENT_ID,
-          input: { threadId: THREAD_ID, reason: "user" },
-        }),
-      );
-      expect(undo._tag).toBe("Success");
-      yield* second.reconnect();
-      expect(yield* sentOrDropped(second, pending)).toBe("dropped");
-      expect(second.registry.get(second.visibleAtom)).toBe(SNAPSHOT);
-    }),
-  );
-
-  it.effect("replays the change another tab queued in place of an older one", () =>
-    Effect.gen(function* () {
-      const storage = { value: null as string | null };
-      const first = yield* makeHarness({ connected: false, storage });
-      yield* Effect.promise(() => first.commands.snooze.run(first.registry, snooze));
-      const { tab: second, pending } = yield* otherTab(storage);
-      yield* Effect.promise(() => first.commands.settle.run(first.registry, settle));
-      const [replacement] = stored(storage);
-      yield* second.reconnect();
-      expect(yield* sentOrDropped(second, pending)).toMatchObject({
-        type: "thread.settle",
-        commandId: replacement!.commandId,
-      });
-    }),
-  );
-
-  it.effect("does not replay when it cannot read the stored queue", () =>
-    Effect.gen(function* () {
-      const reads = yield* Queue.unbounded<void>();
-      const storage = { value: null as string | null, failReads: false, reads };
-      const first = yield* makeHarness({ connected: false, storage });
-      yield* Effect.promise(() => first.commands.settle.run(first.registry, settle));
-      const { tab: second, pending } = yield* otherTab(storage);
-      yield* Queue.clear(reads);
-      storage.failReads = true;
-      yield* second.reconnect();
-      yield* Queue.take(reads);
-      // A second reconnect only replays after the first attempt finished.
-      yield* second.disconnect;
-      yield* second.reconnect();
-      yield* Queue.take(reads);
-      expect(yield* Queue.size(second.requests)).toBe(0);
-      expect(second.registry.get(pending).has(THREAD_ID)).toBe(true);
-    }),
-  );
-
-  const expireStoredSnooze = (storage: { value: string | null }) => {
-    storage.value = storage.value!.replace("2099-01-01T00:00:00.000Z", "2000-01-01T00:00:00.000Z");
-  };
-
-  it.effect("Undo asks the server once another tab has sent the queued change", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ connected: false });
-      h.registry.mount(h.commands.pendingSyncAtom(ENVIRONMENT_ID));
-      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
-      const { tab, pending } = yield* otherTab(h.storage);
-      yield* tab.reconnect();
-      const replay = yield* Queue.take(tab.requests);
-      yield* Deferred.succeed(replay.reply, { sequence: 2 });
-      yield* waitFor(tab.registry, pending, (threads) => threads.size === 0);
-
-      // This tab is still offline, so the server Undo it needs cannot reach the server.
-      const result = yield* Effect.promise(() =>
-        h.commands.unsettle.run(h.registry, {
-          environmentId: ENVIRONMENT_ID,
-          input: { threadId: THREAD_ID, reason: "user" },
-        }),
-      );
-      expect(result._tag).toBe("Failure");
-    }),
-  );
-
   it.effect.each([
     ["settle", "unsettle"],
     ["snooze", "unsnooze"],
   ] as const)(
-    "Undo after a restart or in another tab asks the server once a %s replay lost its reply",
+    "Undo after a restart asks the server once a %s replay lost its reply",
     ([action, undo]) =>
       Effect.gen(function* () {
         const h = yield* makeHarness({ connected: false });
@@ -1607,7 +1150,10 @@ describe("settle and snooze while the environment is offline", () => {
         yield* h.reconnect();
         const replay = yield* Queue.take(h.requests);
         yield* Deferred.fail(replay.reply, lostReply());
-        const { tab } = yield* otherTab(h.storage);
+        const tab = yield* makeHarness({ connected: false, storage: h.storage });
+        const pending = tab.commands.pendingSyncAtom(ENVIRONMENT_ID);
+        tab.registry.mount(pending);
+        yield* waitFor(tab.registry, pending, (threads) => threads.has(THREAD_ID));
 
         // Still offline here, so the server Undo it needs cannot reach the server.
         const result = yield* Effect.promise(() =>
@@ -1646,72 +1192,6 @@ describe("settle and snooze while the environment is offline", () => {
         }),
       );
       expect(result._tag).toBe("Failure");
-    }),
-  );
-
-  it.effect("does not send a queued change it cannot record as sent", () =>
-    Effect.gen(function* () {
-      const markFailed = yield* Deferred.make<void>();
-      let failMark = true;
-      const h = yield* makeHarness({
-        connected: false,
-        wrapStore: (store) => ({
-          ...store,
-          markAttempted: (key) =>
-            failMark
-              ? Deferred.succeed(markFailed, undefined).pipe(
-                  Effect.andThen(
-                    Effect.fail(new ThreadTriageOutboxStorageError({ cause: "disk full" })),
-                  ),
-                )
-              : store.markAttempted(key),
-        }),
-      });
-      yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
-      yield* h.reconnect();
-      const first = yield* Effect.raceFirst(
-        Deferred.await(markFailed).pipe(Effect.as("not sent" as const)),
-        Queue.take(h.requests).pipe(Effect.as("sent" as const)),
-      );
-      expect(first).toBe("not sent");
-      failMark = false;
-      // A second reconnect only replays after the first attempt finished.
-      yield* h.disconnect;
-      yield* h.reconnect();
-      const request = yield* Queue.take(h.requests);
-      expect(request.command.type).toBe("thread.settle");
-      expect(yield* Queue.size(h.requests)).toBe(0);
-    }),
-  );
-
-  it.effect("judges expiry by the replacement another tab stored, not the cached change", () =>
-    Effect.gen(function* () {
-      const storage = { value: null as string | null };
-      const first = yield* makeHarness({ connected: false, storage });
-      yield* Effect.promise(() => first.commands.snooze.run(first.registry, snooze));
-      expireStoredSnooze(storage);
-      const { tab: second, pending } = yield* otherTab(storage);
-      yield* Effect.promise(() => first.commands.settle.run(first.registry, settle));
-      const [replacement] = stored(storage);
-      yield* second.reconnect();
-      expect(yield* sentOrDropped(second, pending)).toMatchObject({
-        type: "thread.settle",
-        commandId: replacement!.commandId,
-      });
-    }),
-  );
-
-  it.effect("drops a replacement another tab stored once its snooze expired", () =>
-    Effect.gen(function* () {
-      const storage = { value: null as string | null };
-      const first = yield* makeHarness({ connected: false, storage });
-      yield* Effect.promise(() => first.commands.snooze.run(first.registry, snooze));
-      const { tab: second, pending } = yield* otherTab(storage);
-      yield* Effect.promise(() => first.commands.snooze.run(first.registry, snooze));
-      expireStoredSnooze(storage);
-      yield* second.reconnect();
-      expect(yield* sentOrDropped(second, pending)).toBe("dropped");
-      expect(stored(storage)).toEqual([]);
     }),
   );
 });

@@ -173,12 +173,12 @@ when the thread settles** enabled in Settings > Projects > Actions. You can also
 that action so T3 can stop its terminal and child processes. Commands started through an
 agent's own shell tools are managed by the provider.
 
-You can settle or snooze a thread while its environment is offline, if this device
-could change threads there the last time it connected and the environment runs a
-release with offline sync. The thread shows **Waiting to sync** on mobile or
+You can settle or snooze a thread while its environment is offline, if the environment
+runs a release with offline sync. The thread shows **Waiting to sync** on mobile or
 **Pending** on web and desktop, and the change is sent when the environment
 reconnects. If the thread changed there in the meantime, that environment's state
-wins and your change is dropped. Undo a pending settle before snoozing the same
+wins and your change is dropped, as it is when this connection cannot change threads there.
+Undo a pending settle before snoozing the same
 thread while offline.
 
 To reclaim disk space from settled work, turn on **Run in the thread's worktree when the

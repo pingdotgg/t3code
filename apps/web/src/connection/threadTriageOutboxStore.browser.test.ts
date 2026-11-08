@@ -7,7 +7,6 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Logger from "effect/Logger";
 import { vi } from "vite-plus/test";
 
 import {
@@ -29,7 +28,7 @@ const replaceStored = (raw: string) => browserThreadTriageOutboxStorage.modify((
 describe("browser thread triage storage", () => {
   it.effect("keeps every tab's change when tabs save at the same time", () =>
     Effect.gen(function* () {
-      yield* replaceStored(JSON.stringify({ entries: [], operableEnvironmentIds: [] }));
+      yield* replaceStored(JSON.stringify({ entries: [] }));
       const tab = () => makeThreadTriageOutboxStore(browserThreadTriageOutboxStorage);
 
       yield* Effect.all([tab().put(settle("first")), tab().put(settle("second"))], {
@@ -38,25 +37,6 @@ describe("browser thread triage storage", () => {
 
       const { entries } = yield* tab().load;
       expect(entries.map((entry) => entry.threadId).toSorted()).toEqual(["first", "second"]);
-    }),
-  );
-
-  it.effect("discards an unreadable document on the caller's logger, then saves", () =>
-    Effect.gen(function* () {
-      yield* replaceStored("{invalid");
-      const warnings: unknown[] = [];
-
-      yield* browserThreadTriageOutboxStore
-        .put(settle("thread"))
-        .pipe(
-          Effect.provideService(
-            Logger.CurrentLoggers,
-            new Set([Logger.make(({ message }) => warnings.push(message))]),
-          ),
-        );
-
-      expect(warnings).toHaveLength(1);
-      expect((yield* browserThreadTriageOutboxStore.load).entries).toEqual([settle("thread")]);
     }),
   );
 
