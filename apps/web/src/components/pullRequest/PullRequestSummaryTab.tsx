@@ -240,11 +240,8 @@ function chatSubject(
 function AddToChatButton({ onClick }: { onClick: () => void }) {
   return (
     <Button size="xs" variant="ghost" className="shrink-0" onClick={onClick}>
-      {/* Wrapped like Fix's label so both sit on the header's baseline. */}
-      <span className="inline-flex items-baseline gap-1">
-        <MessageSquarePlusIcon className="size-3 self-center" />
-        <span>Add to chat</span>
-      </span>
+      <MessageSquarePlusIcon className="size-3" />
+      Add to chat
     </Button>
   );
 }
@@ -649,7 +646,7 @@ export function PullRequestSummaryTab({
         key={`${detail.url}:${comment.id}`}
         className="group rounded-lg border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]"
       >
-        <div className="flex flex-wrap items-baseline gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
             <CommentIdentity comment={comment} detail={detail} />
             {outcome ? (
@@ -666,7 +663,7 @@ export function PullRequestSummaryTab({
               disabled={pendingFinding !== null && pendingFinding !== undefined}
               onClick={() => onFixFinding(finding)}
             >
-              <HammerIcon className="size-3" />
+              <HammerIcon className="size-3 shrink-0" />
               {pendingFinding === pullRequestFindingKey(finding)
                 ? "Preparing..."
                 : pullRequestFixFindingLabel(finding, fixInThisThread)}
@@ -918,7 +915,7 @@ export function PullRequestSummaryTab({
                         disabled={pendingFinding !== null && pendingFinding !== undefined}
                         onClick={() => onFixFinding(finding)}
                       >
-                        <HammerIcon className="size-3" />
+                        <HammerIcon className="size-3 shrink-0" />
                         {pendingFinding === pullRequestFindingKey(finding)
                           ? "Preparing..."
                           : fixCheckLabel}
