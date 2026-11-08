@@ -1,12 +1,10 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   formatHostedThreadLink,
   guessThreadLinkRef,
-  percentDecodedThreadLinkId,
+  threadLinkCandidates,
   type ThreadLink,
   unknownThreadLinkLabel,
-  threadLinkCandidates,
 } from "@t3tools/shared/threadLinks";
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
@@ -22,53 +20,46 @@ export function MarkdownThreadLink(props: {
   readonly link: ThreadLink;
   readonly label: string | null;
 }) {
-  const environmentId = props.link.environmentId ?? props.environmentId;
-  const decodedId = percentDecodedThreadLinkId(props.link.threadId);
-  const written = useThreadShell(scopeThreadRef(environmentId, props.link.threadId));
-  const decoded = useThreadShell(
-    written === null && decodedId !== null ? scopeThreadRef(environmentId, decodedId) : null,
-  );
-  const local = written ?? decoded;
-  const guess = local === null && props.link.environmentId === null;
-  const refs = useThreadRefs(guess);
-  const remote = useThreadShell(guess ? guessThreadLinkRef(props.link, refs) : null);
-  const thread = local ?? remote;
-  if (thread === null) {
-    return <UnloadedThreadLink {...props} />;
-  }
-  const ref = { environmentId: thread.environmentId, threadId: thread.id };
-  const title = thread.title.trim() || props.label || "Untitled thread";
-  return (
-    <ThreadContextChip
-      record={{ ...ref, title }}
-      copyMarkdown={formatHostedThreadLink(ref, title, configuredHostedAppUrl())}
-    />
-  );
-}
-
-function UnloadedThreadLink(props: {
-  readonly environmentId: EnvironmentId;
-  readonly link: ThreadLink;
-  readonly label: string | null;
-}) {
   const candidates = threadLinkCandidates(props.link, props.environmentId);
-  const environmentId = props.link.environmentId ?? props.environmentId;
-  const titles = useEnvironmentQuery(
-    orchestrationEnvironment.threadTitles({
-      environmentId,
-      input: { threadIds: candidates.map((ref) => ref.threadId) },
-    }),
+  const writtenRef = candidates[0]!;
+  const written = useThreadShell(writtenRef);
+  const lookup = useEnvironmentQuery(
+    written === null
+      ? orchestrationEnvironment.threadLinkMetadata({
+          environmentId: writtenRef.environmentId,
+          input: { threadIds: candidates.map((ref) => ref.threadId) },
+        })
+      : null,
   );
-  const target = candidates.find((ref) => titles.data?.[ref.threadId] !== undefined);
-  if (target === undefined && titles.isSuccess && !titles.isPending) {
+  const settled = lookup.isSuccess && !lookup.isPending;
+  const target =
+    written !== null
+      ? { ref: writtenRef, metadata: written }
+      : (candidates.flatMap((ref) => {
+          const metadata = lookup.data?.[ref.threadId];
+          return metadata ? [{ ref, metadata }] : [];
+        })[0] ?? null);
+  const missing = target === null && settled;
+  const guess = missing && props.link.environmentId === null;
+  const refs = useThreadRefs(guess);
+  const remoteRef = guess
+    ? guessThreadLinkRef(
+        props.link,
+        refs.filter((ref) => ref.environmentId !== writtenRef.environmentId),
+      )
+    : null;
+  const remote = useThreadShell(remoteRef);
+  const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
+  if (missing && resolved === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
     return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;
   }
-  const ref = target ?? candidates[0]!;
-  const title = titles.data?.[ref.threadId]?.trim() || props.label || "Thread";
+  const ref = resolved?.ref ?? writtenRef;
+  const title = resolved?.metadata.title.trim() || props.label || "Thread";
   return (
     <ThreadContextChip
       record={{ ...ref, title }}
+      projectId={resolved?.metadata.projectId ?? null}
       copyMarkdown={formatHostedThreadLink(ref, title, configuredHostedAppUrl())}
     />
   );

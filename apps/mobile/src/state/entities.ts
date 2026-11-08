@@ -56,20 +56,20 @@ const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make<ReadonlyMap<string, string>>(new
 const decodeThreadKey = Schema.decodeUnknownSync(Schema.Tuple([EnvironmentId, ThreadId]));
 const threadKey = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, ref.threadId]);
 
-// Omitted and archived targets need only a title lookup, not their conversation history.
+// Omitted and archived targets need only a metadata lookup, not their conversation history.
 const threadTitleAtom = Atom.family((key: string) => {
   const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
   return Atom.make((get) => {
     const shell = get(environmentThreadShells.threadShellAtom(ref));
     if (shell !== null) return shell.title;
     const titles = get(
-      orchestrationEnvironment.threadTitles({
+      orchestrationEnvironment.threadLinkMetadata({
         environmentId: ref.environmentId,
         input: { threadIds: [ref.threadId] },
       }),
     );
     return AsyncResult.isSuccess(titles)
-      ? (titles.value[ref.threadId] ?? (titles.waiting ? "Thread" : null))
+      ? (titles.value[ref.threadId]?.title ?? (titles.waiting ? "Thread" : null))
       : "Thread";
   }).pipe(Atom.withLabel(`mobile-thread-title:${key}`));
 });
@@ -103,11 +103,22 @@ const threadProjectChipIconAtom = Atom.family((key: string) => {
   const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
   return Atom.make((get): string | null => {
     const shell = get(environmentThreadShells.threadShellAtom(ref));
-    const project = shell
+    const metadata =
+      shell ??
+      AsyncResult.getOrElse(
+        get(
+          orchestrationEnvironment.threadLinkMetadata({
+            environmentId: ref.environmentId,
+            input: { threadIds: [ref.threadId] },
+          }),
+        ),
+        () => null,
+      )?.[ref.threadId];
+    const project = metadata?.projectId
       ? get(
           environmentProjects.projectAtom({
             environmentId: ref.environmentId,
-            projectId: shell.projectId,
+            projectId: metadata.projectId,
           }),
         )
       : null;
