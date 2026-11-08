@@ -308,17 +308,14 @@ export const layerWithStarters = (
           }),
         );
 
-      const upgradeStarter = Effect.fn("PipelineService.upgradeStarter")(function* (
-        starter: PipelineStarter,
+      const upgradeStarterCopy = Effect.fn("PipelineService.upgradeStarterCopy")(function* (
+        existing: PipelineDefinition,
       ) {
-        const previous = starter.previousFingerprints ?? [];
-        if (previous.length === 0) return false;
-        const existing = yield* store.getDefinition(
-          PipelineId.make(`pipeline:starter:${starter.key}`),
+        const fingerprint = pipelineStarterFingerprint(existing.steps);
+        const starter = starters.find((candidate) =>
+          candidate.previousFingerprints?.includes(fingerprint),
         );
-        if (existing === null || !previous.includes(pipelineStarterFingerprint(existing.steps))) {
-          return false;
-        }
+        if (starter === undefined) return false;
         const { defaultRuntimeMode } = yield* serverSettings.getSettings;
         // Keep the runtime mode each step was saved with; it is this server's, not the starter's.
         const modes = new Map(existing.steps.map((step) => [step.id, step.runtimeMode] as const));
@@ -332,7 +329,10 @@ export const layerWithStarters = (
           updatedAt: DateTime.formatIso(yield* DateTime.now),
         });
         if (updated) {
-          yield* Effect.logInfo("Upgraded unedited starter pipeline", { starterKey: starter.key });
+          yield* Effect.logInfo("Upgraded unedited starter pipeline", {
+            starterKey: starter.key,
+            pipelineId: existing.id,
+          });
         }
         return updated;
       });
@@ -361,18 +361,18 @@ export const layerWithStarters = (
           ),
         ),
       );
-      // An unedited copy of an older starter version follows the starter. Best effort as well.
-      const upgraded = yield* Effect.forEach(starters, (starter) =>
-        upgradeStarter(starter).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Could not upgrade starter pipeline", {
-              starterKey: starter.key,
-              cause,
-            }).pipe(Effect.as(false)),
+      // An unedited copy of an older starter version follows the starter, including copies made
+      // from the template, which get their own ids. Best effort as well.
+      const upgraded = yield* store.listDefinitions().pipe(
+        Effect.flatMap((definitions) => Effect.forEach(definitions, upgradeStarterCopy)),
+        Effect.map((results) => results.includes(true)),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not upgrade starter pipelines", { cause }).pipe(
+            Effect.as(false),
           ),
         ),
       );
-      if (seeded.includes(true) || upgraded.includes(true)) yield* notifyDefsChanged;
+      if (seeded.includes(true) || upgraded) yield* notifyDefsChanged;
 
       yield* runner.startRecovery();
 

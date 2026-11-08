@@ -268,10 +268,22 @@ it.effect("an unedited copy of an older starter version is upgraded; an edited o
       createdAt: now,
       updatedAt: now,
     });
+    // Recreated from the template in Settings, which gives the copy its own id.
+    const copyId = decodePipelineId("pipeline:from-template");
+    yield* store.insertDefinition({
+      id: copyId,
+      name: "Feature delivery",
+      steps: withStarterRuntimeMode(older, "full-access"),
+      createdAt: now,
+      updatedAt: now,
+    });
     const upgraded = yield* start((service) => service.list());
     assert.deepStrictEqual(
-      upgraded.pipelines[0]?.steps,
-      withStarterRuntimeMode(FEATURE_DELIVERY_PIPELINE.steps, "approval-required"),
+      upgraded.pipelines.map((pipeline) => [pipeline.id, pipeline.steps]),
+      [
+        [id, withStarterRuntimeMode(FEATURE_DELIVERY_PIPELINE.steps, "approval-required")],
+        [copyId, withStarterRuntimeMode(FEATURE_DELIVERY_PIPELINE.steps, "full-access")],
+      ],
     );
 
     // An edit makes the copy the user's own: it no longer follows the starter.

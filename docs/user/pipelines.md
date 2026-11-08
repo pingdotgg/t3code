@@ -13,8 +13,8 @@ from the **Feature delivery** template, a full feature-delivery flow from requir
 follow-through. Its last step waits until you start it, then merges the pull request and does the
 post-merge work.
 T3 Code adds it once. If you delete it, it stays deleted, and you can recreate it from the
-template. While you have not edited it, it is updated to the latest template when T3 Code
-updates. Once you edit it, it is yours and stays as you left it.
+template. While you have not edited a pipeline made from the template, it is updated to the latest
+template when T3 Code updates. Once you edit it, it is yours and stays as you left it.
 
 Each step has a name, a provider and model, a prompt template, optional skills, and a
 [permission mode](./permission-modes.md). Pipelines have no plan mode. The starter's steps use the
