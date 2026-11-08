@@ -85,14 +85,19 @@ const make = Effect.gen(function* () {
   const reclaim = Effect.gen(function* () {
     if (!(yield* readLayout).incrementalVacuum) return;
     // The driver steps once per statement; incremental_vacuum frees one page per step. Yield between pages.
-    for (let page = 0; page < RECLAIM_PAGES_PER_PASS; page++) {
+    let page = 0;
+    for (; page < RECLAIM_PAGES_PER_PASS; page++) {
       const free = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
       if ((free[0]?.freelist_count ?? 0) === 0) break;
       yield* sql`PRAGMA incremental_vacuum(1)`;
       yield* Effect.yieldNow;
     }
+    yield* Effect.annotateCurrentSpan("db.reclaimed_pages", page);
   }).pipe(
     Effect.catch((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
+    // The pass owns the span; tracing each page's two PRAGMAs floods the server trace.
+    Effect.withTracerEnabled(false),
+    Effect.withSpan("DatabaseStorage.reclaim"),
   );
 
   // Even a pass that deletes nothing scans the event store. Persist completion

@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -41,9 +42,26 @@ it.effect("a new database returns freed pages online without losing data", () =>
     yield* sql`CREATE TABLE retained (value TEXT)`;
     yield* sql`INSERT INTO retained VALUES ('keep')`;
     yield* sql`CREATE TABLE discarded (value BLOB)`;
-    yield* sql`INSERT INTO discarded VALUES (zeroblob(1048576))`;
+    yield* sql`INSERT INTO discarded VALUES (zeroblob(6291456))`;
     yield* sql`DROP TABLE discarded`;
-    assert.isAbove(yield* freePages, 0);
+    const before = yield* freePages;
+    assert.isAbove(before, 1024);
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    yield* storage.reclaim.pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true));
+    assert.equal(before - (yield* freePages), 1024);
+    assert.lengthOf(spans, 1);
+    assert.deepEqual(
+      spans.map((span) => span.name),
+      ["DatabaseStorage.reclaim"],
+    );
+    assert.equal(spans[0]?.attributes.get("db.reclaimed_pages"), 1024);
     yield* storage.reclaim;
     assert.equal(yield* freePages, 0);
     assert.deepEqual(yield* sql`SELECT value FROM retained`, [{ value: "keep" }]);
