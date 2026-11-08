@@ -30,12 +30,12 @@ function Host({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** The message surface keeps its 14px corners inside the tray. */
+/** The message surface sits flush in the tray, so it follows the tray's corners. */
 function Main({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-chat-composer-main-surface="true"
-      className={cn("group relative z-10 rounded-pane surface-composer", className)}
+      className={cn("group relative z-10 rounded-composer surface-composer", className)}
       {...props}
     />
   );
