@@ -439,7 +439,7 @@ describe("observability", () => {
       ),
     );
 
-    it.effect("keeps tool argument values out of the trace file and the exporter", () =>
+    it.effect("keeps tool argument names and values out of the trace file and the exporter", () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -492,6 +492,8 @@ describe("observability", () => {
           yield* handle({ label: "Deploy key", value: "pasted-secret" });
           // A value the schema rejects must not reach the span through its error.
           yield* handle({ label: "Deploy key", value: ["malformed-secret"] });
+          // Argument names come from the caller too, so an unknown key must not be recorded.
+          yield* handle({ label: "Deploy key", value: "x", "synthetic-secret-key-482731": "y" });
           yield* sink.close();
 
           const written = yield* fileSystem.readFileString(tracePath);
@@ -502,7 +504,10 @@ describe("observability", () => {
             assert.notInclude(text, "pasted-secret");
             assert.notInclude(text, "malformed-secret");
             assert.notInclude(text, "Deploy key");
-            assert.include(text, '"parameters":["label","value"]');
+            assert.notInclude(text, "synthetic-secret-key-482731");
+            assert.notInclude(text, '"label"');
+            assert.include(text, '"parameters":2');
+            assert.include(text, '"parameters":3');
             assert.include(text, '"tool":"request_secret"');
           }
         }),
