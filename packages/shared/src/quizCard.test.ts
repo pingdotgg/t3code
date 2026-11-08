@@ -115,11 +115,8 @@ describe("quiz cards", () => {
     expect(blankAnswerRight({ answers: ["acceleration"] }, "Acceleration")).toBe(true);
   });
   it("validates options and bounds", () => {
-    expect(readQuizCard({ ...card, reply: undefined })).toBeUndefined();
-    expect(readQuizCard({ ...card, reply: " " })).toBeUndefined();
-    expect(readQuizCard({ ...card, reply: "The teaching this card tests." })).toMatchObject({
-      reply: "The teaching this card tests.",
-    });
+    // Cards saved before APP-102 have no reply and must still render.
+    expect(readQuizCard({ ...card, reply: undefined })).toMatchObject({ answer: "High" });
     expect(quizCardProblem({ ...card, answer: "All of the above" })).toBeDefined();
     expect(quizCardProblem({ ...card, answer: "(Recommended) High" })).toBeDefined();
     expect(

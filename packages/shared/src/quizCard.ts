@@ -12,7 +12,7 @@ export interface QuestionCard {
 export type QuizLevel = "remember" | "understand" | "apply" | "analyse";
 
 export interface QuizCard {
-  readonly reply: string;
+  readonly reply?: string;
   readonly answer: string;
   readonly explanation: string;
   readonly level: QuizLevel;
@@ -171,7 +171,7 @@ export function readQuizCard(value: unknown): QuizCard | undefined {
   const wrongOptions = record.wrongOptions;
   if (
     answer === undefined ||
-    reply?.reply === undefined ||
+    reply === undefined ||
     explanation === undefined ||
     question === undefined ||
     typeof level !== "string" ||
@@ -191,7 +191,7 @@ export function readQuizCard(value: unknown): QuizCard | undefined {
   });
   if (parsed.some((entry) => entry === undefined)) return undefined;
   return {
-    reply: reply.reply,
+    ...reply,
     answer,
     explanation,
     level: level as QuizLevel,

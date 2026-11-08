@@ -80,7 +80,7 @@ const handlers = {
       const card = readQuizCard(input);
       const problem =
         card === undefined
-          ? "Invalid quiz card: reply is required; put the teaching this card tests in reply, then provide 2–4 wrong options and all other required bounded fields."
+          ? "Invalid quiz card: provide 2–4 wrong options and all required bounded fields."
           : quizCardProblem(card);
       if (problem !== undefined || card === undefined) {
         return yield* new OrchestratorMcpFailure({
