@@ -12,9 +12,7 @@ import {
 } from "../UserConfig.ts";
 
 const resolve = (...segments: Array<string>): string =>
-  segments.reduce((acc, segment) =>
-    segment.startsWith("/") ? segment : `${acc}/${segment}`,
-  );
+  segments.reduce((acc, segment) => (segment.startsWith("/") ? segment : `${acc}/${segment}`));
 
 describe("normalizePresetName / isSamePreset", () => {
   it("treats kebab, snake, and camel spellings as the same preset", () => {
@@ -29,15 +27,11 @@ describe("findPresetConflict", () => {
   it("returns undefined when no preset is given or it matches the target", () => {
     expect(findPresetConflict(undefined, "aws-lambda")).toBeUndefined();
     expect(findPresetConflict({}, "aws-lambda")).toBeUndefined();
-    expect(
-      findPresetConflict({ preset: "aws_lambda" }, "aws-lambda"),
-    ).toBeUndefined();
+    expect(findPresetConflict({ preset: "aws_lambda" }, "aws-lambda")).toBeUndefined();
   });
 
   it("surfaces a foreign preset so the build can fail actionably", () => {
-    expect(findPresetConflict({ preset: "netlify" }, "aws-lambda")).toBe(
-      "netlify",
-    );
+    expect(findPresetConflict({ preset: "netlify" }, "aws-lambda")).toBe("netlify");
   });
 });
 

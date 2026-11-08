@@ -1,6 +1,6 @@
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { page } from "vite-plus/test/browser";
+import { cdp, page } from "vite-plus/test/browser";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -217,6 +217,51 @@ const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
 
 describe("MessagesTimeline work rows", () => {
+  it("keeps the worked-for heading in place when expanded at the bottom", async () => {
+    const props = baseProps();
+    const runId = RunId.make("completed-run");
+    const container = document.createElement("div");
+    // Keep the heading on screen so Playwright does not scroll it before clicking.
+    container.style.cssText =
+      "height: min(600px, 100vh); width: 900px; display: flex; flex-direction: column;";
+    await using screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          ...Array.from({ length: 12 }, (_, index) =>
+            message(`Earlier context ${index}`, {}, `context-${index}`),
+          ),
+          message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
+          message("Done", { role: "assistant", runId }, "final"),
+        ]}
+      />,
+      { container },
+    );
+    const heading = screen.getByRole("button", { name: /^Worked for/ });
+    // LegendList keeps rows click-through until its initial scroll settles on animation
+    // frames, which the fake clock below would freeze.
+    await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    // Legend keeps rows transparent and unclickable until its initial scroll settles.
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+      expect(heading.element().checkVisibility({ opacityProperty: true })).toBe(true);
+    });
+    expect(viewport.scrollTop).toBeGreaterThan(0);
+    const top = heading.element().getBoundingClientRect().top;
+    const height = viewport.scrollHeight;
+    using _timers = fakeTimers();
+    await heading.click();
+    await act(() => vi.advanceTimersByTime(1000));
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
+      expect(heading.element().getBoundingClientRect().top).toBeCloseTo(top, 0);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
+        500,
+      );
+    });
+  });
+
   it.each(["delegated", "legacy", "missing"] as const)(
     "uses the reported task for %s completion notifications",
     async (source) => {
@@ -523,6 +568,76 @@ describe("MessagesTimeline messages", () => {
     expect(screen.container.innerHTML).not.toContain("javascript:");
     await click(screen.button("Safe details"));
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+});
+
+function usageLimitEntries(resetAt: string) {
+  const threadId = ThreadId.make("usage-limit-thread");
+  const at = DateTime.makeUnsafe(CREATED_AT);
+  return deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: [
+      {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make("usage-limit"),
+        item: {
+          id: TurnItemId.make("usage-limit"),
+          threadId,
+          runId: RunId.make("usage-limit-run"),
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          title: null,
+          startedAt: at,
+          completedAt: at,
+          updatedAt: at,
+          type: "error",
+          status: "failed",
+          failure: {
+            class: "usage_limit",
+            message: "You've hit your usage limit.",
+            code: null,
+            retryable: true,
+            resetAt,
+          },
+        },
+      },
+    ],
+    optimisticMessages: [],
+  });
+}
+
+describe("MessagesTimeline usage limit notice", () => {
+  it("labels the retry time with the viewer's timezone", async () => {
+    await using screen = await renderTimeline(usageLimitEntries("2026-03-17T19:30:00.000Z"));
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(screen.text()).toMatch(/Usage limit reached\. Retry after .+\./);
+    expect(screen.text()).toContain(`(${timeZone})`);
+  });
+
+  it("keeps the retry time in the named zone after the viewer's timezone changes", async () => {
+    const resetAt = "2026-07-01T19:30:00.000Z";
+    const session = cdp();
+    await session.send("Emulation.setTimezoneOverride", { timezoneId: "Europe/Madrid" });
+    try {
+      {
+        await using _madrid = await renderTimeline(usageLimitEntries(resetAt));
+      }
+      await session.send("Emulation.setTimezoneOverride", { timezoneId: "America/New_York" });
+      await using screen = await renderTimeline(usageLimitEntries(resetAt));
+      const newYorkTime = new Date(resetAt).toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: "America/New_York",
+      });
+      expect(screen.text()).toContain(`${newYorkTime} (America/New_York)`);
+    } finally {
+      await session.send("Emulation.setTimezoneOverride", { timezoneId: "" });
+    }
   });
 });
 
@@ -859,7 +974,7 @@ describe("MessagesTimeline attachments", () => {
           onOpen={onOpen}
         />
       );
-      await using screen = await renderElement(preview());
+      await using screen = await renderElement(<div dir="rtl">{preview()}</div>);
       const audio = screen.container.querySelector("audio")!;
       const duration = vi.spyOn(audio, "duration", "get").mockReturnValue(Infinity);
       const play = vi.spyOn(audio, "play").mockResolvedValue();
@@ -884,6 +999,10 @@ describe("MessagesTimeline attachments", () => {
         audio.dispatchEvent(new Event("durationchange"));
       });
       expect(screen.text()).toContain("0:03 / 0:10");
+      expect(
+        getComputedStyle(screen.container.querySelector("audio")!.previousElementSibling!)
+          .direction,
+      ).toBe("ltr");
       expect(progress.style.width).toBe("30%");
       await act(() => {
         duration.mockReturnValue(NaN);

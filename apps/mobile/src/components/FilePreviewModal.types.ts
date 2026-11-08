@@ -23,7 +23,22 @@ export type FilePreviewSource = FilePreviewItem & {
   readonly gallery?: readonly FilePreviewItem[];
 };
 
-export interface ResolvedFilePreviewSource extends FilePreviewMetadata {
+export interface ResolvedFilePreviewDocument extends FilePreviewMetadata {
+  readonly kind: "pdf" | "document";
   readonly uri: string;
-  readonly gallery?: readonly (FilePreviewMetadata & { readonly uri: string })[];
 }
+
+/** `uri` is absent while it resolves; `failed` marks one that never will. */
+export interface FilePreviewImage extends FilePreviewMetadata {
+  readonly uri?: string;
+  readonly failed?: boolean;
+}
+
+/** Opens before every URL resolves; images keep their slot as URLs arrive. */
+export interface FilePreviewImages {
+  readonly kind: "image";
+  readonly images: readonly FilePreviewImage[];
+  readonly selectedIndex: number;
+}
+
+export type ResolvedFilePreviewSource = ResolvedFilePreviewDocument | FilePreviewImages;
