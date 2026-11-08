@@ -415,23 +415,32 @@ export const make = Effect.gen(function* () {
         error: outcome.failure,
       });
     }
+    const removeFailed = new Set<EnvironmentId>();
     for (const peerEnvironmentId of plan.remove) {
-      yield* client[WS_METHODS.lanGatewayRemove]({ environmentId: peerEnvironmentId }).pipe(
+      const removed = yield* client[WS_METHODS.lanGatewayRemove]({
+        environmentId: peerEnvironmentId,
+      }).pipe(
+        Effect.as(true),
         Effect.catch((error) =>
           Effect.logDebug("Could not remove a stale LAN gateway peer.", {
             gatewayEnvironmentId,
             peerEnvironmentId,
             error,
-          }),
+          }).pipe(Effect.as(false)),
         ),
       );
+      if (!removed) removeFailed.add(peerEnvironmentId);
     }
-    const claimed = claimedGatewayPeerIds({
-      desired,
-      previousDesired,
-      addAttempts: plan.add.map((peer) => peer.environmentId),
-      addSucceeded,
-    });
+    // Keep failed removes claimed so the next reconcile retries them.
+    const claimed = new Set([
+      ...claimedGatewayPeerIds({
+        desired,
+        previousDesired,
+        addAttempts: plan.add.map((peer) => peer.environmentId),
+        addSucceeded,
+      }),
+      ...removeFailed,
+    ]);
     yield* Ref.update(gatewayPreviousDesired, (current) => {
       const next = new Map(current);
       next.set(gatewayEnvironmentId, claimed);
