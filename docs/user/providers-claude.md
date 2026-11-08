@@ -39,7 +39,7 @@ state. Claude does not have Codex's shared-home and shadow-home arrangement.
 
 With more than one Claude instance, the unnamed default one is listed as **Claude · this box**
 (the server machine's own login), and the model chip in the composer names the account a thread
-runs on. A send that would move a thread to another account asks first.
+runs on.
 
 For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.

@@ -119,7 +119,6 @@ import {
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
 import {
-  confirmAccountSwitch,
   draftSendState,
   type MultipleModelTarget,
   resolveMultipleModelTargets,
@@ -598,15 +597,6 @@ export function useComposerSend(input: ComposerSendInput) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
-    // A started thread keeps its account unless the user agrees to move it.
-    const confirmSendAccount = () =>
-      isServerThread && activeMessageCount > 0 && multipleModelSelections === null
-        ? confirmAccountSwitch(
-            providerInstanceEntries,
-            activeThread.modelSelection.instanceId,
-            ctxSelectedModelSelection.instanceId,
-          )
-        : Promise.resolve(true);
     const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
       mergeDirectPreviewAnnotation({
         images: sendContextImages,
@@ -770,7 +760,6 @@ export function useComposerSend(input: ComposerSendInput) {
       if (composerRef.current?.validateProviderInput(outgoingFollowUpText) === false) {
         return;
       }
-      if (!(await confirmSendAccount())) return;
       const followUpPromptSnapshot = promptRef.current;
       const followUpTerminalContexts = [...sendableComposerTerminalContexts];
       const followUpReviewComments = [...composerReviewComments];
@@ -976,10 +965,6 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     sendInFlightRef.current = true;
-    if (!(await confirmSendAccount())) {
-      sendInFlightRef.current = false;
-      return;
-    }
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
     if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {

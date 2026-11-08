@@ -7,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  accountSwitchConfirmMessage,
   applyProviderInstanceSettings,
   brandProviderInstanceEntries,
   deriveProviderEntriesByEnvironment,
@@ -186,27 +185,6 @@ describe("deriveProviderInstanceEntries", () => {
         provider({ provider: claude, instanceId: "claude-public-pool", enabled: false }),
       ])[0],
     ).toBe("Claude");
-  });
-});
-
-describe("accountSwitchConfirmMessage", () => {
-  it("asks only when a send moves the thread to another account of the same provider", () => {
-    const claude = ProviderDriverKind.make("claudeAgent");
-    const entries = deriveProviderInstanceEntries([
-      provider({ provider: claude, instanceId: "claudeAgent" }),
-      provider({
-        provider: claude,
-        instanceId: "claude-public-pool",
-        displayName: "Claude · Mac mini pool",
-      }),
-      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
-    ]);
-    const id = ProviderInstanceId.make;
-    expect(accountSwitchConfirmMessage(entries, id("claude-public-pool"), id("claudeAgent"))).toBe(
-      "Switch this thread to Claude · this box?\nIt runs on Claude · Mac mini pool now.",
-    );
-    expect(accountSwitchConfirmMessage(entries, id("claudeAgent"), id("claudeAgent"))).toBeNull();
-    expect(accountSwitchConfirmMessage(entries, id("claudeAgent"), id("codex"))).toBeNull();
   });
 });
 

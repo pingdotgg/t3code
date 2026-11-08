@@ -17,7 +17,6 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { readLocalApi } from "../../localApi";
-import { accountSwitchConfirmMessage, type ProviderInstanceEntry } from "../../providerInstances";
 import { getUploadedAttachments } from "../../lib/attachmentUploadQueue";
 import { findRevertCheckpoint } from "../../session-logic";
 import { type ChatMessage } from "../../types";
@@ -32,6 +31,7 @@ import {
 } from "../../composerDraftStore";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { createModelSelection } from "@t3tools/shared/model";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
 import {
   formatOutgoingPrompt,
@@ -363,14 +363,4 @@ export function prepareTurnAttachments(input: {
       };
     }),
   );
-}
-
-/** Asks before a send moves a thread to another account; true when nothing needs asking. */
-export async function confirmAccountSwitch(
-  entries: ReadonlyArray<ProviderInstanceEntry>,
-  currentInstanceId: ProviderInstanceEntry["instanceId"],
-  nextInstanceId: ProviderInstanceEntry["instanceId"],
-): Promise<boolean> {
-  const message = accountSwitchConfirmMessage(entries, currentInstanceId, nextInstanceId);
-  return message === null || ((await readLocalApi()?.dialogs.confirm(message)) ?? false);
 }

@@ -58,7 +58,6 @@ export function openNewLesson(request: Request) {
   useLessonDialog.setState({ request });
 }
 
-const LESSON_MODEL = "claude-sonnet-5-5";
 const LESSON_MODEL_SCHEMA = Schema.NullOr(ModelSelection);
 
 function lessonModelSelection(
@@ -66,26 +65,17 @@ function lessonModelSelection(
   remembered: ModelSelection | null,
   fallback: ModelSelection | null,
 ): ModelSelection | null {
-  const offers = (entry: ProviderInstanceEntry, model: string) =>
-    entry.enabled &&
-    entry.isAvailable &&
-    entry.status !== "error" &&
-    entry.models.some((candidate) => candidate.slug === model);
-  if (
-    remembered &&
+  const runnable =
+    remembered !== null &&
     entries.some(
-      (entry) => entry.instanceId === remembered.instanceId && offers(entry, remembered.model),
-    )
-  ) {
-    return remembered;
-  }
-  const preferred =
-    entries.find(
-      (entry) => entry.instanceId === "claude-public-pool" && offers(entry, LESSON_MODEL),
-    ) ?? entries.find((entry) => entry.driverKind === "claudeAgent" && offers(entry, LESSON_MODEL));
-  return preferred
-    ? createModelSelection(preferred.instanceId, LESSON_MODEL, [{ id: "effort", value: "high" }])
-    : fallback;
+      (entry) =>
+        entry.instanceId === remembered.instanceId &&
+        entry.enabled &&
+        entry.isAvailable &&
+        entry.status !== "error" &&
+        entry.models.some((candidate) => candidate.slug === remembered.model),
+    );
+  return runnable ? remembered : fallback;
 }
 
 const depthOptions = [
