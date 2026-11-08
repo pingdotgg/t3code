@@ -363,6 +363,24 @@ it("grades a page passed by path on the file the agent last wrote there", () => 
     },
   };
   assert.deepEqual(failed(expect, run([write, patched, render])), []);
+  const editUnseen = { ...fix, input: { ...fix.input, old_string: "<h1>", new_string: "<h2>" } };
+  const editMarker = { ...fix, step: 2, input: { ...fix.input, old_string: "unknown" } };
+  assert.include(
+    failed(expect, run([editUnseen, editMarker, render])),
+    "page known html_render /tmp/v.html",
+  );
+  const dollar = { ...fix, input: { ...fix.input, new_string: "var(--card)$&" } };
+  assert.deepEqual(failed(expect, run([write, dollar, render])), []);
+  const ambiguous = { ...write, input: { ...write.input, content: "<p>white</p>\n<i>white</i>" } };
+  const patchAmbiguous = {
+    step: 1,
+    tool: "Edit",
+    input: { patch: "*** Update File: /tmp/v.html\n@@\n-white\n+var(--card)\n" },
+  };
+  assert.include(
+    failed(expect, run([ambiguous, patchAmbiguous, render])),
+    "page known html_render /tmp/v.html",
+  );
   const twice = { ...write, input: { ...write.input, content: "<p style=background:#000>#000" } };
   const fixAll = { ...fix, input: { ...fix.input, replace_all: true } };
   assert.deepEqual(failed(expect, run([twice, fixAll, render])), []);

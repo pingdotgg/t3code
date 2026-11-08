@@ -1388,8 +1388,11 @@ const applyPatch = (patch: string, scripts: Map<string, string>, exact: boolean)
     /^\*\*\* (Add|Update|Delete) File: (.+)\n([\s\S]*?)(?=^\*\*\* (?:Add|Update|Delete) File: |^\*\*\* End Patch|(?![\s\S]))/gm,
   )) {
     const lines = body.split("\n");
-    if (op === "Delete") scripts.delete(path);
-    else if (op === "Add")
+    // In exact mode a deleted file stays unknown, so a relative alias cannot supply a stale copy.
+    if (op === "Delete") {
+      if (exact) scripts.set(path, UNKNOWN_SCRIPT);
+      else scripts.delete(path);
+    } else if (op === "Add")
       scripts.set(
         path,
         lines.flatMap((line) => (line.startsWith("+") ? [line.slice(1)] : [])).join("\n"),
@@ -1409,8 +1412,12 @@ const applyPatch = (patch: string, scripts: Map<string, string>, exact: boolean)
         if (unknown || (!before && !after)) continue;
         const applies = before !== "" && source.includes(before);
         // A pure addition has no anchor; appending it is exact enough for substring checks.
-        unknown = exact && before !== "" && !applies;
-        source = applies ? source.replace(before, after) : `${source}\n${after}`;
+        // An anchor that occurs twice could be either place, so exact mode cannot replay it.
+        unknown =
+          exact &&
+          before !== "" &&
+          (!applies || source.indexOf(before) !== source.lastIndexOf(before));
+        source = applies ? source.replace(before, () => after) : `${source}\n${after}`;
       }
       scripts.set(path, unknown ? UNKNOWN_SCRIPT : source);
     }
@@ -1435,10 +1442,14 @@ const noteWrites = (
     const source = scripts.get(path);
     const all = record(call.input) && call.input.replace_all === true;
     if (patch) applyPatch(patch, scripts, exact);
-    else if (exact && path && (source === undefined || !old || !source.includes(old)))
+    else if (
+      exact &&
+      path &&
+      (source === undefined || source === UNKNOWN_SCRIPT || !old || !source.includes(old))
+    )
       scripts.set(path, UNKNOWN_SCRIPT);
     else if (source !== undefined && old)
-      scripts.set(path, all ? source.replaceAll(old, next) : source.replace(old, next));
+      scripts.set(path, all ? source.replaceAll(old, () => next) : source.replace(old, () => next));
   }
   if (SHELL.has(call.tool) && call.tool !== "exec")
     for (const { text } of liveParts(inputString(call.input, "command")))
