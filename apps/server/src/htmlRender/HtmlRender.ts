@@ -1,6 +1,7 @@
 import type { ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isNetworkPath } from "@t3tools/shared/path";
 import {
   clampHtmlRenderHeight,
   HTML_RENDER_COLUMN_WIDTH,
@@ -22,14 +23,16 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type * as Path from "effect/Path";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { openMediaFile, readMediaFileHeader } from "../assets/MediaFile.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
+import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
@@ -39,7 +42,28 @@ import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 const MIB = 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * MIB;
 const MAX_PAGE_BYTES = 25 * MIB;
+const HTML_FILE_EXTENSION = /\.html?$/i;
+// Like the image check, judge the bytes: a renamed .env or key does not start like a page.
+const HTML_DOCUMENT_START = /^\s*<(?:!doctype\s+html|html)[\s>]/i;
 const formatMib = (bytes: number) => `${(bytes / MIB).toFixed(1)} MiB`;
+
+export class HtmlRenderFileError extends Schema.TaggedError<HtmlRenderFileError>()(
+  "HtmlRenderFileError",
+  { path: Schema.String },
+) {
+  override get message(): string {
+    return `${this.path} is not a readable HTML document. Pass an absolute path to a regular .html file that starts with <!doctype html> or <html>, or pass html instead.`;
+  }
+}
+
+export class HtmlRenderFileTooLargeError extends Schema.TaggedError<HtmlRenderFileTooLargeError>()(
+  "HtmlRenderFileTooLargeError",
+  { path: Schema.String, sizeBytes: Schema.Number },
+) {
+  override get message(): string {
+    return `${this.path} is ${formatMib(this.sizeBytes)}; a page must be at most ${formatMib(MAX_PAGE_BYTES)}.`;
+  }
+}
 
 export class HtmlRenderImagesNotFoundError extends Schema.TaggedError<HtmlRenderImagesNotFoundError>()(
   "HtmlRenderImagesNotFoundError",
@@ -108,6 +132,8 @@ export type HtmlRenderPrepareError =
   | HtmlRenderPageTooLargeError
   | HtmlRenderViewportHeightError;
 
+export type HtmlRenderSource = { readonly html: string } | { readonly path: string };
+
 export interface HtmlPreview {
   readonly png: string;
   readonly width: number;
@@ -121,18 +147,28 @@ export class HtmlRender extends Context.Service<
   HtmlRender,
   {
     readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
-    readonly publish: (input: {
-      readonly threadId: ThreadId;
-      readonly html: string;
-      readonly title: string;
-      readonly height: number;
-    }) => Effect.Effect<HtmlRenderReference, HtmlRenderPrepareError | HtmlRenderStoreError>;
-    readonly preview: (input: {
-      readonly html: string;
-      readonly width?: number | undefined;
-      readonly appearance?: ThemeAppearance | undefined;
-    }) => Effect.Effect<
+    readonly publish: (
+      input: HtmlRenderSource & {
+        readonly threadId: ThreadId;
+        readonly title: string;
+        readonly height: number;
+      },
+    ) => Effect.Effect<
+      HtmlRenderReference,
+      | HtmlRenderFileError
+      | HtmlRenderFileTooLargeError
+      | HtmlRenderPrepareError
+      | HtmlRenderStoreError
+    >;
+    readonly preview: (
+      input: HtmlRenderSource & {
+        readonly width?: number | undefined;
+        readonly appearance?: ThemeAppearance | undefined;
+      },
+    ) => Effect.Effect<
       HtmlPreview,
+      | HtmlRenderFileError
+      | HtmlRenderFileTooLargeError
       | Exclude<HtmlRenderPrepareError, HtmlRenderImagesNotFoundError>
       | PreviewBrowser.PreviewBrowserInstallError
       | PreviewBrowser.PreviewBrowserInstallingError
@@ -331,7 +367,9 @@ const MEASURE_FRAGMENT = htmlRenderThemeFragment(
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
+  const isServerInternalPath = yield* makeIsServerInternalPath;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const services = yield* Effect.context<
@@ -400,6 +438,39 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const readPageFile = Effect.fn("HtmlRender.readPageFile")(function* (filePath: string) {
+    const unreadable = new HtmlRenderFileError({ path: filePath });
+    if (!path.isAbsolute(filePath) || isNetworkPath(filePath)) return yield* unreadable;
+    // Check the resolved file, so a symlink named .html cannot reach another file.
+    const realPath = yield* fileSystem.realPath(filePath).pipe(Effect.mapError(() => unreadable));
+    if (!HTML_FILE_EXTENSION.test(realPath) || (yield* isServerInternalPath(realPath))) {
+      return yield* unreadable;
+    }
+    // Open without following links and recheck the path, so a link or FIFO swapped in is refused.
+    const bytes = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* openMediaFile(realPath).pipe(Effect.mapError(() => unreadable));
+        // Unlike client reads, the caller may be sandboxed: a second hard link could give any
+        // file an .html name.
+        if (file === null || file.info.nlink !== 1n) return yield* unreadable;
+        if (file.info.size > BigInt(MAX_PAGE_BYTES)) {
+          return yield* new HtmlRenderFileTooLargeError({
+            path: filePath,
+            sizeBytes: Number(file.info.size),
+          });
+        }
+        return yield* readMediaFileHeader(realPath, file, Number(file.info.size)).pipe(
+          Effect.mapError(() => unreadable),
+        );
+      }),
+    );
+    const html = new TextDecoder().decode(bytes);
+    return HTML_DOCUMENT_START.test(html) ? html : yield* unreadable;
+  });
+
+  const readSource = (input: HtmlRenderSource) =>
+    "path" in input ? readPageFile(input.path) : Effect.succeed(input.html);
+
   // The bootstrap goes in first so its head scan never runs over inlined image data.
   const inline = (html: string) =>
     inlineLocalImages(injectHtmlRenderBootstrap(html)).pipe(Effect.provideContext(services));
@@ -413,13 +484,15 @@ const make = Effect.gen(function* () {
     return inlined.html;
   });
 
-  const publish = Effect.fn("HtmlRender.publish")(function* (input: {
-    readonly threadId: ThreadId;
-    readonly html: string;
-    readonly title: string;
-    readonly height: number;
-  }) {
-    const html = yield* prepare(input.html);
+  const publish = Effect.fn("HtmlRender.publish")(function* (
+    input: HtmlRenderSource & {
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly height: number;
+    },
+  ) {
+    const source = yield* readSource(input);
+    const html = yield* prepare(source);
     // The `-html` id suffix makes the asset route serve it as a sandboxed text/html document.
     const attachmentId = createAttachmentId(input.threadId, "html");
     const filePath =
@@ -447,7 +520,16 @@ const make = Effect.gen(function* () {
           ...(heights === undefined ? {} : { heights }),
         };
         return mcpSessions
-          .recordHtmlRender(input.threadId, input, reference)
+          .recordHtmlRender(
+            input.threadId,
+            {
+              html: source,
+              path: "path" in input ? input.path : undefined,
+              title: input.title,
+              height: input.height,
+            },
+            reference,
+          )
           .pipe(Effect.as(reference));
       }),
       // An interrupted publish must leave neither an attachment nor a recoverable reference.
@@ -463,18 +545,20 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const preview = Effect.fn("HtmlRender.preview")(function* (input: {
-    readonly html: string;
-    readonly width?: number | undefined;
-    readonly appearance?: ThemeAppearance | undefined;
-  }) {
+  const preview = Effect.fn("HtmlRender.preview")(function* (
+    input: HtmlRenderSource & {
+      readonly width?: number | undefined;
+      readonly appearance?: ThemeAppearance | undefined;
+    },
+  ) {
     const width = Math.min(
       MAX_PREVIEW_WIDTH,
       Math.max(MIN_PREVIEW_WIDTH, Math.round(input.width ?? HTML_RENDER_COLUMN_WIDTH)),
     );
     const appearance = input.appearance ?? "dark";
-    yield* rejectViewportHeight(input.html);
-    const inlined = yield* inline(input.html);
+    const source = yield* readSource(input);
+    yield* rejectViewportHeight(source);
+    const inlined = yield* inline(source);
     const executable = yield* previewBrowser.executable;
     const theme = htmlRenderTheme(
       appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS,
