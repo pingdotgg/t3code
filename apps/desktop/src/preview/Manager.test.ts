@@ -2454,7 +2454,6 @@ describe("PreviewManager", () => {
         const makeWebview = (id: number) => {
           const element = {
             tagName: "WEBVIEW",
-            isConnected: true,
             getWebContentsId: () => id,
             focus: () => {
               document.activeElement = element;
@@ -2466,9 +2465,7 @@ describe("PreviewManager", () => {
         const previewWebview = makeWebview(42);
         const webviews = [otherTabWebview, previewWebview];
         Object.assign(document, {
-          querySelector: (selector: string) => (/webview/iu.test(selector) ? webviews[0] : null),
-          querySelectorAll: (selector: string) => (/webview/iu.test(selector) ? webviews : []),
-          getElementsByTagName: (tag: string) => (/^webview$/iu.test(tag) ? webviews : []),
+          querySelectorAll: (selector: string) => (selector === "webview" ? webviews : []),
         });
         const context = NodeVM.createContext({ document });
         const host = Object.assign(makeTestHostWebContents(), {
