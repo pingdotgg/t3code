@@ -23,6 +23,7 @@ import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useThreadShell } from "../../state/entities";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
+import { dismissThreadActionNotice, useThreadActionNotice } from "../threads/thread-action-notice";
 import { CommandPalette } from "./CommandPalette";
 import {
   dispatchHardwareKeyboardCommand,
@@ -71,6 +72,7 @@ export function HardwareKeyboardCommandProvider({
     [activeThread, activeThreadRef],
   );
   const [copyFeedback, setCopyFeedback] = useState<GitActionProgress>(EMPTY_COPY_FEEDBACK);
+  const threadActionNotice = useThreadActionNotice();
   const copyRequestIdRef = useRef(0);
   const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dismissCopyFeedback = useCallback(() => {
@@ -198,7 +200,14 @@ export function HardwareKeyboardCommandProvider({
       <T3KeyboardCommands enabledCommands={enabledCommands} onCommand={onCommand}>
         {children}
       </T3KeyboardCommands>
-      <GitActionProgressOverlay progress={copyFeedback} onDismiss={dismissCopyFeedback} />
+      {threadActionNotice.phase === "idle" ? (
+        <GitActionProgressOverlay progress={copyFeedback} onDismiss={dismissCopyFeedback} />
+      ) : (
+        <GitActionProgressOverlay
+          progress={threadActionNotice}
+          onDismiss={dismissThreadActionNotice}
+        />
+      )}
     </CommandPaletteContext>
   );
 }
