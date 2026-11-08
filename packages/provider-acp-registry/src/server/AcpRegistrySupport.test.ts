@@ -336,6 +336,53 @@ describe("AcpRegistrySupport", () => {
     ),
   );
 
+  it.live("launches the checked executable through symlinks and parent components", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const root = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+      const targetDirectory = path.join(root, "actual");
+      yield* fileSystem.makeDirectory(path.join(targetDirectory, "child"), { recursive: true });
+      yield* fileSystem.symlink(path.join(targetDirectory, "child"), path.join(root, "link"));
+      for (const [directory, output] of [
+        [targetDirectory, "checked"],
+        [root, "decoy"],
+      ] as const) {
+        const executable = path.join(directory, "agent");
+        yield* fileSystem.writeFileString(executable, `#!/bin/sh\nprintf '${output}\\n'\n`);
+        yield* fileSystem.chmod(executable, 0o755);
+      }
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: root,
+        toolsDir: path.join(root, "tools"),
+        registryUrl,
+      });
+      for (const source of ["local", "registry"] as const) {
+        for (const prefix of [root, path.relative(process.cwd(), root)]) {
+          const commandPath = `${prefix}/link/../agent`;
+          const resolved = yield* resolver.resolve(settings({ source, commandPath }), root);
+          const output = yield* spawner.string(
+            ChildProcess.make(resolved.spawn.command, resolved.spawn.args, {
+              cwd: resolved.spawn.cwd,
+              env: resolved.spawn.env,
+              shell: false,
+            }),
+          );
+          expect(output, `${source}: ${commandPath}`).toBe("checked\n");
+        }
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   it.effect("reports missing or non-executable local commands without registry fallback", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

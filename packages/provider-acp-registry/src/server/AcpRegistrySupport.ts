@@ -652,6 +652,13 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const architecture = yield* HostProcess.Architecture;
   const hostEnvironment = yield* HostProcess.Environment;
   const resolveExecutable = yield* SpawnExecutableResolution;
+  // Normalizing POSIX paths can change which executable a symlink followed by .. selects.
+  const absoluteExecutablePath = (command: string) =>
+    platform === "win32"
+      ? path.resolve(command)
+      : path.isAbsolute(command)
+        ? command
+        : `${process.cwd()}${path.sep}${command}`;
   const platformTarget = resolveAcpRegistryPlatformTarget(platform, architecture);
   const registryUrl = input.registryUrl ?? ACP_REGISTRY_URL;
   const registryDirectory = path.join(input.cacheDir, "acp-registry");
@@ -1846,7 +1853,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         return {
           distribution: "local",
           spawn: {
-            command: path.resolve(command),
+            command: absoluteExecutablePath(command),
             args: settings.commandArgs,
             cwd,
             env,
@@ -1915,7 +1922,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         agent,
         distribution: distribution.kind,
         spawn: {
-          command: path.resolve(command),
+          command: absoluteExecutablePath(command),
           args,
           cwd,
           env: spawnEnvironment,
