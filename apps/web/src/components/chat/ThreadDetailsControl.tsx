@@ -29,6 +29,7 @@ export function ThreadDetailsControl({
   part = "row",
   multiline = false,
   tone = "default",
+  chevronAlign = "text",
   className,
   children,
   size = "default",
@@ -40,6 +41,8 @@ export function ThreadDetailsControl({
   part?: keyof typeof parts;
   multiline?: boolean;
   tone?: "default" | "muted" | "primary" | "destructive";
+  /** A choice row's chevron lines up with the text or the 12px icons ending the rows around it. */
+  chevronAlign?: "text" | "icon";
 }) {
   const control = useRender({
     defaultTagName: "button",
@@ -64,7 +67,12 @@ export function ThreadDetailsControl({
           part === "choice" ? (
             <>
               {children}
-              <ChevronRightIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
+              <ChevronRightIcon
+                className={cn(
+                  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+                  chevronAlign === "icon" && "me-0",
+                )}
+              />
             </>
           ) : (
             children
