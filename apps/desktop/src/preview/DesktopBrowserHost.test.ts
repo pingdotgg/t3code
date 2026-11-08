@@ -34,6 +34,8 @@ const command = (
 const makeDebuggee = (
   options: {
     readonly deferFocus?: boolean;
+    /** The guest is still loading its first page. */
+    readonly loading?: boolean;
     readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
   } = {},
 ) => {
@@ -73,6 +75,7 @@ const makeDebuggee = (
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
+    isLoadingMainFrame: () => options.loading === true,
   });
   return {
     tab: {
@@ -81,6 +84,7 @@ const makeDebuggee = (
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
+    domReady: () => webContents.emit("dom-ready"),
     /** Ids of the commands the debugger received, in order. */
     sent,
     focusEmulation,
@@ -141,6 +145,27 @@ describe("DesktopBrowserHost", () => {
 
       expect(yield* takeEvents(host, 1)).toEqual([{ type: "attached", ...key }]);
       expect(yield* takeEvents(host, 1)).toEqual([{ type: "attached", ...key }]);
+    }),
+  );
+
+  it.effect("announces a guest still loading its first page only once that page is up", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const loading = makeDebuggee({ loading: true });
+      const other = { ...key, tabId: "tab-2" };
+      const reader = yield* takeEvents(host, 3).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      host.setShown(key, true);
+      host.attach(key, loading.tab);
+      host.attach(other, makeDebuggee().tab);
+      loading.domReady();
+
+      expect(yield* Fiber.join(reader)).toEqual([
+        { type: "attached", ...other },
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+      ]);
     }),
   );
 
