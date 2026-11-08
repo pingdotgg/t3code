@@ -63,6 +63,7 @@ import {
   parseManualDesktopSshTarget,
   parsePairingUrlFields,
   parseRemotePairingFields,
+  hostUsesGatewayPath,
   formatDesktopSshConnectionError,
 } from "./ConnectionsSettings.logic";
 
@@ -244,7 +245,10 @@ export function AddEnvironmentDialog({
         : gatewayPairPrefill
           ? {
               expectedEnvironmentId: gatewayPairPrefill.expectedEnvironmentId,
-              gatewayEnvironmentId: gatewayPairPrefill.gatewayEnvironmentId,
+              // Prefill host id must not follow a user edit to a direct URL.
+              ...(hostUsesGatewayPath(remotePairingInput.host)
+                ? { gatewayEnvironmentId: gatewayPairPrefill.gatewayEnvironmentId }
+                : {}),
             }
           : {}),
     });

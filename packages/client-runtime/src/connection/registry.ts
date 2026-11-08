@@ -58,6 +58,7 @@ import {
   mergeGatewayRoutes,
   mergeLearnedRoutes,
   planGatewayPeerReconcile,
+  retainedGatewayPeerIds,
   routeGatewayEnvironmentId,
   routesAfterRemoving,
   upsertRoute,
@@ -373,6 +374,7 @@ export const make = Effect.gen(function* () {
   ) {
     const catalog = yield* SubscriptionRef.get(entries);
     const desired = desiredGatewayPeers(catalog.values(), gatewayEnvironmentId);
+    const retain = retainedGatewayPeerIds(catalog.values(), gatewayEnvironmentId);
     const listed = yield* client[WS_METHODS.lanGatewayList]({}).pipe(
       Effect.catch((error) =>
         Effect.logDebug("Could not list LAN gateway peers for reconcile.", {
@@ -382,7 +384,7 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (listed === null) return;
-    const plan = planGatewayPeerReconcile({ desired, listed: listed.peers });
+    const plan = planGatewayPeerReconcile({ desired, listed: listed.peers, retain });
     for (const peer of plan.add) {
       yield* client[WS_METHODS.lanGatewayAdd]({ url: peer.url }).pipe(
         Effect.catch((error) =>

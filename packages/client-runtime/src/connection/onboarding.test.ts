@@ -164,6 +164,7 @@ function layerPairingHttp(
 function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
+  hopTicketCalls: Array<EnvironmentId> = [],
 ) {
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
@@ -194,7 +195,11 @@ function layerPairingOnboarding(
     ),
     Layer.mock(GatewayHop.GatewayHopAuthorization)({
       remember: () => Effect.void,
-      issueTicket: () => Effect.succeedSome("hop-ticket"),
+      issueTicket: (id) =>
+        Effect.sync(() => {
+          hopTicketCalls.push(id);
+          return Option.some("hop-ticket");
+        }),
     }),
   );
   return Onboarding.layer.pipe(
@@ -318,6 +323,30 @@ describe("connection onboarding", () => {
       expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
       expect(error.message).toContain("LAN gateway");
     }),
+  );
+
+  it.effect(
+    "ignores a stale gateway host id when the pairing host is no longer a gateway path",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+        const hopTicketCalls: Array<EnvironmentId> = [];
+        const gatewayEnvironmentId = EnvironmentId.make("env_gateway");
+        const registration = yield* preparePairingRegistration({
+          host: "https://desk.example.test/",
+          pairingCode: "pairing-token",
+          gatewayEnvironmentId,
+          expectedEnvironmentId: PAIRED_ENVIRONMENT_ID,
+        }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls, hopTicketCalls)));
+
+        expect(hopTicketCalls).toEqual([]);
+        expect(registration.profile.gatewayEnvironmentId).toBeUndefined();
+        expect(calls.map((call) => call.url)).toEqual([
+          "https://desk.example.test/.well-known/t3/environment",
+          "https://desk.example.test/oauth/token",
+        ]);
+        expect(calls.every((call) => !call.url.includes("gatewayTicket="))).toBe(true);
+      }),
   );
 
   it.effect("turns a switched-off environment back on when it is paired again", () =>

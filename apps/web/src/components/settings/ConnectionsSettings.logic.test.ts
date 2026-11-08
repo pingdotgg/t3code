@@ -2,11 +2,21 @@ import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  hostUsesGatewayPath,
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
+
+describe("hostUsesGatewayPath", () => {
+  it("detects a LAN gateway peer path and ignores a direct host", () => {
+    expect(hostUsesGatewayPath("https://gateway.example/__t3_gateway/env_peer/")).toBe(true);
+    expect(hostUsesGatewayPath("gateway.example/__t3_gateway/env_peer")).toBe(true);
+    expect(hostUsesGatewayPath("https://desk.example/")).toBe(false);
+    expect(hostUsesGatewayPath("desk.example")).toBe(false);
+  });
+});
 
 describe("togglePairingScopeSelection", () => {
   it.each([
