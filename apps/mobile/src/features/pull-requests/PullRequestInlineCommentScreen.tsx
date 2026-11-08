@@ -15,6 +15,8 @@ import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 export type InlineCommentParams = PullRequestParams & {
   readonly draftId?: string;
@@ -33,7 +35,14 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   const body = editedBody ?? saved?.body ?? "";
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
   const { refresh: refreshDetail } = detail;
-  useFocusEffect(() => refreshDetail());
+  const completions = usePullRequestCompletions({
+    environmentId: params.environmentId,
+    projectId: params.projectId,
+    value: body,
+    onChangeValue: setBody,
+    support: detail.data?.capabilities ?? null,
+  });
+  useFocusEffect(refreshDetail);
   const permissions = usePullRequestPermissions(params, detail.data);
   const stale = detail.data && detail.data.headSha !== params.headSha;
   const pending = useRef(false);
@@ -101,8 +110,12 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           {params.code}
         </Text>
       </View>
+      <PullRequestCompletionSuggestions completions={completions} />
       <TextInput
         multiline
+        selection={completions.selection}
+        onSelectionChange={completions.onSelectionChange}
+        onBlur={completions.onBlur}
         editable={store.ready && !busy}
         autoFocus
         accessibilityLabel="Inline review comment"

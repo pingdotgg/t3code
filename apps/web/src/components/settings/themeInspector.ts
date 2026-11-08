@@ -390,10 +390,8 @@ export function inspectThemeRoleFromUtilitiesAtElement(
 }
 
 export function highlightThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): number {
-  const startedAt = performance.now();
   clearThemeInspectorAttribute(THEME_INSPECTOR_MATCH_ATTRIBUTE);
   const candidates = themeInspectorCandidates();
-  const probeStartedAt = performance.now();
   const matches = withThemeTokenProbeSession(() => {
     const baseline = new Map<Element, ThemePaintSnapshot>();
     for (const element of candidates) {
@@ -413,7 +411,6 @@ export function highlightThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): n
     }
     return changed;
   });
-  const probeDuration = performance.now() - probeStartedAt;
 
   const highlightedElements = new Set<Element>();
   for (const element of matches) {
@@ -425,14 +422,6 @@ export function highlightThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): n
     element.setAttribute(THEME_INSPECTOR_MATCH_ATTRIBUTE, "");
   }
   renderThemeInspectorSpotlight([...highlightedElements]);
-  if (import.meta.env.DEV) {
-    const spotlight = document.getElementById(THEME_SPOTLIGHT_ID);
-    if (spotlight) {
-      spotlight.dataset.themeInspectorCandidates = String(candidates.length);
-      spotlight.dataset.themeInspectorProbeMs = probeDuration.toFixed(2);
-      spotlight.dataset.themeInspectorTotalMs = (performance.now() - startedAt).toFixed(2);
-    }
-  }
   return highlightedElements.size;
 }
 

@@ -102,6 +102,20 @@ describe("Antigravity process environment", () => {
     });
   });
 
+  it("runs the agy CLI as `agy acp` without a harness", () => {
+    const spawn = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/usr/bin/agy", harnessPath: null },
+      profile,
+      cwd: "/project",
+      baseEnv: { PATH: "/usr/bin", ANTIGRAVITY_HARNESS_PATH: "/stale/harness" },
+    });
+
+    expect(spawn.command).toBe("/usr/bin/agy");
+    expect(spawn.args).toEqual(["acp"]);
+    expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
+    expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
+  });
+
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
     const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
     const spawnFor = (auth: AntigravityAuthConfig) =>
@@ -577,7 +591,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "links the user's global skill directories into the profile without touching real content",
+    "links only the user's existing global skill directories without touching real content",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -587,26 +601,44 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         const profileDirectory = path.join(temporaryDirectory, "profile");
         const configSkills = path.join(userHome, ".gemini", "config", "skills");
         const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
+        const isLink = (link: string) =>
+          fs.readLink(link).pipe(
+            Effect.as(true),
+            Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+          );
         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
 
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         const configLink = path.join(profileDirectory, "config", "skills");
         const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
         expect(yield* fs.readLink(configLink)).toBe(configSkills);
-        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
+        expect(yield* isLink(cliLink)).toBe(false);
         expect(yield* fs.exists(path.join(configLink, "review"))).toBe(true);
         expect(yield* fs.exists(path.join(profileDirectory, "config", "mcp_config.json"))).toBe(
           false,
         );
 
-        yield* fs.remove(cliLink);
-        yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
+        // The harness leaves an empty folder where the link was skipped.
+        yield* fs.makeDirectory(cliLink, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect((yield* fs.stat(cliLink)).type).toBe("Directory");
+
+        yield* fs.makeDirectory(cliSkills, { recursive: true });
         yield* fs.remove(configLink);
         yield* fs.makeDirectory(path.join(configLink, "own-skill"), { recursive: true });
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
         expect(yield* fs.exists(path.join(configLink, "own-skill"))).toBe(true);
         expect((yield* fs.stat(configLink)).type).toBe("Directory");
+
+        yield* fs.remove(cliLink);
+        yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
+
+        yield* fs.remove(cliSkills, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* isLink(cliLink)).toBe(false);
       }),
   );
 

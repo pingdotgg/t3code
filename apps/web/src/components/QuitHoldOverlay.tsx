@@ -22,7 +22,7 @@ function subscribeQuitHint(listener: () => void): () => void {
   listeners.add(listener);
   if (listeners.size === 1) {
     stopBridge =
-      window.desktopBridge?.onQuitShortcut?.((hint) => {
+      window.desktopBridge?.onQuitShortcut((hint) => {
         window.clearTimeout(hideTimer);
         if (hint.state === "down") {
           pressedMode = hint.mode;
