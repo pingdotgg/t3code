@@ -9,7 +9,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom, filesViewedAtom, allowed, denied } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -47,10 +47,17 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() => AsyncResult.success(pages[cursor]!)),
     ),
+    filesViewedAtom: Atom.make(() => AsyncResult.success({ files: [], truncated: false })),
+    allowed: Atom.make(true),
+    denied: Atom.make(false),
   };
 });
 
-const mocks = vi.hoisted(() => ({ paged: false, diffCommits: [] as Array<string | undefined> }));
+const mocks = vi.hoisted(() => ({
+  paged: false,
+  diffCommits: [] as Array<string | undefined>,
+  canMarkViewed: true,
+}));
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -66,6 +73,11 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
         mocks.diffCommits.push(input.commit);
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
+      filesViewed: (() => filesViewedAtom) as never,
+      setFilesViewed: {
+        ...actual.pullRequestEnvironment.setFilesViewed,
+        permissionAtom: () => (mocks.canMarkViewed ? allowed : denied),
+      },
     },
   };
 });
@@ -125,20 +137,22 @@ const detail: PullRequestDetailView = {
   },
 };
 
-function setup({ paged }: { paged: boolean }) {
+function setup({ paged, canMarkViewed = true }: { paged: boolean; canMarkViewed?: boolean }) {
   mocks.paged = paged;
   mocks.diffCommits = [];
+  mocks.canMarkViewed = canMarkViewed;
 }
 
 const tab = (
   refreshToken: number,
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
+  pullRequest: PullRequestDetailView = detail,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
-    reference={detail}
-    detail={detail}
+    reference={pullRequest}
+    detail={pullRequest}
     selectedCommitOid={null}
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
@@ -234,4 +248,16 @@ it("never requests the diff of a selected commit the pull request no longer has"
     .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
     .toBeVisible();
   expect(mocks.diffCommits).not.toContain("gone");
+});
+
+it("disables the Viewed checkbox on a connection that cannot mark files viewed", async () => {
+  setup({ paged: false, canMarkViewed: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(
+    tab(0, null, { ...detail, capabilities: { ...detail.capabilities, viewedFiles: "host" } }),
+    { container },
+  );
+
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeDisabled();
 });

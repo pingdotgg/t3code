@@ -30,7 +30,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useAtomRefresh } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
   createContext,
@@ -253,6 +253,7 @@ function reviewThreadsByPath(threads: ReadonlyArray<PullRequestReviewThread>) {
 
 interface FileViewedToggleState {
   readonly enabled: boolean;
+  readonly canMarkViewed: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setFileViewed: (fileKey: string, viewed: boolean, extendRange: boolean) => void;
@@ -279,12 +280,13 @@ function FileViewedToggle({
       {stat}
       <label
         data-viewed-toggle=""
-        className="flex w-18 shrink-0 cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
+        className="flex w-18 shrink-0 cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground has-disabled:cursor-default"
         onClick={(event) => event.stopPropagation()}
       >
         <Checkbox
           aria-label={stale ? "Changed" : "Viewed"}
           checked={viewed}
+          disabled={!viewedFiles.canMarkViewed}
           onCheckedChange={(next, details) =>
             viewedFiles.setFileViewed(
               fileKey,
@@ -519,6 +521,9 @@ function PullRequestCodeTab({
     reference,
     enabled: viewedFilesStore !== undefined,
   });
+  const canMarkViewed = useAtomValue(
+    pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId),
+  );
   const {
     setViewed,
     refresh: refreshFilesViewed,
@@ -785,6 +790,7 @@ function PullRequestCodeTab({
   };
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
+    canMarkViewed,
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
     setFileViewed,
