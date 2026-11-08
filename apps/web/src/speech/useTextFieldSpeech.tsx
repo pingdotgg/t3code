@@ -74,14 +74,14 @@ export function TextFieldSpeechControls({
 }) {
   return (
     <>
-      {speech.preview ? (
-        <p
-          role="status"
-          className="order-first max-h-24 w-full overflow-y-auto rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 text-sm break-words whitespace-pre-wrap"
-        >
-          {speech.preview.committed}
-          <span className="text-muted-foreground">{speech.preview.tentative}</span>
-        </p>
+      {speech.state.phase === "recording" || speech.state.phase === "transcribing" ? (
+        // Fixed height pinned to the newest words, so dictating never resizes the form or moves its popover.
+        <div className="order-first flex h-24 w-full flex-col-reverse overflow-y-auto rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 text-sm">
+          <p role="status" className="break-words whitespace-pre-wrap">
+            {speech.preview?.committed}
+            <span className="text-muted-foreground">{speech.preview?.tentative}</span>
+          </p>
+        </div>
       ) : null}
       <ComposerSpeechRecordingPill
         size="compact"
