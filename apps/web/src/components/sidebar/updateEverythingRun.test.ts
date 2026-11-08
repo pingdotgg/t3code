@@ -1,11 +1,13 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ServerSelfUpdateOutcome } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { serverEnvironment } from "~/state/server";
+import { toastManager } from "../ui/toast";
 import { startDesktopUpdateLaunchNotice } from "./updateEverythingRun";
 
-function relaunchWhileRestarting(environmentId: EnvironmentId) {
+function relaunchWhileRestarting(environmentId: EnvironmentId, updateId?: string) {
   const now = 1_800_000_000_000;
   vi.useFakeTimers({ now });
   const store = new Map([
@@ -17,7 +19,15 @@ function relaunchWhileRestarting(environmentId: EnvironmentId) {
         updatedServers: 0,
         updatedProviders: 0,
         failures: [],
-        handedOff: [{ environmentId, label: "Slow", targetVersion: "9.9.9", startedAt: now }],
+        handedOff: [
+          {
+            environmentId,
+            label: "Slow",
+            targetVersion: "9.9.9",
+            startedAt: now,
+            ...(updateId === undefined ? {} : { updateId }),
+          },
+        ],
       }),
     ],
   ]);
@@ -62,6 +72,44 @@ describe("startDesktopUpdateLaunchNotice", () => {
     try {
       await vi.advanceTimersByTimeAsync(32 * 60 * 1000);
       expect(appAtomRegistry.get(stateAtom)).toEqual({ status: "idle" });
+    } finally {
+      release();
+      stop();
+    }
+  });
+
+  it("reports this update's rollback instead of restarting until the timeout", async () => {
+    const environmentId = EnvironmentId.make("rolled-back-machine");
+    const stateAtom = serverEnvironment.updateStateAtom(environmentId);
+    const outcomeAtom = Atom.make<AsyncResult.AsyncResult<ServerSelfUpdateOutcome>>(
+      AsyncResult.initial(),
+    );
+    using _outcome = vi.spyOn(serverEnvironment, "updateOutcome").mockReturnValue(outcomeAtom);
+    using addToast = vi.spyOn(toastManager, "add");
+    const stop = relaunchWhileRestarting(environmentId, "update-2");
+    const release = appAtomRegistry.mount(stateAtom);
+    const outcome = (id: string, reason: string) =>
+      AsyncResult.success<ServerSelfUpdateOutcome>({
+        id,
+        fromVersion: "9.9.8",
+        targetVersion: "9.9.9",
+        status: "rolled-back",
+        reason,
+      });
+    try {
+      appAtomRegistry.set(outcomeAtom, outcome("update-1", "an earlier attempt"));
+      expect(appAtomRegistry.get(stateAtom)).toMatchObject({ status: "running" });
+
+      appAtomRegistry.set(outcomeAtom, outcome("update-2", "candidate-exited:78"));
+      expect(appAtomRegistry.get(stateAtom)).toEqual({ status: "idle" });
+      expect(addToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "error",
+          description: expect.objectContaining({
+            props: expect.objectContaining({ children: "Slow: candidate-exited:78" }),
+          }),
+        }),
+      );
     } finally {
       release();
       stop();
