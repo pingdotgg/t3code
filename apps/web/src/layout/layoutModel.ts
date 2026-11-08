@@ -1219,7 +1219,12 @@ export function showLayoutContent(state: LayoutState, content: LayoutTabContent)
   if (existing) return focusLayoutTab(state, existing.tab.id);
   const focused = selectFocusedTab(state);
   if (focused && content.kind !== "launcher") {
-    return replaceLayoutTabContent(state, focused.id, content);
+    // A side panel or terminal sits beside its thread's chat; the chat's tab is the one to swap.
+    const target =
+      focused.content.kind === "surface"
+        ? (findLayoutChatForThread(state, focused.content.threadRef)?.tab ?? focused)
+        : focused;
+    return focusLayoutTab(replaceLayoutTabContent(state, target.id, content), target.id);
   }
   return openLayoutTab(state, content);
 }
