@@ -1087,6 +1087,9 @@ const decodeClaudeHistoryFork = Schema.decodeUnknownEffect(
     Schema.Struct({ sessionId: Schema.String, headMessageId: Schema.optionalKey(Schema.String) }),
   ),
 );
+const decodeClaudeHistoryMessages = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(Schema.Struct({ uuid: Schema.String }))),
+);
 
 const claudeConfigDirOf = (
   path: Path.Path,
@@ -1097,7 +1100,7 @@ const claudeConfigDirOf = (
 // The SDK reads CLAUDE_CONFIG_DIR from process.env. Isolate custom homes in a
 // worker so concurrent providers keep the server's environment.
 const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
-  readonly method: "forkSession";
+  readonly method: "forkSession" | "getSessionMessages";
   readonly sessionId: string;
   readonly options?: ForkSessionOptions;
   readonly environment: NodeJS.ProcessEnv;
@@ -1617,8 +1620,16 @@ export const layerQueryRunner: Layer.Layer<
             Effect.andThen(
               session.messages.pipe(
                 Stream.takeUntil((message) => message.type === "result"),
-                Stream.runDrain,
+                Stream.runLast,
               ),
+            ),
+            Effect.filterOrFail(
+              (last) =>
+                Option.isSome(last) &&
+                last.value.type === "result" &&
+                last.value.subtype === "success" &&
+                !last.value.is_error,
+              () => new Error("Claude did not confirm /goal clear on the fork."),
             ),
             Effect.timeout("30 seconds"),
             Effect.mapError((cause) => queryRunnerError(cause, "clearGoal")),
@@ -1627,20 +1638,32 @@ export const layerQueryRunner: Layer.Layer<
         }
         // The SDK remaps copied UUIDs. Capture the inherited head before the
         // fork's first run appends messages.
+        const historyOptions = input.options.dir === undefined ? {} : { dir: input.options.dir };
         const headMessageId = usesHostConfig
           ? yield* Effect.tryPromise({
-              try: () =>
-                getSessionMessages(
-                  result.sessionId,
-                  input.options.dir === undefined ? {} : { dir: input.options.dir },
-                ),
+              try: () => getSessionMessages(result.sessionId, historyOptions),
               catch: (cause) => queryRunnerError(cause, "getSessionMessages"),
             }).pipe(
               Effect.map((messages) => messages.at(-1)?.uuid),
               Effect.orElseSucceed(() => undefined),
             )
-          : result.headMessageId;
-        return headMessageId === undefined ? result : { ...result, headMessageId };
+          : input.clearGoal === undefined
+            ? result.headMessageId
+            : yield* runClaudeWorker({
+                method: "getSessionMessages",
+                sessionId: result.sessionId,
+                options: historyOptions,
+                environment: input.environment,
+              }).pipe(
+                Effect.flatMap(decodeClaudeHistoryMessages),
+                Effect.map((messages) => messages.at(-1)?.uuid),
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Effect.provideService(Path.Path, path),
+                Effect.orElseSucceed(() => undefined),
+              );
+        return headMessageId === undefined
+          ? { sessionId: result.sessionId }
+          : { sessionId: result.sessionId, headMessageId };
       }),
       subagentLaunchToolUseId: Effect.fn("ClaudeAgentSdkQueryRunner.subagentLaunchToolUseId")(
         function* (input: ClaudeAgentSdkSubagentLookupInput) {
@@ -12290,6 +12313,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(upToMessageId === undefined ? {} : { upToMessageId }),
               };
               const sourceGoal = forkInput.sourceProviderThread.goal;
+              const launchArgSettings =
+                sourceGoal == null
+                  ? undefined
+                  : yield* readClaudeLaunchArgSettings({
+                      settings: adapterOptions.settings,
+                      cwd: input.runtimePolicy.cwd,
+                      fileSystem,
+                      path,
+                    });
               const forked = yield* queryRunner.forkSession({
                 sessionId: sourceNativeThreadId,
                 options: forkOptions,
@@ -12309,6 +12341,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                           resume: true,
                           cwd: input.runtimePolicy.cwd,
                           settings: adapterOptions.settings,
+                          ...(launchArgSettings === undefined
+                            ? {}
+                            : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
                           environment: adapterOptions.environment,
                           tools: [],
                         });
