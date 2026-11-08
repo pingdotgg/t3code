@@ -1572,6 +1572,42 @@ it.effect("stops the running turn and starts a goal sent into it next", () =>
   ),
 );
 
+it.effect("restarts by stopping the running turn when the provider cannot interrupt-restart", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn, send, read } = yield* goalHarness(
+        "restart-without-interrupt-restart",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* send("queued", "queued", "queue");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart"),
+          threadId,
+          messageId: MessageId.make("message:restart"),
+          text: "do this instead",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "restart_active", targetRunId: started[0]!.runId },
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        yield* worker.drain();
+
+        assert.deepEqual(steered, []);
+        assert.deepEqual(yield* read(threadId), {
+          queue: ["queued"],
+          started: ["first", "do this instead"],
+          stopRequested: true,
+        });
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("queues a goal clear without stopping work when no goal drives it", () =>
   Effect.scoped(
     Effect.gen(function* () {
