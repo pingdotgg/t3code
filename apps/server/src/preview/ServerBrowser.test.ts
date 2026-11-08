@@ -31,14 +31,20 @@ import * as TestClock from "effect/testing/TestClock";
 import type { BrowserContext, Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
 
+import { issueAssetUrl } from "../assets/AssetAccess.ts";
+import * as AssetSigner from "../assets/AssetSigner.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
   presentAsChrome: async () => {},
@@ -200,6 +206,19 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       viewport = size;
     }),
     goto: vi.fn(async (next: string) => {
+      // Like Chromium, a reserved `.invalid` host never resolves.
+      if (new URL(next).hostname.endsWith(".invalid")) {
+        const request = {
+          url: () => next,
+          method: () => "GET",
+          isNavigationRequest: () => true,
+          frame: () => page,
+          failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
+        };
+        events.emit("request", request);
+        events.emit("requestfailed", request);
+        throw new Error(`page.goto: net::ERR_NAME_NOT_RESOLVED at ${next}`);
+      }
       url = next;
       events.emit("load");
       const pending = initialNavigation;
@@ -393,6 +412,10 @@ const dependencies = Layer.mergeAll(
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
   PreviewAgentActivity.layer,
+  WorkspacePaths.layer,
+  AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer)),
+  Layer.mock(Orchestrator.OrchestratorV2)({}),
+  Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -1048,6 +1071,48 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
       expect((yield* Queue.clear(viewer.output)).some((item) => item._tag === "download")).toBe(
         false,
       );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a server tab opens this server's file link on an origin the server cannot reach", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const manager = yield* Manager.PreviewManager;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const events = yield* manager.subscribeEvents;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-browser-ws-" });
+      yield* fs.writeFileString(path.join(workspaceRoot, "report.html"), "<h1>report</h1>");
+      const { relativeUrl } = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: scope.thread.threadId, path: "report.html" },
+        workspaceRoot,
+      });
+      // The client resolves the asset against its own public origin, as behind tailscale serve.
+      yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        url: `http://unreachable.invalid${relativeUrl}`,
+      });
+      let settled;
+      do {
+        settled = yield* PubSub.take(events);
+      } while (
+        settled.type !== "failed" &&
+        (settled.type !== "navigated" || settled.snapshot.navStatus._tag === "Loading")
+      );
+      const navStatus =
+        settled.type === "failed"
+          ? { _tag: "LoadFailed", url: settled.url, description: settled.description }
+          : settled.snapshot.navStatus;
+      expect(navStatus).toEqual({
+        _tag: "Success",
+        url: expect.stringMatching(
+          /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/api\/assets\//,
+        ),
+        title: "test page",
+      });
+      expect("url" in navStatus && navStatus.url.endsWith(relativeUrl)).toBe(true);
     }),
   ).pipe(Effect.provide(layer)),
 );
