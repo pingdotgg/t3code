@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { serverEnvironment } from "~/state/server";
-import type { ServerUpdateOutcome } from "../ServerUpdateAction";
+import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
 import type { UpdateEverythingRun } from "./updateEverything.logic";
 import {
   retryFailedUpdateRunServers,
@@ -113,7 +113,7 @@ describe("retryFailedUpdateRunServers", () => {
       restartAt: null,
       machines: [...serverVersions.keys()].map(failedMachine),
     }));
-    const update = vi.fn(async (): Promise<ServerUpdateOutcome> => ({
+    const update = vi.fn(async (_target: ServerUpdateTarget): Promise<ServerUpdateOutcome> => ({
       status: "failed",
       message: rejection,
     }));
