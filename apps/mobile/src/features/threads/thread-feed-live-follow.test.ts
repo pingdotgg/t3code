@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  listenThreadFeedEnd,
   resolveThreadFeedLiveFollow,
   resolveThreadFeedReflowAnchor,
   resolveThreadFeedReflowOffset,
@@ -208,6 +209,41 @@ describe("shouldShowThreadFeedScrollToEnd", () => {
     { endFollowEnabled: true, isAtEnd: true, expected: false },
   ])("shows only when follow is paused away from the end: %j", ({ expected, ...state }) => {
     expect(shouldShowThreadFeedScrollToEnd(state)).toBe(expected);
+  });
+});
+
+describe("listenThreadFeedEnd", () => {
+  // Mirrors LegendList: a row's growth notifies totalSize before the end-alignment
+  // padding that fills an underfilled viewport shrinks to match.
+  const underfilledList = () => {
+    const viewport = 800;
+    let totalSize = 300;
+    let alignPadding = viewport - totalSize;
+    let notifyTotalSize = () => {};
+    return {
+      listen: (signalName: string, callback: () => void) => {
+        if (signalName === "totalSize") notifyTotalSize = callback;
+        return () => {};
+      },
+      isAtEnd: () => totalSize + alignPadding - viewport <= 0,
+      growRow: (growth: number) => {
+        totalSize += growth;
+        notifyTotalSize();
+        alignPadding = Math.max(0, viewport - totalSize);
+      },
+    };
+  };
+
+  it.each([
+    { growth: 200, reported: [true] },
+    { growth: 700, reported: [false] },
+  ])("reads the end once a row's growth settles: %j", async ({ growth, reported }) => {
+    const list = underfilledList();
+    const reports: boolean[] = [];
+    listenThreadFeedEnd(list, () => reports.push(list.isAtEnd()));
+    list.growRow(growth);
+    await Promise.resolve();
+    expect(reports).toEqual(reported);
   });
 });
 

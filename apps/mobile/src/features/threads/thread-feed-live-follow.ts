@@ -101,6 +101,26 @@ export function shouldShowThreadFeedScrollToEnd(input: {
   return !input.endFollowEnabled && !input.isAtEnd;
 }
 
+/** The LegendList state signals that can move the feed's end. */
+export interface ThreadFeedEndSignals {
+  readonly listen: (signalName: "isAtEnd" | "totalSize", callback: () => void) => () => void;
+}
+
+export function listenThreadFeedEnd(
+  signals: ThreadFeedEndSignals,
+  reportAtEnd: () => void,
+): () => void {
+  const unsubscribeAtEnd = signals.listen("isAtEnd", reportAtEnd);
+  // The edge signal refreshes on scroll, data and layout passes, not when a row grows, so a
+  // growing reply re-reads the end on totalSize. LegendList notifies that before it updates the
+  // end-alignment padding its end check adds, so the read waits a microtask.
+  const unsubscribeTotalSize = signals.listen("totalSize", () => queueMicrotask(reportAtEnd));
+  return () => {
+    unsubscribeAtEnd();
+    unsubscribeTotalSize();
+  };
+}
+
 /** The LegendList state a width reflow reads before rows re-measure and after they settle. */
 export interface ThreadFeedReflowListState {
   readonly data: ReadonlyArray<{ readonly id: string }>;

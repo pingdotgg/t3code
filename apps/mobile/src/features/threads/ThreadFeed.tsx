@@ -206,6 +206,7 @@ import {
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
+  listenThreadFeedEnd,
   resolveThreadFeedLiveFollow,
   resolveThreadFeedReflowAnchor,
   resolveThreadFeedReflowOffset,
@@ -3210,15 +3211,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     if (!list) return;
     const bottom = contentInsetEndAdjustment.get();
     if (bottom > 0) list.reportContentInset({ bottom });
-    // The edge signal refreshes on scroll, data and layout passes, not when a row grows, so a
-    // reply streaming in while the reader holds the list also re-reads the end.
-    const listState = list.getState();
-    const unsubscribeAtEnd = listState.listen("isAtEnd", () => reportListAtEnd());
-    const unsubscribeTotalSize = listState.listen("totalSize", () => reportListAtEnd());
-    releaseListRef.current = () => {
-      unsubscribeAtEnd();
-      unsubscribeTotalSize();
-    };
+    releaseListRef.current = listenThreadFeedEnd(list.getState(), reportListAtEnd);
     reportListAtEnd();
   };
   const jumpIndex = jumpReady
