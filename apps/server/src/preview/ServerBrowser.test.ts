@@ -2399,3 +2399,77 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+/** Makes the tab's next color scheme change hang in Playwright; resolves once it has started. */
+const stallColorScheme = (page: ReturnType<typeof makeContext>["page"]) => {
+  const started = Promise.withResolvers<void>();
+  page.emulateMedia.mockImplementationOnce(() => {
+    started.resolve();
+    return new Promise<void>(() => {});
+  });
+  return Effect.promise(() => started.promise);
+};
+
+it.effect("a stuck agent action times out on the server and later calls on its tab fail fast", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const stalled = stallColorScheme(contexts[0]!.page);
+      const stuck = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* stalled;
+      // The broker evicts a host that has not answered by timeoutMs plus its one second grace.
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(stuck)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      // The server answered in time, so the host every tab shares stays connected.
+      const status = yield* broker
+        .invoke({ scope, tabId, operation: "status", input: {} })
+        .pipe(Effect.exit);
+      expect(status).toMatchObject({ _tag: "Success" });
+      const busy = yield* broker
+        .invoke<void>({ scope, tabId, operation: "click", input: { ref: "e1" }, timeoutMs: 1_000 })
+        .pipe(Effect.flip);
+      expect(busy.message).toMatch(/busy|still running/i);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a tab stuck in an agent action does not hold back setting changes for other tabs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const other = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const stalled = stallColorScheme(contexts[0]!.page);
+      yield* broker
+        .invoke({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.ignore, Effect.forkScoped);
+      // The stuck action has already published its own tab's resized event.
+      yield* stalled;
+      yield* manager.adjust({
+        threadId: scope.thread.threadId,
+        tabId: PreviewTabId.make(other.tabId!),
+        colorScheme: "dark",
+      });
+      yield* TestClock.adjust("2 seconds");
+      expect(contexts[1]!.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: "dark" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
