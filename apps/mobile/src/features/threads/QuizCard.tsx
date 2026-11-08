@@ -1,6 +1,7 @@
 import {
   cardAnswerMessage,
   quizAnswerMessage,
+  quizRevealWrongIdeas,
   shuffledQuizOptions,
   type QuizCard as QuizCardData,
 } from "@t3tools/shared/quizCard";
@@ -31,6 +32,7 @@ export function QuizCard(props: {
   const revealed = props.answered || submitted;
   const picked = options.find((option) => option.option === selected);
   const sentPick = submitted ? picked : undefined;
+  const wrongOptions = quizRevealWrongIdeas(options);
 
   const submit = async () => {
     if (sending || revealed || selected === null) return;
@@ -166,13 +168,11 @@ export function QuizCard(props: {
                 : "Wrong."}
           </Text>
           <Text>{props.quizCard.explanation}</Text>
-          {options.map((option) =>
-            option.correct || !("wrongIdea" in option) ? null : (
-              <Text key={option.option}>
-                <Text className="font-t3-medium">{option.option}:</Text> {option.wrongIdea}
-              </Text>
-            ),
-          )}
+          {wrongOptions.map((option) => (
+            <Text key={option.option}>
+              <Text className="font-t3-medium">{option.label}</Text> {option.wrongIdea}
+            </Text>
+          ))}
         </View>
       )}
     </View>

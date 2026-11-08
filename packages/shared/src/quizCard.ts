@@ -262,6 +262,19 @@ export function shuffledQuizOptions(card: QuizCard, seed: string) {
   return options;
 }
 
+export function quizRevealWrongIdeas(options: ReturnType<typeof shuffledQuizOptions>) {
+  return options.flatMap((option) => {
+    if (option.correct || !("wrongIdea" in option)) return [];
+    return [
+      {
+        option: option.option,
+        label: `Wrong idea behind ${option.option}:`,
+        wrongIdea: option.wrongIdea,
+      },
+    ];
+  });
+}
+
 export function quizAnswerMessage(input: {
   readonly answer: string | null;
   readonly correct: boolean;
