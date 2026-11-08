@@ -1,5 +1,4 @@
 import {
-  SourceControlProviderKind,
   type PullRequestCheck,
   PullRequestComment,
   ThreadPullRequestWatch,
@@ -9,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
@@ -40,8 +40,19 @@ const check = (name: string, status: PullRequestCheck["status"]): PullRequestChe
 
 type Detail = Parameters<typeof evaluatePullRequestWatch>[1];
 
+const capabilities = (checksAlwaysReport: boolean): Detail["capabilities"] => ({
+  diff: true,
+  comment: true,
+  actions: [],
+  mergeMethods: [],
+  search: false,
+  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+  reviewers: { request: false, listCandidates: false },
+  checksAlwaysReport,
+});
+
 const detail = (overrides: Partial<Detail> = {}): Detail => ({
-  provider: SourceControlProviderKind.make("github"),
+  capabilities: capabilities(true),
   headSha: "aaaaaaaaaa",
   checks: [check("lint", "success"), check("test", "pending")],
   mergeability: "mergeable",
@@ -273,6 +284,28 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it("wakes once per edit of a remark seen at the watermark, never for the agent's own", () => {
+    const seen = remark("ci-bot", "2026-10-10T19:52:40.000Z");
+    const watching = watch({
+      headSha: "aaaaaaaaaa",
+      remarksThrough: seen.createdAt,
+      remarkIds: [seen.id],
+      wakes: 2,
+    });
+    assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [seen]).changes, []);
+    const edited = { ...seen, editedAt: "2026-10-10T20:04:50.000Z" };
+    const first = evaluatePullRequestWatch(watching, detail(), [edited]);
+    assert.deepEqual(first.changes, [{ kind: "remarks", remarks: [edited] }]);
+    assert.strictEqual(first.next.remarksThrough, edited.editedAt);
+    assert.deepEqual(evaluatePullRequestWatch(first.next, detail(), [edited]).changes, []);
+    const again = { ...seen, editedAt: "2026-10-10T20:05:50.000Z" };
+    const second = evaluatePullRequestWatch(first.next, detail(), [again]);
+    assert.deepEqual(second.changes, [{ kind: "remarks", remarks: [again] }]);
+    assert.deepEqual(evaluatePullRequestWatch(second.next, detail(), [again]).changes, []);
+    const own = { ...edited, author: { login: "agent-user", name: null, avatarUrl: null } };
+    assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [own]).changes, []);
+  });
+
   it("does not treat a failed check read as a rerun", () => {
     const failed = detail({ checks: [check("lint", "failure")] });
     const reported = evaluatePullRequestWatch(watch(), failed, noRemarks);
@@ -303,10 +336,30 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), comments).changes, []);
   });
 
+  it("cuts a long remark in the wake message without splitting an emoji", () => {
+    const body = `${"x".repeat(196)}🚀 and more`;
+    const report = evaluatePullRequestWatch(watch(), detail(), [
+      remark("reviewer", "2026-10-02T12:06:00Z", body),
+    ]);
+    const { text } = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: null,
+      report,
+    });
+    assert.isTrue(text.isWellFormed());
+    assert.include(text, `"${"x".repeat(196)}..."`);
+  });
+
   it("reports a conflict once, until the branch is clean again", () => {
     const conflicting = detail({ mergeability: "conflicting" });
     const first = evaluatePullRequestWatch(watch(), conflicting, noRemarks);
     assert.deepEqual(first.changes, [{ kind: "conflicting" }]);
+    const { headSha: _unreadHead, ...headUnread } = conflicting;
+    const unread = evaluatePullRequestWatch(first.next, headUnread, noRemarks);
+    assert.deepEqual(unread.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(unread.next, conflicting, noRemarks).changes, []);
     const recomputing = evaluatePullRequestWatch(
       first.next,
       detail({ mergeability: "unknown" }),
@@ -320,6 +373,20 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(clean.next, conflicting, noRemarks).changes, [
       { kind: "conflicting" },
     ]);
+    const pushed = { headSha: "bbbbbbbbbb" };
+    const recomputed = evaluatePullRequestWatch(
+      first.next,
+      detail({ ...pushed, mergeability: "unknown" }),
+      noRemarks,
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        recomputed.next,
+        detail({ ...pushed, mergeability: "conflicting" }),
+        noRemarks,
+      ).changes,
+      [{ kind: "conflicting" }],
+    );
   });
 
   it("does not spend the comment wake limit on check results", () => {
@@ -364,11 +431,8 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(pushed.flat(), ["no-checks"]);
   });
 
-  it("never reports missing checks on a host whose checks it cannot read", () => {
-    const azure = detail({
-      provider: SourceControlProviderKind.make("azure-devops"),
-      checks: [],
-    });
-    assert.isTrue(anHourLater(watch(), azure).every((kinds) => kinds.length === 0));
+  it("never reports missing checks on a host where an empty list says nothing", () => {
+    const silent = detail({ capabilities: capabilities(false), checks: [] });
+    assert.isTrue(anHourLater(watch(), silent).every((kinds) => kinds.length === 0));
   });
 });

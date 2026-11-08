@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 
 import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -23,10 +24,25 @@ import { vi } from "vite-plus/test";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
-  return { ...actual, realpath: vi.fn(actual.realpath) };
+  return { ...actual, realpath: vi.fn(actual.realpath), open: vi.fn(actual.open) };
 });
 
-// Temp folders count as known workspaces unless named as unknown.
+const injectShortReads = Effect.fn("injectShortReads")(function* (target: string) {
+  const native = yield* Effect.promise(() => vi.importActual<typeof NodeFSP>("node:fs/promises"));
+  const open = vi.mocked(NodeFSP.open).mockImplementation(async (path, flags, mode) => {
+    const handle = await native.open(path, flags, mode);
+    if (path === target) {
+      const read = handle.read.bind(handle);
+      Object.defineProperty(handle, "read", {
+        value: (buffer: Uint8Array, offset: number, length: number, position: number) =>
+          read(buffer, offset, Math.min(length, 2), position),
+      });
+    }
+    return handle;
+  });
+  yield* Effect.addFinalizer(() => Effect.sync(() => open.mockImplementation(native.open)));
+});
+
 const UNKNOWN_WORKSPACE_PREFIX = "t3code-unknown-workspace-";
 const layerKnownWorkspacesTest = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
   assertContains: (cwd) =>
@@ -46,12 +62,12 @@ const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
-  Layer.provide(
+  Layer.provideMerge(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-files-test-",
     }),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const makeTempDir = Effect.gen(function* () {
@@ -163,6 +179,57 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("readFile", () => {
+    it.effect("reads UTF-8 files relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/index.ts",
+        });
+
+        expect(result).toEqual({
+          relativePath: "src/index.ts",
+          contents: "export const answer = 42;\n",
+          byteLength: 26,
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("finishes short reads before decoding UTF-8 text", () =>
+      Effect.gen(function* () {
+        const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        const contents = "A café 🐈\n";
+        yield* writeTextFile(cwd, "short.txt", contents);
+        const target = yield* fs.realPath(`${cwd}/short.txt`);
+        yield* injectShortReads(target);
+        expect(yield* files.readFile({ cwd, relativePath: "short.txt" })).toEqual({
+          relativePath: "short.txt",
+          contents,
+          byteLength: Buffer.byteLength(contents),
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("rejects binary bytes delivered after an initial short read", () =>
+      Effect.gen(function* () {
+        const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "short.txt", "ab\0cd");
+        const target = yield* fs.realPath(`${cwd}/short.txt`);
+        yield* injectShortReads(target);
+        const error = yield* files.readFile({ cwd, relativePath: "short.txt" }).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceBinaryFileError);
+      }),
+    );
+
     it.effect("reads host files outside the workspace root by absolute path", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -204,6 +271,25 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           byteLength: 8,
           truncated: false,
         });
+      }),
+    );
+
+    it.effect("does not read server state files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(config.secretsDir, "example.bin", "example\n");
+        yield* writeTextFile(config.stateDir, "statev2.sqlite", "example\n");
+
+        for (const input of [
+          { cwd, relativePath: path.join(config.secretsDir, "example.bin") },
+          { cwd: config.stateDir, relativePath: "statev2.sqlite" },
+        ]) {
+          const error = yield* workspaceFileSystem.readFile(input).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        }
       }),
     );
 
@@ -343,6 +429,26 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
+    it.effect("drops a multibyte character split by the read limit", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const limit = 1024 * 1024;
+        const euro = new TextEncoder().encode("€");
+        const bytes = new Uint8Array(limit - 1 + euro.length).fill(0x61);
+        bytes.set(euro, limit - 1);
+        yield* fileSystem.writeFile(path.join(cwd, "large.txt"), bytes);
+
+        const result = yield* workspaceFileSystem.readFile({ cwd, relativePath: "large.txt" });
+
+        expect(result.truncated).toBe(true);
+        expect(result.byteLength).toBe(bytes.length);
+        expect(result.contents).toBe("a".repeat(limit - 1));
+      }),
+    );
+
     it.effect("rejects binary files without leaking their contents into the error", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -427,6 +533,38 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         );
         expect(afterWrite.truncated).toBe(false);
       }),
+    );
+
+    it.effect("saves over an existing file without rescanning the workspace", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/main.ts", "export {};\n");
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/main.ts",
+          contents: "export const edited = true;\n",
+        });
+
+        expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
+          "export const edited = true;\n",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(WorkspaceFileSystem.layer).pipe(
+            Layer.provide(layerKnownWorkspacesTest),
+            Layer.provide(WorkspacePaths.layer),
+            Layer.provide(
+              Layer.mock(WorkspaceEntries.WorkspaceEntries)({
+                refresh: () => Effect.die("An overwrite rescanned the workspace."),
+              }),
+            ),
+          ),
+        ),
+      ),
     );
 
     it.effect("rejects writes outside the workspace root", () =>
@@ -575,7 +713,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, ".git/config", "[core]\n");
-        // A bare repository named `.bare`, and a linked worktree's git folder inside it.
         yield* writeTextFile(cwd, ".bare/HEAD", "ref: refs/heads/main\n");
         yield* writeTextFile(cwd, ".bare/objects/info/packs");
         yield* writeTextFile(cwd, ".bare/refs/heads/main");
@@ -649,7 +786,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const parentDir = yield* makeTempDir;
-        // A bare repository with a worktree checked out inside it.
         const bare = path.join(parentDir, "repo.git");
         yield* writeTextFile(bare, "HEAD", "ref: refs/heads/main\n");
         yield* writeTextFile(bare, "objects/info/packs");

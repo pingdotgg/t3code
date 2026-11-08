@@ -32,9 +32,7 @@ const syncFs = <A>(method: string, path: string, run: () => A) =>
       }),
   });
 
-/**
- * @public Service construction is part of the canonical Effect module API.
- */
+/** @public */
 export const make = FileSystem.makeNoop({
   exists: (path) =>
     syncFs("exists", path, () => {

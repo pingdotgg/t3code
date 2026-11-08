@@ -1,4 +1,4 @@
-import { MspError, type SendUserTurnOptions } from "@muse-code/sdk";
+import { MspError, type ProcessExit, type SendUserTurnOptions } from "@muse-code/sdk";
 import {
   MUSE_DEFAULT_MODEL,
   ProviderDriverKind,
@@ -30,7 +30,6 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -65,7 +64,9 @@ import {
 import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
 import {
   createMuseSdkHostEffect,
+  MuseSdkError,
   museApprovalMode,
+  museCanonicalPath,
   musePermissionProfile,
   museWorkspaceRoot,
   type createMuseSdkHost,
@@ -232,11 +233,7 @@ interface PendingRequest {
   shown: boolean;
 }
 
-/**
- * Muse 1.4.4 cannot address an inline child session (`session/read` and
- * `view/subscribe` answer sessionNotFound), so the thread carries the prompt,
- * live status (on its root node) and result.
- */
+// Muse 1.4.4 cannot read/subscribe to inline child sessions; retain prompt, root status, and result here.
 interface ChildContext {
   readonly childSessionId: string;
   readonly childThreadId: ThreadId;
@@ -252,6 +249,9 @@ const nativeRef = (nativeId: string) => ({
   nativeId,
   strength: "strong" as const,
 });
+/** The roster lists a child under its turn item's native id, so readers can pair the two. */
+const backgroundTaskId = (item: MuseItem) =>
+  item.kind === "subagent" ? item.childSessionId || item.subagentId || item.itemId : item.itemId;
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);
 const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/contextUsage",
@@ -281,8 +281,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: MUSE_PROVIDER,
-    getCapabilities: () => Effect.succeed(MuseProviderCapabilitiesV2),
-    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
+    getCapabilities: Effect.fn("MuseAdapter.getCapabilities")(function () {
+      return Effect.succeed(MuseProviderCapabilitiesV2);
+    }),
+    planSelectionTransition: Effect.fn("MuseAdapter.planSelectionTransition")(function () {
+      return Effect.succeed(turnScopedSelectionTransition());
+    }),
     openSession: Effect.fn("MuseAdapterV2.openSession")(function* (
       input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     ) {
@@ -290,12 +294,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       if (input.runtimePolicy.interactionMode === "plan")
         return yield* protocolError("Muse Code does not support dedicated Plan mode");
       const scope = yield* Effect.scope;
-      // Muse rejects non-canonical workspace roots (for example macOS /tmp) and
-      // reports canonical paths in approvals, so resolve symlinks once here.
+      // Native realpath also corrects filesystem case, which Muse validates.
       const requestedCwd = input.runtimePolicy.cwd ?? providerHost.paths.cwd;
-      const cwd = yield* fileSystem
-        .realPath(requestedCwd)
-        .pipe(Effect.orElseSucceed(() => requestedCwd));
+      const cwd = yield* museCanonicalPath(requestedCwd);
       const workspaceRoot = yield* museWorkspaceRoot(cwd);
       const now = yield* DateTime.now;
       let session: OrchestrationV2ProviderSession = {
@@ -331,7 +332,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let thread: OrchestrationV2ProviderThread | undefined;
       let active: ActiveTurn | undefined;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
-      // Meta's newest subscription windows, for when a turn stopped at a usage limit can resume.
       let latestSubscriptionUsage: MuseSubscriptionUsage | undefined;
       const agentEndedAt = new Map<string, DateTime.Utc>();
       const resolveModel = Effect.fnUntraced(function* (selection: ModelSelection) {
@@ -385,18 +385,25 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }).pipe(
           Effect.timeout(options.requestTimeoutMs ?? 30_000),
           Effect.catchTags({
-            TimeoutError: (cause) =>
-              Effect.gen(function* () {
-                yield* eventPermit.withPermits(1)(failHost(cause));
-                return yield* protocolError(`Muse ${method} timed out; its host was closed`, cause);
-              }),
+            // The enclosing operation owns the span for this inline handler.
+            TimeoutError: Effect.fnUntraced(function* (cause) {
+              yield* eventPermit.withPermits(1)(failHost(cause));
+              return yield* protocolError(`Muse ${method} timed out; its host was closed`, cause);
+            }),
           }),
         );
       const updateSession = Effect.fnUntraced(function* (
         status: OrchestrationV2ProviderSession["status"],
         lastError: string | null = null,
       ) {
-        session = { ...session, status, lastError, updatedAt: yield* DateTime.now };
+        session = {
+          ...session,
+          status,
+          // lastError is the thread banner, so it gets the failure item's bounded, redacted text.
+          lastError:
+            lastError === null ? null : makeProviderFailure({ message: lastError }).message,
+          updatedAt: yield* DateTime.now,
+        };
         yield* emit({
           type: "provider_session.updated",
           driver: MUSE_PROVIDER,
@@ -601,9 +608,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           item.result?.summary ??
           (status === "failed" ? item.failureReason : undefined);
         const result = resultText ?? null;
-        const nativeTaskRef = item.childSessionId
-          ? nativeRef(item.childSessionId)
-          : nativeRef(item.subagentId ?? item.itemId);
+        const nativeTaskRef = nativeRef(backgroundTaskId(item));
         const subagent: OrchestrationV2Subagent = {
           id: base.nodeId,
           threadId: base.threadId,
@@ -681,7 +686,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const description = item?.objective ?? item?.entryId ?? item?.fallbackText;
             return [
               {
-                taskId: itemId,
+                taskId: item ? backgroundTaskId(item) : itemId,
                 kind:
                   item?.kind === "subagent" ? ("subagent" as const) : ("background_task" as const),
                 ...(description ? { description } : {}),
@@ -720,7 +725,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "cancelled"
                     : "failed",
             });
-          if (wasRunning !== observedChildren.has(item.itemId)) yield* syncBackground();
+          const running = observedChildren.has(item.itemId);
+          // Muse reveals a subagent's ids over several revisions, so a running child is
+          // relisted whenever the id its turn item carries moves.
+          const listed = thread?.pendingBackgroundTasks?.some(
+            (task) => task.taskId === backgroundTaskId(item),
+          );
+          if (wasRunning !== running || (running && !listed)) yield* syncBackground();
         }
         const streaming = status === "running";
         const base = {
@@ -1059,7 +1070,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         yield* settleObservedChildren("failed");
         if (turn) yield* Queue.fail(events, protocolError(detail, cause));
-        yield* Effect.tryPromise(() => failed.close()).pipe(Effect.ignore, Effect.forkIn(scope));
+        yield* Effect.tryPromise({
+          try: () => failed.close(),
+          catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+        }).pipe(Effect.ignore, Effect.forkIn(scope));
       });
       const owns = (turn: ActiveTurn, turnId: string) =>
         turnId === turn.nativeId || turn.joined.has(turnId);
@@ -1295,7 +1309,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       const handleNotification = Effect.fnUntraced(function* (method: string, data: unknown) {
         const params = yield* decode(recordSchema, data);
-        // Account-wide, so it names no session: Meta's subscription windows after a response.
+        // usage/changed is account-wide and carries no session ID.
         if (method === "usage/changed") {
           latestSubscriptionUsage = yield* decode(MuseSubscriptionUsage, params);
           return;
@@ -1340,8 +1354,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             return;
           }
         }
-        // A workflow child's approval comes under the child's own run id, during a turn
-        // or after it, so it skips turn routing.
+        // Child approvals use their own run IDs and can outlive turns; bypass turn routing.
         if (params.subagentOrigin !== undefined && method.startsWith("approval/"))
           return yield* handleRequestEvent(method, params, undefined);
         if (
@@ -1363,7 +1376,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 detail: null,
                 ...(notification ? { notification } : {}),
                 dispatchIfCurrent: (dispatch) =>
-                  wake === held ? Effect.map(dispatch, Option.some) : Effect.succeed(Option.none()),
+                  wake === held ? Effect.asSome(dispatch) : Effect.succeedNone,
                 clearIfCurrent: () =>
                   Effect.sync(() => {
                     if (wake === held) wake = undefined;
@@ -1371,7 +1384,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               });
           }
         }
-        if (wake && active?.nativeId !== wake.nativeId) {
+        // Muse compacts the latest run, which can be the held wake; its compaction item ends this turn.
+        if (
+          wake &&
+          active?.nativeId !== wake.nativeId &&
+          !(active?.compact && itemEvent?.kind === "compaction")
+        ) {
           const turnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
           if (turnId === wake.nativeId) {
             wake.events.push([method, data]);
@@ -1678,6 +1696,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           threadId: input.threadId,
           env: environment,
         });
+        // Finalizers run in reverse order: reap detached work after closing the host.
+        const scopeUnit = launch.unit;
+        const stopScope =
+          scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
+        yield* Scope.addFinalizer(scope, stopScope);
+        const processExited = yield* Deferred.make<ProcessExit>();
+        // Observe raw exit before acquisition: inherited stdout can also block startup cleanup.
+        yield* Deferred.await(processExited).pipe(Effect.andThen(stopScope), Effect.forkIn(scope));
         const created = yield* Effect.acquireRelease(
           createMuseSdkHostEffect(
             {
@@ -1686,6 +1712,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               cwd,
               environment,
               runtimeMode: input.runtimePolicy.runtimeMode,
+              onProcessExit: (exit) => {
+                Deferred.doneUnsafe(processExited, Effect.succeed(exit));
+              },
             },
             options.createHost,
           ).pipe(
@@ -1704,7 +1733,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 closed = true;
                 hostEpoch++;
               }
-              yield* Effect.tryPromise(() => created.close()).pipe(Effect.ignore);
+              const close = Effect.tryPromise({
+                try: () => created.close(),
+                catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+              });
+              // SDK shutdown sends SIGKILL after 10s + 2s, but inherited pipes can
+              // keep its close promise pending. Let the scope reap those holders.
+              yield* (
+                scopeUnit === undefined
+                  ? close
+                  : close.pipe(Effect.interruptible, Effect.timeoutOption("13 seconds"))
+              ).pipe(Effect.ignore);
             }),
           { interruptible: true },
         ).pipe(Effect.provideService(Scope.Scope, scope));
@@ -1733,7 +1772,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               epoch,
             });
         });
-        void created.exited.then((exit) => {
+        const reportExit = (exit: ProcessExit) => {
           if (!closed && epoch === hostEpoch) {
             const reason = created
               .stderrTail?.()
@@ -1747,7 +1786,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               epoch,
             });
           }
-        });
+        };
+        void created.exited.then(reportExit);
+        yield* Deferred.await(processExited).pipe(
+          Effect.tap((exit) => Effect.sync(() => reportExit(exit))),
+          Effect.forkIn(scope),
+        );
       });
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
@@ -1804,8 +1848,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           const config = mcpSession
             ? {
                 mcpServers: {
-                  // Muse defaults to "required", which fails the whole run when T3's
-                  // tools cannot be reached. The agent should still work without them.
+                  // Muse's required default fails runs if T3 tools are unreachable; make them optional.
                   "t3-code": {
                     transport: "streamableHttp",
                     mode: "optional",
@@ -1841,6 +1884,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           );
           if (result.session.sessionId !== nativeSessionId)
             return yield* protocolError("Muse returned a different session identity");
+          if (result.history?.noneReason === "projectionUnavailable")
+            return yield* protocolError(
+              "Muse cannot stream this session because its live view is unavailable",
+            );
           if (requestedId)
             yield* request("session/setApprovalMode", {
               mode: museApprovalMode(args.runtimePolicy.runtimeMode),
@@ -1895,10 +1942,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         message: ProviderAdapter.ProviderAdapterV2TurnMessage,
       ) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
-        const text = providerMessageTextWithAttachmentPaths({
+        const text = yield* providerMessageTextWithAttachmentPaths({
           text: message.text,
           attachments: message.attachments,
           resolveAttachmentPath: providerHost.resolveAttachmentPath,
+          resolveExtractedTextPath: providerHost.resolveExtractedTextPath,
         });
         if (text) parts.push({ type: "text", text });
         for (const attachment of message.attachments)
@@ -2014,8 +2062,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             lastRunOrdinal: turnInput.runOrdinal,
           });
           yield* updateSession("running");
-          const held = wake;
-          wake = undefined;
+          // Compaction cannot join a running wake, so the wake stays held for its continuation.
+          const held = compact ? undefined : wake;
+          if (held) wake = undefined;
           if (continuation && !held) return yield* finish(turn, "completed");
           if (held && !continuation) turn.joined.add(held.nativeId);
           for (const [method, data] of held?.events ?? [])
@@ -2024,17 +2073,20 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         if (continuation) return;
         yield* Effect.gen(function* () {
           if (compact) {
-            const result = yield* request("session/compact", {}, true, nativeId).pipe(
+            // The turn's terminal reports a declined compaction; only a broken host fails the command.
+            const declined = yield* request("session/compact", {}, true, nativeId).pipe(
               Effect.flatMap((value) => decode(MuseCompactResult, value)),
+              Effect.map((result) =>
+                result.status === "accepted"
+                  ? undefined
+                  : result.status === "noop"
+                    ? (result.reason ?? "Muse has no context to compact.")
+                    : `Muse returned an unsupported compaction status: ${result.status}`,
+              ),
+              Effect.catch((error) => (broken ? Effect.fail(error) : Effect.succeed(error.detail))),
             );
-            if (result.status === "noop")
-              yield* eventPermit.withPermits(1)(
-                finish(turn, "failed", result.reason ?? "Muse has no context to compact."),
-              );
-            else if (result.status !== "accepted")
-              return yield* protocolError(
-                `Muse returned an unsupported compaction status: ${result.status}`,
-              );
+            if (declined !== undefined)
+              yield* eventPermit.withPermits(1)(finish(turn, "failed", declined));
           } else {
             const result = yield* request(
               "turn/start",
@@ -2051,8 +2103,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   ...parts,
                 ],
                 displayText: turnInput.message.text || "Image attachment",
-                // A resumed session keeps the root it was created with; pin it to
-                // this thread's current checkout so edits land where T3 tracks them.
+                // Resumed sessions retain old roots; pin edits to the current checkout.
                 workspaceRoots: [workspaceRoot],
                 ifBusy: "queue",
                 ...(effort ? { reasoningEffort: effort } : {}),
@@ -2215,6 +2266,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         interruptTurn: Effect.fn("MuseAdapter.interruptTurn")(
           function* (args) {
             const turn = active;
+            // Recovering an ended turn is done unless Muse still runs work Stop cannot end.
+            if (
+              !turn &&
+              args.requestRuntimeRestart === true &&
+              observedChildren.size === 0 &&
+              wake === undefined
+            )
+              return;
             if (
               !turn ||
               turn.providerTurn.id !== args.providerTurnId ||
@@ -2227,11 +2286,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 Effect.gen(function* () {
                   if (active !== turn) return;
                   hostEpoch++;
-                  yield* Effect.tryPromise(() => host.close()).pipe(
-                    Effect.mapError((cause) => protocolError("Cannot stop Muse compaction", cause)),
-                    Effect.onError(failHost),
-                  );
+                  yield* Effect.tryPromise({
+                    try: () => host.close(),
+                    catch: (cause) => protocolError("Cannot stop Muse compaction", cause),
+                  }).pipe(Effect.onError(failHost));
                   broken = true;
+                  wake = undefined;
                   yield* finish(turn, "interrupted", undefined, "broken");
                   yield* settleObservedChildren("interrupted");
                   yield* updateSession("stopped");
@@ -2334,8 +2394,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 }),
             ),
           ),
-        // Muse rejects forks at completed-turn boundaries (InvalidCut), so T3 uses
-        // portable context handoff for forks and does not rewind Muse conversations.
+        // Muse rejects completed-turn forks with InvalidCut; use portable handoff without rewinding.
         rollbackThread: (args) =>
           Effect.fail(
             new ProviderAdapter.ProviderAdapterRollbackThreadError({

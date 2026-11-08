@@ -5,11 +5,6 @@ import {
   type DesktopEnvironmentBootstrap,
 } from "@t3tools/contracts";
 
-/**
- * Keep this the one source of truth: the producer (`connection/platform.ts`) mints ids via
- * {@link desktopLocalConnectionId} and every consumer classifies via {@link
- * isDesktopLocalConnectionTarget}, so the convention can never drift between the two.
- */
 const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
 
 export function desktopLocalConnectionId(backendId: string): string {
@@ -31,10 +26,6 @@ export function desktopLocalBackendId(target: ConnectionTarget): string | null {
     : null;
 }
 
-export function isWslConnectionTarget(target: ConnectionTarget): boolean {
-  return desktopLocalBackendId(target)?.startsWith("wsl:") === true;
-}
-
 export type DesktopSecondaryBootstrapsRead =
   | {
       readonly _tag: "Success";
@@ -50,10 +41,7 @@ export interface DesktopSecondaryBootstrapsReader {
   readonly readSnapshot: () => ReadonlyArray<DesktopEnvironmentBootstrap>;
 }
 
-/**
- * A successful empty read is authoritative; a thrown read preserves the previous snapshot so UI
- * consumers cannot temporarily disagree with the platform's retained registrations.
- */
+/** Empty reads clear the snapshot; failed reads retain platform registrations. */
 export function createDesktopSecondaryBootstrapsReader(
   resolveBridge: () => Pick<DesktopBridge, "getLocalEnvironmentBootstraps"> | undefined,
 ): DesktopSecondaryBootstrapsReader {

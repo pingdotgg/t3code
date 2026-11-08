@@ -17,11 +17,19 @@ import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 /** The relay enforces the same cap. */
 export const WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 
-/** Response header naming what happened to the request; the relay records it. */
+// The relay records this outcome header.
 const WEBHOOK_OUTCOME_HEADER = "x-t3-hook-outcome";
 
-const json = (status: number, body: Record<string, string>, outcome: string) =>
-  HttpServerResponse.jsonUnsafe(body, { status, headers: { [WEBHOOK_OUTCOME_HEADER]: outcome } });
+const json = (
+  status: number,
+  body: Record<string, string>,
+  outcome: string,
+  headers?: Record<string, string>,
+) =>
+  HttpServerResponse.jsonUnsafe(body, {
+    status,
+    headers: { ...headers, [WEBHOOK_OUTCOME_HEADER]: outcome },
+  });
 
 export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -41,6 +49,12 @@ export const layer = HttpApiBuilder.group(
       readonly params: { readonly hookId: string; readonly token: string };
       readonly request: HttpServerRequest.HttpServerRequest;
     }) {
+      // The router answers HEAD with the GET route; link checkers probe with HEAD.
+      if (request.method === "HEAD") {
+        return json(405, { error: "method_not_allowed" }, "method_not_allowed", {
+          allow: "GET, POST, PUT, PATCH",
+        });
+      }
       const contentLength = Number(request.headers["content-length"] ?? "0");
       if (!Number.isFinite(contentLength) || contentLength > WEBHOOK_MAX_BODY_BYTES) {
         return json(413, { error: "body_too_large" }, "body_too_large");
@@ -117,6 +131,8 @@ export const layer = HttpApiBuilder.group(
           return json(401, { error: "invalid_signature" }, "rejected_signature");
         case "disabled":
           return json(409, { error: "hook_disabled" }, "disabled");
+        case "blocked_by_policy":
+          return json(403, { error: "blocked_by_policy" }, "blocked_by_policy");
         case "rate_limited":
           return json(429, { error: result.outcome }, result.outcome);
         case "expired":

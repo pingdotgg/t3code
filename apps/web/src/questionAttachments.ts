@@ -1,4 +1,8 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  onThreadRequestsResolved,
+  resolvedQuestionDraftKeys,
+} from "@t3tools/client-runtime/state/thread-requests";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { DraftId, useComposerDraftStore } from "./composerDraftStore";
@@ -92,3 +96,25 @@ export function clearQuestionAttachmentDraft(key: DraftId): void {
     return { counts: next };
   });
 }
+
+/** Clears the thread's question attachment drafts for every request outside `pendingRequestIds`. */
+function pruneResolvedQuestionAttachmentDrafts(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  pendingRequestIds: ReadonlyArray<string>,
+): void {
+  const keys = new Set([
+    ...Object.keys(useComposerDraftStore.getState().draftsByThreadKey),
+    ...Object.keys(useQuestionAttachmentPreparation.getState().counts),
+  ]);
+  const prefix = questionAttachmentDraftPrefix(environmentId, threadId);
+  for (const key of resolvedQuestionDraftKeys(keys, prefix, pendingRequestIds)) {
+    clearQuestionAttachmentDraft(DraftId.make(key));
+  }
+}
+
+// Attachment drafts persist across reloads, so a request resolved while this
+// client was away is pruned when its thread's projection first synchronizes.
+onThreadRequestsResolved(({ environmentId, threadId, pendingRequestIds }) =>
+  pruneResolvedQuestionAttachmentDrafts(environmentId, threadId, pendingRequestIds),
+);

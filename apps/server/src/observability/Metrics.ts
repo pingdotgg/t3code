@@ -15,6 +15,14 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
   description: "RPC request handling duration.",
 });
 
+export const orchestrationCommandsTotal = Metric.counter("t3_orchestration_commands_total", {
+  description: "Total orchestration commands dispatched, by outcome.",
+});
+
+export const orchestrationCommandDuration = Metric.timer("t3_orchestration_command_duration", {
+  description: "Orchestration command handling duration, excluding thread dispatch lock wait.",
+});
+
 export const orchestrationEffectClaimsTotal = Metric.counter(
   "t3_orchestration_effect_claims_total",
   {
@@ -85,10 +93,6 @@ export const gitCommandDuration = Metric.timer("t3_git_command_duration", {
 
 export const terminalSessionsTotal = Metric.counter("t3_terminal_sessions_total", {
   description: "Total terminal sessions started.",
-});
-
-export const terminalRestartsTotal = Metric.counter("t3_terminal_restarts_total", {
-  description: "Total terminal restart requests handled.",
 });
 
 export const webhookDeliveriesTotal = Metric.counter("t3_webhook_deliveries_total", {
@@ -171,8 +175,7 @@ const recordMetrics =
     }
   });
 
-// Durations come from the monotonic clock, so wall-clock corrections cannot skew them, and
-// metrics are recorded in an exit finalizer, so interrupted work is counted as "interrupt".
+// Monotonic timing ignores clock corrections; exit finalizers count interruptions.
 const withMetricsImpl = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   options: WithMetricsOptions,
@@ -187,3 +190,14 @@ export const withMetrics: {
   ): <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   <A, E, R>(effect: Effect.Effect<A, E, R>, options: WithMetricsOptions): Effect.Effect<A, E, R>;
 } = dual(2, withMetricsImpl);
+
+// Shaped as an `Effect.fn` combinator: the command is the instrumented function's argument.
+export const withCommandMetrics = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  command: { readonly type: string },
+): Effect.Effect<A, E, R> =>
+  withMetrics(effect, {
+    counter: orchestrationCommandsTotal,
+    timer: orchestrationCommandDuration,
+    attributes: { commandType: command.type },
+  });

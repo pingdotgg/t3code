@@ -4,18 +4,22 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthStandardClientScopes, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command, CliError } from "effect/cli";
 
@@ -30,11 +34,13 @@ import {
   persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { resolveHostCliCommand } from "./invocation.ts";
 import { DevServerNotProxiableError, resolveTailscaleLocalTarget } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { buildPairingAppLink } from "@t3tools/shared/remote";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
 
 const baseState = {
   version: 1,
@@ -49,12 +55,10 @@ describe("pair tailscale local target", () => {
     expect(resolveTailscaleLocalTarget({ ...baseState, devUrl: "http://localhost:5733/" })).toEqual(
       { localPort: 5_733 },
     );
-    // A dev server on a non-loopback interface must be proxied at that
-    // interface; tailscale serve defaults to 127.0.0.1 otherwise.
+    // tailscale serve defaults to loopback, so non-loopback dev servers need an explicit target.
     expect(
       resolveTailscaleLocalTarget({ ...baseState, devUrl: "http://192.168.1.10:5733/" }),
     ).toEqual({ localPort: 5_733, localHost: "192.168.1.10" });
-    // URL.hostname keeps IPv6 brackets, so the serve target stays valid.
     expect(
       resolveTailscaleLocalTarget({ ...baseState, devUrl: "http://[fd7a:115c::1]:5733/" }),
     ).toEqual({ localPort: 5_733, localHost: "[fd7a:115c::1]" });
@@ -89,19 +93,21 @@ const testDescriptor = {
   label: "pair-test",
   platform: { os: "linux", arch: "x64" },
   serverVersion: "0.0.1",
+  orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
   capabilities: { repositoryIdentity: true },
 };
 
 const withDescriptorServer = <A, E, R>(
   run: (origin: string) => Effect.Effect<A, E, R>,
   host = "127.0.0.1",
+  descriptor: object = testDescriptor,
 ) =>
   Effect.acquireUseRelease(
     Effect.callback<NodeHttp.Server>((resume) => {
       const server = NodeHttp.createServer((request, response) => {
         if (request.url === "/.well-known/t3/environment") {
           response.writeHead(200, { "content-type": "application/json" });
-          response.end(JSON.stringify(testDescriptor));
+          response.end(JSON.stringify(descriptor));
           return;
         }
         response.writeHead(404);
@@ -131,7 +137,7 @@ describe("t3 pair", () => {
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("Unexpected pipeline");
               if (command.args[0] === "serve") {
-                const target = command.args.at(-1)!;
+                const target = String(command.args.at(-1));
                 const descriptor = yield* Effect.promise(async () =>
                   (await fetch(new URL("/.well-known/t3/environment", target))).json(),
                 );
@@ -185,7 +191,7 @@ describe("t3 pair", () => {
           assert.include(output, "Pairing URL: https://pair-test.tail.ts.net/pair#token=");
         }),
       "::1",
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
@@ -211,6 +217,7 @@ describe("t3 pair", () => {
 
         const token = /#token=([A-Z2-9]+)/.exec(output)?.[1];
         assert.isString(token);
+        assert.include(output, `App link: ${buildPairingAppLink(`${origin}/pair#token=${token}`)}`);
 
         const listed = yield* captureStdout(
           runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
@@ -224,7 +231,7 @@ describe("t3 pair", () => {
         assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
       }),
     ).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Effect.provideService(HostProcess.Environment, {
         ...process.env,
         [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
@@ -259,13 +266,57 @@ describe("t3 pair", () => {
 
         assert.include(output, "Pairing URL: http://localhost:5733/pair#token=");
       }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("refuses --tailscale before turning on Serve when the policy keeps clients local", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-policy-test-"));
+        const policyPath = NodePath.join(baseDir, "policy.json");
+        NodeFS.writeFileSync(
+          policyPath,
+          JSON.stringify({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { clients: ["desktop", "local-browser"] },
+          }),
+        );
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() => Effect.die("tailscale must not run")),
+            ),
+            Effect.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_DEV_MANAGED_POLICY_PATH: policyPath } }),
+              ),
+            ),
+            Effect.flip,
+          ),
+        );
+
+        assert.include(
+          String(error),
+          "Example Corp's policy does not allow remote clients, so Tailscale Serve cannot be turned on.",
+        );
+      }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("ignores runtime state whose recorded pid is no longer alive", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
-        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-pid-test-"));
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3 pair pid test-"));
         const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
         const state = yield* makePersistedServerRuntimeState({
           config: { host: "127.0.0.1", devUrl: undefined },
@@ -284,8 +335,12 @@ describe("t3 pair", () => {
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
         assert.include(rendered, "No running T3 Code server found.");
+        for (const subcommand of ["serve", "connect"]) {
+          const { command } = yield* resolveHostCliCommand(subcommand, ["--base-dir", baseDir]);
+          assert.include(rendered, `\`${command}\``);
+        }
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   // regression: #10516 minting opens the target database with this checkout's
@@ -325,7 +380,41 @@ describe("t3 pair", () => {
           "server-runtime.json",
         ]);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  // regression: #15492 an older CLI minted into a V1 database the protocol 2
+  // server never reads, so pairing must refuse before opening the database.
+  it.effect("rejects a server on another protocol before opening its database", () =>
+    withDescriptorServer(
+      (origin) =>
+        Effect.gen(function* () {
+          const baseDir = NodeFS.mkdtempSync(
+            NodePath.join(NodeOS.tmpdir(), "t3-pair-protocol-test-"),
+          );
+          yield* persistServerRuntimeState({
+            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: Number(new URL(origin).port),
+            }),
+          });
+
+          const exit = yield* provideCliTestLayers(
+            runCli(["pair", "--base-dir", baseDir]).pipe(Effect.exit),
+          );
+
+          assert.deepEqual(NodeFS.readdirSync(NodePath.join(baseDir, "userdata")), [
+            "server-runtime.json",
+          ]);
+          assert.isTrue(Exit.isFailure(exit));
+          if (Exit.isFailure(exit)) {
+            assert.include(String(Cause.squash(exit.cause)), "t3@0.0.45 pair");
+          }
+        }),
+      "127.0.0.1",
+      { ...testDescriptor, serverVersion: "0.0.45", orchestrationProtocolVersion: 1 },
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   // Without the capability `tailscale serve` blocks on an enablement URL, so
@@ -377,7 +466,7 @@ describe("t3 pair", () => {
         assert.include(String(error), "https://login.tailscale.com/admin/dns");
         assert.deepEqual(tailscaleCalls, [["status", "--json"]]);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 
@@ -447,6 +536,105 @@ describe("auth scope options", () => {
       }
       assert.equal(scopeError.option, "scope");
       assert.equal(scopeError.value, "admin");
+    }),
+  );
+});
+
+describe("auth pairing create --base-url", () => {
+  it.effect.each(["192.168.1.5:3773", "localhost:3773", "ftp://localhost:3773"])(
+    "rejects %s before issuing a token",
+    (baseUrl) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-base-url-test-"));
+        const error = yield* runCli([
+          "auth",
+          "pairing",
+          "create",
+          "--base-dir",
+          baseDir,
+          "--base-url",
+          baseUrl,
+        ]).pipe(Effect.provide(layerCliRuntime), Effect.flip);
+
+        if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
+          assert.fail(`Expected ShowHelp, got ${String(error)}`);
+        }
+        const flagError = error.errors[0];
+        if (flagError?._tag !== "InvalidValue") {
+          assert.fail(`Expected InvalidValue, got ${String(flagError?._tag)}`);
+        }
+        assert.equal(flagError.option, "base-url");
+        assert.equal(flagError.value, baseUrl);
+
+        const listOutput = yield* captureStdout(
+          runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
+        );
+        assert.deepEqual(JSON.parse(listOutput), []);
+      }),
+  );
+
+  it.effect.each(["http://192.168.1.5:3773", "https://example.com", "http:localhost:3773"])(
+    "prints a pair URL for %s",
+    (baseUrl) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-base-url-test-"));
+        const output = yield* captureStdout(
+          runCli([
+            "auth",
+            "pairing",
+            "create",
+            "--base-dir",
+            baseDir,
+            "--base-url",
+            baseUrl,
+            "--json",
+          ]),
+        );
+        const issued = JSON.parse(output) as {
+          readonly credential: string;
+          readonly pairUrl: string;
+        };
+
+        assert.equal(issued.pairUrl, `${new URL(baseUrl).origin}/pair#token=${issued.credential}`);
+      }),
+  );
+});
+
+describe("scripted auth output", () => {
+  it.effect.each(
+    [
+      ["auth", "session", "issue", "--token-only"],
+      ["auth", "session", "list", "--json"],
+      ["auth", "pairing", "list", "--json"],
+    ].map((command) => ({ command, label: command.join(" ") })),
+  )("prints only the result for $label after removing an abandoned upload", ({ command }) =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-quiet-test-"));
+      const attachmentsDir = NodePath.join(baseDir, "userdata", "attachments");
+      NodeFS.mkdirSync(attachmentsDir, { recursive: true });
+      // An abandoned upload makes config resolution log that it removed it.
+      const abandoned = NodePath.join(attachmentsDir, "abandoned.part");
+      NodeFS.writeFileSync(abandoned, "");
+      const jan2020Seconds = 1_577_836_800;
+      NodeFS.utimesSync(abandoned, jan2020Seconds, jan2020Seconds);
+      // The sweep reads Clock, so a week past the upload's mtime makes it expired.
+      yield* TestClock.setTime((jan2020Seconds + 7 * 24 * 60 * 60) * 1000);
+
+      const lines = yield* provideCliTestLayers(
+        Effect.gen(function* () {
+          yield* runCli([...command, "--base-dir", baseDir]);
+          return yield* TestConsole.logLines;
+        }),
+      );
+
+      assert.isFalse(NodeFS.existsSync(abandoned));
+      assert.lengthOf(lines, 1);
+      const output = String(lines[0]);
+      if (command.includes("--json")) {
+        assert.deepEqual(JSON.parse(output), []);
+      } else {
+        assert.match(output.trim(), /^[\w-]+\.[\w-]+/);
+      }
     }),
   );
 });

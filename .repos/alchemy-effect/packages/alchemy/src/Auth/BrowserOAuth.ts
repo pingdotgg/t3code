@@ -1,17 +1,17 @@
 /**
- * Shared browser-OAuth ceremony for auth providers: open the authorization
- * URL, then race the provider's local callback listener against the branded
- * "waiting for browser" prompt (spinner + compact URL; Enter switches to
- * manual code entry, `o` opens the browser again, and `c` copies the URL).
+ * Shared browser-OAuth ceremony for auth providers: an
+ * {@link Interaction.browserLogin} that waits for the provider's local
+ * callback listener, with manual code entry as the fallback.
  *
- * Built-in providers (Cloudflare, Planetscale) and custom stack-provided
- * auth providers should all route their browser flows through this so the
+ * {@link deviceOAuth} is the device-code (RFC 8628) counterpart.
+ *
+ * Built-in providers (Planetscale, Cloudflare) and custom stack-provided
+ * auth providers should all route their browser flows through these so the
  * login UX stays uniform.
  */
 import * as Effect from "effect/Effect";
-import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import * as Interaction from "../Interaction.ts";
-import { CallbackServerStartError } from "./OAuthFlow.ts";
+import { CallbackServerStartError, type DeviceAuthorization } from "./OAuthFlow.ts";
 
 export interface BrowserOAuthOptions<A, E1, R1, E2, R2> {
   /** Display name, e.g. "Cloudflare" — used in the prompt title. */
@@ -29,40 +29,53 @@ export interface BrowserOAuthOptions<A, E1, R1, E2, R2> {
 export const browserOAuth = Effect.fn(function* <A, E1, R1, E2, R2>(
   options: BrowserOAuthOptions<A, E1, R1, E2, R2>,
 ) {
-  const services = yield* Effect.context<ChildProcessSpawner>();
-  // This runner is invoked later by React's keyboard event boundary, not
-  // while the surrounding Effect is executing.
-  const openUrl = Effect.runPromiseWith(services);
-  const openFailed = yield* Interaction.openUrl(options.url).pipe(
-    Effect.as(false),
-    Effect.catch(() => Effect.succeed(true)),
-  );
-  return yield* Effect.raceFirst(
-    // A callback server that cannot start (e.g. the port is taken) must not
-    // fail the race — warn and hang so manual code entry stays available.
-    // Genuine OAuth failures delivered via the callback still fail fast.
-    options.callback.pipe(
-      Effect.catch((e) =>
-        e instanceof CallbackServerStartError
-          ? Interaction.accessors.output
-              .warning(`${e.message} — paste the authorization code instead.`)
-              .pipe(Effect.andThen(Effect.never))
-          : Effect.fail(e),
-      ),
-    ),
-    (yield* Interaction.Interaction).prompt
-      .awaitExternal({
-        message: `${options.provider} authorization`,
-        waitingLabel:
-          options.waitingLabel ??
-          "waiting for browser authorization (up to 5 minutes)…",
-        url: options.url,
-        openFailed,
-        onOpen: () => openUrl(Interaction.openUrl(options.url)),
-        inputLabel: "Paste the authorization code or callback URL",
-        validate: (value) =>
-          value.trim().length > 0 ? undefined : "Paste a code or URL",
-      })
-      .pipe(Effect.flatMap(options.exchange)),
-  );
+  // A callback server that cannot start (e.g. the port is taken) must not
+  // fail the race when the user can paste the code instead — warn and hang
+  // so manual entry stays available. Without terminal input there is no
+  // manual entry, so the startup error fails the login. Genuine OAuth
+  // failures delivered via the callback always fail fast.
+  const { input } = (yield* Interaction.Interaction).terminal;
+  return yield* Interaction.browserLogin({
+    provider: options.provider,
+    url: options.url,
+    waitingLabel: options.waitingLabel,
+    waitFor: input
+      ? options.callback.pipe(
+          Effect.catchIf(
+            (e): e is E1 & CallbackServerStartError => e instanceof CallbackServerStartError,
+            (e) =>
+              Interaction.warning(`${e.message} — paste the authorization code instead.`).pipe(
+                Effect.andThen(Effect.never),
+              ),
+          ),
+        )
+      : options.callback,
+    manualCode: {
+      label: "Paste the authorization code or callback URL",
+      validate: (value) => (value.trim().length > 0 ? undefined : "Paste a code or URL"),
+      exchange: options.exchange,
+    },
+  });
 });
+
+export interface DeviceOAuthOptions<A, E, R> {
+  /** Display name, e.g. "Cloudflare" — used in the prompt title. */
+  provider: string;
+  /** The pending device authorization to show the user. */
+  authorization: DeviceAuthorization;
+  /** Polls until the user approves; usually `client.deviceToken(authorization)`. */
+  token: Effect.Effect<A, E, R>;
+}
+
+/**
+ * Shared device-authorization (RFC 8628) ceremony: open the verification
+ * URL, show the user code, and wait for the token poll. The prompt only
+ * renders the URL/code and re-opens the browser; the poll always wins.
+ */
+export const deviceOAuth = <A, E, R>(options: DeviceOAuthOptions<A, E, R>) =>
+  Interaction.browserLogin({
+    provider: options.provider,
+    url: options.authorization.verificationUriComplete,
+    code: options.authorization.userCode,
+    waitFor: options.token,
+  });
