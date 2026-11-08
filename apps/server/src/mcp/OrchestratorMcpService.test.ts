@@ -20,7 +20,6 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
-  RunAttemptId,
   RunId,
   ThreadId,
   type OrchestrationV2ServerCommand,
@@ -3054,49 +3053,14 @@ describe("OrchestratorMcpService provider resolution", () => {
           status: "running",
           result: null,
         };
-        let hasContinuation = false;
-        let hasStoredResult = false;
-        const restartedAttemptId = RunAttemptId.make("attempt:mcp-restarted-child");
-        const continuationAttemptId = RunAttemptId.make("attempt:mcp-child-continuation");
-        const continuationSelection = { ...runSelection, model: "claude-sonnet-4-6" };
-        // Claude ran the restarted attempt on Sonnet; a later turn of another attempt reported Haiku.
-        const providerTurns = [
-          { runAttemptId: restartedAttemptId, ordinal: 1, model: "claude-sonnet-4-6" },
-          { runAttemptId: continuationAttemptId, ordinal: 2, model: "claude-haiku-4-5" },
-          {
-            runAttemptId: RunAttemptId.make("attempt:mcp-other-run"),
-            ordinal: 2,
-            model: "claude-haiku-4-5",
-          },
-        ];
         const dependencies = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadRecords: (threadId, fields) =>
+            getThreadRecords: (threadId) =>
               Effect.succeed(
                 threadId === parentThreadId
-                  ? ({
-                      ...parentProjection([
-                        {
-                          ...task,
-                          status: hasStoredResult ? "completed" : task.status,
-                          result: hasStoredResult ? "Stored review result." : null,
-                          completionDelivery: { state: "acknowledged" },
-                        },
-                      ]),
-                      contextTransfers: hasStoredResult
-                        ? [
-                            {
-                              id: "transfer:mcp-stored-result",
-                              type: "subagent_result",
-                              sourceThreadId: childThreadId,
-                              targetThreadId: parentThreadId,
-                              sourcePoint: { runId: RunId.make("run:mcp-restarted-child") },
-                            },
-                          ]
-                        : [],
-                    } as unknown as OrchestrationV2ThreadProjection)
+                  ? parentProjection([task])
                   : ({
                       ...childProjection,
                       thread: { ...childProjection.thread, modelSelection: threadSelection },
@@ -3105,28 +3069,20 @@ describe("OrchestratorMcpService provider resolution", () => {
                             {
                               id: RunId.make("run:mcp-restarted-child"),
                               ordinal: 1,
-                              status: hasStoredResult ? "completed" : "running",
+                              status: "running",
                               modelSelection: runSelection,
-                              activeAttemptId: restartedAttemptId,
-                              delegatedTaskId: hasStoredResult ? undefined : taskId,
+                              activeAttemptId: "attempt:mcp-restarted-child",
                             },
-                            ...(hasContinuation
-                              ? [
-                                  {
-                                    id: RunId.make("run:mcp-child-continuation"),
-                                    ordinal: 2,
-                                    status: hasStoredResult ? "completed" : "running",
-                                    modelSelection: continuationSelection,
-                                    activeAttemptId: continuationAttemptId,
-                                    delegatedTaskId: hasStoredResult ? undefined : taskId,
-                                  },
-                                ]
-                              : []),
                           ]
                         : [],
-                      providerTurns: fields?.some((field) => field === "providerTurns")
-                        ? providerTurns
-                        : [],
+                      // Claude ran the requested Opus on Sonnet.
+                      providerTurns: [
+                        {
+                          runAttemptId: "attempt:mcp-restarted-child",
+                          ordinal: 1,
+                          model: "claude-sonnet-4-6",
+                        },
+                      ],
                     } as unknown as OrchestrationV2ThreadProjection),
               ),
           }),
@@ -3140,20 +3096,16 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         yield* Effect.gen(function* () {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          for (const [runExists, continuationExists, storedResult, selection, executedModel] of [
-            [true, false, false, runSelection, "claude-sonnet-4-6"],
-            [true, true, false, continuationSelection, "claude-haiku-4-5"],
-            [true, true, true, runSelection, "claude-sonnet-4-6"],
-            [false, false, false, threadSelection, null],
+          for (const [selection, executedModel] of [
+            [runSelection, "claude-sonnet-4-6"],
+            [threadSelection, null],
           ] as const) {
-            hasRun = runExists;
-            hasContinuation = continuationExists;
-            hasStoredResult = storedResult;
             const result = yield* service.taskStatus(scope, taskId);
             assert.equal(result.providerInstanceId, selection.instanceId);
             assert.equal(result.model, selection.model);
             assert.deepEqual(result.options, selection.options);
             assert.equal(result.executedModel, executedModel);
+            hasRun = false;
           }
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
       }),

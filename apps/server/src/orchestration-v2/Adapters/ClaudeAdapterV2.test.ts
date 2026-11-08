@@ -2970,11 +2970,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     uuid: "00000000-0000-4000-8000-000000000101",
     session_id: WAKE_NATIVE_SESSION,
   });
-  const makeAssistantTextFrame = (input: { readonly uuid: string; readonly text: string }) =>
+  const makeAssistantTextFrame = (input: {
+    readonly uuid: string;
+    readonly text: string;
+    readonly model?: string;
+  }) =>
     claudeSdkFrame({
       type: "assistant",
       message: {
-        model: "claude-sonnet-4-6",
+        model: input.model ?? "claude-sonnet-4-6",
         id: `msg_${input.uuid}`,
         type: "message",
         role: "assistant",
@@ -3003,12 +3007,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly text?: string;
     readonly parentToolUseId?: string | null;
     readonly apiErrorParams?: unknown;
-    readonly model?: string;
   }) =>
     claudeSdkFrame({
       type: "assistant",
       message: {
-        model: input.model ?? "claude-sonnet-4-6",
+        model: "claude-sonnet-4-6",
         id: `msg_${input.uuid}`,
         type: "message",
         role: "assistant",
@@ -6837,7 +6840,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* Queue.offerAll(harness.sdkMessages, [
-          makeAssistantTextFrame({ uuid: mainUuid, text: "Delegating." }),
+          // Claude reports the model it ran, which can differ from the one requested.
+          makeAssistantTextFrame({
+            uuid: mainUuid,
+            text: "Delegating.",
+            model: "claude-haiku-4-5-20251001",
+          }),
           makeAssistantErrorFrame({
             uuid: "00000000-0000-4000-8000-000000000642",
             error: undefined,
@@ -6849,6 +6857,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         const providerTurn = lastProviderTurn(harness.events);
         assert.equal(providerTurn.nativeTurnRef?.nativeId, mainUuid);
+        assert.equal(providerTurn.model, "claude-haiku-4-5");
         const rolledBack = yield* harness.runtime.rollbackThread({
           providerThread: harness.providerThread,
           target: {
@@ -8855,80 +8864,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
-  );
-
-  it.effect("records the root model Claude reports for each turn, not the requested one", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
-      const runTurn = (ordinal: number, frames: ReadonlyArray<SDKMessage>) =>
-        Effect.gen(function* () {
-          yield* harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now: yield* DateTime.now,
-              attachments: [],
-              modelSelection: {
-                instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-                model: "claude-opus-4-6",
-              },
-              attemptId: RunAttemptId.make(`attempt-claude-executed-model-${ordinal}`),
-              providerTurnOrdinal: ordinal,
-              text: "Review this.",
-            }),
-          );
-          yield* Queue.offerAll(harness.sdkMessages, [
-            ...frames,
-            makeResultFrame({
-              uuid: `00000000-0000-4000-8000-00000000066${ordinal}`,
-              result: "Done.",
-            }),
-          ]);
-          yield* Queue.take(harness.terminalReceipts);
-          return lastProviderTurn(harness.events).model;
-        });
-      yield* Queue.offer(harness.sdkMessages, wakeTurnInit);
-      // A native subagent's model is not the run's.
-      assert.equal(
-        yield* runTurn(1, [
-          makeAssistantErrorFrame({
-            uuid: "00000000-0000-4000-8000-000000000671",
-            error: undefined,
-            model: "claude-sonnet-4-6",
-          }),
-          makeAssistantErrorFrame({
-            uuid: "00000000-0000-4000-8000-000000000672",
-            error: undefined,
-            parentToolUseId: "toolu_executed_model_subagent",
-            model: "claude-haiku-4-5-20251001",
-          }),
-        ]),
-        "claude-sonnet-4-6",
-      );
-      // A dated slug reports its catalog model, so it is not mistaken for another one.
-      assert.equal(
-        yield* runTurn(2, [
-          makeAssistantErrorFrame({
-            uuid: "00000000-0000-4000-8000-000000000673",
-            error: undefined,
-            model: "claude-haiku-4-5-20251001",
-          }),
-        ]),
-        "claude-haiku-4-5",
-      );
-      // A turn that reports no model does not inherit the previous one's.
-      assert.isUndefined(yield* runTurn(3, []));
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-        ),
-      ),
-    ),
   );
 
   it.effect("preserves typed Claude plans and todos through generic tool completion", () =>

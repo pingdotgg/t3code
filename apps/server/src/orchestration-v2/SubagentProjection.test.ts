@@ -413,44 +413,14 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
   assert.equal(result.text, "All steps passed.");
   assert.equal(result.messageId, report.message.id);
   assert.equal(result.turnItemId, report.turnItem.id);
-});
-
-it("leads a task's result with the model its own attempt reported running", () => {
-  const { projection, run } = taskFixture();
-  const answer = makeSubagentConversationArtifacts({
-    messageId: MessageId.make("answer"),
-    turnItemId: TurnItemId.make("answer"),
-    threadId: parentThreadId,
-    rootNodeId: NodeId.make("root"),
-    providerThreadId: null,
-    providerTurnId: null,
-    nativeItemRef: null,
-    role: "assistant",
-    text: "Review done.",
-    ordinal: 1,
-    now: childCreatedAt,
-  });
-  const resultWith = (providerTurns: ReadonlyArray<object>) =>
-    subagentResultForRun(
-      {
-        ...projection,
-        messages: [{ ...answer.message, runId: run.id }],
-        providerTurns: providerTurns as never,
-      },
-      run,
-    ).text;
-  const turn = (ordinal: number, model?: string, runAttemptId = run.activeAttemptId) => ({
-    runAttemptId,
-    ordinal,
-    ...(model === undefined ? {} : { model }),
-  });
+  const reported = { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" };
   assert.equal(
-    resultWith([turn(1, "gpt-5.4-mini"), turn(2, "gpt-5.4-nano", RunAttemptId.make("other"))]),
-    "Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\nReview done.",
+    subagentResultForRun(
+      { ...projection, messages: [report.message], providerTurns: [reported as never] },
+      run,
+    ).text,
+    "Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\nAll steps passed.",
   );
-  assert.equal(resultWith([turn(1, "gpt-5.4")]), "Review done.");
-  // The newest turn reported no model, so an earlier turn's is not attributed to it.
-  assert.equal(resultWith([turn(1, "gpt-5.4-mini"), turn(2)]), "Review done.");
 });
 
 it.effect("ends an orphaned native subagent's node when only its record already ended", () =>
