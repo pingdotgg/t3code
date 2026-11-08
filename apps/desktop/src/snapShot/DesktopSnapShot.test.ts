@@ -1548,7 +1548,21 @@ it("keeps Windows text outside the rich serialization budget without a second tr
   const tree = vi.fn(async () => {
     throw new Error("Duplicate traversal");
   });
-  const window = { role: "window", name: "Editor", bounds, tree, children: async () => children };
+  const unreadable = {
+    role: "button",
+    get name(): string {
+      throw new Error("Element went away");
+    },
+    bounds,
+    children: async () => [],
+  };
+  const window = {
+    role: "window",
+    name: "Editor",
+    bounds,
+    tree,
+    children: async () => [...children, unreadable],
+  };
   accessibilityForegroundMock.mockReset().mockResolvedValue({ pid: 123, asElement: () => window });
   const result = await readAccessibleWindowContext(
     { title: "Editor", bounds, owner: { processId: 123 } },

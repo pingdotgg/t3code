@@ -410,7 +410,10 @@ export async function accessibleWindowElementTree(
     const elementBounds = safeProperty(() => current.bounds);
     if (options.onText) {
       try {
-        options.onText(current.name ?? undefined, current.value ?? undefined);
+        options.onText(
+          safeProperty(() => current.name) ?? undefined,
+          safeProperty(() => current.value) ?? undefined,
+        );
       } catch {
         truncated = true;
         options.onTraversalError?.();
