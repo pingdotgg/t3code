@@ -74,9 +74,13 @@ exit 7
   const archive = yield* fs.readFile(path.join(root, "release", archiveName));
   let checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
   const requests: Array<string> = [];
+  let failures = 0;
   const server = NodeHttp.createServer((request, response) => {
     requests.push(request.url ?? "");
-    if (request.url === `/v${VERSION}/SHA256SUMS`) {
+    if (failures > 0) {
+      failures -= 1;
+      response.writeHead(504).end("upstream timed out");
+    } else if (request.url === `/v${VERSION}/SHA256SUMS`) {
       response.end(`${checksum}  ${archiveName}\n`);
     } else if (request.url === `/v${VERSION}/${archiveName}`) {
       response.writeHead(200, { "Content-Length": archive.length }).end(archive);
@@ -100,6 +104,9 @@ exit 7
     requests,
     corruptChecksum: () => {
       checksum = "0".repeat(64);
+    },
+    failNextRequest: () => {
+      failures = 1;
     },
   };
 });
@@ -339,6 +346,48 @@ fs.readFileSync = (file, ...rest) => {
         assert.deepStrictEqual(
           yield* fs.readDirectory(path.join(root, "other-home/runtime/versions")),
           [],
+        );
+      }),
+  );
+  // regression: #32897
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "installs when GitHub answers the first release request with HTTP 504",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-retry-test-" });
+        const output = yield* buildNpmLauncher({
+          version: VERSION,
+          outputDir: path.join(root, "out"),
+        });
+        const release = yield* serveFakeRelease(root);
+        release.failNextRequest();
+        const home = path.join(root, "home");
+        const installed = yield* run(
+          process.execPath,
+          [path.join(output.packageDir, "bin/t3.mjs"), "--version"],
+          {
+            cwd: root,
+            env: {
+              PATH: (yield* HostProcess.Environment).PATH,
+              T3CODE_HOME: home,
+              T3CODE_RELEASE_BASE_URL: release.baseUrl,
+            },
+          },
+        );
+        assert.equal(release.requests[0], `/v${VERSION}/SHA256SUMS`);
+        assert.equal(
+          installed.exitCode,
+          0,
+          `the launcher gave up after one 504: ${installed.stderr}`,
+        );
+        assert.equal(installed.stdout.trim(), VERSION);
+        assert.equal(
+          (yield* fs.readFileString(
+            path.join(home, "runtime/versions", VERSION, ".install-complete"),
+          )).trim(),
+          VERSION,
         );
       }),
   );

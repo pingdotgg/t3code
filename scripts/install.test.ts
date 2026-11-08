@@ -243,3 +243,87 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
     },
   );
 });
+
+// regression: #32897
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "installer transient errors",
+  () => {
+    it("installs when GitHub answers the first release request with HTTP 504", async () => {
+      const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-retry-"));
+      const version = "1.2.3";
+      const stem = `t3-${version}-linux-${HostProcess.Architecture.defaultValue()}`;
+      const archiveName = `${stem}.tar.gz`;
+      const requests: Array<string> = [];
+      const server = NodeHttp.createServer();
+      try {
+        await NodeFSP.mkdir(NodePath.join(root, stem));
+        await NodeFSP.writeFile(NodePath.join(root, stem, "t3"), "#!/bin/sh\necho 't3 v1.2.3'\n", {
+          mode: 0o755,
+        });
+        const archivePath = NodePath.join(root, archiveName);
+        NodeChildProcess.execFileSync("tar", ["-czf", archivePath, "-C", root, stem]);
+        const archive = await NodeFSP.readFile(archivePath);
+        const digest = NodeCrypto.createHash("sha256").update(archive).digest("hex");
+        server.on("request", (request, response) => {
+          requests.push(request.url ?? "");
+          if (requests.length === 1) {
+            response.writeHead(504).end("upstream timed out");
+          } else if (request.url === "/pingdotgg/t3code/releases/latest") {
+            response.end(JSON.stringify({ tag_name: `v${version}` }, null, 2));
+          } else if (request.url === `/v${version}/SHA256SUMS`) {
+            response.end(`${digest}  ${archiveName}\n`);
+          } else if (request.url === `/v${version}/${archiveName}`) {
+            response.end(archive);
+          } else {
+            response.writeHead(404).end();
+          }
+        });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const source = await NodeFSP.readFile(
+          NodePath.resolve(import.meta.dirname, "install.sh"),
+          "utf8",
+        );
+        const installer = NodePath.join(root, "install.sh");
+        await NodeFSP.writeFile(
+          installer,
+          source.replace(/https:\/\/(api\.)?github\.com/g, origin),
+        );
+        const { code, output } = await new Promise<{ code: number | null; output: string }>(
+          (resolve, reject) => {
+            const child = NodeChildProcess.spawn("sh", [installer], {
+              env: {
+                ...process.env,
+                T3CODE_VERSION: "",
+                T3CODE_CHANNEL: "stable",
+                T3CODE_HOME: NodePath.join(root, "home"),
+                T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
+                T3CODE_RELEASE_BASE_URL: origin,
+              },
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+            let output = "";
+            child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+            child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+            child.on("error", reject);
+            child.on("close", (code) => resolve({ code, output }));
+          },
+        );
+        expect(requests[0]).toBe("/pingdotgg/t3code/releases/latest");
+        expect(code, `the installer gave up after one 504: ${output}`).toBe(0);
+        expect(output).toContain(`Installed T3 Code ${version}`);
+        expect(
+          NodeChildProcess.execFileSync(NodePath.join(root, "bin/t3"), ["--version"], {
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("t3 v1.2.3");
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      }
+    });
+  },
+);
