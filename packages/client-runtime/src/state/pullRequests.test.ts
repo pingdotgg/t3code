@@ -2287,3 +2287,481 @@ it.effect("publishes the accepted guide run before the follow-up read finishes",
     }),
   ),
 );
+
+const listResult = (entries: ReadonlyArray<object>) => ({
+  entries,
+  viewers: {},
+  providers: [],
+  errors: [],
+  truncated: false,
+  nextCursors: {},
+});
+
+it.effect.each([
+  ["close", { state: "closed" }, "open"],
+  ["reopen", { state: "open" }, "closed"],
+  ["ready", { isDraft: false }, "open"],
+  ["draft", { isDraft: true }, "open"],
+  ["enable-auto-merge", { autoMergeEnabled: true }, "open"],
+  ["disable-auto-merge", { autoMergeEnabled: false }, "open"],
+] as const)("shows %s in loaded readers before the host replies", ([action, shown, from]) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let reads = 0;
+      const sent = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const before = {
+        ...actionReference,
+        provider: "github",
+        title: "Ship it",
+        url: actionReply.url,
+        author: null,
+        headBranch: "feature",
+        baseBranch: "main",
+        state: from,
+        isDraft: action === "ready",
+        autoMergeEnabled: action === "disable-auto-merge",
+        createdAt: "2026-10-27T08:00:00Z",
+        updatedAt: "2026-10-27T09:00:00Z",
+        observedAt: 100,
+      };
+      const read = () =>
+        Effect.sync(() => {
+          reads++;
+          return before;
+        });
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: read,
+        [WS_METHODS.pullRequestsPreview]: read,
+        [WS_METHODS.pullRequestsSummary]: read,
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.sync(() => {
+            reads++;
+            return listResult([before]);
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(sent, undefined);
+            yield* Deferred.await(release);
+            return { ...before, ...shown, updatedAt: "2026-10-27T10:00:00Z", observedAt: 200 };
+          }),
+      });
+      const { atoms, registry, runtime } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const readers: ReadonlyArray<Atom.Atom<AsyncResult.AsyncResult<object, unknown>>> = [
+        atoms.detail(target),
+        atoms.preview(target),
+        createLinkedPullRequestSummaryAtomFamily(runtime, atoms.refreshes)(target),
+      ];
+      const list = atoms.list({ environmentId: target.environmentId, input: { state: from } });
+      for (const atom of [...readers, list]) {
+        registry.mount(atom);
+        yield* Effect.promise(() => executeAtomQuery(registry, atom));
+      }
+      reads = 0;
+
+      const acting = yield* Effect.promise(() =>
+        atoms.runAction.run(registry, { ...target, input: { ...actionReference, action } }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(sent);
+
+      for (const atom of readers.slice(0, action.includes("auto-merge") ? 1 : readers.length)) {
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(atom)))).toMatchObject(shown);
+      }
+      const rows = Option.getOrThrow(AsyncResult.value(registry.get(list))).entries;
+      if ("state" in shown) expect(rows).toEqual([]);
+      else if ("isDraft" in shown) expect(rows).toMatchObject([shown]);
+      else expect(rows).toHaveLength(1);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(acting);
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(readers[0]!)))).toMatchObject({
+        ...shown,
+        updatedAt: "2026-10-27T10:00:00Z",
+      });
+      // Only a reopen re-reads, for the branch data and permissions its reply lacks.
+      expect(reads).toBe(action === "reopen" ? 1 : 0);
+    }),
+  ),
+);
+
+it.effect("puts readers back when the host refuses an action, and saves nothing it guessed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sent = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const open = { ...actionReference, state: "open", isDraft: false, observedAt: 100 };
+      const saved = new Map<string, string>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: () => Effect.succeed(open),
+        [WS_METHODS.pullRequestsList]: () => Effect.succeed(listResult([open])),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(sent, undefined);
+            yield* Deferred.await(release);
+            return yield* new PullRequestOperationError({
+              operation: "runAction",
+              detail: "You cannot close this pull request.",
+            });
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(
+        client,
+        undefined,
+        false,
+        {},
+        {
+          load: (_environmentId, key) => Effect.sync(() => Option.fromUndefinedOr(saved.get(key))),
+          save: (_environmentId, key, payload) => Effect.sync(() => void saved.set(key, payload)),
+        },
+      );
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      const list = atoms.list({ environmentId: target.environmentId, input: { state: "open" } });
+      const loaded: ReadonlyArray<Atom.Atom<AsyncResult.AsyncResult<object, unknown>>> = [
+        detail,
+        list,
+      ];
+      for (const atom of loaded) {
+        registry.mount(atom);
+        yield* Effect.promise(() => executeAtomQuery(registry, atom));
+      }
+
+      const acting = yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "close" },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(sent);
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("closed");
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(acting))._tag).toBe("Failure");
+
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("open");
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries).toMatchObject([
+        { state: "open" },
+      ]);
+      expect([...saved.values()].some((payload) => payload.includes('"closed"'))).toBe(false);
+    }),
+  ),
+);
+
+it.effect(
+  "keeps an accepted change on screen until the re-read when the reply has no summary",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let state = "open";
+        let reads = 0;
+        const rereadStarted = yield* Deferred.make<void>();
+        const releaseReread = yield* Deferred.make<void>();
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.gen(function* () {
+              reads++;
+              const answer = { ...actionReference, state, observedAt: reads };
+              if (reads === 2) {
+                yield* Deferred.succeed(rereadStarted, undefined);
+                yield* Deferred.await(releaseReread);
+              }
+              return answer;
+            }),
+          [WS_METHODS.pullRequestsRunAction]: () =>
+            Effect.sync(() => {
+              state = "closed";
+              return undefined;
+            }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const detail = atoms.detail(target);
+        registry.mount(detail);
+        yield* Effect.promise(() => executeAtomQuery(registry, detail));
+
+        yield* Effect.promise(() =>
+          atoms.runAction.run(registry, {
+            ...target,
+            input: { ...actionReference, action: "close" },
+          }),
+        );
+        yield* Deferred.await(rereadStarted);
+
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("closed");
+        yield* Deferred.succeed(releaseReread, undefined);
+        expect(
+          (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).observedAt,
+        ).toBe(2);
+      }),
+    ),
+);
+
+it.effect("shows a queued close before the action ahead of it answers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const firstSent = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const rows = [1, 2].map((number) => ({
+        ...actionReference,
+        number,
+        state: "open",
+        isDraft: false,
+        updatedAt: `2026-10-27T0${number}:00:00Z`,
+      }));
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsList]: () => Effect.succeed(listResult(rows)),
+        [WS_METHODS.pullRequestsRunAction]: (input: { readonly number: number }) =>
+          Effect.gen(function* () {
+            if (input.number === 1) {
+              yield* Deferred.succeed(firstSent, undefined);
+              yield* Deferred.await(release);
+            }
+            return undefined;
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const list = atoms.list({ environmentId: TARGET.environmentId, input: { state: "open" } });
+      registry.mount(list);
+      yield* Effect.promise(() => executeAtomQuery(registry, list));
+
+      const closes = [1, 2].map((number) =>
+        atoms.runAction.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: { ...actionReference, number, action: "close" },
+        }),
+      );
+      yield* Deferred.await(firstSent);
+
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries).toEqual([]);
+      yield* Deferred.succeed(release, undefined);
+      yield* Effect.promise(() => Promise.all(closes));
+    }),
+  ),
+);
+
+it.effect("leaves a merge as it is until the host says what it did", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sent = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.succeed({ ...actionReference, state: "open", observedAt: 100 }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(sent, undefined);
+            yield* Deferred.await(release);
+            // A merge queue takes the merge and merges later.
+            return { ...actionReply, state: "open", autoMergeEnabled: true };
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      registry.mount(detail);
+      yield* Effect.promise(() => executeAtomQuery(registry, detail));
+
+      const acting = yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "merge" },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(sent);
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("open");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(acting);
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail)))).toMatchObject({
+        state: "open",
+        autoMergeEnabled: true,
+      });
+    }),
+  ),
+);
+
+it.effect.each(["accepted", "refused"] as const)(
+  "shows a title edit at once and keeps it only when the host takes it (%s)",
+  (outcome) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let title = "Original";
+        let reads = 0;
+        const sent = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const read = () =>
+          Effect.sync(() => {
+            reads++;
+            return { ...actionReference, state: "open", title, observedAt: reads };
+          });
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsDetail]: read,
+          [WS_METHODS.pullRequestsPreview]: read,
+          [WS_METHODS.pullRequestsList]: () =>
+            Effect.sync(() => {
+              reads++;
+              return listResult([
+                { ...actionReference, state: "open", title, updatedAt: actionReply.updatedAt },
+              ]);
+            }),
+          [WS_METHODS.pullRequestsUpdate]: (input: { readonly title: string }) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(sent, undefined);
+              yield* Deferred.await(release);
+              if (outcome === "refused") return yield* new MutationRefused();
+              title = input.title;
+            }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const detail = atoms.detail(target);
+        const preview = atoms.preview(target);
+        const list = atoms.list({ environmentId: target.environmentId, input: { state: "open" } });
+        const loaded: ReadonlyArray<Atom.Atom<AsyncResult.AsyncResult<object, unknown>>> = [
+          detail,
+          preview,
+          list,
+        ];
+        for (const atom of loaded) {
+          registry.mount(atom);
+          yield* Effect.promise(() => executeAtomQuery(registry, atom));
+        }
+        const titles = () => [
+          Option.getOrThrow(AsyncResult.value(registry.get(detail))).title,
+          Option.getOrThrow(AsyncResult.value(registry.get(preview))).title,
+          Option.getOrThrow(AsyncResult.value(registry.get(list))).entries[0]?.title,
+        ];
+
+        const editing = yield* Effect.promise(() =>
+          atoms.update.run(registry, { ...target, input: { ...actionReference, title: "Edited" } }),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(sent);
+        expect(titles()).toEqual(["Edited", "Edited", "Edited"]);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(editing);
+
+        expect(titles()).toEqual(
+          outcome === "refused"
+            ? ["Original", "Original", "Original"]
+            : ["Edited", "Edited", "Edited"],
+        );
+        // The edit is known, so no reader asks the host again.
+        expect(reads).toBe(3);
+      }),
+    ),
+);
+
+it.effect("shows a label change at once and takes it back when the host refuses it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sent = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const existing = { name: "existing", color: "111111" };
+      const added = { name: "new", color: "abcdef" };
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.succeed({ ...actionReference, state: "open", labels: [existing] }),
+        [WS_METHODS.pullRequestsLabelCandidates]: () =>
+          Effect.succeed({
+            candidates: [
+              { ...existing, description: null, isApplied: true },
+              { ...added, description: null, isApplied: false },
+            ],
+            truncated: false,
+          }),
+        [WS_METHODS.pullRequestsSetLabels]: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(sent, undefined);
+            yield* Deferred.await(release);
+            return yield* new MutationRefused();
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      const candidates = atoms.labelCandidates(target);
+      const loaded: ReadonlyArray<Atom.Atom<AsyncResult.AsyncResult<object, unknown>>> = [
+        detail,
+        candidates,
+      ];
+      for (const atom of loaded) {
+        registry.mount(atom);
+        yield* Effect.promise(() => executeAtomQuery(registry, atom));
+      }
+
+      const labelling = yield* Effect.promise(() =>
+        atoms.setLabels.run(registry, {
+          ...target,
+          input: { ...actionReference, labels: ["new"], applied: true },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(sent);
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).labels).toEqual([
+        existing,
+        added,
+      ]);
+      expect(
+        Option.getOrThrow(AsyncResult.value(registry.get(candidates))).candidates.map(
+          (candidate) => candidate.isApplied,
+        ),
+      ).toEqual([true, true]);
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(labelling))._tag).toBe("Failure");
+
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).labels).toEqual([existing]);
+      expect(
+        Option.getOrThrow(AsyncResult.value(registry.get(candidates))).candidates.map(
+          (candidate) => candidate.isApplied,
+        ),
+      ).toEqual([true, false]);
+    }),
+  ),
+);
+
+it.effect("keeps an accepted label change when a candidates read sent before it answers late", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let applied = false;
+      let reads = 0;
+      const readStarted = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsLabelCandidates]: () =>
+          Effect.gen(function* () {
+            reads++;
+            const answer = {
+              candidates: [{ name: "new", color: null, description: null, isApplied: applied }],
+              truncated: false,
+            };
+            if (reads === 2) {
+              yield* Deferred.succeed(readStarted, undefined);
+              yield* Deferred.await(releaseRead);
+            }
+            return answer;
+          }),
+        [WS_METHODS.pullRequestsSetLabels]: () =>
+          Effect.sync(() => {
+            applied = true;
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const candidates = atoms.labelCandidates(target);
+      registry.mount(candidates);
+      yield* Effect.promise(() => executeAtomQuery(registry, candidates));
+      registry.refresh(candidates);
+      yield* Deferred.await(readStarted);
+
+      yield* Effect.promise(() =>
+        atoms.setLabels.run(registry, {
+          ...target,
+          input: { ...actionReference, labels: ["new"], applied: true },
+        }),
+      );
+      yield* Deferred.succeed(releaseRead, undefined);
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, candidates, { suspendOnWaiting: true }))
+          .candidates[0]?.isApplied,
+      ).toBe(true);
+    }),
+  ),
+);

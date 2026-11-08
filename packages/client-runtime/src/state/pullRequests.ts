@@ -16,11 +16,15 @@ import {
   type PullRequestListInput,
   type PullRequestListStatsInput,
   type PullRequestListStatsResult,
+  type PullRequestUpdateInput,
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestListEntry,
   type PullRequestRef,
   type PullRequestMergeMethod,
+  type PullRequestLabel,
+  type PullRequestLabelCandidateList,
+  type PullRequestState,
   PullRequestOperationError,
   PullRequestSummary,
   type VcsStatusResult,
@@ -34,6 +38,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
+  type AtomCommand,
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -119,10 +124,11 @@ function writableQueryFamily<A, E>(
 /** Restart pre-mutation reads before patching so they cannot restore stale values. */
 function updateCached<A, E>(
   registry: AtomRegistry.AtomRegistry,
-  atom: Atom.Writable<AsyncResult.AsyncResult<A, E>>,
+  shown: Atom.Writable<AsyncResult.AsyncResult<A, E>>,
   update: (value: A) => A,
   refresh = false,
 ) {
+  const atom = (uneditedReaders.get(shown) ?? shown) as typeof shown;
   if (refresh || registry.get(atom).waiting) registry.refresh(atom);
   registry.update(atom, AsyncResult.map(update));
 }
@@ -141,6 +147,198 @@ interface ActionReplyPatch {
 
 // Module-wide so readers built by separate factories, such as linked summaries, are patched too.
 const actionReplyPatches = new WeakMap<object, ActionReplyPatch>();
+
+/** What a write in flight will change, shown by every reader until the host answers. */
+interface PullRequestPendingEdit {
+  readonly reference: PullRequestRef;
+  readonly state?: PullRequestState;
+  readonly isDraft?: boolean;
+  readonly autoMergeEnabled?: boolean;
+  readonly title?: string;
+  readonly body?: string;
+  readonly labels?: {
+    readonly applied: boolean;
+    readonly labels: ReadonlyArray<PullRequestLabel>;
+  };
+}
+
+type EditedField = "state" | "isDraft" | "autoMergeEnabled" | "title" | "body";
+
+interface EditableReader {
+  readonly environmentId: EnvironmentId;
+  readonly concerns: (reference: PullRequestRef) => boolean;
+  readonly edit: (value: never, edit: PullRequestPendingEdit) => unknown;
+}
+
+// Module-wide like the reply patches, so separately built readers see the same writes.
+const pendingEdits = Atom.family((_environmentId: EnvironmentId) =>
+  Atom.make<ReadonlyArray<PullRequestPendingEdit>>([]).pipe(Atom.keepAlive),
+);
+const editableReaders = new WeakMap<object, EditableReader>();
+const editedReaders = new WeakMap<object, object>();
+const uneditedReaders = new WeakMap<object, object>();
+
+function loadedValue<A>(registry: AtomRegistry.AtomRegistry, atom: Atom.Atom<unknown>) {
+  return Option.flatMap(registry.getNodes().get(atom)?.valueOption() ?? Option.none(), (result) =>
+    AsyncResult.value(result as AsyncResult.AsyncResult<A, unknown>),
+  );
+}
+
+function withEdit<T extends object>(
+  value: T,
+  edit: PullRequestPendingEdit,
+  fields: ReadonlyArray<EditedField>,
+): T {
+  const held = value as Record<string, unknown>;
+  const changed = fields.filter(
+    (field) => edit[field] !== undefined && held[field] !== edit[field],
+  );
+  let next =
+    changed.length === 0
+      ? held
+      : { ...held, ...Object.fromEntries(changed.map((field) => [field, edit[field]])) };
+  if (edit.autoMergeEnabled === false && next.autoMergeMethod !== undefined) {
+    const { autoMergeMethod: _disarmed, ...withoutAutoMerge } = next;
+    next = withoutAutoMerge;
+  }
+  return next as T;
+}
+
+function withLabelEdit<T extends { readonly labels: ReadonlyArray<PullRequestLabel> }>(
+  value: T,
+  edit: PullRequestPendingEdit,
+): T {
+  if (edit.labels === undefined) return value;
+  const { applied, labels: changed } = edit.labels;
+  const names = new Set(changed.map((label) => label.name));
+  const labels = applied
+    ? [
+        ...value.labels,
+        ...changed.filter((label) => !value.labels.some((held) => held.name === label.name)),
+      ]
+    : value.labels.filter((label) => !names.has(label.name));
+  return labels.length === value.labels.length ? value : { ...value, labels };
+}
+
+/**
+ * The reader with every write in flight for its pull request applied. Writes go to the reader
+ * underneath, so a refused edit never stays behind in what the host said.
+ */
+function editedQuery<A, E>(
+  inner: Atom.Writable<AsyncResult.AsyncResult<A, E>>,
+  reader: Omit<EditableReader, "edit"> & {
+    readonly edit: (value: A, edit: PullRequestPendingEdit) => A;
+  },
+  idleTtlMs = 5 * 60_000,
+): Atom.Writable<AsyncResult.AsyncResult<A, E>> {
+  const existing = editedReaders.get(inner);
+  if (existing !== undefined) return existing as Atom.Writable<AsyncResult.AsyncResult<A, E>>;
+  const shown = Atom.writable(
+    (get) => {
+      const result = get(inner);
+      const edits = get(pendingEdits(reader.environmentId));
+      const value = AsyncResult.value(result);
+      if (edits.length === 0 || Option.isNone(value)) return result;
+      const next = edits.reduce(
+        (current, edit) => (reader.concerns(edit.reference) ? reader.edit(current, edit) : current),
+        value.value,
+      );
+      return next === value.value ? result : AsyncResult.map(result, () => next);
+    },
+    (context, value: AsyncResult.AsyncResult<A, E>) => context.set(inner, value),
+    (refresh) => refresh(inner),
+  ).pipe(Atom.setIdleTTL(idleTtlMs));
+  editableReaders.set(inner, reader as EditableReader);
+  editedReaders.set(inner, shown);
+  uneditedReaders.set(shown, inner);
+  return shown;
+}
+
+/** Shows the command's edit from the click until it settles, queued behind others or not. */
+function showWhileInFlight<Target extends { readonly environmentId: EnvironmentId }, A, E, C>(
+  command: C & AtomCommand<Target, A, E>,
+  editOf: (registry: AtomRegistry.AtomRegistry, target: Target) => PullRequestPendingEdit | null,
+): C {
+  return {
+    ...command,
+    run: async (registry, target) => {
+      const edit = editOf(registry, target);
+      if (edit === null) return command.run(registry, target);
+      const edits = pendingEdits(target.environmentId);
+      registry.update(edits, (current) => [...current, edit]);
+      try {
+        return await command.run(registry, target);
+      } finally {
+        registry.update(edits, (current) => current.filter((entry) => entry !== edit));
+      }
+    },
+  } satisfies AtomCommand<Target, A, E>;
+}
+
+/** Keeps an accepted edit in loaded readers once it stops being in flight. */
+function settleEdit(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  edit: PullRequestPendingEdit | null,
+  readsAfterWrite = false,
+) {
+  if (edit === null) return;
+  for (const atom of registry.getNodes().keys()) {
+    const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
+    if (reader?.environmentId !== environmentId || !reader.concerns(edit.reference)) continue;
+    const shown = loadedValue<never>(registry, atom as Atom.Atom<unknown>);
+    if (Option.isNone(shown) || reader.edit(shown.value, edit) === shown.value) continue;
+    const writable = atom as Atom.Writable<AsyncResult.AsyncResult<never, unknown>>;
+    // A read still waiting may predate the write, unless the caller started it after the commit.
+    if (!readsAfterWrite && registry.get(writable).waiting) registry.refresh(writable);
+    registry.update(
+      writable,
+      AsyncResult.map((value) => reader.edit(value, edit) as never),
+    );
+  }
+}
+
+function pullRequestReference(input: PullRequestRef): PullRequestRef {
+  const { projectId, host, repository, number, expectedAccountId } = input;
+  return {
+    projectId,
+    ...(host === undefined ? {} : { host }),
+    repository,
+    number,
+    ...(expectedAccountId === undefined ? {} : { expectedAccountId }),
+  };
+}
+
+/** What an action changes, left out where only the host knows, as when a queue takes a merge. */
+function actionEdit(input: PullRequestActionInput): PullRequestPendingEdit | null {
+  if (input.stackNumber !== undefined) return null;
+  const reference = pullRequestReference(input);
+  switch (input.action) {
+    case "close":
+      return { reference, state: "closed" };
+    case "reopen":
+      return { reference, state: "open" };
+    case "ready":
+      return { reference, isDraft: false };
+    case "draft":
+      return { reference, isDraft: true };
+    case "enable-auto-merge":
+      return { reference, autoMergeEnabled: true };
+    case "disable-auto-merge":
+      return { reference, autoMergeEnabled: false };
+    default:
+      return null;
+  }
+}
+
+function updateEdit(input: PullRequestUpdateInput): PullRequestPendingEdit | null {
+  if (input.title === undefined && input.body === undefined) return null;
+  return {
+    reference: pullRequestReference(input),
+    ...(input.title === undefined ? {} : { title: input.title }),
+    ...(input.body === undefined ? {} : { body: input.body }),
+  };
+}
 
 function samePullRequest(reader: PullRequestRef, acted: PullRequestRef) {
   return (
@@ -214,6 +412,22 @@ export function patchPullRequestListEntries<Entry extends PullRequestListEntry>(
     : entries;
 }
 
+function editListEntries<Entry extends PullRequestListEntry>(
+  input: PullRequestListInput,
+  entries: ReadonlyArray<Entry>,
+  edit: PullRequestPendingEdit,
+): ReadonlyArray<Entry> {
+  let changed = false;
+  const edited = entries.flatMap((entry): Entry[] => {
+    if (!samePullRequest(entry, edit.reference)) return [entry];
+    const next = withLabelEdit(withEdit(entry, edit, ["state", "isDraft", "title"]), edit);
+    if (next === entry) return [entry];
+    changed = true;
+    return listAccepts(input, next.state, next.isDraft) ? [next] : [];
+  });
+  return changed ? edited : entries;
+}
+
 function patchListWithReply(
   input: PullRequestListInput,
   value: PullRequestListResult,
@@ -252,6 +466,8 @@ function actionPatchedQuery<Input, A, E>(
     readonly rereadWithoutReply?: boolean;
     /** False for reads the refresh stream does not restart; defaults to true. */
     readonly refreshedByServer?: (input: Input) => boolean;
+    /** Shows a write in flight; absent where the reader holds nothing such a write changes. */
+    readonly edit?: (input: Input, value: A, edit: PullRequestPendingEdit) => A;
   },
 ) {
   const writable = Atom.family((atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
@@ -260,7 +476,20 @@ function actionPatchedQuery<Input, A, E>(
   return (target: { readonly environmentId: EnvironmentId; readonly input: Input }) => {
     const query = source(target);
     const atom = writable(query);
-    if (actionReplyPatches.has(atom)) return atom;
+    const edit = options.edit;
+    const reader =
+      edit === undefined
+        ? atom
+        : editedQuery(
+            atom,
+            {
+              environmentId: target.environmentId,
+              concerns: (reference) => options.concerns(target.input, reference),
+              edit: (value, pending) => edit(target.input, value, pending),
+            },
+            options.idleTtlMs,
+          );
+    if (actionReplyPatches.has(atom)) return reader;
     const pendingRead = (registry: AtomRegistry.AtomRegistry) => {
       const result = Option.getOrUndefined(
         registry.getNodes().get(query)?.valueOption() ?? Option.none(),
@@ -296,7 +525,9 @@ function actionPatchedQuery<Input, A, E>(
           if (next === shown.value)
             return lacking || (unrefreshed && pending !== undefined) ? reread() : undefined;
           yield* options.onAnswer?.(target, next, registry) ?? Effect.void;
-          const mounted = (registry.getNodes().get(atom)?.listeners.size ?? 0) > 0;
+          const mounted = [atom, reader].some(
+            (shownBy) => (registry.getNodes().get(shownBy)?.listeners.size ?? 0) > 0,
+          );
           if (!freshRead && (pending !== undefined || lacking || (unrefreshed && mounted)))
             registry.refresh(atom);
           registry.update(
@@ -313,7 +544,7 @@ function actionPatchedQuery<Input, A, E>(
         },
       ),
     });
-    return atom;
+    return reader;
   };
 }
 
@@ -380,6 +611,8 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
               number: value.number,
               ...(value.observedAt === undefined ? {} : { observedAt: value.observedAt }),
             },
+      edit: (_input, value, edit) =>
+        withEdit(value, edit, ["state", "isDraft", "autoMergeEnabled", "title"]),
     },
   );
 }
@@ -515,6 +748,11 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           const { autoMergeMethod: _disarmed, ...withoutAutoMerge } = patched;
           return withoutAutoMerge;
         },
+        edit: (_input, value, edit) =>
+          withLabelEdit(
+            withEdit(value, edit, ["state", "isDraft", "autoMergeEnabled", "title", "body"]),
+            edit,
+          ),
       },
     ),
   );
@@ -577,6 +815,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
                       "observedAt",
                     ]),
                   },
+          edit: (_input, value, edit) => withEdit(value, edit, ["state", "isDraft", "title"]),
         },
       ),
     );
@@ -584,7 +823,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   // Hover cards read their own atoms, so a pending or failed hover read never decides where a
   // click on the same link goes.
   const previewCard = previewQuery("environment-data:pull-requests:preview-card");
-  const labelCandidates = writableQueryFamily(
+  const labelCandidateQueries = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:label-candidates",
       tag: WS_METHODS.pullRequestsLabelCandidates,
@@ -592,6 +831,51 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
+  const labelCandidates = normalizePullRequestQuery((target) =>
+    editedQuery(labelCandidateQueries(target), {
+      environmentId: target.environmentId,
+      concerns: (reference) => samePullRequest(target.input, reference),
+      edit: (value, edit) => {
+        if (edit.labels === undefined) return value;
+        const { applied, labels } = edit.labels;
+        let changed = false;
+        const candidates = value.candidates.map((candidate) => {
+          if (
+            candidate.isApplied === applied ||
+            !labels.some((label) => label.name === candidate.name)
+          )
+            return candidate;
+          changed = true;
+          return { ...candidate, isApplied: applied };
+        });
+        return changed ? { ...value, candidates } : value;
+      },
+    }),
+  );
+  const labelEdit = (
+    registry: AtomRegistry.AtomRegistry,
+    target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: PullRequestRef & {
+        readonly labels: ReadonlyArray<string>;
+        readonly applied: boolean;
+      };
+    },
+  ): PullRequestPendingEdit => {
+    const candidates = Option.getOrUndefined(
+      loadedValue<PullRequestLabelCandidateList>(registry, labelCandidates(target)),
+    )?.candidates;
+    return {
+      reference: pullRequestReference(target.input),
+      labels: {
+        applied: target.input.applied,
+        labels: target.input.labels.map((name) => ({
+          name,
+          color: candidates?.find((candidate) => candidate.name === name)?.color ?? null,
+        })),
+      },
+    };
+  };
   const reviewGuide = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:review-guide",
@@ -744,6 +1028,10 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             input.host.toLowerCase() === reference.host.toLowerCase()),
         refreshedByServer: (input) => input.cursors === undefined,
         patch: patchListWithReply,
+        edit: (input, value, edit) => {
+          const entries = editListEntries(input, value.entries, edit);
+          return entries === value.entries ? value : { ...value, entries };
+        },
       },
     ),
     /**
@@ -848,41 +1136,48 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.projectId, input.repository, input.number]),
       },
     }),
-    runAction: createEnvironmentRpcCommand(runtime, {
-      tag: WS_METHODS.pullRequestsRunAction,
-      label: "environment-data:pull-requests:run-action",
-      // Preparation belongs to the write's lane. Refreshable queries would restart it after
-      // every preceding action, and preparing outside the lane could reorder the clicks.
-      execute: runAction,
-      onStart: (_target, registry) => readsInFlight(registry),
-      // Loaded readers show the reply, or re-read when the host's reply lacked the pull request.
-      onSuccess: ({ environmentId, input }, registry, reply, readsBeforeSend) => {
-        const { projectId, host, repository, number, expectedAccountId } = input;
-        return applyActionReply(
-          registry,
-          environmentId,
-          {
-            projectId,
-            ...(host === undefined ? {} : { host }),
-            repository,
-            number,
-            ...(expectedAccountId === undefined ? {} : { expectedAccountId }),
-          },
-          reply,
-          readsBeforeSend ?? new Set(),
-        );
-      },
-      scheduler: commandScheduler,
-      concurrency: serialPerEnvironment,
-    }),
-    update: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:pull-requests:update",
-      tag: WS_METHODS.pullRequestsUpdate,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
-      onSuccess: (target, registry) => Effect.sync(() => registry.refresh(preview(target))),
-      scheduler: commandScheduler,
-      concurrency: serialPerEnvironment,
-    }),
+    runAction: showWhileInFlight(
+      createEnvironmentRpcCommand(runtime, {
+        tag: WS_METHODS.pullRequestsRunAction,
+        label: "environment-data:pull-requests:run-action",
+        // Preparation belongs to the write's lane. Refreshable queries would restart it after
+        // every preceding action, and preparing outside the lane could reorder the clicks.
+        execute: runAction,
+        onStart: (_target, registry) => readsInFlight(registry),
+        // Loaded readers show the reply, or re-read when the host's reply lacked the pull request.
+        onSuccess: ({ environmentId, input }, registry, reply, readsBeforeSend) =>
+          applyActionReply(
+            registry,
+            environmentId,
+            pullRequestReference(input),
+            reply,
+            readsBeforeSend ?? new Set(),
+          ).pipe(
+            // The re-read a bare reply starts would otherwise show the old state until it answers.
+            Effect.andThen(
+              Effect.sync(() => {
+                if (reply === undefined)
+                  settleEdit(registry, environmentId, actionEdit(input), true);
+              }),
+            ),
+          ),
+        scheduler: commandScheduler,
+        concurrency: serialPerEnvironment,
+      }),
+      (_registry, { input }) => actionEdit(input),
+    ),
+    update: showWhileInFlight(
+      createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:pull-requests:update",
+        tag: WS_METHODS.pullRequestsUpdate,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
+        onSuccess: ({ environmentId, input }, registry) =>
+          Effect.sync(() => settleEdit(registry, environmentId, updateEdit(input))),
+        scheduler: commandScheduler,
+        concurrency: serialPerEnvironment,
+      }),
+      (_registry, { input }) => updateEdit(input),
+    ),
     comment: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:comment",
       tag: WS_METHODS.pullRequestsComment,
@@ -1018,44 +1313,20 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         }),
     }),
     labelCandidates,
-    setLabels: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:pull-requests:set-labels",
-      tag: WS_METHODS.pullRequestsSetLabels,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsSetLabels, input),
-      scheduler: commandScheduler,
-      concurrency: serialPerEnvironment,
-      onSuccess: (target, registry) =>
-        Effect.sync(() => {
-          const { labels, applied } = target.input;
-          const candidatesAtom = labelCandidates(target);
-          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
-          const names = new Set(labels);
-          updateCached(registry, candidatesAtom, (value) => ({
-            ...value,
-            candidates: value.candidates.map((candidate) =>
-              names.has(candidate.name) ? { ...candidate, isApplied: applied } : candidate,
-            ),
-          }));
-          for (const atom of loadedDetails(registry, target)) {
-            updateCached(registry, atom, (value) => ({
-              ...value,
-              labels: applied
-                ? [
-                    ...value.labels,
-                    ...labels
-                      .filter((name) => !value.labels.some((label) => label.name === name))
-                      .map((name) => ({
-                        name,
-                        color:
-                          candidates?.candidates.find((candidate) => candidate.name === name)
-                            ?.color ?? null,
-                      })),
-                  ]
-                : value.labels.filter((label) => !names.has(label.name)),
-            }));
-          }
-        }),
-    }),
+    setLabels: showWhileInFlight(
+      createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:pull-requests:set-labels",
+        tag: WS_METHODS.pullRequestsSetLabels,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsSetLabels, input),
+        scheduler: commandScheduler,
+        concurrency: serialPerEnvironment,
+        onSuccess: (target, registry) =>
+          Effect.sync(() =>
+            settleEdit(registry, target.environmentId, labelEdit(registry, target)),
+          ),
+      }),
+      labelEdit,
+    ),
     setThreadResolution: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:set-thread-resolution",
       tag: WS_METHODS.pullRequestsSetThreadResolution,
