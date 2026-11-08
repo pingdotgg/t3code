@@ -4,7 +4,11 @@ import {
   connectionRouteLabel,
   connectionRoutes,
 } from "@t3tools/client-runtime/connection";
-import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@t3tools/contracts";
+import type {
+  DesktopDiscoveredSshHost,
+  DesktopSshEnvironmentTarget,
+  EnvironmentMachineKind,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { ReactNode } from "react";
 
@@ -17,6 +21,31 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): string {
   const authority = target.username ? `${target.username}@${target.hostname}` : target.hostname;
   return target.port ? `${authority}:${target.port}` : authority;
+}
+
+/** Discovered SSH hosts that no saved environment already reaches. */
+export function unsavedDesktopSshHosts(
+  hosts: ReadonlyArray<DesktopDiscoveredSshHost>,
+  savedEnvironments: ReadonlyArray<EnvironmentPresentation>,
+): ReadonlyArray<DesktopDiscoveredSshHost> {
+  const savedKeys = new Set<string>();
+  for (const environment of savedEnvironments) {
+    const profile = environment.entry.profile;
+    if (
+      environment.entry.target._tag !== "SshConnectionTarget" ||
+      Option.isNone(profile) ||
+      profile.value._tag !== "SshConnectionProfile"
+    ) {
+      continue;
+    }
+    savedKeys.add(profile.value.target.alias);
+    savedKeys.add(formatDesktopSshTarget(profile.value.target));
+  }
+  return hosts.filter(
+    (host) =>
+      !savedKeys.has(host.alias) &&
+      (host.source === "ssh-config" || !savedKeys.has(formatDesktopSshTarget(host))),
+  );
 }
 
 export function environmentTransportLabel(

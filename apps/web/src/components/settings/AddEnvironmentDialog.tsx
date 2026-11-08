@@ -14,10 +14,9 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
-import { formatDesktopSshTarget } from "./EnvironmentRow";
+import { formatDesktopSshTarget, unsavedDesktopSshHosts } from "./EnvironmentRow";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
 import {
@@ -92,23 +91,6 @@ export function AddEnvironmentDialog({
     reportFailure: false,
   });
   const relayDiscoveryState = useRelayEnvironmentDiscovery();
-  const savedDesktopSshEnvironmentKeys = (() => {
-    const keys = new Set<string>();
-    for (const environment of savedEnvironments) {
-      const profile = environment.entry.profile;
-      if (
-        environment.entry.target._tag !== "SshConnectionTarget" ||
-        Option.isNone(profile) ||
-        profile.value._tag !== "SshConnectionProfile"
-      ) {
-        continue;
-      }
-      const target = profile.value.target;
-      keys.add(target.alias);
-      keys.add(formatDesktopSshTarget(target));
-    }
-    return keys;
-  })();
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
@@ -131,13 +113,7 @@ export function AddEnvironmentDialog({
     if (isSshDiscoveryActive) refreshDesktopSshHosts();
   }, [isSshDiscoveryActive, refreshDesktopSshHosts]);
   const discoveredSshHosts = desktopSshHosts.data ?? EMPTY_DISCOVERED_SSH_HOSTS;
-  const unsavedDiscoveredSshHosts = discoveredSshHosts.filter((target) => {
-    const address = formatDesktopSshTarget(target);
-    return (
-      !savedDesktopSshEnvironmentKeys.has(target.alias) &&
-      (target.source === "ssh-config" || !savedDesktopSshEnvironmentKeys.has(address))
-    );
-  });
+  const unsavedDiscoveredSshHosts = unsavedDesktopSshHosts(discoveredSshHosts, savedEnvironments);
   const filteredDiscoveredSshHosts = filterDiscoveredSshHosts(
     unsavedDiscoveredSshHosts,
     savedBackendSshHost,
