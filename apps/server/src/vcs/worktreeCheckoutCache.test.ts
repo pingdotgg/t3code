@@ -277,8 +277,14 @@ describe.skipIf(!symlinksSupported)("worktree checkout cache", () => {
     },
     {
       name: "a file was added to the cache",
-      change: (fixture: { cacheDir: string; repo: string; root: string }) =>
-        NodeFS.writeFileSync(NodePath.join(cacheEntry(fixture), "src", "extra.txt"), "extra\n"),
+      change: (fixture: { cacheDir: string; repo: string; root: string }) => {
+        const folder = NodePath.join(cacheEntry(fixture), "src");
+        NodeFS.writeFileSync(NodePath.join(folder, "extra.txt"), "extra\n");
+        // Linux stamps times from a coarse clock, so a write right after the build can keep the
+        // folder's mtime; APFS has no such gap. Move it on so the test does not depend on that.
+        const moved = NodeFS.statSync(folder).mtimeMs / 1000 + 1;
+        NodeFS.utimesSync(folder, moved, moved);
+      },
     },
     {
       name: "the repository's checkout settings changed",

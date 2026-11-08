@@ -28,16 +28,13 @@ export function useAvailableSettingsSearchItems() {
         hasServerConfig: environment.serverConfig !== null,
       }),
     ) === true;
-  // Matches FastCheckoutRow, which shows only when every connected machine supports it.
-  const fastCheckoutScope = environments.filter(
-    (environment) => environment.connection.phase === "connected",
-  );
+  // Any machine that offers it; the row then shows for a settings scope where all selected ones do.
   const hasFastWorktreeCheckoutEnvironment =
-    (fastCheckoutScope.length > 0 &&
-      fastCheckoutScope.every(
-        (environment) =>
-          environment.serverConfig?.environment.capabilities.fastWorktreeCheckout === true,
-      )) === true;
+    environments.some(
+      (environment) =>
+        environment.connection.phase === "connected" &&
+        environment.serverConfig?.environment.capabilities.fastWorktreeCheckout === true,
+    ) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
