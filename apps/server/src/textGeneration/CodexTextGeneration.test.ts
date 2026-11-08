@@ -177,7 +177,6 @@ function withFakeCodexEnv<A, E, R>(
     managedRuntime?: boolean;
     homePath?: string;
     desktopConfig?: string;
-    legacyState?: string;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -188,9 +187,6 @@ function withFakeCodexEnv<A, E, R>(
     const path = yield* Path.Path;
     if (input.desktopConfig !== undefined) {
       yield* fs.writeFileString(path.join(tempDir, "config.toml"), input.desktopConfig);
-    }
-    if (input.legacyState !== undefined) {
-      yield* fs.writeFileString(path.join(tempDir, ".codex-global-state.json"), input.legacyState);
     }
     const config = decodeCodexSettings({
       binaryPath: codexPath,
@@ -279,35 +275,24 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect.each(["config", "legacy"] as const)(
-    "uses Codex desktop %s commit instructions in the CLI prompt",
-    (source) =>
-      withFakeCodexEnv(
-        {
-          output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
-          stdinMustContain: "Include the issue number in each commit subject.",
-          stdinMustNotContain: "PR-only instruction",
-          ...(source === "config"
-            ? {
-                desktopConfig:
-                  '[desktop]\ngit-commit-instructions = "Include the issue number in each commit subject."\ngit-pr-instructions = "PR-only instruction"\n',
-              }
-            : {
-                legacyState: JSON.stringify({
-                  "git-commit-instructions": "Include the issue number in each commit subject.",
-                  "git-pr-instructions": "PR-only instruction",
-                }),
-              }),
-        },
-        (generation) =>
-          generation.generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "fix/settings",
-            stagedSummary: "M README.md",
-            stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          }),
-      ),
+  it.effect("uses Codex desktop config commit instructions in the CLI prompt", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
+        stdinMustContain: "Include the issue number in each commit subject.",
+        stdinMustNotContain: "PR-only instruction",
+        desktopConfig:
+          '[desktop]\ngit-commit-instructions = "Include the issue number in each commit subject."\ngit-pr-instructions = "PR-only instruction"\n',
+      },
+      (generation) =>
+        generation.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "fix/settings",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        }),
+    ),
   );
 
   it.effect.each([false, true])(

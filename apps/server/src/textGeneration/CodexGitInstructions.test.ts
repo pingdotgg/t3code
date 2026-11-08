@@ -8,16 +8,7 @@ import { expect } from "vite-plus/test";
 import { readCodexGitInstructions } from "./CodexGitInstructions.ts";
 
 const cases = [
-  { name: "missing files", expected: {} },
-  {
-    name: "legacy desktop state",
-    legacy:
-      '{"git-commit-instructions":"  Use conventional commits.  ","git-pr-instructions":"Describe tests."}',
-    expected: {
-      commitInstructions: "Use conventional commits.",
-      changeRequestInstructions: "Describe tests.",
-    },
-  },
+  { name: "missing config", expected: {} },
   {
     name: "current desktop config with multiline instructions",
     config:
@@ -28,37 +19,29 @@ const cases = [
     },
   },
   {
-    name: "config overrides legacy per field",
-    config: '[desktop]\ngit-commit-instructions = "Use the new format."',
-    legacy: '{"git-commit-instructions":"Old format","git-pr-instructions":"Keep the PR format."}',
+    name: "trims instructions and preserves absent fields",
+    config: '[desktop]\ngit-commit-instructions = "  Use the new format.  "',
     expected: {
       commitInstructions: "Use the new format.",
-      changeRequestInstructions: "Keep the PR format.",
     },
   },
   {
-    name: "cleared config instructions do not revive legacy instructions",
+    name: "cleared config instructions",
     config: '[desktop]\ngit-commit-instructions = "  "',
-    legacy: '{"git-commit-instructions":"Old format"}',
     expected: { commitInstructions: "" },
   },
   {
     name: "invalid instruction values preserve valid fields",
     config: '[desktop]\ngit-commit-instructions = 42\ngit-pr-instructions = "Describe tests."',
-    legacy: '{"git-commit-instructions":"Use conventional commits."}',
     expected: {
-      commitInstructions: "Use conventional commits.",
       changeRequestInstructions: "Describe tests.",
     },
   },
   {
-    name: "malformed config falls back to legacy",
+    name: "malformed config",
     config: "[desktop",
-    legacy: '{"git-pr-instructions":"Describe tests."}',
-    expected: { changeRequestInstructions: "Describe tests." },
+    expected: {},
   },
-  { name: "malformed state", legacy: "{", expected: {} },
-  { name: "invalid state shape", legacy: "[]", expected: {} },
   { name: "invalid desktop shape", config: "desktop = false", expected: {} },
 ] as const;
 
@@ -70,9 +53,6 @@ it.layer(NodeServices.layer)("CodexGitInstructions", (it) => {
       const home = yield* fs.makeTempDirectoryScoped();
       if ("config" in testCase) {
         yield* fs.writeFileString(path.join(home, "config.toml"), testCase.config);
-      }
-      if ("legacy" in testCase) {
-        yield* fs.writeFileString(path.join(home, ".codex-global-state.json"), testCase.legacy);
       }
       const instructions = yield* readCodexGitInstructions(home);
       expect(instructions).toEqual({
