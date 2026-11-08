@@ -171,6 +171,10 @@ export const make = Effect.gen(function* () {
       return Effect.suspend(() => {
         const channel = autoUpdater.channel;
         let stage: "validation" | "handoff" | "shutdown" = "validation";
+        let helperPid: number | undefined;
+        let helperClosed = false;
+        let closed: Promise<void> | undefined;
+        let committed = false;
         const installError = (cause: unknown) =>
           new ElectronUpdaterQuitAndInstallError({
             channel,
@@ -194,67 +198,87 @@ export const make = Effect.gen(function* () {
             }
             const appBundle = path.resolve(execPath, "../../..");
             stage = "handoff";
-            const installerProcess = await new Promise<NodeChildProcess.ChildProcess>(
-              (resolveReady, reject) => {
-                const child = NodeChildProcess.spawn(
-                  installer,
-                  [
-                    selected.archive,
-                    appBundle,
-                    selected.version,
-                    String(process.pid),
-                    String(isForceRunAfter),
-                  ],
-                  { detached: true, stdio: ["ignore", "pipe", "pipe"] },
-                );
-                let output = "";
-                let errors = "";
-                let finished = false;
-                const finish = (error?: Error) => {
-                  if (finished) return;
-                  finished = true;
-                  signal.removeEventListener("abort", abort);
+            await new Promise<void>((resolveReady, reject) => {
+              const child = NodeChildProcess.spawn(
+                installer,
+                [
+                  selected.archive,
+                  appBundle,
+                  selected.version,
+                  String(process.pid),
+                  String(isForceRunAfter),
+                ],
+                { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+              );
+              helperPid = child.pid;
+              closed = new Promise<void>((resolveClosed) =>
+                child.once("close", () => {
+                  helperClosed = true;
+                  resolveClosed();
+                }),
+              );
+              let output = "";
+              let errors = "";
+              let finished = false;
+              const finish = (error?: Error) => {
+                if (finished) return;
+                finished = true;
+                signal.removeEventListener("abort", abort);
+                if (error) {
+                  reject(error);
+                } else {
                   child.stdout?.destroy();
                   child.stderr?.destroy();
-                  if (error) {
-                    child.kill();
-                    reject(error);
-                  } else {
-                    child.unref();
-                    resolveReady(child);
-                  }
-                };
-                const abort = () => finish(new Error("External installer handoff was cancelled."));
-                signal.addEventListener("abort", abort, { once: true });
-                child.once("error", finish);
-                child.once("close", () =>
-                  finish(new Error(errors || "External installer exited before becoming ready.")),
-                );
-                child.stderr?.on("data", (chunk: Buffer) => {
-                  errors = (errors + chunk.toString()).slice(-8192);
-                });
-                child.stdout?.on("data", (chunk: Buffer) => {
-                  output += chunk.toString();
-                  if (output === "ready\n") finish();
-                  else if (output.includes("\n") || output.length > 4096)
-                    finish(new Error("Invalid external installer readiness response."));
-                });
-                if (signal.aborted) abort();
-              },
-            );
-            if (signal.aborted) {
-              installerProcess.kill();
-              signal.throwIfAborted();
-            }
+                  child.unref();
+                  resolveReady();
+                }
+              };
+              const abort = () => finish(new Error("External installer handoff was cancelled."));
+              signal.addEventListener("abort", abort, { once: true });
+              child.once("error", finish);
+              child.once("close", () =>
+                finish(new Error(errors || "External installer exited before becoming ready.")),
+              );
+              child.stderr?.on("data", (chunk: Buffer) => {
+                errors = (errors + chunk.toString()).slice(-8192);
+              });
+              child.stdout?.on("data", (chunk: Buffer) => {
+                if (finished) return;
+                output += chunk.toString();
+                if (output === "ready\n") finish();
+                else if (output.includes("\n") || output.length > 4096)
+                  finish(new Error("Invalid external installer readiness response."));
+              });
+              if (signal.aborted) abort();
+            });
+            signal.throwIfAborted();
             stage = "shutdown";
             // Reuse the synchronous quit gate without invoking Squirrel or ShipIt.
             Electron.autoUpdater.emit("before-quit-for-update");
             Electron.app.quit();
+            committed = true;
           },
           catch: installError,
         }).pipe(
           Effect.timeout("120 seconds"),
           Effect.catchTags({ TimeoutError: (cause) => Effect.fail(installError(cause)) }),
+          Effect.ensuring(
+            Effect.tryPromise({
+              try: async () => {
+                if (committed || closed === undefined) return;
+                if (!helperClosed && helperPid !== undefined) {
+                  try {
+                    process.kill(-helperPid, "SIGTERM");
+                  } catch (cause) {
+                    if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH"))
+                      throw cause;
+                  }
+                }
+                await closed;
+              },
+              catch: installError,
+            }).pipe(Effect.orDie),
+          ),
         );
       });
     }),
