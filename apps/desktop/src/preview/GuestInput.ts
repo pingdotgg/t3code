@@ -141,6 +141,19 @@ const sendPointerPress = async (
   }
 };
 
+/** Keys reach a guest only while the embedder's <webview> element has DOM focus; guest focus() does not move it. */
+export const focusGuestWebview = async (webContents: Electron.WebContents): Promise<void> => {
+  const host = webContents.hostWebContents;
+  if (!host || host.isDestroyed()) return;
+  await host.executeJavaScript(`(() => {
+    for (const view of document.querySelectorAll("webview")) {
+      try {
+        if (view.getWebContentsId() === ${webContents.id}) return view.focus({ preventScroll: true });
+      } catch {}
+    }
+  })()`);
+};
+
 const pointerCommands = new WeakMap<Electron.WebContents, Promise<unknown>>();
 
 /** Focus capture crosses processes; later pointer events must not overtake the press. */

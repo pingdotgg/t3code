@@ -85,6 +85,7 @@ import {
 } from "./GuestProtocol.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
+import { focusGuestWebview } from "./GuestInput.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
 
 export type PreviewNavStatus =
@@ -2265,7 +2266,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             if (voice) wc.ipc.on(ANNOTATION_VOICE_EVENT_CHANNEL, onVoiceEvent);
             wc.once("destroyed", onDestroyed);
             wc.on("did-start-navigation", onNavigated);
+            // Raises an unfocused window; the host's <webview> element still needs DOM focus for keys.
             if (!wc.isFocused()) wc.focus();
+            // Not awaited: a busy or hung host renderer must not hold up the overlay.
+            runFork(
+              attemptPromise({ operation: "pickElement.focus", tabId, webContentsId: wc.id }, () =>
+                focusGuestWebview(wc),
+              ).pipe(Effect.ignore),
+            );
             wc.send(
               START_PICK_CHANNEL,
               annotationTheme,
