@@ -1,12 +1,23 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
+  AcpRegistryDriver,
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
   buildCheckedAcpRegistrySnapshot,
@@ -430,5 +441,63 @@ describe("acpRegistrySnapshotReadiness", () => {
         message: "Checking ACP authentication, models, and commands in the background...",
       });
     }),
+  );
+
+  it.effect("starts background discovery and sign-in agents outside the server's directory", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const spawnCwds = yield* Queue.unbounded<string>();
+      yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        accentColor: undefined,
+        environment: [],
+        enabled: true,
+        config: decodeSettings({ source: "local", commandPath: "/local/agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "local-agent",
+            version: null,
+            distribution: "local",
+          }),
+          resolve: (_settings, cwd) =>
+            Queue.offer(spawnCwds, cwd).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new AcpRegistrySupport.AcpRegistryError({
+                    reason: "agent_not_configured",
+                    detail: "The test stops before spawning the agent.",
+                  }),
+                ),
+              ),
+            ),
+        }),
+      );
+
+      // Startup resolves once for the status probe and once for sign-in method discovery.
+      const cwds = [yield* Queue.take(spawnCwds), yield* Queue.take(spawnCwds)];
+      expect(cwds).not.toContain(host.paths.cwd);
+      for (const cwd of cwds) {
+        expect(yield* fileSystem.readDirectory(cwd)).toEqual([]);
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        TestProviderHost.layer().pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          Layer.provideMerge(IdAllocator.layer),
+          Layer.provideMerge(McpProviderSessions.layer),
+          Layer.provideMerge(
+            Layer.succeed(
+              ProviderEventLoggers.ProviderEventLoggers,
+              ProviderEventLoggers.NoOpProviderEventLoggers,
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 });
