@@ -89,7 +89,8 @@ function makeCopilotSdkMcpApps(
         (cause) =>
           new ProviderAdapter.ProviderAdapterProtocolError({
             driver: GITHUB_COPILOT_PROVIDER,
-            detail: `Copilot MCP App request failed: ${cause.message}`,
+            detail: `Copilot MCP App ${payload.operation} request failed`,
+            cause,
           }),
       ),
     );

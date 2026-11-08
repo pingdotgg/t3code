@@ -538,11 +538,16 @@ it("swaps npm's Windows shim for the binary behind it", () => {
   const root = "C:\\npm\\prefix";
   const nested = `${root}\\node_modules\\@github\\copilot\\node_modules\\@github\\copilot-win32-x64\\copilot.exe`;
   const hoisted = `${root}\\node_modules\\@github\\copilot-win32-x64\\copilot.exe`;
+  const projectBin = "C:\\repo\\node_modules\\.bin";
+  const projectNested = `C:\\repo\\node_modules\\@github\\copilot\\node_modules\\@github\\copilot-win32-x64\\copilot.exe`;
+  const projectHoisted = `C:\\repo\\node_modules\\@github\\copilot-win32-x64\\copilot.exe`;
   const resolve = (command: string, ...present: Array<string>) =>
     copilotWindowsExecutable(command, "x64", (path) => present.includes(path));
 
   assert.strictEqual(resolve(`${root}\\copilot.cmd`, nested), nested);
   assert.strictEqual(resolve(`${root}\\copilot.CMD`, hoisted), hoisted);
+  assert.strictEqual(resolve(`${projectBin}\\copilot.cmd`, projectNested), projectNested);
+  assert.strictEqual(resolve(`${projectBin}\\copilot.cmd`, projectHoisted), projectHoisted);
   assert.strictEqual(resolve(`${root}\\copilot.cmd`), `${root}\\copilot.cmd`);
   assert.strictEqual(resolve("C:\\tools\\copilot.exe"), "C:\\tools\\copilot.exe");
 });
@@ -630,6 +635,31 @@ it.effect("reports a real cancel after an earlier steer finished", () =>
     yield* runtime.cancel;
     fakes.emit(event("session.idle", { aborted: true }));
 
+    assert.strictEqual((yield* Fiber.join(prompt)).stopReason, "cancelled");
+  }).pipe(Effect.scoped),
+);
+
+// regression: Autopilot can finish while background work is still running
+it.effect("settles an Autopilot turn on session.autopilot_stopped", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
+    const prompt = yield* startPrompt(runtime);
+    fakes.emit(event("assistant.turn_start"));
+    fakes.emit(
+      event("session.autopilot_stopped", { reason: "task_complete", requestId: "message:go" }),
+    );
+    assert.strictEqual((yield* Fiber.join(prompt)).stopReason, "end_turn");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("cancels an Autopilot turn when session.autopilot_stopped reports aborted", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
+    const prompt = yield* startPrompt(runtime);
+    yield* runtime.cancel;
+    fakes.emit(event("session.autopilot_stopped", { reason: "aborted", requestId: "message:go" }));
     assert.strictEqual((yield* Fiber.join(prompt)).stopReason, "cancelled");
   }).pipe(Effect.scoped),
 );

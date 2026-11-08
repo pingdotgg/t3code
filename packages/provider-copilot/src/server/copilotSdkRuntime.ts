@@ -399,12 +399,15 @@ export function copilotWindowsExecutable(
 ) {
   if (!/\.(?:cmd|bat|ps1)$/i.test(command)) return command;
   const directory = command.slice(0, Math.max(command.lastIndexOf("\\"), command.lastIndexOf("/")));
+  // Global npm puts the shim next to `node_modules`; a project install puts it in `.bin`.
+  const packageRoot = /\.bin$/i.test(directory)
+    ? directory.replace(/[\\/][^\\/]+$/, "")
+    : `${directory}\\node_modules`;
   const binary = `@github\\copilot-win32-${arch}\\copilot.exe`;
   return (
-    [
-      `${directory}\\node_modules\\@github\\copilot\\node_modules\\${binary}`,
-      `${directory}\\node_modules\\${binary}`,
-    ].find(exists) ?? command
+    [`${packageRoot}\\@github\\copilot\\node_modules\\${binary}`, `${packageRoot}\\${binary}`].find(
+      exists,
+    ) ?? command
   );
 }
 
@@ -1182,9 +1185,25 @@ export const makeCopilotSdkRuntime = Effect.fn("makeCopilotSdkRuntime")(function
       };
     }
     if (event.type === "commands.changed") yield* refreshCommands.pipe(Effect.ignore);
-    // Settling here keeps a turn from ending ahead of its own queued output.
-    if (event.type === "session.idle") {
-      const cancelled = event.data.aborted === true && activePrompt?.steered !== true;
+    // Autopilot can finish while background work is still running; that ends the request
+    // with session.autopilot_stopped, not session.idle.
+    if (event.type === "session.autopilot_stopped" && event.data.reason === "error") {
+      yield* settlePrompt(
+        Effect.fail(
+          new AcpErrors.AcpRequestError({
+            code: -32603,
+            errorMessage: "Autopilot request failed",
+            method: "session/prompt",
+          }),
+        ),
+      );
+    } else if (event.type === "session.idle" || event.type === "session.autopilot_stopped") {
+      // Settling here keeps a turn from ending ahead of its own queued output.
+      const cancelled =
+        activePrompt?.steered !== true &&
+        (event.type === "session.idle"
+          ? event.data.aborted === true
+          : event.data.reason === "aborted");
       const usage = promptUsage;
       promptUsage = undefined;
       yield* settlePrompt(
@@ -1222,7 +1241,13 @@ export const makeCopilotSdkRuntime = Effect.fn("makeCopilotSdkRuntime")(function
       mainAgentBusy = true;
       if (activePrompt !== undefined) activePrompt.steered = false;
     }
-    if (event.type === "assistant.idle" || event.type === "session.idle") mainAgentBusy = false;
+    if (
+      event.type === "assistant.idle" ||
+      event.type === "session.idle" ||
+      event.type === "session.autopilot_stopped"
+    ) {
+      mainAgentBusy = false;
+    }
     Queue.offerUnsafe(updates, event);
   };
 
