@@ -166,6 +166,7 @@ describe("DesktopSettings", () => {
           environment.desktopSettingsPath,
           `{
             // JSONC-style comments and trailing commas match server settings parsing.
+            "localEnvironmentEnabled": false,
             "serverExposureMode": "network-accessible",
             "tailscaleServeEnabled": true,
             "tailscaleServePort": 8443,
@@ -176,9 +177,10 @@ describe("DesktopSettings", () => {
           }\n`,
         );
 
-        assert.deepEqual(yield* settings.load, {
+        const loaded = yield* settings.load;
+        assert.deepEqual(loaded, {
           linuxPasswordStore: "auto",
-          localEnvironmentEnabled: true,
+          localEnvironmentEnabled: false,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
@@ -190,6 +192,9 @@ describe("DesktopSettings", () => {
           wslOnly: false,
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
+
+        yield* settings.setServerExposureMode("local-only");
+        assert.deepEqual(yield* settings.load, { ...loaded, serverExposureMode: "local-only" });
       }),
     ),
   );
