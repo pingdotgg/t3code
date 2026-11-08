@@ -427,6 +427,7 @@ export const OrchestrationV2Lesson = Schema.Struct({
   topic: TrimmedNonEmptyString.check(Schema.isMaxLength(4_000)),
   depth: Schema.Literals(["overview", "working", "deep"]),
   purpose: Schema.Literals(["outcome", "prerequisite"]),
+  history: Schema.optional(Schema.Literals(["new", "didnt-stick", "want-depth"])),
   goal: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
   source: Schema.optional(
     Schema.Struct({

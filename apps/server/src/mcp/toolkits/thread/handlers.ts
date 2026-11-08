@@ -104,6 +104,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           topic: input.topic,
           depth: input.depth,
           purpose: input.purpose,
+          ...(input.history === undefined ? {} : { history: input.history }),
           ...(input.goal === undefined ? {} : { goal: input.goal }),
           ...(input.excerpt === undefined
             ? {}

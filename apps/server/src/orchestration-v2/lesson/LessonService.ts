@@ -35,6 +35,12 @@ const LESSON_DEPTH_LABELS = {
   deep: ["Deep detail", "the mechanics, edge cases and why it works"],
 } as const;
 
+const LESSON_HISTORY_LABELS = {
+  new: "New to me",
+  "didnt-stick": "Seen it, didn't stick",
+  "want-depth": "Know it, want depth",
+} as const;
+
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
 
 export function buildLessonOpening(
@@ -44,6 +50,8 @@ export function buildLessonOpening(
   const [label, explanation] = LESSON_DEPTH_LABELS[lesson.depth];
   const why = lesson.purpose === "outcome" ? "Toward an outcome" : "Building prerequisites";
   const goal = lesson.goal === undefined ? "" : `, for ${lesson.goal}`;
+  const history =
+    lesson.history === undefined ? "" : `\nHistory: ${LESSON_HISTORY_LABELS[lesson.history]}`;
   const source =
     lesson.source === undefined
       ? ""
@@ -55,7 +63,7 @@ export function buildLessonOpening(
   const ask = /^https?:\/\/\S+$/.test(lesson.topic.trim())
     ? "I'd like to follow this course"
     : "I'd like a lesson on";
-  return `${ask}: ${lesson.topic}\nHow deep: ${label} (${explanation})\nWhy: ${why}${goal}\n${source}\nStart by checking what I already know about this, then teach at that depth and keep examples tied to why I'm learning it.`;
+  return `${ask}: ${lesson.topic}\nHow deep: ${label} (${explanation})\nWhy: ${why}${goal}${history}\n${source}\nStart by checking what I already know about this, then teach at that depth and keep examples tied to why I'm learning it.`;
 }
 
 export class LessonService extends Context.Service<

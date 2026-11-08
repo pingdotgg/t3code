@@ -1161,6 +1161,16 @@ function deriveThreadFeedRunFolds(
       continue;
     }
     const terminalAssistantId = terminalAssistantMessageIdByRun.get(runId);
+    // The text that sets up a card is what the card tests, so it stays beside it, visuals between.
+    const cardLeadIds = new Set<string>();
+    let lead: string | null = null;
+    for (const entry of group.entries) {
+      if (entry.type === "message") lead = entry.id;
+      else if (entry.type === "quiz-card" && lead !== null) {
+        cardLeadIds.add(lead);
+        lead = null;
+      }
+    }
     const hiddenEntryIds = new Set(
       group.entries
         .filter(
@@ -1169,6 +1179,7 @@ function deriveThreadFeedRunFolds(
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             entry.type !== "quiz-card" &&
+            !cardLeadIds.has(entry.id) &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
             !(
               entry.type === "activity-group" &&
