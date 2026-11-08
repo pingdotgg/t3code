@@ -6,7 +6,6 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
-  UNTIMED_SNOOZE_WAKE_AT,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
@@ -345,20 +344,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       let command: OrchestrationV2Command;
       switch (input.action) {
         case "snooze":
-          if (input.snoozedUntil === undefined && input.wakeOnPullRequest === undefined) {
+          if (input.snoozedUntil === undefined) {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
-              message: "snooze requires snoozedUntil or wakeOnPullRequest.",
+              message: "snooze requires snoozedUntil.",
             });
           }
-          command = {
-            ...common,
-            type: "thread.snooze",
-            snoozedUntil: input.snoozedUntil ?? UNTIMED_SNOOZE_WAKE_AT,
-            ...(input.wakeOnPullRequest === undefined
-              ? {}
-              : { wakeOnPullRequest: input.wakeOnPullRequest }),
-          };
+          command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
           break;
         case "unsnooze":
         case "unsettle":
