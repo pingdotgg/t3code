@@ -20,6 +20,7 @@ import {
   type NewThreadLink,
   type PromptLinkRepository,
   promptLinkPullRequestUrl,
+  promptLinkRepositoryCloneUrl,
 } from "@t3tools/shared/promptLinks";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -213,7 +214,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       return;
     }
     setState({ status: "opening" });
-    const remoteUrl = `https://github.com/${repository.owner}/${repository.name}.git`;
+    const remoteUrl = promptLinkRepositoryCloneUrl(repository);
     const settings = serverConfig.settings;
     const result = await startProjectClone({
       environmentId,
@@ -244,10 +245,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({ status: "missing-repository", repository });
       return;
     }
-    void suggestAppAccessForRemote(
-      environmentId,
-      `https://github.com/${repository.owner}/${repository.name}.git`,
-    );
+    void suggestAppAccessForRemote(environmentId, remoteUrl);
     const project = await waitForProject(
       scopeProjectRef(environmentId, result.value.projectId),
       5_000,

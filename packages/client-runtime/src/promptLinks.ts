@@ -18,7 +18,7 @@ import {
   visibleThreadPullRequests,
 } from "./threadPullRequests.ts";
 
-// A link's `owner/name` is GitHub's. GitCafe syncs a repository two-way with GitHub under the
+// A link's `owner/name` without a host is GitHub's. GitCafe syncs a repository two-way with GitHub under the
 // same path, so a checkout cloned from git.cafe counts as the linked repository.
 const PROMPT_LINK_REPOSITORY_HOSTS = ["github.com", "git.cafe", "staging.git.cafe"];
 
@@ -30,7 +30,12 @@ export function findPromptLinkProjects<
   P extends { readonly repositoryIdentity?: RepositoryIdentity | null | undefined },
 >(projects: ReadonlyArray<P>, repository: PromptLinkRepository): P[] {
   const path = `${repository.owner}/${repository.name}`.toLowerCase();
-  const keys = new Set(PROMPT_LINK_REPOSITORY_HOSTS.map((host) => `${host}/${path}`));
+  // A link naming its host matches the `host/path` key git remotes produce, which has no port.
+  const hosts =
+    repository.host === undefined
+      ? PROMPT_LINK_REPOSITORY_HOSTS
+      : [repository.host.toLowerCase().replace(/:\d+$/, "")];
+  const keys = new Set(hosts.map((host) => `${host}/${path}`));
   return projects.filter(
     (project) =>
       project.repositoryIdentity != null &&

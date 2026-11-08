@@ -9,6 +9,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -53,6 +54,25 @@ describe("findPromptLinkProjects", () => {
         (project) => project.id,
       ),
     ).toEqual(["gitcafe", "staging"]);
+  });
+
+  it("matches a link naming another host only on that host", () => {
+    const projects = [
+      {
+        id: "gitlab",
+        repositoryIdentity: identity(
+          normalizeGitRemoteUrl("ssh://git@gitlab.example.com:2222/Acme_Corp/infra/mono.git"),
+        ),
+      },
+      { id: "github", repositoryIdentity: identity("github.com/acme_corp/infra/mono") },
+    ];
+    expect(
+      findPromptLinkProjects(projects, {
+        host: "gitlab.example.com:8443",
+        owner: "acme_corp/infra",
+        name: "mono",
+      }).map((project) => project.id),
+    ).toEqual(["gitlab"]);
   });
 });
 

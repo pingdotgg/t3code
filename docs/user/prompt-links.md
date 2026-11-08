@@ -23,7 +23,7 @@ https://app.t3.codes/new?pr=owner/name/123&prompt=Fix%20the%20failing%20check
 | Parameter  | Meaning                                                                       |
 | ---------- | ----------------------------------------------------------------------------- |
 | `prompt`   | The prompt. Required, except on pull request links. At most 8,000 characters. |
-| `repo`     | A GitHub repository, as `owner/name` or its URL.                              |
+| `repo`     | A GitHub repository as `owner/name`, or any repository's HTTPS URL.           |
 | `provider` | A provider such as `codex` or `claude`.                                       |
 | `model`    | A model of that provider, by its id or name.                                  |
 | `pr`       | A GitHub pull request, as `owner/name/123` or its URL.                        |
