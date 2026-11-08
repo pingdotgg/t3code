@@ -19,7 +19,6 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Statement from "effect/sql/Statement";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -1224,180 +1223,118 @@ it.effect("a side chat opened during the parent's first turn starts from a diges
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
-it.effect("merge-back rejects a second fork's context until the first is consumed", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const parentId = ThreadId.make("merge-back-guard-parent");
-    const parentRunId = RunId.make("merge-back-guard-parent-run");
-    yield* createParent(parentId);
-    yield* writeParentRun({
-      threadId: parentId,
-      runId: parentRunId,
-      ordinal: 1,
-      status: "completed",
-      text: "Parent work",
-    });
-    const forkAndRun = (name: string) =>
-      Effect.gen(function* () {
-        const threadId = ThreadId.make(`merge-back-guard-${name}`);
-        const runId = RunId.make(`merge-back-guard-${name}-run`);
-        yield* orchestrator.dispatch({
-          type: "thread.fork",
-          commandId: CommandId.make(`merge-back-guard-fork-${name}`),
-          sourceThreadId: parentId,
-          targetThreadId: threadId,
-          sourcePoint: { type: "run", runId: parentRunId },
-          sideChat: true,
+it.effect(
+  "merge-back rejects a second fork's context until the first is consumed or cancelled",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const parentId = ThreadId.make("merge-back-guard-parent");
+      const parentRunId = RunId.make("merge-back-guard-parent-run");
+      yield* createParent(parentId);
+      yield* writeParentRun({
+        threadId: parentId,
+        runId: parentRunId,
+        ordinal: 1,
+        status: "completed",
+        text: "Parent work",
+      });
+      const forkAndRun = (name: string) =>
+        Effect.gen(function* () {
+          const threadId = ThreadId.make(`merge-back-guard-${name}`);
+          const runId = RunId.make(`merge-back-guard-${name}-run`);
+          yield* orchestrator.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make(`merge-back-guard-fork-${name}`),
+            sourceThreadId: parentId,
+            targetThreadId: threadId,
+            sourcePoint: { type: "run", runId: parentRunId },
+            sideChat: true,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* writeParentRun({ threadId, runId, ordinal: 1, status: "completed", text: name });
+          return { threadId, runId };
+        });
+      const mergeBack = (commandId: string, fork: { threadId: ThreadId; runId: RunId }) =>
+        orchestrator.dispatch({
+          type: "thread.merge_back",
+          commandId: CommandId.make(commandId),
+          sourceThreadId: fork.threadId,
+          targetThreadId: parentId,
+          sourcePoint: { type: "run", runId: fork.runId },
           createdBy: "user",
           creationSource: "web",
         });
-        yield* writeParentRun({ threadId, runId, ordinal: 1, status: "completed", text: name });
-        return { threadId, runId };
-      });
-    const mergeBack = (commandId: string, fork: { threadId: ThreadId; runId: RunId }) =>
-      orchestrator.dispatch({
-        type: "thread.merge_back",
-        commandId: CommandId.make(commandId),
-        sourceThreadId: fork.threadId,
-        targetThreadId: parentId,
-        sourcePoint: { type: "run", runId: fork.runId },
+      const first = yield* forkAndRun("first");
+      const second = yield* forkAndRun("second");
+
+      yield* mergeBack("merge-back-guard-first", first);
+      const rejected = yield* mergeBack("merge-back-guard-second", second).pipe(Effect.flip);
+      assert.include(String(rejected.cause), "pending context from another side chat or fork");
+      yield* mergeBack("merge-back-guard-first-again", first);
+      // That pending merge-back targets the parent, so it does not block one into `first`.
+      const nested = { threadId: ThreadId.make("merge-back-guard-nested") };
+      const nestedRunId = RunId.make("merge-back-guard-nested-run");
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("merge-back-guard-fork-nested"),
+        sourceThreadId: first.threadId,
+        targetThreadId: nested.threadId,
+        sourcePoint: { type: "run", runId: first.runId },
         createdBy: "user",
         creationSource: "web",
       });
-    const first = yield* forkAndRun("first");
-    const second = yield* forkAndRun("second");
+      yield* writeParentRun({
+        threadId: nested.threadId,
+        runId: nestedRunId,
+        ordinal: 1,
+        status: "completed",
+        text: "nested",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.merge_back",
+        commandId: CommandId.make("merge-back-guard-nested"),
+        sourceThreadId: nested.threadId,
+        targetThreadId: first.threadId,
+        sourcePoint: { type: "run", runId: nestedRunId },
+        createdBy: "user",
+        creationSource: "web",
+      });
 
-    yield* mergeBack("merge-back-guard-first", first);
-    const rejected = yield* mergeBack("merge-back-guard-second", second).pipe(Effect.flip);
-    assert.include(String(rejected.cause), "pending context from another side chat or fork");
-    yield* mergeBack("merge-back-guard-first-again", first);
-    // That pending merge-back targets the parent, so it does not block one into `first`.
-    const nested = { threadId: ThreadId.make("merge-back-guard-nested") };
-    const nestedRunId = RunId.make("merge-back-guard-nested-run");
-    yield* orchestrator.dispatch({
-      type: "thread.fork",
-      commandId: CommandId.make("merge-back-guard-fork-nested"),
-      sourceThreadId: first.threadId,
-      targetThreadId: nested.threadId,
-      sourcePoint: { type: "run", runId: first.runId },
-      createdBy: "user",
-      creationSource: "web",
-    });
-    yield* writeParentRun({
-      threadId: nested.threadId,
-      runId: nestedRunId,
-      ordinal: 1,
-      status: "completed",
-      text: "nested",
-    });
-    yield* orchestrator.dispatch({
-      type: "thread.merge_back",
-      commandId: CommandId.make("merge-back-guard-nested"),
-      sourceThreadId: nested.threadId,
-      targetThreadId: first.threadId,
-      sourcePoint: { type: "run", runId: nestedRunId },
-      createdBy: "user",
-      creationSource: "web",
-    });
+      const parent = yield* orchestrator.getThreadProjection(parentId);
+      assert.deepEqual(
+        parent.contextTransfers
+          .filter((transfer) => transfer.type === "merge_back")
+          .map((transfer) => [transfer.sourceThreadId, transfer.status]),
+        [
+          [first.threadId, "superseded"],
+          [first.threadId, "pending"],
+        ],
+      );
 
-    const parent = yield* orchestrator.getThreadProjection(parentId);
-    assert.deepEqual(
-      parent.contextTransfers
-        .filter((transfer) => transfer.type === "merge_back")
-        .map((transfer) => [transfer.sourceThreadId, transfer.status]),
-      [
-        [first.threadId, "superseded"],
-        [first.threadId, "pending"],
-      ],
-    );
-  }).pipe(Effect.provide(forkCases[0]!.layer)),
-);
-
-it.effect("cancelling a pending merge-back withdraws it and frees the target", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const parentId = ThreadId.make("merge-back-cancel-parent");
-    const parentRunId = RunId.make("merge-back-cancel-parent-run");
-    yield* createParent(parentId);
-    yield* writeParentRun({
-      threadId: parentId,
-      runId: parentRunId,
-      ordinal: 1,
-      status: "completed",
-      text: "Parent work",
-    });
-    const forkAndRun = (name: string) =>
-      Effect.gen(function* () {
-        const threadId = ThreadId.make(`merge-back-cancel-${name}`);
-        const runId = RunId.make(`merge-back-cancel-${name}-run`);
-        yield* orchestrator.dispatch({
-          type: "thread.fork",
-          commandId: CommandId.make(`merge-back-cancel-fork-${name}`),
-          sourceThreadId: parentId,
-          targetThreadId: threadId,
-          sourcePoint: { type: "run", runId: parentRunId },
-          sideChat: true,
+      const cancelFirst = (commandId: string) =>
+        orchestrator.dispatch({
+          type: "thread.merge_back.cancel",
+          commandId: CommandId.make(commandId),
+          sourceThreadId: first.threadId,
+          targetThreadId: parentId,
           createdBy: "user",
           creationSource: "web",
         });
-        yield* writeParentRun({ threadId, runId, ordinal: 1, status: "completed", text: name });
-        return { threadId, runId };
-      });
-    const mergeBack = (commandId: string, fork: { threadId: ThreadId; runId: RunId }) =>
-      orchestrator.dispatch({
-        type: "thread.merge_back",
-        commandId: CommandId.make(commandId),
-        sourceThreadId: fork.threadId,
-        targetThreadId: parentId,
-        sourcePoint: { type: "run", runId: fork.runId },
-        createdBy: "user",
-        creationSource: "web",
-      });
-    const sideChat = yield* forkAndRun("side-chat");
-    const otherFork = yield* forkAndRun("other-fork");
-
-    yield* mergeBack("merge-back-cancel-merge", sideChat);
-    const cancelled = yield* orchestrator
-      .dispatch({
-        type: "thread.merge_back.cancel",
-        commandId: CommandId.make("merge-back-cancel-cancel"),
-        sourceThreadId: sideChat.threadId,
-        targetThreadId: parentId,
-        createdBy: "user",
-        creationSource: "web",
-      })
-      .pipe(Effect.exit);
-    assert.isTrue(Exit.isSuccess(cancelled), "thread.merge_back.cancel was not accepted");
-
-    const afterCancel = yield* orchestrator.getThreadProjection(parentId);
-    assert.deepEqual(
-      afterCancel.contextTransfers.filter(
-        (transfer) =>
-          transfer.type === "merge_back" &&
-          transfer.sourceThreadId === sideChat.threadId &&
-          transfer.status === "pending",
-      ),
-      [],
-    );
-    // Another device cancelling after the first one is not an error.
-    const cancelledAgain = yield* orchestrator
-      .dispatch({
-        type: "thread.merge_back.cancel",
-        commandId: CommandId.make("merge-back-cancel-cancel-again"),
-        sourceThreadId: sideChat.threadId,
-        targetThreadId: parentId,
-        createdBy: "user",
-        creationSource: "web",
-      })
-      .pipe(Effect.exit);
-    assert.isTrue(Exit.isSuccess(cancelledAgain), String(cancelledAgain));
-    yield* mergeBack("merge-back-cancel-other-fork", otherFork);
-    const afterOther = yield* orchestrator.getThreadProjection(parentId);
-    assert.deepEqual(
-      afterOther.contextTransfers
-        .filter((transfer) => transfer.type === "merge_back" && transfer.status === "pending")
-        .map((transfer) => transfer.sourceThreadId),
-      [otherFork.threadId],
-    );
-  }).pipe(Effect.provide(forkCases[0]!.layer)),
+      yield* cancelFirst("merge-back-guard-cancel-first");
+      // Another device cancelling after the first one is not an error.
+      yield* cancelFirst("merge-back-guard-cancel-first-again");
+      yield* mergeBack("merge-back-guard-second-after-cancel", second);
+      const afterCancel = yield* orchestrator.getThreadProjection(parentId);
+      assert.deepEqual(
+        afterCancel.contextTransfers
+          .filter((transfer) => transfer.type === "merge_back")
+          .map((transfer) => [transfer.sourceThreadId, transfer.status]),
+        [
+          [first.threadId, "superseded"],
+          [first.threadId, "superseded"],
+          [second.threadId, "pending"],
+        ],
+      );
+    }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
