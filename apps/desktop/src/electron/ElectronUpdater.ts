@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off
-// The detached installer must survive Electron and its Effect runtime shutting down.
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,14 +6,13 @@ import * as Scope from "effect/Scope";
 
 import { autoUpdater } from "electron-updater";
 import * as Electron from "electron";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The detached installer must outlive the Effect runtime.
 import * as NodeChildProcess from "node:child_process";
-import * as NodePath from "node:path";
-import * as NodeUtil from "node:util";
+import * as NodePath from "@effect/platform-node/NodePath";
+import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Option from "effect/Option";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
-
-const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 
 type AutoUpdater = typeof autoUpdater;
 
@@ -51,6 +48,7 @@ export class ElectronUpdaterQuitAndInstallError extends Schema.TaggedError<Elect
     channel: Schema.NullOr(Schema.String),
     isSilent: Schema.Boolean,
     isForceRunAfter: Schema.Boolean,
+    stage: Schema.optionalKey(Schema.Literals(["validation", "handoff", "shutdown"])),
     cause: Schema.Defect(),
   },
 ) {
@@ -94,6 +92,7 @@ export class ElectronUpdater extends Context.Service<
 /** @public */
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
+  const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const execPath = yield* HostProcess.ExecutablePath;
   const installer =
@@ -171,31 +170,41 @@ export const make = Effect.gen(function* () {
     }) {
       return Effect.suspend(() => {
         const channel = autoUpdater.channel;
+        let stage: "validation" | "handoff" | "shutdown" = "validation";
+        const installError = (cause: unknown) =>
+          new ElectronUpdaterQuitAndInstallError({
+            channel,
+            isSilent,
+            isForceRunAfter,
+            stage,
+            cause,
+          });
         return Effect.tryPromise({
           try: async (signal) => {
             if (installer === undefined) {
+              stage = "shutdown";
               autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
               return;
             }
-            if (!NodePath.isAbsolute(installer) || downloaded === undefined) {
+            const selected = downloaded;
+            if (!path.isAbsolute(installer) || selected === undefined) {
               throw new Error(
                 "External update installation requires an absolute installer path and a downloaded archive.",
               );
             }
-            const appBundle = NodePath.resolve(execPath, "../../..");
-            const { stdout } = await execFileAsync(
-              installer,
-              ["prepare", downloaded.archive, appBundle, downloaded.version],
-              { timeout: 120_000, signal },
-            );
-            const prepared = stdout.trim();
-            if (!NodePath.isAbsolute(prepared))
-              throw new Error("External installer did not return a staged app path.");
+            const appBundle = path.resolve(execPath, "../../..");
+            stage = "handoff";
             const installerProcess = await new Promise<NodeChildProcess.ChildProcess>(
               (resolveReady, reject) => {
                 const child = NodeChildProcess.spawn(
                   installer,
-                  ["install", prepared, appBundle, String(process.pid), String(isForceRunAfter)],
+                  [
+                    selected.archive,
+                    appBundle,
+                    selected.version,
+                    String(process.pid),
+                    String(isForceRunAfter),
+                  ],
                   { detached: true, stdio: ["ignore", "pipe", "pipe"] },
                 );
                 let output = "";
@@ -204,7 +213,6 @@ export const make = Effect.gen(function* () {
                 const finish = (error?: Error) => {
                   if (finished) return;
                   finished = true;
-                  clearTimeout(timer);
                   signal.removeEventListener("abort", abort);
                   child.stdout?.destroy();
                   child.stderr?.destroy();
@@ -217,10 +225,6 @@ export const make = Effect.gen(function* () {
                   }
                 };
                 const abort = () => finish(new Error("External installer handoff was cancelled."));
-                const timer = setTimeout(
-                  () => finish(new Error("External installer did not become ready.")),
-                  120_000,
-                );
                 signal.addEventListener("abort", abort, { once: true });
                 child.once("error", finish);
                 child.once("exit", () =>
@@ -242,18 +246,16 @@ export const make = Effect.gen(function* () {
               installerProcess.kill();
               signal.throwIfAborted();
             }
+            stage = "shutdown";
             // Reuse the synchronous quit gate without invoking Squirrel or ShipIt.
             Electron.autoUpdater.emit("before-quit-for-update");
             Electron.app.quit();
           },
-          catch: (cause) =>
-            new ElectronUpdaterQuitAndInstallError({
-              channel,
-              isSilent,
-              isForceRunAfter,
-              cause,
-            }),
-        });
+          catch: installError,
+        }).pipe(
+          Effect.timeout("120 seconds"),
+          Effect.catchTags({ TimeoutError: (cause) => Effect.fail(installError(cause)) }),
+        );
       });
     }),
     on: Effect.fn("ElectronUpdater.on")(function (eventName, listener) {
@@ -284,4 +286,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ElectronUpdater, make);
+export const layer = Layer.effect(ElectronUpdater, make).pipe(Layer.provide(NodePath.layer));

@@ -82,18 +82,20 @@ export function createFixture(options = {}) {
   try {
     const bin = NodePath.join(dir, "fake-bin");
     NodeFS.mkdirSync(bin);
-    const app = NodePath.join(dir, "Fixture App.app");
+    const app = NodePath.join(dir, options.installedName ?? "Fixture App.app");
     createBundle(app, "1.0.0");
-    const source = NodePath.join(dir, "release/Fixture App.app");
+    const source = NodePath.join(dir, "release", options.archiveName ?? "Fixture App.app");
     createBundle(source, options.version ?? "2.0.0", options);
+    for (const [index, bundle] of (options.extraBundles ?? []).entries()) {
+      createBundle(NodePath.join(dir, "release", `Extra ${index}.app`), "2.0.0", bundle);
+    }
     const expected = snapshot(source);
     const archive = NodePath.join(dir, "selected.zip");
     const archived = run("/usr/bin/ditto", [
       "-c",
       "-k",
       "--sequesterRsrc",
-      "--keepParent",
-      source,
+      NodePath.dirname(source),
       archive,
     ]);
     NodeAssert.equal(archived.status, 0, archived.stderr);
@@ -102,6 +104,10 @@ export function createFixture(options = {}) {
 
     // Only signature, Gatekeeper and launch boundaries are simulated; these are not signed-app fixtures.
     const stubs = {
+      sleep: `#!/bin/sh
+printf 'waiting\\n' >&5
+exec /bin/sleep "$@"
+`,
       codesign: `#!/bin/sh
 for arg do bundle=$arg; done
 if [ "$1" = -dv ]; then printf 'TeamIdentifier=%s\\n' "$(cat "$bundle/.team")" >&2; exit 0; fi
@@ -143,15 +149,16 @@ printf 'open:%s\\n' "$*" >> "$FIXTURE_EVENTS"
       FIXTURE_EVENTS: events,
       FIXTURE_PARENT: "99999999",
     };
-    const prepare = () => run("/bin/sh", [helper, "prepare", archive, app, "2.0.0"], { env });
-    return { dir, app, archive, expected, helper, env, events, prepare, clean };
+    const attempt = () =>
+      run("/bin/sh", [helper, archive, app, "2.0.0", "99999999", "false"], { env });
+    return { dir, app, archive, expected, helper, env, events, attempt, clean };
   } catch (error) {
     clean();
     throw error;
   }
 }
 
-export async function startParent() {
+async function startParent() {
   const child = NodeChildProcess.spawn(
     process.execPath,
     ["-e", "process.stdin.resume();process.stdin.on('end',()=>process.exit(0));"],
@@ -161,7 +168,7 @@ export async function startParent() {
   return child;
 }
 
-export async function stopParent(child) {
+async function stopParent(child) {
   if (child.exitCode === null && child.signalCode === null) {
     const exited = NodeEvents.once(child, "exit");
     child.stdin.end();
@@ -169,27 +176,35 @@ export async function stopParent(child) {
   }
 }
 
-export async function install(fixture, { relaunch = true, failInstalled = false } = {}) {
+export async function install(
+  fixture,
+  { relaunch = true, failInstalled = false, cancel = false, timeout = false } = {},
+) {
   const parent = await startParent();
   let child;
   let watchdog;
   let stdout = "";
   let stderr = "";
   try {
-    const prepared = fixture.prepare();
-    NodeAssert.equal(prepared.status, 0, prepared.stderr);
-    const candidate = prepared.stdout.trim();
-    const stage = NodePath.dirname(candidate);
+    if (timeout) {
+      // Exercise the production timeout branch without waiting two minutes.
+      const source = NodeFS.readFileSync(fixture.helper, "utf8");
+      NodeAssert.equal(source.split('"$attempts" -lt 120').length, 2);
+      NodeFS.writeFileSync(
+        fixture.helper,
+        source.replace('"$attempts" -lt 120', '"$attempts" -lt 0'),
+      );
+    }
     child = NodeChildProcess.spawn(
       "/bin/sh",
-      [fixture.helper, "install", candidate, fixture.app, String(parent.pid), String(relaunch)],
+      [fixture.helper, fixture.archive, fixture.app, "2.0.0", String(parent.pid), String(relaunch)],
       {
         env: {
           ...fixture.env,
           FIXTURE_PARENT: String(parent.pid),
           FIXTURE_FAIL_INSTALLED: failInstalled ? "1" : "0",
         },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "pipe"],
       },
     );
     const closed = NodeEvents.once(child, "close");
@@ -221,15 +236,37 @@ export async function install(fixture, { relaunch = true, failInstalled = false 
     });
     NodeAssert.equal(isAlive(parent.pid), true, "ready precedes fixture parent exit");
     NodeAssert.equal(NodeFS.readFileSync(NodePath.join(fixture.app, ".version"), "utf8"), "1.0.0");
-    NodeAssert.equal(NodeFS.existsSync(candidate), true, "candidate remains staged at readiness");
-    NodeAssert.equal(
-      NodeFS.existsSync(`${fixture.app}.update-lock`),
-      true,
-      "ready follows lock acquisition",
+    const stages = NodeFS.readdirSync(fixture.dir).filter(
+      (name) =>
+        name.startsWith(".t3-update.") &&
+        NodeFS.existsSync(NodePath.join(fixture.dir, name, "install.log")),
     );
+    NodeAssert.equal(stages.length, 1, "one stage belongs to this invocation");
+    const stage = NodePath.join(fixture.dir, stages[0]);
+    const candidate = NodePath.join(stage, "candidate.app");
+    if (!timeout) {
+      NodeAssert.equal(NodeFS.existsSync(candidate), true, "candidate remains staged at readiness");
+      NodeAssert.equal(
+        NodeFS.existsSync(`${fixture.app}.update-lock`),
+        true,
+        "ready follows lock acquisition",
+      );
+    }
     NodeAssert.equal(NodeFS.readFileSync(fixture.events, "utf8").includes("open:"), false);
-    await stopParent(parent);
+    if (cancel) child.kill("SIGTERM");
+    else if (!timeout) {
+      await new Promise((resolve, reject) => {
+        child.stdio[5].once("data", resolve);
+        child.once("close", () =>
+          reject(new Error("installer exited without waiting for its live parent")),
+        );
+        if (child.exitCode !== null) reject(new Error("installer already exited without waiting"));
+      });
+      await stopParent(parent);
+    }
     const [status] = await closed;
+    if (cancel || timeout)
+      NodeAssert.equal(isAlive(parent.pid), true, "failed handoff leaves parent running");
     return {
       status,
       stdout,
