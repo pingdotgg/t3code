@@ -139,6 +139,8 @@ const ALL_HOSTS_VALUE = "";
 const ALL_SERVERS_VALUE = "";
 const UNFILTERED_VALUE = "all";
 const VIEWER_AUTHOR_VALUE = "me";
+/** Same aliases `resolvePullRequestAuthorFilter` accepts for the signed-in viewer. */
+const isViewerAuthorFilter = (value: string | undefined) => /^@?me$/i.test(value?.trim() ?? "");
 /** Project ids are unique only within an environment. */
 export const pullRequestProjectKey = (project: {
   readonly id: ProjectId;
@@ -283,11 +285,11 @@ function PullRequestAuthorChoices({
 }) {
   const [query, setQuery] = useState("");
   const hosted = useHostedFilterOptions(scope, "authors", query);
+  const isViewerAuthor = isViewerAuthorFilter(value);
   const login = value?.toLowerCase() ?? "";
-  const selected =
-    value === VIEWER_AUTHOR_VALUE
-      ? undefined
-      : selectedPullRequestAuthor(options, hosted.authors, value);
+  const selected = isViewerAuthor
+    ? undefined
+    : selectedPullRequestAuthor(options, hosted.authors, value);
   const visible = [
     ...(selected ? [selected] : []),
     ...pullRequestAuthorChoices(options, hosted.authors, query).filter(
@@ -305,7 +307,10 @@ function PullRequestAuthorChoices({
         placeholder="Search authors"
         aria-label="Search authors"
       />
-      <MenuRadioGroup value={selected?.actor.login ?? value ?? ""} onValueChange={select}>
+      <MenuRadioGroup
+        value={isViewerAuthor ? VIEWER_AUTHOR_VALUE : (selected?.actor.login ?? value ?? "")}
+        onValueChange={select}
+      >
         <MenuRadioItem value="">
           <span className="flex min-w-0 items-center gap-2">
             <LayersIcon aria-hidden className="size-3.5" />
@@ -358,7 +363,7 @@ function PullRequestAuthorFilter({
         <UserRoundIcon aria-hidden className="size-3.5" />
         <span className="flex-1">Author</span>
         <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
-          {value === VIEWER_AUTHOR_VALUE ? "Me" : (value ?? "Anyone")}
+          {isViewerAuthorFilter(value) ? "Me" : (value ?? "Anyone")}
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
