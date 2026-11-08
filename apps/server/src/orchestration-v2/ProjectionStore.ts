@@ -760,8 +760,18 @@ function preserveRunRecordedFields(
   next: OrchestrationV2Run,
 ): OrchestrationV2Run {
   if (current === undefined) return next;
+  const launchEvidence = next.launchEvidence ?? current.launchEvidence;
+  const providerStart = next.launchEvidence?.providerStart ?? current.launchEvidence?.providerStart;
   return {
     ...next,
+    ...(launchEvidence === undefined
+      ? {}
+      : {
+          launchEvidence: {
+            ...launchEvidence,
+            ...(providerStart === undefined ? {} : { providerStart }),
+          },
+        }),
     ...(next.delegatedCompletion === undefined && current.delegatedCompletion !== undefined
       ? { delegatedCompletion: current.delegatedCompletion }
       : {}),
@@ -2129,7 +2139,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
                 payload_json = ${keepRecordedRunField(
-                  keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                  keepRecordedRunField(
+                    keepRecordedRunField(
+                      keepRecordedRunField(
+                        sql`excluded.payload_json`,
+                        "$.launchEvidence.providerStart",
+                      ),
+                      "$.launchEvidence",
+                    ),
+                    "$.delegatedCompletion",
+                  ),
                   "$.restartCancelledBackgroundWork",
                 )}
             `;

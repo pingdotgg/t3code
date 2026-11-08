@@ -666,12 +666,33 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     baseRef: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
+    requireFreshOrigin: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+
+const PreparedWorkspaceEvidence = Schema.Struct({
+  recordedAt: IsoDateTime,
+  fetchedAt: IsoDateTime,
+  worktreePath: TrimmedNonEmptyString,
+  originRef: TrimmedNonEmptyString,
+  commitSha: TrimmedNonEmptyString,
+  treeSha: TrimmedNonEmptyString,
+});
+
+export const OrchestrationV2RunLaunchEvidence = Schema.Struct({
+  ...PreparedWorkspaceEvidence.fields,
+  taskPrompt: Schema.String,
+  userMessageId: MessageId,
+  modelSelection: ModelSelection,
+  providerStart: Schema.optional(
+    Schema.Struct({ attemptId: RunAttemptId, verifiedAt: IsoDateTime }),
+  ),
+});
+export type OrchestrationV2RunLaunchEvidence = typeof OrchestrationV2RunLaunchEvidence.Type;
 
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
@@ -706,6 +727,7 @@ export const OrchestrationV2Run = Schema.Struct({
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  launchEvidence: Schema.optional(OrchestrationV2RunLaunchEvidence),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
 });
@@ -3390,6 +3412,13 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("prepared-run.record-workspace"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    workspace: PreparedWorkspaceEvidence,
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),
