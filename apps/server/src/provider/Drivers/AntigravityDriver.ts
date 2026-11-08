@@ -275,6 +275,7 @@ export const AntigravityDriver: ProviderDriver<
           installation: executable,
           profile,
           cwd: input.cwd,
+          runtimeMode: input.runtimeMode ?? "approval-required",
           baseEnv: processEnvironment,
           auth,
           runtimeTempDirectory,
@@ -452,8 +453,13 @@ export const AntigravityDriver: ProviderDriver<
       ),
     );
     const defaultModel = currentCatalog.pipe(Effect.map((catalog) => catalog?.defaultChatModel));
+    const usesCli = yield* installation.resolve(settings.binaryPath, processEnvironment).pipe(
+      Effect.map((executable) => executable.harnessPath === null),
+      Effect.orElseSucceed(() => false),
+    );
     const orchestrationAdapter = yield* makeAntigravityAdapterV2({
       instanceId,
+      usesCli,
       selfInvocation,
       makeRuntime,
       withProcess: authFlow.withProcess,
