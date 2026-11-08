@@ -14,6 +14,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+import * as CodexRpc from "./rpc.ts";
 import { makeInMemoryStdio } from "./_internal/stdio.ts";
 import * as CodexError from "./errors.ts";
 
@@ -96,7 +97,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
         yield* client.handleServerNotification("thread/realtime/sdp", (payload) =>
           Deferred.succeed(realtimeSdp, payload.sdp).pipe(Effect.asVoid),
         );
-        yield* client.request("thread/realtime/start", {
+        yield* client.request(CodexRpc.CLIENT_REQUEST_METHODS["thread/realtime/start"], {
           threadId: "thread-1",
           outputModality: "audio",
           version: "v3",
@@ -106,7 +107,9 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
           voice: "sol",
         });
         assert.equal(yield* Deferred.await(realtimeSdp), "synthetic-answer");
-        yield* client.request("thread/realtime/stop", { threadId: "thread-1" });
+        yield* client.request(CodexRpc.CLIENT_REQUEST_METHODS["thread/realtime/stop"], {
+          threadId: "thread-1",
+        });
 
         return {
           account,

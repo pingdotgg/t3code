@@ -107,8 +107,17 @@ const handleMethod = (message: Record<string, unknown>) => {
     case "thread/realtime/start": {
       const params = message.params as Record<string, unknown>;
       const transport = params.transport as Record<string, unknown>;
-      if (transport.type !== "webrtc" || transport.sdp !== "synthetic-offer") {
-        respondError(message.id as number | string, -32602, "Expected the WebRTC offer");
+      if (
+        params.threadId !== "thread-1" ||
+        params.outputModality !== "audio" ||
+        params.version !== "v3" ||
+        params.voice !== "sol" ||
+        params.includeStartupContext !== false ||
+        params.clientManagedHandoffs !== true ||
+        transport.type !== "webrtc" ||
+        transport.sdp !== "synthetic-offer"
+      ) {
+        respondError(message.id as number | string, -32602, "Unexpected realtime start parameters");
         return;
       }
       writeMessage({
@@ -119,6 +128,11 @@ const handleMethod = (message: Record<string, unknown>) => {
       return;
     }
     case "thread/realtime/stop": {
+      const params = message.params as Record<string, unknown>;
+      if (params.threadId !== "thread-1") {
+        respondError(message.id as number | string, -32602, "Expected to stop thread-1");
+        return;
+      }
       respond(message.id as number | string, {});
       return;
     }

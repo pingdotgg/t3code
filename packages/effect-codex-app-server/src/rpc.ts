@@ -3,7 +3,13 @@ import * as Realtime from "./realtime.ts";
 
 export * from "./_generated/meta.gen.ts";
 
-export type ClientRequestMethod = keyof ClientRequestParamsByMethod;
+export const CLIENT_REQUEST_METHODS = {
+  ...Generated.CLIENT_REQUEST_METHODS,
+  "thread/realtime/start": "thread/realtime/start",
+  "thread/realtime/stop": "thread/realtime/stop",
+} as const;
+
+export type ClientRequestMethod = keyof typeof CLIENT_REQUEST_METHODS;
 
 export interface ClientRequestParamsByMethod extends Generated.ClientRequestParamsByMethod {
   readonly "thread/realtime/start": Realtime.ExperimentalRealtimeWebrtcStartParams;
