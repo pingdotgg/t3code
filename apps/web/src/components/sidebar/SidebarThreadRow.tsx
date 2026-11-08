@@ -51,7 +51,6 @@ import {
 } from "lucide-react";
 import {
   memo,
-  useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -114,6 +113,7 @@ import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger }
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import { ThreadRenameInput } from "./ThreadRenameInput";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -587,47 +587,6 @@ type SidebarThreadRowProps = {
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
 };
-
-// Mounted only while renaming, so each rename starts uncommitted.
-function ThreadRenameInput(props: {
-  title: string;
-  onTitleChange: (title: string) => void;
-  onCommit: () => void;
-  onCancel: () => void;
-}) {
-  // Enter and Escape blur the input as it unmounts; that blur must not cancel again.
-  const settledRef = useRef(false);
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    event.stopPropagation();
-    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === "Enter") {
-      event.preventDefault();
-      settledRef.current = true;
-      props.onCommit();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      settledRef.current = true;
-      props.onCancel();
-    }
-  };
-  return (
-    <input
-      autoFocus
-      value={props.title}
-      dir="auto"
-      aria-label="Thread title"
-      onChange={(event) => props.onTitleChange(event.target.value)}
-      onFocus={(event) => event.currentTarget.select()}
-      onKeyDown={handleKeyDown}
-      onBlur={() => {
-        if (!settledRef.current) props.onCancel();
-      }}
-      onClick={(event) => event.stopPropagation()}
-      onDoubleClick={(event) => event.stopPropagation()}
-      className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
-    />
-  );
-}
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
