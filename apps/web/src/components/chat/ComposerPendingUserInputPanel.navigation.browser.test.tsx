@@ -32,9 +32,9 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 }));
 
 import { act, fakeTimers, render } from "../../../test/render";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
-import { useComposerDraftStore } from "../../composerDraftStore";
 import { questionAttachmentDraftId } from "../../questionAttachments";
 import { useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 
