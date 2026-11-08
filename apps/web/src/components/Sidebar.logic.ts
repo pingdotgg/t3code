@@ -915,10 +915,22 @@ export function resolveSidebarThreadStatus(
  * The dot on a closed boring-sidebar folder: the most urgent state among its
  * hidden threads. Waiting threads stay quiet, like their rows.
  */
-export function resolveSidebarFolderDot(
-  threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
+export function resolveSidebarFolderDot<
+  T extends ThreadStatusInput & SidebarThreadStatusInput = ThreadStatusInput &
+    SidebarThreadStatusInput,
+>(
+  threads: ReadonlyArray<T>,
+  options?: {
+    readonly sourceControlStatusForThread?: (
+      thread: T,
+    ) => "committing" | "pushing" | "submitting" | "merging" | null;
+  },
 ): "attention" | "failed" | "unread" | "working" | null {
-  const statuses = new Set(threads.map((thread) => resolveSidebarThreadStatus(thread)));
+  const statusOf = (thread: T) =>
+    resolveSidebarThreadStatus(thread, {
+      sourceControlStatus: options?.sourceControlStatusForThread?.(thread) ?? null,
+    });
+  const statuses = new Set(threads.map(statusOf));
   if (
     statuses.has("input") ||
     statuses.has("approval") ||
@@ -930,7 +942,7 @@ export function resolveSidebarFolderDot(
   if (statuses.has("failed")) return "failed";
   // Rows show Done only for ready threads, so the dot follows the same rule.
   const hasUnread = threads.some(
-    (thread) => resolveSidebarThreadStatus(thread) === "ready" && hasUnseenCompletion(thread),
+    (thread) => statusOf(thread) === "ready" && hasUnseenCompletion(thread),
   );
   if (hasUnread) return "unread";
   if (

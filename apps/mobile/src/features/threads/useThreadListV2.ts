@@ -1,4 +1,5 @@
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
+import { isThreadWorkingOrSourceControlBusy } from "@t3tools/client-runtime/state/thread-inbox";
 import { isThreadStackedActionRunning } from "@t3tools/client-runtime/state/vcs";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -38,8 +39,15 @@ type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 function observeInbox(
   threads: Parameters<typeof threadListInboxReturns.observe>[0],
   _expiredGraceVersion: number,
+  stackedActionThreads: ReadonlyMap<string, unknown>,
 ) {
-  return threadListInboxReturns.observe(threads);
+  return threadListInboxReturns.observe(threads, {
+    isWorking: (thread) =>
+      isThreadWorkingOrSourceControlBusy(
+        thread,
+        isThreadStackedActionRunning(thread, stackedActionThreads),
+      ),
+  });
 }
 
 /**
@@ -81,14 +89,10 @@ export function useThreadListV2(input: {
   );
   const stackedActionThreads = useAtomValue(vcsActionManager.stackedActionThreadsAtom);
   const inbox = useMemo(
-    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
-    [threads, workingShelfEnabled, inboxVersion],
+    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion, stackedActionThreads),
+    [threads, workingShelfEnabled, inboxVersion, stackedActionThreads],
   );
-  const isWorking = useMemo(() => {
-    const inboxIsWorking = inbox.isWorking;
-    return (thread: Parameters<typeof inboxIsWorking>[0]) =>
-      inboxIsWorking(thread) || isThreadStackedActionRunning(thread, stackedActionThreads);
-  }, [inbox.isWorking, stackedActionThreads]);
+  const isWorking = inbox.isWorking;
   // Compute move availability per section; per-row planning is quadratic.
   const moveAvailability = useMemo(() => {
     const sectionAvailability = (section: "pinned" | "active") =>

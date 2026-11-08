@@ -1658,6 +1658,11 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+    expect(
+      resolveSidebarFolderDot([idle], {
+        sourceControlStatusForThread: () => "merging",
+      }),
+    ).toBe("working");
   });
 });
 

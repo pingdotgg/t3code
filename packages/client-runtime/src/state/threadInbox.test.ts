@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   createInboxReturnTracker,
   isThreadWorking,
+  isThreadWorkingOrSourceControlBusy,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
 } from "./threadInbox.ts";
@@ -34,6 +35,31 @@ function thread(id: string, working: boolean) {
   };
 }
 
+describe("isThreadWorkingOrSourceControlBusy", () => {
+  it("keeps approval and user-input out of the Working shelf during a source-control action", () => {
+    expect(isThreadWorkingOrSourceControlBusy(thread("a", false), true)).toBe(true);
+    expect(
+      isThreadWorkingOrSourceControlBusy(
+        { ...thread("a", false), hasPendingApprovals: true },
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      isThreadWorkingOrSourceControlBusy(
+        { ...thread("a", false), hasPendingUserInput: true },
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      isThreadWorkingOrSourceControlBusy(
+        { ...thread("a", false), pendingSubagentRequest: "approval" },
+        true,
+      ),
+    ).toBe(false);
+    expect(isThreadWorkingOrSourceControlBusy(thread("a", true), false)).toBe(true);
+  });
+});
+
 describe("createInboxReturnTracker", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -42,6 +68,20 @@ describe("createInboxReturnTracker", () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+  });
+  it("stamps a return when a custom source-control busy predicate clears", () => {
+    const tracker = createInboxReturnTracker();
+    let sourceControlBusy = true;
+    const isWorking = (candidate: Parameters<typeof isThreadWorkingOrSourceControlBusy>[0]) =>
+      isThreadWorkingOrSourceControlBusy(candidate, sourceControlBusy);
+    tracker.observe([thread("a", false)], { isWorking });
+    expect(tracker.isWorking(thread("a", false))).toBe(true);
+    sourceControlBusy = false;
+    tracker.observe([thread("a", false)], { isWorking });
+    expect(tracker.isWorking(thread("a", false))).toBe(true);
+    vi.advanceTimersByTime(2_000);
+    expect(tracker.isWorking(thread("a", false))).toBe(false);
+    expect(tracker.returnedAt(thread("a", false))).toBe(12_000);
   });
   it("stamps a thread when it stops working, but never on the first observation", () => {
     const tracker = createInboxReturnTracker();

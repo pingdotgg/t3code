@@ -30,6 +30,21 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
   return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
 }
 
+/**
+ * Working-shelf placement for agent work or an in-flight source-control action.
+ * Approvals and user-input stay in the active list, matching `isThreadWorking`.
+ */
+export function isThreadWorkingOrSourceControlBusy(
+  thread: WorkingThreadInput,
+  sourceControlBusy: boolean,
+): boolean {
+  if (isThreadWorking(thread)) return true;
+  if (!sourceControlBusy) return false;
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  if (thread.pendingSubagentRequest != null) return false;
+  return true;
+}
+
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
@@ -166,16 +181,22 @@ export function createInboxReturnTracker() {
       };
     },
     getSnapshot: () => version,
-    observe(threads: readonly TrackedInboxThread[] | null): {
+    observe(
+      threads: readonly TrackedInboxThread[] | null,
+      options?: {
+        readonly isWorking?: (thread: WorkingThreadInput & ThreadKeyInput) => boolean;
+      },
+    ): {
       readonly isWorking: (thread: WorkingThreadInput & ThreadKeyInput) => boolean;
       readonly returnedAt: (thread: ThreadKeyInput) => number | undefined;
     } {
+      const resolveWorking = options?.isWorking ?? isThreadWorking;
       if (threads === null) {
         clearTimeout(timer);
         timer = undefined;
         states.clear();
         returns.clear();
-        return { isWorking: isThreadWorking, returnedAt: () => undefined };
+        return { isWorking: resolveWorking, returnedAt: () => undefined };
       }
       const present = new Set<string>();
       const at = now();
@@ -185,7 +206,7 @@ export function createInboxReturnTracker() {
         const key = keyOf(thread);
         present.add(key);
         const previous = states.get(key);
-        const actual = isThreadWorking(thread);
+        const actual = resolveWorking(thread);
         const placement =
           actual || previous?.working
             ? JSON.stringify([
@@ -234,7 +255,7 @@ export function createInboxReturnTracker() {
       states.forEach((state, key) => observedWorking.set(key, state.working));
       const observedReturns = new Map(returns);
       return {
-        isWorking: (thread) => observedWorking.get(keyOf(thread)) ?? isThreadWorking(thread),
+        isWorking: (thread) => observedWorking.get(keyOf(thread)) ?? resolveWorking(thread),
         returnedAt: (thread) => observedReturns.get(keyOf(thread)),
       };
     },

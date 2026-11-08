@@ -1,10 +1,13 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveSourceControlThreadStatus } from "@t3tools/client-runtime/state/vcs";
+import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { vcsActionManager } from "../../state/vcs";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -46,6 +49,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const stackedActionThreads = useAtomValue(vcsActionManager.stackedActionThreadsAtom);
   const dot = collapsed
     ? resolveSidebarFolderDot(
         hiddenThreads.map((thread) => ({
@@ -57,6 +61,12 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
             ],
           ),
         })),
+        {
+          sourceControlStatusForThread: (thread) =>
+            resolveSourceControlThreadStatus(
+              stackedActionThreads.get(`${thread.environmentId}:${thread.id}`),
+            ),
+        },
       )
     : null;
   return (

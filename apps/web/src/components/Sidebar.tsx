@@ -32,7 +32,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
   createInboxReturnTracker,
-  isThreadWorking,
+  isThreadWorkingOrSourceControlBusy,
 } from "@t3tools/client-runtime/state/thread-inbox";
 import { isThreadStackedActionRunning } from "@t3tools/client-runtime/state/vcs";
 import { vcsActionManager } from "~/state/vcs";
@@ -630,13 +630,24 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
-  const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
+  const sourceControlWorking = (
+    thread: Parameters<typeof isThreadWorkingOrSourceControlBusy>[0] & {
+      readonly environmentId: EnvironmentThreadShell["environmentId"];
+      readonly id: EnvironmentThreadShell["id"];
+    },
+  ) =>
+    isThreadWorkingOrSourceControlBusy(
+      thread,
+      isThreadStackedActionRunning(thread, stackedActionThreads),
+    );
+  const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null, {
+    isWorking: sourceControlWorking,
+  });
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
   const threadIsWorking = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
-    (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread)) ||
-    isThreadStackedActionRunning(thread, stackedActionThreads);
+    manuallyMoved ? sourceControlWorking(thread) : inboxObservation.isWorking(thread);
   const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
     workingShelfEnabled && threadIsWorking(thread, manuallyMoved) ? working : active;
   const snoozed: EnvironmentThreadShell[] = [];
