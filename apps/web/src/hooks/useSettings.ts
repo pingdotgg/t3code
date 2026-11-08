@@ -1,4 +1,6 @@
 import { useRef, useSyncExternalStore, use } from "react";
+import * as Schema from "effect/Schema";
+import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 import { useSyncExternalStoreWithSelector } from "use-sync-external-store/with-selector";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
@@ -153,6 +155,7 @@ async function hydrateClientSettings(): Promise<void> {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
       setClientSettingsHydrationStatus("ready");
+      switchFollowUpsToQueueOnce(persistedSettings?.followUpBehavior === "steer");
     } catch (error) {
       if (hydrationGeneration === clientSettingsHydrationGeneration) {
         setClientSettingsHydrationStatus("failed");
@@ -173,6 +176,22 @@ async function hydrateClientSettings(): Promise<void> {
   clientSettingsHydrationPromise = hydrationPromise;
 
   return clientSettingsHydrationPromise;
+}
+
+// OminaX (D98): saves wrote the old "steer" default for everyone, so a saved Steer is not a choice.
+const FOLLOW_UPS_QUEUE_SWITCH_KEY = "ominax:follow-ups-queue-switched";
+
+function switchFollowUpsToQueueOnce(savedSteer: boolean): void {
+  const markSwitched = () => setLocalStorageItem(FOLLOW_UPS_QUEUE_SWITCH_KEY, true, Schema.Boolean);
+  try {
+    if (getLocalStorageItem(FOLLOW_UPS_QUEUE_SWITCH_KEY, Schema.Boolean)) return;
+    if (!savedSteer) return markSwitched();
+  } catch {
+    return; // Unusable storage can't remember the switch, so leave the setting alone.
+  }
+  void persistClientSettingsUpdate((current) => ({ ...current, followUpBehavior: "queue" }))
+    .then(markSwitched)
+    .catch(() => undefined);
 }
 
 const defaultClientSettingsPersistence = (settings: ClientSettings): Promise<void> =>

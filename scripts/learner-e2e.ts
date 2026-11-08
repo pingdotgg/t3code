@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalConsole:off - Host-side browser automation.
-// Scripted learner on Replay: New lesson, a plain Send mid-reply, a queued send mid-reply.
+// Scripted learner on Replay: New lesson, a plain (queued) Send mid-reply, a steered send mid-reply.
 // It checks the basic flow only; Claude's in-place steering and the provider refusals are
 // pinned by SteeringCompletion.integration.test.ts. Usage: vp run learner-e2e [--skip-build] [--out <dir>]
 import * as NodeChildProcess from "node:child_process";
@@ -126,13 +126,33 @@ async function runLearner(page: Page): Promise<void> {
     await waitForReplyBelow(page, "How a hash map works");
   });
 
-  await check("L2a plain Send during a reply restarts it with the message", async () => {
+  await check("L2a plain Send during a reply queues it for afterwards", async () => {
     await sendIdle(page, "Start with buckets, please.");
-    const steer = "What happens on a collision?";
+    const queued = "What happens on a collision?";
+    await composer(page).fill(queued);
+    // The send button's hint: "Click to queue, Ctrl-click to steer" (⌘ on macOS).
+    await page.getByRole("button", { name: "Queue message" }).click();
+    await queuedChip(page).or(errorToast(page)).first().waitFor();
+    await expectNoErrorToast(page);
+    if (await page.getByText("Cut off by a steer").isVisible()) {
+      throw new Error("The plain Send steered instead of queuing.");
+    }
+    if ((await composer(page).innerText()).trim() !== "") {
+      throw new Error("The draft bounced back into the composer.");
+    }
+    await queuedChip(page).waitFor({ state: "detached" });
+    await waitForReplyBelow(page, queued);
+  });
+
+  await check("L2b Ctrl/Cmd-click during a reply steers and restarts it", async () => {
+    await sendIdle(page, "And resizing?");
+    const steer = "When should I pick a tree instead?";
     await composer(page).fill(steer);
-    await page.getByRole("button", { name: "Steer message" }).click();
+    await page
+      .getByRole("button", { name: "Queue message" })
+      .click({ modifiers: ["ControlOrMeta"] });
     // Replay can't steer in place, so a steer cuts the attempt off and restarts it.
-    // A refused steer falls back to the queue instead (only L2b should see one) or errors.
+    // A refused steer falls back to the queue instead or errors.
     await page
       .getByText("Cut off by a steer")
       .or(queuedChip(page))
@@ -141,26 +161,9 @@ async function runLearner(page: Page): Promise<void> {
       .waitFor();
     await expectNoErrorToast(page);
     if (await queuedChip(page).isVisible()) {
-      throw new Error("The send was queued instead of restarting the reply.");
-    }
-    if ((await composer(page).innerText()).trim() !== "") {
-      throw new Error("The draft bounced back into the composer.");
+      throw new Error("The Ctrl/Cmd-click was queued instead of restarting the reply.");
     }
     await waitForReplyBelow(page, steer);
-  });
-
-  await check("L2b queued send during a reply runs afterwards", async () => {
-    await sendIdle(page, "And resizing?");
-    const queued = "When should I pick a tree instead?";
-    await composer(page).fill(queued);
-    // The send button's hint: "Click to steer, Ctrl-click to queue" (⌘ on macOS).
-    await page
-      .getByRole("button", { name: "Steer message" })
-      .click({ modifiers: ["ControlOrMeta"] });
-    await queuedChip(page).waitFor();
-    await expectNoErrorToast(page);
-    await queuedChip(page).waitFor({ state: "detached" });
-    await waitForReplyBelow(page, queued);
   });
 }
 

@@ -7,7 +7,8 @@ export type WhatsNewGuide = {
     | "question-cards"
     | "answer-types"
     | "courses"
-    | "chat-sync";
+    | "chat-sync"
+    | "queued-follow-ups";
   readonly version: string;
   readonly title: string;
   readonly benefit: string;
@@ -76,6 +77,14 @@ export const whatsNewGuides: readonly WhatsNewGuide[] = [
     title: "Sync from T3 Code",
     benefit: "Bring over the T3 Code chats OminaX doesn't have yet, in one click.",
     actionLabel: "Try Sync",
+  },
+  {
+    id: "queued-follow-ups",
+    version: "0.1.7",
+    title: "Messages wait their turn",
+    benefit:
+      "Messages you send while the tutor replies now wait their turn; ⌘-click (Ctrl-click) to steer.",
+    actionLabel: "See the setting",
   },
 ];
 

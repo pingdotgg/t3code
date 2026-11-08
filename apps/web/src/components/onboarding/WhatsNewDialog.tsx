@@ -151,6 +151,9 @@ function WhatsNewDialog({
         case "chat-sync":
           void navigate({ to: "/settings/threads", hash: "chat-sync" });
           break;
+        case "queued-follow-ups":
+          void navigate({ to: "/settings/chat", hash: "follow-ups" });
+          break;
       }
     });
   };

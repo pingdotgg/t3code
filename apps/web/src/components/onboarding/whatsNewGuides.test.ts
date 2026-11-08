@@ -32,6 +32,7 @@ describe("resolveWhatsNewGuides", () => {
       "question-cards",
       "answer-types",
       "chat-sync",
+      "queued-follow-ups",
     ]);
   });
 
