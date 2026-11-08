@@ -39,18 +39,19 @@ const COVERAGE_FAILURE_TTL = Duration.seconds(30);
 /** Whether the app sign-in reaches a repository; `signed-out` when the server is not signed in. */
 export type GitHubAppReach = "covered" | "not-covered" | "signed-out";
 
-/** Accounts that installed the app for all repositories, and repositories listed one by one. */
+/** All-repository accounts, repositories listed one by one, and accounts listed past the cap. */
 interface AppCoverage {
   readonly accounts: ReadonlySet<string>;
   readonly repositories: ReadonlySet<string>;
+  readonly cutShort: ReadonlySet<string>;
 }
 
 export class GitHubAppAccess extends Context.Service<
   GitHubAppAccess,
   {
     /**
-     * Whether an installation covers `owner/name`. A check that fails answers `covered`, so a
-     * GitHub hiccup does not nag the user.
+     * Whether an installation covers `owner/name`. A check that fails, or a listing cut short,
+     * answers `covered`, so a GitHub hiccup or a large installation does not nag the user.
      */
     readonly reach: (host: string, repository: string) => Effect.Effect<GitHubAppReach>;
     /** The login the app sign-in acts as. */
@@ -124,6 +125,7 @@ export const make = Effect.gen(function* () {
     }
     const accounts = new Set<string>();
     const repositories = new Set<string>();
+    const cutShort = new Set<string>();
     for (const installation of installations) {
       const login = installation.account?.login.toLowerCase();
       if (login === undefined) continue;
@@ -132,9 +134,9 @@ export const make = Effect.gen(function* () {
         continue;
       }
       for (let page = 1; ; page++) {
-        // Past the cap the list is cut short; count the whole account as reached rather than nag.
+        // Past the cap the list is cut short; this account's unlisted repositories stay unknown.
         if (page > MAX_PAGES) {
-          accounts.add(login);
+          cutShort.add(login);
           break;
         }
         const listed = yield* readAsApp(
@@ -150,7 +152,7 @@ export const make = Effect.gen(function* () {
         if (listed.value.repositories.length < PAGE_SIZE) break;
       }
     }
-    return { accounts, repositories } satisfies AppCoverage;
+    return { accounts, repositories, cutShort } satisfies AppCoverage;
   });
 
   const coverage = yield* Cache.makeWith(coverageOf, {
@@ -158,7 +160,7 @@ export const make = Effect.gen(function* () {
     timeToLive: (exit) => (Exit.isSuccess(exit) ? COVERAGE_TTL : COVERAGE_FAILURE_TTL),
   });
 
-  /** `unknown` when GitHub could not list the installations just now. */
+  /** `unknown` when GitHub could not list the installations just now, or listed them cut short. */
   const coverageFor = Effect.fn("GitHubAppAccess.coverageFor")(function* (
     rawHost: string,
     rawRepository: string,
@@ -170,9 +172,10 @@ export const make = Effect.gen(function* () {
     if (known.value === null) return "signed-out" as const;
     const repository = ownerAndName(rawRepository);
     const owner = repository.split("/")[0] ?? "";
-    return known.value.accounts.has(owner) || known.value.repositories.has(repository)
-      ? ("covered" as const)
-      : ("not-covered" as const);
+    if (known.value.accounts.has(owner) || known.value.repositories.has(repository)) {
+      return "covered" as const;
+    }
+    return known.value.cutShort.has(owner) ? ("unknown" as const) : ("not-covered" as const);
   });
 
   const reach: GitHubAppAccess["Service"]["reach"] = (host, repository) =>

@@ -560,6 +560,31 @@ describe("GitHubAppAccess", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("gives the user's credential to a repository past a cut-off selected listing", () => {
+    const fullPage = {
+      body: {
+        repositories: Array.from({ length: 100 }, (_, index) => ({
+          full_name: `acme/repo-${index}`,
+        })),
+      },
+    };
+    const { layer } = harness({
+      signIns: { "github.com": session() },
+      handle: (sent) =>
+        sent.path === "/user/installations/2/repositories" ? fullPage : installedOn(sent),
+    });
+    return Effect.gen(function* () {
+      const access = yield* GitHubAppAccess.GitHubAppAccess;
+      const tokenFor = (repository: string) =>
+        access
+          .credentialFor("github.com", repository)
+          .pipe(Effect.map((held) => Redacted.value(held.token)));
+      expect(yield* tokenFor("acme/unlisted")).toBe("gh-token");
+      expect(yield* tokenFor("acme/repo-0")).toBe("ghu_current");
+      expect(yield* access.reach("github.com", "acme/unlisted")).toBe("covered");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("pins the user's credential while the app's reach is unknown", () => {
     const failing = (sent: Sent): Reply =>
       sent.path.startsWith("/user/installations") ? { status: 502, body: {} } : { body: {} };
