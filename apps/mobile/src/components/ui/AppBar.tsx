@@ -46,6 +46,8 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
 
 const TITLE_BAR_MARGIN = 32;
 const TITLE_BAR_BUTTON = 44;
+/** Liquid-glass trailing clusters sit wider than the 44pt hit target; keep a clear edge. */
+const TITLE_TRAILING_GAP = 24;
 
 /** Custom title that long-presses open a menu without UIKit's title-menu chevron. */
 function AppBarTitleMenu(props: {
@@ -60,16 +62,14 @@ function AppBarTitleMenu(props: {
   const { width: windowWidth } = useWindowDimensions();
   const columnWidth = useNativeColumnLayoutMetrics()?.width;
   const screenWidth = columnWidth ?? windowWidth;
-  // Custom title views are centered in the full bar. Reserve the heavier side on both
-  // sides so the view cannot sit under leading/trailing chrome (incl. glass clusters).
-  const leadingWidth = TITLE_BAR_MARGIN + props.leadingButtons * TITLE_BAR_BUTTON;
-  const trailingWidth = TITLE_BAR_MARGIN + props.trailingButtons * TITLE_BAR_BUTTON;
-  const width = Math.max(
-    TITLE_BAR_BUTTON,
-    screenWidth - 2 * Math.max(leadingWidth, trailingWidth) - TITLE_BAR_BUTTON,
-  );
+  // Editor-style titleView sits after leading chrome (not bar-centered). Size to the remaining
+  // gap so the label fills it and ellipsizes only against trailing actions.
+  const leadingWidth = TITLE_BAR_MARGIN / 2 + props.leadingButtons * TITLE_BAR_BUTTON;
+  const trailingWidth =
+    TITLE_BAR_MARGIN / 2 + props.trailingButtons * TITLE_BAR_BUTTON + TITLE_TRAILING_GAP;
+  const width = Math.max(TITLE_BAR_BUTTON, screenWidth - leadingWidth - trailingWidth);
   return (
-    <View style={{ width, maxWidth: width, overflow: "hidden" }}>
+    <View style={{ width, overflow: "hidden" }}>
       <Menu
         shouldOpenOnLongPress
         title={props.titleMenu.status ?? props.titleMenu.title}
