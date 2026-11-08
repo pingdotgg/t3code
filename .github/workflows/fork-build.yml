@@ -1,0 +1,224 @@
+# Personal fork pipeline (see FORK.md).
+#
+# Every few hours: if MT Code published a new munim-v* release, re-apply this
+# fork's own commits on top of it (Claude resolves any merge conflict), then
+# test, build the Windows installer and publish it as a GitHub release. The
+# desktop app's update arrow reads those releases.
+#
+# The fork's default branch `custom` is always "latest MT Code release + our
+# commits". A rebased candidate is pushed to `custom-next` first and only
+# replaces `custom` after its installer built and published.
+name: Fork sync and build
+
+on:
+  schedule:
+    - cron: "23 */4 * * *"
+  push:
+    branches: [custom]
+    paths-ignore: ["FORK.md"]
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: Build and publish even if the current commit was already released
+        type: boolean
+        default: false
+
+concurrency:
+  group: fork-sync-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+env:
+  MTCODE_REMOTE: https://github.com/munimtechnologies/mtcode.git
+  BOT_NAME: Ryan Hart
+  BOT_EMAIL: 3673962+ryankhart@users.noreply.github.com
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      sha: ${{ steps.plan.outputs.sha }}
+      base_tag: ${{ steps.plan.outputs.base_tag }}
+      version: ${{ steps.plan.outputs.version }}
+      rebased: ${{ steps.rebase.outputs.rebased }}
+    steps:
+      - name: Checkout custom
+        uses: actions/checkout@v4
+        with:
+          ref: custom
+          fetch-depth: 0
+          # A personal token is needed to push branches whose new commits touch
+          # .github/workflows (every MT Code release does); GITHUB_TOKEN can't.
+          token: ${{ secrets.FORK_PUSH_TOKEN }}
+
+      - name: Keep only this workflow enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow list --all --json id,path,state --jq '.[] | select(.path != ".github/workflows/fork-build.yml" and .state == "active") | .id' |
+            while read -r id; do gh workflow disable "$id" || true; done
+
+      - name: Fetch MT Code releases
+        run: |
+          git config user.name "$BOT_NAME"
+          git config user.email "$BOT_EMAIL"
+          git config rerere.enabled true
+          git config rerere.autoupdate true
+          git fetch --no-tags "$MTCODE_REMOTE" '+refs/tags/munim-v*:refs/tags/munim-v*'
+          base=$(git describe --tags --match 'munim-v*' --abbrev=0 HEAD)
+          latest=$(git tag -l 'munim-v*' | sed 's/^munim-v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          echo "BASE_TAG=$base" >> "$GITHUB_ENV"
+          echo "LATEST_TAG=munim-v$latest" >> "$GITHUB_ENV"
+          echo "Current base: $base; latest MT Code release: munim-v$latest"
+
+      - name: Re-apply our commits on the new release
+        id: rebase
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ "$BASE_TAG" = "$LATEST_TAG" ]; then
+            echo "rebased=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Rebasing $(git rev-list --count "$BASE_TAG..HEAD") commits from $BASE_TAG onto $LATEST_TAG"
+          # Mid-rebase the working tree may not have our files yet, so keep the prompt aside.
+          cp fork/resolve-conflicts-prompt.md "$RUNNER_TEMP/prompt.md"
+          if ! git rebase --onto "$LATEST_TAG" "$BASE_TAG" custom; then
+            npm install -g @anthropic-ai/claude-code >/dev/null
+            for round in $(seq 1 40); do
+              [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ] || break
+              if [ -z "$(git diff --name-only --diff-filter=U)" ]; then
+                # rerere or a previous round resolved everything; keep going.
+                GIT_EDITOR=true git rebase --continue && break || continue
+              fi
+              echo "::group::Claude resolves: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+              claude -p "$(cat "$RUNNER_TEMP/prompt.md")" \
+                --permission-mode bypassPermissions --max-turns 60 --output-format text || true
+              echo "::endgroup::"
+              staged=$(git diff --cached --name-only)
+              if [ -n "$(git diff --name-only --diff-filter=U)" ] || { [ -n "$staged" ] && git diff --cached | grep -qE '^\+(<<<<<<<|>>>>>>>) '; }; then
+                echo "Conflicts remain after Claude's attempt"; exit 1
+              fi
+              GIT_EDITOR=true git rebase --continue && break || true
+            done
+            if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then echo "Rebase did not finish"; exit 1; fi
+          fi
+          git push --force origin HEAD:refs/heads/custom-next
+          echo "rebased=true" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to build
+        id: plan
+        run: |
+          base=$(git describe --tags --match 'munim-v*' --abbrev=0 HEAD)
+          sha=$(git rev-parse HEAD)
+          released=$(git tag --points-at HEAD -l 'v*' | head -1)
+          build=true
+          if [ -n "$released" ] && [ "${{ inputs.force_build }}" != "true" ]; then build=false; fi
+          # Fork version: MT Code's x.y.z becomes x.y.(z*100+n), n = rebuild count on that base,
+          # so each rebuild sorts above the last and below the next MT Code release.
+          v=${base#munim-v}; maj=${v%%.*}; rest=${v#*.}; min=${rest%%.*}; pat=${rest#*.}
+          for n in $(seq 0 99); do
+            cand="$maj.$min.$((pat * 100 + n))"
+            git rev-parse -q --verify "refs/tags/v$cand" >/dev/null || break
+          done
+          {
+            echo "build=$build"; echo "sha=$sha"; echo "base_tag=$base"; echo "version=$cand"
+          } >> "$GITHUB_OUTPUT"
+          echo "base=$base sha=$sha already-released=${released:-no} build=$build version=$cand"
+
+  build:
+    needs: sync
+    if: needs.sync.outputs.build == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.sync.outputs.version }}
+      BASE_TAG: ${{ needs.sync.outputs.base_tag }}
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.FORK_PUSH_TOKEN }}
+
+      - name: Fetch base tag
+        run: git fetch --no-tags "$MTCODE_REMOTE" "+refs/tags/$BASE_TAG:refs/tags/$BASE_TAG"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install dependencies
+        run: |
+          npx -y "$(node -p 'require("./package.json").packageManager')" install --frozen-lockfile
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Test and typecheck what our commits touch
+        run: node fork/check-changes.mjs "$BASE_TAG"
+
+      - name: Build installer
+        env:
+          T3CODE_DESKTOP_DISTRO: munim
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+          T3CODE_DESKTOP_VERSION: ${{ needs.sync.outputs.version }}
+        run: |
+          [ -f .env ] || cp .env.example .env
+          node scripts/update-release-package-versions.ts "$VERSION"
+          npx -y "$(node -p 'require("./package.json").packageManager')" dist:desktop:win:x64
+          ls -la release
+
+      - name: Check our features are inside the installer
+        run: node fork/check-installer.mjs release
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(release/*.exe release/*.exe.blockmap release/latest*.yml)
+          [ ${#files[@]} -ge 3 ] || { echo "missing release files: ${files[*]}"; exit 1; }
+          notes="Built from MT Code ${BASE_TAG#munim-v} plus this fork's commits ($(git rev-list --count "$BASE_TAG..HEAD") commits). See FORK.md."
+          gh release create "v$VERSION" "${files[@]}" --target "${{ needs.sync.outputs.sha }}" \
+            --title "T3 Code $VERSION (MT Code ${BASE_TAG#munim-v} + fork)" --notes "$notes" --latest
+
+      - name: Promote candidate to custom
+        if: needs.sync.outputs.rebased == 'true'
+        run: |
+          git push --force origin "${{ needs.sync.outputs.sha }}:refs/heads/custom"
+          git push origin --delete custom-next || true
+
+  report:
+    needs: [sync, build]
+    if: failure()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Open or update a failure issue
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          body="The fork pipeline stopped. Nothing was published, so installed copies stay on their current version.
+
+          Run: $run_url
+          Base: ${{ needs.sync.outputs.base_tag || 'unknown' }}"
+          existing=$(gh issue list -R "${{ github.repository }}" --label fork-pipeline --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" -R "${{ github.repository }}" --body "$body"
+          else
+            gh label create fork-pipeline -R "${{ github.repository }}" --color B60205 --force >/dev/null
+            gh issue create -R "${{ github.repository }}" --title "Fork pipeline failed" --label fork-pipeline --body "$body"
+          fi

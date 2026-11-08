@@ -1,0 +1,7 @@
+# Tests that fail on this PC with or without the custom commits (checked 2026-11-03 on munim-v0.1.48).
+# One substring of the test's full name per line. Remove a line once upstream fixes it.
+with native PDFs, images, and paths on sends and steering
+pins tool search on when the user's Claude settings choose auto
+# Added 2026-11-05 (fail on unmodified munim-v0.1.50):
+hides the one-tap Continue message from memory and SQL timelines
+continues a stopped run without a visible user message

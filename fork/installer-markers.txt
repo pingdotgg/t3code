@@ -1,0 +1,5 @@
+# One string per fork feature that must appear in the packaged app.
+# If a feature's wording changes, update its marker here in the same commit.
+New thread button
+Search Google for
+next-message buttons above the empty composer
