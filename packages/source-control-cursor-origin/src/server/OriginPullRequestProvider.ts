@@ -655,11 +655,15 @@ export const make = Effect.gen(function* () {
         const pullRequests = page.pullRequests ?? [];
         for (const pullRequest of pullRequests)
           remember(pullKey({ ...input, number: pullRequest.number }), pullRequest);
-        const avatars = yield* avatarsFor(
-          input.cwd,
-          pullRequests.map((pullRequest) => pullRequest.author),
-          avatarArgs,
-        );
+        // `origin pr list` only reads the first page, so later pages use the pictures already read.
+        const avatars =
+          input.cursor === undefined
+            ? yield* avatarsFor(
+                input.cwd,
+                pullRequests.map((pullRequest) => pullRequest.author),
+                avatarArgs,
+              )
+            : avatarCache;
         const next = page.nextPageToken || null;
         return {
           items: pullRequests.map((pullRequest) => toProviderChangeRequest(pullRequest, avatars)),

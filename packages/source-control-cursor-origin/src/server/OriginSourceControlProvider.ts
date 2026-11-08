@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { SourceControlProviderError, SourceControlProviderKind } from "@t3tools/contracts";
 import { CURSOR_ORIGIN_WEB_BASE_URL, parseChangeRequestUrl } from "../shared/definition.ts";
@@ -82,11 +83,10 @@ function originPullNumber(reference: string): number | null {
 /** A cursor.com pull request URL names its own repository, which need not be the checkout's. */
 function pullReference(reference: string) {
   const trimmed = reference.trim();
-  const link = URL.canParse(trimmed) ? parseChangeRequestUrl(new URL(trimmed)) : null;
-  return {
-    repository: link?.repository ?? null,
-    number: link?.number ?? originPullNumber(trimmed),
-  };
+  if (!URL.canParse(trimmed)) return { repository: null, number: originPullNumber(trimmed) };
+  // Another host's pull request URL must not resolve to the same number here.
+  const link = parseChangeRequestUrl(new URL(trimmed));
+  return { repository: link?.repository ?? null, number: link?.number ?? null };
 }
 
 const cloneUrls = (repository: OriginRepository, fallbackName: string) => {
@@ -291,13 +291,19 @@ export const make = Effect.gen(function* () {
             OriginRepositorySchema,
           )
           .pipe(
-            Effect.retry({ times: 2 }),
+            Effect.retry({
+              times: 2,
+              schedule: Schedule.spaced("1 second"),
+              while: (error) =>
+                error.reason !== "rate-limited" && error.reason !== "unauthenticated",
+            }),
             Effect.mapError(
               (cause) =>
                 new OriginCli.OriginCliError({
                   operation: "createRepository",
                   cwd: input.cwd,
-                  reason: "failed",
+                  reason: cause.reason,
+                  ...(cause.retryAt === undefined ? {} : { retryAt: cause.retryAt }),
                   detail: `Created ${owner}/${name}, but could not make it private, so your Cursor team can still see it. Set it to private on cursor.com.`,
                   cause,
                 }),
@@ -323,6 +329,16 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const repository = yield* cli.resolveRepository(input);
         const { repository: linked, number } = pullReference(input.reference);
+        const reference = input.reference.trim();
+        // The CLI reads a leading dash as a flag and ignores a target after `--`; no branch starts
+        // with one.
+        if (number === null && reference.startsWith("-"))
+          return yield* new OriginCli.OriginCliError({
+            operation: "checkoutChangeRequest",
+            cwd: input.cwd,
+            reason: "not-found",
+            detail: "Specify a pull request number, branch, or Cursor Origin pull request URL.",
+          });
         if (linked !== null && linked !== repository.toLowerCase())
           return yield* new OriginCli.OriginCliError({
             operation: "checkoutChangeRequest",
@@ -336,12 +352,12 @@ export const make = Effect.gen(function* () {
           args: [
             "pr",
             "checkout",
-            number === null ? input.reference : String(number),
             "-R",
             repository,
             "--remote",
             input.context?.remoteName ?? (yield* git.resolvePrimaryRemoteName(input.cwd)),
             ...(input.force ? ["--force"] : []),
+            number === null ? reference : String(number),
           ],
         });
       },

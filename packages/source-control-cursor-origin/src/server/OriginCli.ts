@@ -15,6 +15,7 @@ import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import { Agent } from "@effect/platform-node/Undici";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { CURSOR_ORIGIN_GIT_HOST } from "../shared/definition.ts";
@@ -25,6 +26,8 @@ import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MISSING_TOKEN_TTL_MS = 10_000;
+/** How long a session is trusted before the CLI is asked again, as the GitHub and GitCafe credentials are. */
+const SESSION_TTL_MS = 5 * 60_000;
 const MAX_OUTPUT_BYTES = 8_000_000;
 const API_BASE_URL = "https://api.cursor.com";
 
@@ -261,19 +264,19 @@ const make = Effect.gen(function* () {
     },
   );
 
-  // The CLI's session token, kept until Origin refuses it. One read at a time, so a burst of
+  // The CLI's session token, kept a few minutes or until Origin refuses it. One read at a time, so a burst of
   // requests on a cold server spawns the CLI once; a failed read is shared for a few seconds, so
   // a burst while signed out does not queue one CLI process per request either.
   const tokenLock = yield* Semaphore.make(1);
   let token: Result.Result<Redacted.Redacted<string>, OriginCliError> | null = null;
   let tokenExpiresAt = 0;
   let viewerAccount: string | null = null;
+  let viewerExpiresAt = 0;
   const currentToken = (cwd: string) =>
     tokenLock.withPermits(1)(
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
-        if (token !== null && (Result.isSuccess(token) || tokenExpiresAt > now))
-          return yield* Effect.fromResult(token);
+        if (token !== null && tokenExpiresAt > now) return yield* Effect.fromResult(token);
         token = yield* execute({ cwd, operation: "authToken", args: ["auth", "token"] }).pipe(
           Effect.flatMap((stdout) => {
             const read = stdout.trim();
@@ -290,7 +293,9 @@ const make = Effect.gen(function* () {
           }),
           Effect.result,
         );
-        tokenExpiresAt = (yield* Clock.currentTimeMillis) + MISSING_TOKEN_TTL_MS;
+        tokenExpiresAt =
+          (yield* Clock.currentTimeMillis) +
+          (Result.isSuccess(token) ? SESSION_TTL_MS : MISSING_TOKEN_TTL_MS);
         return yield* Effect.fromResult(token);
       }),
     );
@@ -315,7 +320,9 @@ const make = Effect.gen(function* () {
       )
       .pipe(
         Effect.flatMap((response) =>
-          response.text.pipe(Effect.map((body) => ({ response, body }))),
+          collectUint8StreamText({ stream: response.stream, maxBytes: MAX_OUTPUT_BYTES }).pipe(
+            Effect.map((collected) => ({ response, collected })),
+          ),
         ),
         Effect.timeout(DEFAULT_TIMEOUT_MS),
         Effect.mapError(
@@ -327,6 +334,18 @@ const make = Effect.gen(function* () {
               detail: "Could not reach Cursor Origin.",
               cause,
             }),
+        ),
+        Effect.flatMap(({ response, collected }) =>
+          collected.truncated
+            ? Effect.fail(
+                new OriginCliError({
+                  operation: input.operation,
+                  cwd: input.cwd,
+                  reason: "failed",
+                  detail: "Cursor Origin sent a response too large to read.",
+                }),
+              )
+            : Effect.succeed({ response, body: collected.text }),
         ),
       );
   };
@@ -394,7 +413,8 @@ const make = Effect.gen(function* () {
     ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.ignore);
 
   const viewer: OriginCli["Service"]["viewer"] = Effect.fn("OriginCli.viewer")(function* (cwd) {
-    if (viewerAccount !== null) return viewerAccount;
+    if (viewerAccount !== null && viewerExpiresAt > (yield* Clock.currentTimeMillis))
+      return viewerAccount;
     yield* Effect.forkIn(warmUp(cwd), scope);
     return yield* authStatus(cwd).pipe(
       Effect.flatMap((status) => {
@@ -409,7 +429,12 @@ const make = Effect.gen(function* () {
             }),
           );
         viewerAccount = account;
-        return Effect.succeed(account);
+        return Clock.currentTimeMillis.pipe(
+          Effect.map((now) => {
+            viewerExpiresAt = now + SESSION_TTL_MS;
+            return account;
+          }),
+        );
       }),
     );
   });

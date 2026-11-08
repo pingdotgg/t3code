@@ -213,6 +213,7 @@ export const OriginFileListSchema = Schema.Struct({
           status: OptionalString,
           patch: OptionalString,
           previousFilename: OptionalString,
+          changes: Schema.optional(Schema.NullOr(Int64)),
         }),
       ),
     ),
@@ -373,7 +374,7 @@ export function originFilesPatch(
         ...(added ? ["new file mode 100644"] : removed ? ["deleted file mode 100644"] : []),
         ...(oldPath !== file.filename
           ? [
-              `similarity index ${file.patch ? 0 : 100}%`,
+              `similarity index ${file.patch || Number(file.changes ?? 0) > 0 ? 0 : 100}%`,
               `${action} from ${quoteGitPatchPath(oldPath)}`,
               `${action} to ${quoteGitPatchPath(file.filename)}`,
             ]
