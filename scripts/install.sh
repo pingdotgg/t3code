@@ -58,10 +58,24 @@ if "$interactive"; then
 fi
 step "Finding your release..."
 
+# Sleeps 1, 2, then 4 s before retrying a 408, 429, 5xx, or network error. Not curl
+# --retry: older curl waits out any Retry-After, however long.
+backoff() {
+  case "$1" in 408 | 429) ;; 4??) return 1 ;; esac
+  [ "$2" -lt 4 ] && sleep "$((1 << ($2 - 1)))"
+}
+
 # Exit 44 on a 404 so callers can tell "no such asset" from a network failure.
 fetch() {
   if command -v curl >/dev/null 2>&1; then
-    status="$(curl -sSL -H "Accept: ${3:-*/*}" -w '%{http_code}' "$1" -o "$2")" || return 1
+    attempt=1
+    while :; do
+      code=0; status="$(curl -sSL -H "Accept: ${3:-*/*}" -w '%{http_code}' "$1" -o "$2")" || code=$?
+      case "$code:$status" in 0:2??) break ;; esac
+      backoff "$status" "$attempt" || break
+      attempt=$((attempt + 1))
+    done
+    [ "$code" -eq 0 ] || return 1
     case "$status" in
       2??) return 0 ;;
       404) return 44 ;;
@@ -80,18 +94,30 @@ mb() {
   tenths=$((($1 * 10 + 524288) / 1048576))
   printf '%s.%s' "$((tenths / 10))" "$((tenths % 10))"
 }
-# Poll the file written by the downloader; no progress-output parsing or extra request.
-download() {
-  if ! "$interactive"; then fetch "$1" "$2"; return; fi
+download_start() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -D "$2.headers" "$1" -o "$2" 2>"$2.errors" &
+    curl -fsSL -w '%{http_code}' -D "$2.headers" "$1" -o "$2" >"$2.status" 2>"$2.errors" &
   else
     wget -q --server-response "$1" -O "$2" 2>"$2.headers" &
   fi
   download_pid=$!
+}
+# Reaps the finished download, then restarts it if curl hit a transient error.
+download_retry() {
+  result=0; wait "$download_pid" || result=$?
+  download_pid=
+  [ "$result" -ne 0 ] && [ -f "$2.status" ] && backoff "$(cat "$2.status")" "$attempt" || return 1
+  attempt=$((attempt + 1))
+  download_start "$1" "$2"
+}
+# Poll the file written by the downloader; no progress-output parsing or extra request.
+download() {
+  if ! "$interactive"; then fetch "$1" "$2"; return; fi
+  attempt=1
+  download_start "$1" "$2"
   previous=-1
   cr="$(printf '\r')"
-  while kill -0 "$download_pid" 2>/dev/null; do
+  while kill -0 "$download_pid" 2>/dev/null || download_retry "$1" "$2"; do
     bytes=0; total=0
     if [ -f "$2" ]; then bytes="$(wc -c < "$2")"; fi
     if [ -f "$2.headers" ]; then
@@ -119,8 +145,6 @@ download() {
     fi
     sleep 0.1
   done
-  result=0; wait "$download_pid" || result=$?
-  download_pid=
   if [ "$result" -ne 0 ]; then
     printf '\n' >&2
     if [ -f "$2.errors" ]; then cat "$2.errors" >&2; else cat "$2.headers" >&2; fi
@@ -128,7 +152,7 @@ download() {
   fi
   size="$(mb "$(wc -c < "$2")")"
   printf '\r\033[2K  %s■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■%s 100%%  %s%s / %s MB%s\n' "$accent" "$reset" "$muted" "$size" "$size" "$reset" >&2
-  rm -f "$2.headers" "$2.errors"
+  rm -f "$2.headers" "$2.errors" "$2.status"
 }
 
 case "$(uname -s)" in
