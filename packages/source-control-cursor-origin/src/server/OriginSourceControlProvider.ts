@@ -73,9 +73,9 @@ export const makeDiscovery = Effect.gen(function* () {
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
-/** `42`, `#42`, or a `cursor.com/codebase/…/pull/42` URL. */
+/** `42` or `#42`; anything else, such as `123/fix`, is a branch. */
 function originPullNumber(reference: string): number | null {
-  const match = /(?:^#?|\/pull\/)(\d+)(?:\/[^?#]*)?(?:[?#].*)?$/u.exec(reference.trim());
+  const match = /^#?(\d+)$/u.exec(reference.trim());
   const number = Number(match?.[1]);
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
