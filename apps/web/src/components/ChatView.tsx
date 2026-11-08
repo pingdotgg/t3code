@@ -4074,7 +4074,6 @@ export default function ChatView(props: ChatViewProps) {
                   onDeleteProjectScript={deleteProjectScriptStable}
                   onCompactContext={onComposerCompactContextStable}
                   compactDisabled={compactDisabled}
-                  compactDisabledReason={compactDisabledReason}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
