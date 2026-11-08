@@ -1144,7 +1144,7 @@ export function ThreadRelationshipsPanel(props: {
               {groups
                 .filter((group) => group.id === "previous" && group.rows.length > 0)
                 .map((group) => (
-                  <div key={`${scopedThreadKey(ref)}:${group.id}`} className="mt-1.5">
+                  <div key={`${scopedThreadKey(ref)}:${group.id}`} className="not-first:mt-1.5">
                     <ThreadLineageGroup {...group}>
                       {(visibleRows) => visibleRows.map((row) => renderLineageRow(row, true))}
                     </ThreadLineageGroup>
