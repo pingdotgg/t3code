@@ -3,7 +3,7 @@ import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
-import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -25,7 +25,6 @@ type GitCommitSheetProps = StaticScreenProps<{
 export function GitCommitSheet(_props: GitCommitSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
@@ -66,7 +65,6 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     });
   };
 
-  const android = Platform.OS === "android";
   const header = (
     <SheetHeader
       title="Commit changes"
@@ -81,19 +79,17 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     // header's Compose button is one, so Android renders content first and reverses the column.
     <View
       collapsable={false}
-      className="bg-sheet ios:flex-1 android:flex-col-reverse"
-      style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
+      className="bg-sheet ios:flex-1 android:absolute android:inset-0 android:flex-col-reverse"
     >
-      <ScreenContent fitToContents>
+      <ScreenContent>
         <ScrollView
           nestedScrollEnabled
           contentInsetAdjustmentBehavior="automatic"
-          className="android:shrink android:grow-0 ios:flex-1"
+          className="flex-1"
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           automaticallyAdjustKeyboardInsets
           contentContainerClassName="px-5 pt-4 pb-6 gap-5"
-          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           {isDefaultRef ? (
             <Text className="text-sm text-warning-foreground">
@@ -207,25 +203,28 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               })
             )}
           </View>
-          <View className="gap-2">
-            <Button
-              label="Commit changes"
-              icon="checkmark"
-              tone="primary"
-              fullWidth
-              disabled={!canWriteSourceControl || noneSelected || busy}
-              onPress={() => void runCommitAction(false)}
-            />
-            <Button
-              label="Commit on a new branch"
-              icon="arrow.branch"
-              tone="text"
-              fullWidth
-              disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
-              onPress={() => void runCommitAction(true)}
-            />
-          </View>
         </ScrollView>
+        <View
+          className="shrink-0 gap-2 border-t border-border-subtle px-5 pt-3"
+          style={{ paddingBottom: Math.max(insets.bottom, 18) }}
+        >
+          <Button
+            label="Commit changes"
+            icon="checkmark"
+            tone="primary"
+            fullWidth
+            disabled={!canWriteSourceControl || noneSelected || busy}
+            onPress={() => void runCommitAction(false)}
+          />
+          <Button
+            label="Commit on a new branch"
+            icon="arrow.branch"
+            tone="text"
+            fullWidth
+            disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
+            onPress={() => void runCommitAction(true)}
+          />
+        </View>
       </ScreenContent>
       {header}
     </View>

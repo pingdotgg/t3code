@@ -685,7 +685,10 @@ const RootStackConfig = createWorkspaceStackNavigator({
     GitCommit: createNativeStackScreen({
       screen: GitCommitSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
-      options: sheetRoute({ detent: 0.8, androidFit: true }),
+      options: {
+        ...sheetRoute({ detent: 0.8 }),
+        ...(Platform.OS === "android" ? { sheetAllowedDetents: [0.92] } : undefined),
+      },
     }),
     GitBranches: createNativeStackScreen({
       screen: GitBranchesSheet,
