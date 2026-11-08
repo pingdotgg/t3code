@@ -46,11 +46,10 @@ const CodexMcpServers = Schema.fromJsonString(
 );
 const decodeCodexMcpServers = Schema.decodeEffect(CodexMcpServers);
 
-// mcp_servers={} merges instead of replacing; disable named entries and quote dotted names.
-const codexMcpServersOff = (names: ReadonlyArray<string>): string | null =>
-  names.length === 0
-    ? null
-    : `mcp_servers={${names.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`;
+// Codex splits override paths on dots without interpreting TOML key quotes.
+// Leaf overrides preserve transports supplied by earlier launcher -c arguments.
+const codexMcpServersOff = (names: ReadonlyArray<string>): ReadonlyArray<string> =>
+  names.flatMap((name) => ["--config", `mcp_servers.${name}.enabled=false`]);
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
   codexConfig: CodexSettings,
@@ -288,13 +287,22 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           : {}),
       };
       const execLaunchArgs = codexExecLaunchArgs(launchArgs);
-      const mcpServersOff = yield* listEnabledMcpServers({
+      const enabledMcpServers = yield* listEnabledMcpServers({
         binary,
         cwd,
         env,
         // `codex mcp` rejects --strict-config; the overrides still apply.
         launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
-      }).pipe(Effect.map(codexMcpServersOff));
+      });
+      const unaddressableServer = enabledMcpServers.find(
+        (name) => name.includes(".") || name.includes("=") || name.includes("\0"),
+      );
+      if (unaddressableServer !== undefined) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: `Codex cannot safely disable MCP server ${yield* encodeJsonForOperation(operation, unaddressableServer)}: its CLI override parser does not support dots, equals signs, or null characters in server names. Rename that server or select another system model.`,
+        });
+      }
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
@@ -302,7 +310,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...execLaunchArgs,
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
-          ...(mcpServersOff ? ["--config", mcpServersOff] : []),
+          ...codexMcpServersOff(enabledMcpServers),
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",
