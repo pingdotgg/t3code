@@ -1262,38 +1262,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     requestedBranch: string,
   ) {
-    // A branch at a parent path (such as `t3`) blocks every ref nested under it, so no suffix
-    // would help; flatten to a sibling the way temporary worktree branches already do.
+    const result = yield* executeGit(
+      "GitVcsDriver.branchExists",
+      cwd,
+      ["for-each-ref", "--format=%(refname:strip=2)", "refs/heads/"],
+      { maxOutputBytes: 16 * 1024 * 1024 },
+    );
+    if (result.stdoutTruncated) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.renameBranch",
+        command: "git for-each-ref",
+        cwd,
+        detail: "Branch enumeration exceeded the output limit.",
+      });
+    }
+    const branches = new Set(result.stdout.split("\n").filter(Boolean));
+    const blockedNames = new Set(branches);
+    for (const branch of branches) {
+      const segments = branch.split("/");
+      for (let index = 1; index < segments.length; index += 1) {
+        blockedNames.add(segments.slice(0, index).join("/"));
+      }
+    }
+    // An ancestor ref blocks every suffix beneath it, so flatten to a sibling.
     const segments = requestedBranch.split("/");
-    let blockedByParent = false;
-    for (let index = 1; index < segments.length && !blockedByParent; index += 1) {
-      blockedByParent = yield* branchExists(cwd, segments.slice(0, index).join("/"));
-    }
+    const blockedByParent = segments.some(
+      (_, index) => index > 0 && branches.has(segments.slice(0, index).join("/")),
+    );
     const desiredBranch = blockedByParent ? segments.join("-") : requestedBranch;
-    // A branch nested under the name (`t3-fix/child`) blocks it as surely as one with the name.
-    const isBranchNameTaken = (name: string) =>
-      Effect.zipWith(
-        branchExists(cwd, name),
-        runGitStdout(
-          "GitVcsDriver.branchExists",
-          cwd,
-          ["for-each-ref", "--count=1", "--format=%(refname)", `refs/heads/${name}/`],
-          true,
-        ),
-        (exists, nested) => exists || nested.trim().length > 0,
-      );
-
-    const isDesiredTaken = yield* isBranchNameTaken(desiredBranch);
-    if (!isDesiredTaken) {
-      return desiredBranch;
-    }
-
+    if (!blockedNames.has(desiredBranch)) return desiredBranch;
     for (let suffix = 1; suffix <= 100; suffix += 1) {
       const candidate = `${desiredBranch}-${suffix}`;
-      const isCandidateTaken = yield* isBranchNameTaken(candidate);
-      if (!isCandidateTaken) {
-        return candidate;
-      }
+      if (!blockedNames.has(candidate)) return candidate;
     }
 
     return yield* new GitCommandError({
@@ -4239,14 +4239,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
         });
       }
-      let directoryName = targetBranch.replace(/\//g, "-");
-      // Leave room for files beneath the worktree on Windows, regardless of branch length.
-      if (directoryName.length > 40) {
-        const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(targetBranch));
-        // Avoid splitting a surrogate pair, which Git would list back as a different path.
-        const prefix = directoryName.slice(0, 23).replace(/[\uD800-\uDBFF]$/, "");
-        directoryName = `${prefix}-${Hex.encode(hash).slice(0, 16)}`;
+      const identity = `${yield* readGitCommonDir(input.cwd)}\0${targetBranch}`;
+      const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(identity));
+      // Bound both UTF-16 length and UTF-8 bytes, leaving room for files on Windows.
+      let prefix = "";
+      for (const character of targetBranch.replace(/\//g, "-")) {
+        if (prefix.length + character.length > 23 || Buffer.byteLength(prefix + character) > 23)
+          break;
+        prefix += character;
       }
+      const directoryName = `${prefix}-${Hex.encode(hash).slice(0, 16)}`;
       worktreePath = path.join(parentDir, repoName, directoryName);
     }
     const newRefName = input.newRefName;
