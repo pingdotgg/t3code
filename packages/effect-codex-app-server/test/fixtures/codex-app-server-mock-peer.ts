@@ -104,6 +104,24 @@ const handleMethod = (message: Record<string, unknown>) => {
       });
       return;
     }
+    case "thread/realtime/start": {
+      const params = message.params as Record<string, unknown>;
+      const transport = params.transport as Record<string, unknown>;
+      if (transport.type !== "webrtc" || transport.sdp !== "synthetic-offer") {
+        respondError(message.id as number | string, -32602, "Expected the WebRTC offer");
+        return;
+      }
+      writeMessage({
+        method: "thread/realtime/sdp",
+        params: { threadId: params.threadId, sdp: "synthetic-answer" },
+      });
+      respond(message.id as number | string, {});
+      return;
+    }
+    case "thread/realtime/stop": {
+      respond(message.id as number | string, {});
+      return;
+    }
     default: {
       if (message.id !== undefined) {
         respondError(message.id as number | string, -32601, `Unhandled request: ${method}`);

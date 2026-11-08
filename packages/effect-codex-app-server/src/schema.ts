@@ -1,5 +1,6 @@
 export * from "./_generated/schema.gen.ts";
-export * from "./_generated/meta.gen.ts";
+export * from "./rpc.ts";
+export * from "./realtime.ts";
 export * from "./_generated/namespaces.gen.ts";
 
 // Mirrors codex_protocol::protocol::MAX_THREAD_GOAL_OBJECTIVE_CHARS, which the

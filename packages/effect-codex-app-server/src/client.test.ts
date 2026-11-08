@@ -39,6 +39,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
     Effect.gen(function* () {
       const userInputRequests = yield* Ref.make<Array<unknown>>([]);
       const messageDeltas = yield* Ref.make<Array<unknown>>([]);
+      const realtimeSdp = yield* Deferred.make<string>();
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
       const layerClient = CodexClient.layerChildProcess(handle);
@@ -91,6 +92,21 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
         const skills = yield* client.request("skills/list", { cwds: [peerCwd] });
         assert.equal(skills.data.length, 1);
         assert.equal(skills.data[0]?.cwd, peerCwd);
+
+        yield* client.handleServerNotification("thread/realtime/sdp", (payload) =>
+          Deferred.succeed(realtimeSdp, payload.sdp).pipe(Effect.asVoid),
+        );
+        yield* client.request("thread/realtime/start", {
+          threadId: "thread-1",
+          outputModality: "audio",
+          version: "v3",
+          transport: { type: "webrtc", sdp: "synthetic-offer" },
+          includeStartupContext: false,
+          clientManagedHandoffs: true,
+          voice: "sol",
+        });
+        assert.equal(yield* Deferred.await(realtimeSdp), "synthetic-answer");
+        yield* client.request("thread/realtime/stop", { threadId: "thread-1" });
 
         return {
           account,

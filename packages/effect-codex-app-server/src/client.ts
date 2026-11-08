@@ -7,7 +7,7 @@ import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import * as CodexRpc from "./_generated/meta.gen.ts";
+import * as CodexRpc from "./rpc.ts";
 import * as CodexSchema from "./_generated/schema.gen.ts";
 import * as CodexError from "./errors.ts";
 import * as CodexProtocol from "./protocol.ts";
