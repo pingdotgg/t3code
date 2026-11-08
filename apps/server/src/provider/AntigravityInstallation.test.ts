@@ -688,10 +688,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           const windowsDirectory = path.join(baseDir, `windows-${name}`);
           yield* fs.makeDirectory(windowsDirectory);
           yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
-          expect(yield* windows.resolve("agy", { PATH: windowsDirectory })).toMatchObject({
-            executablePath: path.join(windowsDirectory, name),
-            harnessPath: null,
-          });
+          const resolved = yield* windows.resolve("agy", { PATH: windowsDirectory });
+          // On a case-insensitive filesystem (macOS, Windows) the agy.CMD probe matches agy.cmd first.
+          expect(resolved.executablePath.toLowerCase()).toBe(
+            path.join(windowsDirectory, name).toLowerCase(),
+          );
+          expect(resolved.harnessPath).toBeNull();
         }
       }),
   );
