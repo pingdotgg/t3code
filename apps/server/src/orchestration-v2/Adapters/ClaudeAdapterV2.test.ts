@@ -3673,6 +3673,262 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect.each([
+    {
+      name: "text after quiz_card at turn end",
+      tools: ["mcp__t3-code__quiz_card"],
+      texts: ["Answer the card above when you're ready."],
+      result: "Answer the card above when you're ready.",
+      reasoningText: "Answer the card above when you're ready.",
+      expected: ["reasoning"],
+    },
+    {
+      name: "text after question_card at turn end",
+      tools: ["mcp__t3-code__question_card"],
+      texts: ["Your answer is still open."],
+      expected: ["reasoning"],
+    },
+    {
+      name: "text between two cards stays visible",
+      tools: ["mcp__t3-code__quiz_card", "mcp__t3-code__question_card"],
+      texts: ["The next check builds on that card."],
+      expected: ["assistant_message", "reasoning"],
+    },
+    {
+      name: "multiple card leads stay visible",
+      tools: ["mcp__t3-code__quiz_card", "mcp__t3-code__question_card", "mcp__t3-code__quiz_card"],
+      texts: ["Lead for the second card.", "Lead for the third card.", "Trailing card filler."],
+      result: "Trailing card filler.",
+      expected: ["assistant_message", "assistant_message", "reasoning"],
+    },
+    {
+      name: "two text blocks after the last card",
+      tools: ["mcp__t3-code__quiz_card"],
+      texts: ["Answer the card above."],
+      extraText: "Next I'll cover the verifier.",
+      reasoningText: "Answer the card above.\nNext I'll cover the verifier.",
+      expected: ["reasoning"],
+    },
+    {
+      name: "text after Bash stays visible",
+      tools: ["Bash"],
+      texts: ["The command completed."],
+      expected: ["assistant_message"],
+    },
+  ] as const)("keeps only trailing card text as reasoning: $name", (testCase) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("trailing-card-text-attempt"),
+          text: "Teach me",
+          attachments: [],
+        }),
+      );
+      const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+        claudeSdkFrame({
+          type: "assistant",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: { id: uuid, model: "claude-sonnet-5-5", content },
+        });
+      const frames: SDKMessage[] = [];
+      for (const [index, tool] of testCase.tools.entries()) {
+        frames.push(
+          snapshot(`trailing-card-tool-${index}`, [
+            { type: "tool_use", id: `tool-${index}`, name: tool, input: {} },
+          ]),
+        );
+        const text = testCase.texts[index];
+        if (text !== undefined) {
+          frames.push(snapshot(`trailing-card-text-${index}`, [{ type: "text", text }]));
+        }
+      }
+      if (testCase.tools.length > testCase.texts.length) {
+        frames.push(snapshot("trailing-card-tail", [{ type: "text", text: "The final prompt." }]));
+      }
+      if ("extraText" in testCase) {
+        frames.push(snapshot("trailing-card-extra", [{ type: "text", text: testCase.extraText }]));
+      }
+      frames.push(makeResultFrame({ uuid: "trailing-card-result", result: testCase.result ?? "" }));
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      yield* harness.awaitTerminal(1);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message")
+          ? [{ type: event.turnItem.type, text: event.turnItem.text }]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => item.type),
+        [...testCase.expected],
+      );
+      if ("reasoningText" in testCase) {
+        assert.deepEqual(
+          items.filter((item) => item.type === "reasoning").map((item) => item.text),
+          [testCase.reasoningText],
+        );
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each(["steer", "promotion", "duplicate"] as const)(
+    "keeps post-card text correct across $scenario",
+    (scenario) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`card-${scenario}-attempt`),
+          text: "Teach me",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+          claudeSdkFrame({
+            type: "assistant",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: { id: uuid, model: "claude-sonnet-5-5", content },
+          });
+        const card = (id: string) =>
+          snapshot(id, [
+            { type: "tool_use", id: `${id}-tool`, name: "mcp__t3-code__quiz_card", input: {} },
+          ]);
+        yield* harness.offerAndWait(card(`card-${scenario}-a`));
+        if (scenario === "steer") {
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          yield* harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${input.attemptId}`,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("card-steer-message"),
+              text: "Continue with this correction.",
+              attachments: [],
+            },
+          });
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "card-steer-abort",
+              result: "",
+              terminalReason: "aborted_streaming",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "card-steer-reply",
+              text: "The corrected explanation.",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "card-steer-final", result: "The corrected explanation." }),
+          );
+          yield* harness.awaitTerminal(1);
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text === "The corrected explanation.",
+            ),
+          );
+          return;
+        }
+        if (scenario === "promotion") {
+          yield* harness.offerAndWait(
+            snapshot("promotion-lead", [{ type: "text", text: "Right, that holds." }]),
+          );
+          yield* harness.offerAndWait(
+            snapshot("promotion-card-b", [
+              { type: "thinking", thinking: "Planning the next idea", signature: "sig" },
+              { type: "thinking", thinking: "Next idea…", signature: "sig" },
+              {
+                type: "tool_use",
+                id: "promotion-card-b-tool",
+                name: "mcp__t3-code__quiz_card",
+                input: {},
+              },
+            ]),
+          );
+          yield* harness.offerAndWait(makeResultFrame({ uuid: "promotion-result", result: "" }));
+          yield* harness.awaitTerminal(1);
+          const ordered = harness.events
+            .flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              ((event.turnItem.type === "assistant_message" &&
+                ["Right, that holds.", "Next idea…"].includes(event.turnItem.text)) ||
+                (event.turnItem.type === "dynamic_tool" &&
+                  event.turnItem.status === "running" &&
+                  event.turnItem.nativeItemRef?.nativeId === "promotion-card-b-tool"))
+                ? [
+                    {
+                      ordinal: event.turnItem.ordinal,
+                      value:
+                        event.turnItem.type === "dynamic_tool" ? "card-b" : event.turnItem.text,
+                    },
+                  ]
+                : [],
+            )
+            .sort((a, b) => a.ordinal - b.ordinal)
+            .map((item) => item.value);
+          assert.deepEqual(ordered, ["Right, that holds.", "Next idea…", "card-b"]);
+          return;
+        }
+        yield* harness.offerAndWait(
+          snapshot("duplicate-text", [{ type: "text", text: "Only once." }]),
+        );
+        yield* harness.offerAndWait(
+          snapshot("duplicate-text", [{ type: "text", text: "Only once." }]),
+        );
+        yield* harness.offerAndWait(makeResultFrame({ uuid: "duplicate-result", result: "" }));
+        yield* harness.awaitTerminal(1);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "reasoning" &&
+            event.turnItem.text.includes("Only once.")
+              ? [event.turnItem.text]
+              : [],
+          ),
+          ["Only once."],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   const attachmentBudgetOutcomes = [
     "resume",
     "legacy",
