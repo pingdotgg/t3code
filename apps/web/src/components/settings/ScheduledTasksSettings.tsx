@@ -1314,7 +1314,7 @@ function ScheduledTaskDestination({
             }
             aria-label={onThreadModeChange ? "Destination thread" : undefined}
             disabled={disabled}
-            render={<Button variant="outline" size="sm" />}
+            render={<Button variant="secondary" size="sm" />}
             className="w-full justify-between"
           >
             <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
