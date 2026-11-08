@@ -829,6 +829,68 @@ it.effect("working runs exclude queued and finished runs", () =>
       });
       assert.equal(yield* store.hasWorkingRuns(), working, status);
     }
+
+    // A Claude background subagent can keep working after its parent run completes.
+    const providerThreadId = ProviderThreadId.make("provider-thread:working-runs");
+    const providerThread = {
+      id: providerThreadId,
+      driver,
+      providerInstanceId,
+      providerSessionId: null,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle" as const,
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      pendingBackgroundTasks: [{ taskId: "review", kind: "subagent" as const }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* store.apply({
+      id: EventId.make("working-runs:background-subagent"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: providerThread,
+    });
+    assert.isTrue(yield* store.hasWorkingRuns());
+
+    yield* store.apply({
+      id: EventId.make("working-runs:idle-command"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...providerThread,
+        pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command" }],
+      },
+    });
+    assert.isFalse(yield* store.hasWorkingRuns());
+
+    yield* store.apply({
+      id: EventId.make("working-runs:awaited-command"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...providerThread,
+        pendingBackgroundTasks: [{ taskId: "tests", kind: "command", awaited: true as const }],
+      },
+    });
+    assert.isTrue(yield* store.hasWorkingRuns());
+
+    yield* store.apply({
+      id: EventId.make("working-runs:background-cleared"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...providerThread, pendingBackgroundTasks: [] },
+    });
+    assert.isFalse(yield* store.hasWorkingRuns());
   }).pipe(Effect.provide(layerTest)),
 );
 

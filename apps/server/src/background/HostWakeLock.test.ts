@@ -15,6 +15,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as HostWakeLock from "./HostWakeLock.ts";
 
 const runUpdated = { type: "run.updated" } as OrchestrationV2DomainEvent;
+const providerThreadUpdated = { type: "provider-thread.updated" } as OrchestrationV2DomainEvent;
 const turnItemUpdated = { type: "turn-item.updated" } as OrchestrationV2DomainEvent;
 
 const setup = Effect.fn("HostWakeLockTest.setup")(function* (input: {
@@ -146,6 +147,23 @@ describe("HostWakeLock", () => {
         yield* Queue.take(host.spawned);
         // One read at startup, one for the run event.
         expect(yield* Ref.get(host.workingReads)).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("reconciles when a provider thread's background roster changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const host = yield* setup({ mode: "whileWorking" });
+
+        yield* Ref.set(host.working, true);
+        yield* Queue.offer(host.events, providerThreadUpdated);
+        yield* Queue.take(host.spawned);
+
+        yield* Ref.set(host.working, false);
+        yield* Queue.offer(host.events, providerThreadUpdated);
+        yield* Queue.take(host.released);
+        expect(yield* Ref.get(host.spawns)).toBe(1);
       }),
     ),
   );

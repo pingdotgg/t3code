@@ -109,7 +109,13 @@ export const make = Effect.gen(function* () {
         ),
         Stream.merge(
           orchestrator.streamDomainEvents.pipe(
-            Stream.filter((event) => event.type === "run.created" || event.type === "run.updated"),
+            Stream.filter(
+              (event) =>
+                event.type === "run.created" ||
+                event.type === "run.updated" ||
+                // Background agents can outlive their parent run; their roster lives here.
+                event.type === "provider-thread.updated",
+            ),
           ),
         ),
         Stream.runForEach(() => reconcile),

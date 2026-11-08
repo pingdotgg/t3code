@@ -517,7 +517,12 @@ export interface ProjectionStoreV2Shape {
   >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
-  /** Excludes queued runs, which can sit idle until a usage limit resets. */
+  /**
+   * True while a run is preparing/starting/running/waiting, or while a provider
+   * thread still holds completion on background work (subagent, background_task,
+   * or an awaited command/monitor) after its parent run ends. Excludes queued
+   * runs, which can sit idle until a usage limit resets.
+   */
   readonly hasWorkingRuns: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   /** Every active thread, in shell order. */
   readonly listActiveShellIndex: () => Effect.Effect<
@@ -7227,10 +7232,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     }, Effect.mapError(shellSnapshotReadError));
 
     const hasWorkingRuns = Effect.fn("ProjectionStore.hasWorkingRuns")(function* () {
+      // Same hold rules as backgroundWorkHoldsCompletion: subagent/background_task
+      // always hold; command/monitor only when awaited.
       const rows = yield* sql<{ readonly working: number }>`
-        SELECT EXISTS (
-          SELECT 1 FROM orchestration_v2_projection_runs
-          WHERE status IN ('preparing', 'starting', 'running', 'waiting')
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runs
+            WHERE status IN ('preparing', 'starting', 'running', 'waiting')
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM orchestration_v2_projection_provider_threads AS provider_thread
+            JOIN json_each(provider_thread.payload_json, '$.pendingBackgroundTasks') AS task
+            WHERE json_extract(task.value, '$.awaited') = 1
+               OR json_extract(task.value, '$.kind') IN ('subagent', 'background_task')
+          )
         ) AS working
       `;
       return rows[0]?.working === 1;
