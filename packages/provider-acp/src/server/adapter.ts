@@ -4586,6 +4586,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             context.interrupted = true;
           }
           const failure = stopReasonFailure(work.stopReason, work.error);
+          if (failure !== undefined && !context.interrupted) {
+            yield* terminalizeOpenForegroundTools(context, "failed");
+          }
           yield* finalizeTurn(
             context,
             failure !== undefined

@@ -2058,7 +2058,7 @@ describe("AcpRegistryAdapterV2", () => {
     { stopReason: "max_tokens", childUpdate: "state_update" },
     { stopReason: "max_turn_requests", childUpdate: "subagent_update" },
   ])(
-    "fails Claude's turn and child when they stop with $stopReason via $childUpdate",
+    "fails Claude's turn, child and running tool when they stop with $stopReason via $childUpdate",
     ({ stopReason, childUpdate }) =>
       Effect.gen(function* () {
         const { update, idle, prompt } = claudeFrames;
@@ -2066,6 +2066,15 @@ describe("AcpRegistryAdapterV2", () => {
           ...claudeFrames.open,
           ...prompt(1),
           ...claudeChild,
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "root-tool",
+            name: "Bash",
+            title: "Read package",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: "cat package.json" },
+          }),
           update("child-1", { sessionUpdate: "state_update", state: "running" }),
           childUpdate === "state_update"
             ? update("child-1", { sessionUpdate: "state_update", state: "idle", stopReason })
@@ -2086,6 +2095,12 @@ describe("AcpRegistryAdapterV2", () => {
         if (child?.type !== "subagent.updated") throw new Error("Missing child update");
         assert.equal(child.subagent.status, "failed");
         assert.isNotNull(child.subagent.result, "the child shows why it stopped");
+        const tool = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+        );
+        if (tool?.type !== "turn_item.updated") throw new Error("Missing tool update");
+        assert.equal(tool.turnItem.status, "failed");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
