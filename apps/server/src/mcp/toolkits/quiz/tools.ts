@@ -12,7 +12,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 // First, so the model writes the reply before the question.
 const reply = Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(2000)).annotate({
   description:
-    "Your words to the learner, shown as your message text just above the card; they never see your thinking. After an answer: your verdict, then the teaching this card tests, with the facts it needs (rules, numbers, definitions) written out here, never just a pointer to a table or text above. For an opening check: one sentence of framing.",
+    "Your words to the learner, shown as your message text just above the card; they never see your thinking. Except for an opening check or explain-back request, the reply itself must be one tight paragraph: give the verdict on the learner's last answer, if there is one, then teach what this card tests with its facts (rules, numbers, definitions) written out here, never just a pointer to a table or text above. For an opening check or explain-back request, the reply itself may be one short framing sentence.",
 });
 
 export const QuizCardInput = Schema.Struct({

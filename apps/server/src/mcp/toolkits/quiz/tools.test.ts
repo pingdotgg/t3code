@@ -69,7 +69,7 @@ it("tells the model what a card's reply holds", () => {
     const schema = advertisedJsonSchema(tool) as { properties: { reply: object } };
     expect(schema.properties.reply, tool.name).toMatchObject({
       maxLength: 2000,
-      description: expect.stringContaining("the teaching this card tests"),
+      description: expect.stringContaining("teach what this card tests"),
     });
   }
 });
