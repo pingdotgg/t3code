@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Effect has no SOCKS proxy or address block list.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - Raw SOCKS sockets own the CONNECT deadline and clear it on completion.
 import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
@@ -127,6 +127,9 @@ export const resolvePreviewEgressProxy = (
   }
 };
 
+// Match ConnectReachability's five-second connect budget, below measurement's six seconds.
+const CONNECT_TIMEOUT_MS = 5_000;
+
 /** Opens a CONNECT tunnel to host:port through the egress proxy. */
 const connectThroughProxy = (
   proxy: PreviewEgressProxy,
@@ -139,9 +142,11 @@ const connectThroughProxy = (
   let head = Buffer.alloc(0);
   let headerBytes = 0;
   let finished = false;
+  const timer = setTimeout(() => finish(new Error("egress proxy timed out")), CONNECT_TIMEOUT_MS);
   const finish = (error: Error | undefined, rest = Buffer.alloc(0)) => {
     if (finished) return;
     finished = true;
+    clearTimeout(timer);
     socket.off("data", onData);
     done(error, rest);
   };

@@ -2,6 +2,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import type * as NodeDns from "node:dns";
 import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeNet from "node:net";
@@ -244,6 +245,73 @@ describe("publicProxy", () => {
       );
 
     const portOf = (server: NodeNet.Server) => (server.address() as NodeNet.AddressInfo).port;
+
+    it.live.each(["", "HTTP/1.1 100 Continue\r\n\r\n", "HTTP/1.1 200 OK\r\n"])(
+      "refuses an unfinished CONNECT and ignores a late success (initial reply %j)",
+      (response) =>
+        Effect.gen(function* () {
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+          try {
+            const requested = Promise.withResolvers<NodeNet.Socket>();
+            const closed = Promise.withResolvers<void>();
+            const { server, seen } = yield* fakeEgress(response);
+            server.on("connection", (socket) => {
+              socket.once("data", () => requested.resolve(socket));
+              socket.once("close", () => closed.resolve());
+            });
+            yield* withEnv(
+              { T3CODE_PREVIEW_EGRESS_PROXY: `http://127.0.0.1:${portOf(server)}` },
+              Effect.gen(function* () {
+                const { port } = yield* publicProxy;
+                const connecting = yield* connectThrough(port, ipv4Target("1.1.1.1", 443)).pipe(
+                  Effect.forkScoped,
+                );
+                const upstream = yield* Effect.promise(() => requested.promise);
+                vi.advanceTimersByTime(5_000);
+                upstream.write("HTTP/1.1 200 OK\r\n\r\n");
+                const { code, socket } = yield* Fiber.join(connecting);
+                expect(code).toBe(5);
+                yield* Effect.promise(() => closed.promise);
+                if (!socket.closed) {
+                  yield* Effect.promise(
+                    () => new Promise<void>((resolve) => socket.once("close", () => resolve())),
+                  );
+                }
+                expect(socket.destroyed).toBe(true);
+                expect(seen).toEqual(["CONNECT 1.1.1.1:443 HTTP/1.1"]);
+              }),
+            );
+          } finally {
+            vi.useRealTimers();
+          }
+        }).pipe(Effect.scoped),
+    );
+
+    it.live("keeps a completed tunnel open past the CONNECT deadline", () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        try {
+          const { server } = yield* fakeEgress(200);
+          yield* withEnv(
+            { T3CODE_PREVIEW_EGRESS_PROXY: `http://127.0.0.1:${portOf(server)}` },
+            Effect.gen(function* () {
+              const { port } = yield* publicProxy;
+              const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 443));
+              expect(code).toBe(0);
+              vi.advanceTimersByTime(5_000);
+              const echoed = yield* Effect.callback<string>((resume) => {
+                socket.once("data", (chunk) => resume(Effect.succeed(chunk.toString())));
+                socket.write("ping");
+              });
+              expect(echoed).toBe("ping");
+              socket.destroy();
+            }),
+          );
+        } finally {
+          vi.useRealTimers();
+        }
+      }).pipe(Effect.scoped),
+    );
 
     it.live.each(["client disconnect", "scope shutdown"] as const)(
       "closes an unfinished CONNECT on %s",
