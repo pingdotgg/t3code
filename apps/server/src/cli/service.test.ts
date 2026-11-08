@@ -225,7 +225,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
       const { service, uninstalls } = makeTestService({
         ...status,
-        installedBaseDir: input.otherHome ? "/home/me/.t3" : baseDir,
+        ...(input.otherHome
+          ? { installedBaseDir: "/home/me/.t3", otherBaseDir: "/home/me/.t3" }
+          : { installedBaseDir: baseDir }),
       });
       vi.spyOn(BootService, "layer").mockReturnValue(
         Layer.succeed(

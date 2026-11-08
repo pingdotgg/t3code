@@ -89,9 +89,7 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
   const path = yield* Path.Path;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
-  const servesThisHome =
-    status.installedBaseDir !== undefined &&
-    path.resolve(status.installedBaseDir) === path.resolve(input.baseDir);
+  const servesThisHome = status.installedBaseDir !== undefined && status.otherBaseDir === undefined;
   const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const runtimeDir = path.dirname(versionsDir);
   const launchedAs = (yield* HostProcess.IsExecutable) ? yield* resolveLauncherPath : undefined;
