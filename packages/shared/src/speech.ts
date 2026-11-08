@@ -1,4 +1,6 @@
 import {
+  CLOUD_SPEECH_PROVIDER_NAMES,
+  type CloudSpeechProvider,
   SPEECH_MAX_OPTIONS_BYTES,
   type SpeechCustomWords,
   SpeechTranscriptionOptions,
@@ -7,6 +9,21 @@ import * as Schema from "effect/Schema";
 
 const decodeOptions = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 const encodeOptions = Schema.encodeSync(Schema.fromJsonString(SpeechTranscriptionOptions));
+
+export function cloudSpeechDisclosure(provider: CloudSpeechProvider, environment: string) {
+  return provider === "openrouter"
+    ? `After you stop, ${environment} sends the recording to OpenRouter. OpenRouter chooses who runs your model. OminaX requests zero data retention; your OpenRouter account may allow safety retention.`
+    : `After you stop, ${environment} sends your recording and vocabulary hints, including project names, to ${CLOUD_SPEECH_PROVIDER_NAMES[provider]}.`;
+}
+
+// Only offer explicit hints understood by all cloud APIs; other languages can still be detected.
+export const cloudSpeechLanguages = {
+  supportsLanguageDetection: true,
+  languages:
+    "ar bg ca cs da de el en es fa fi fr hi hr hu id it ja ko mk ms nl pl pt ro ru sk sv th tr uk ur vi zh".split(
+      " ",
+    ),
+};
 
 /** Resolve the language the model can produce from the requested language. */
 export function effectiveSpeechLanguage(
@@ -17,6 +34,44 @@ export function effectiveSpeechLanguage(
   if (intent !== "auto" && model.languages.includes(intent)) return intent;
   if (model.supportsLanguageDetection) return "auto";
   return model.languages.find((language) => language === "en") ?? model.languages[0] ?? "auto";
+}
+
+/**
+ * The model first-run setup offers: the selected one, else a recommended one, else any that the
+ * server would really transcribe the person's language with. Without a language hint,
+ * offer only the selected model, without a recommendation.
+ */
+export function chooseSetupSpeechModel<
+  Model extends {
+    readonly id: string;
+    readonly languages: readonly string[];
+    readonly supportsLanguageDetection: boolean;
+    readonly recommended: boolean;
+  },
+>(
+  models: readonly Model[],
+  input: {
+    readonly selectedModelId: string;
+    readonly intent: string;
+    readonly preferred: readonly string[];
+  },
+) {
+  if (input.intent === "auto" && input.preferred.length === 0) {
+    const model = models.find(({ id }) => id === input.selectedModelId);
+    return model && { model, language: null };
+  }
+  for (const language of input.intent === "auto" ? input.preferred : [input.intent]) {
+    const capable = models.filter((model) => {
+      const effective = effectiveSpeechLanguage(model, input.intent);
+      return effective === language || (effective === "auto" && model.languages.includes(language));
+    });
+    const model =
+      capable.find(({ id }) => id === input.selectedModelId) ??
+      capable.find(({ recommended }) => recommended) ??
+      capable[0];
+    if (model) return { model, language };
+  }
+  return undefined;
 }
 
 const vocabularyKey = (value: string) => value.trim().normalize("NFC").toLocaleLowerCase();

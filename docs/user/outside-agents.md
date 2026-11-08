@@ -45,9 +45,10 @@ Only approve a sign-in you just started. To approve, enter a pairing code from
 browser already signed in to the environment with permission to manage access
 can approve without a code.
 
-Then choose what the agent may do:
+Then choose what the agent may do. **Auto** is selected by default, or the
+closest lower mode allowed by your organization’s policy:
 
-- **Read only** is the default. The agent can read projects and threads and see
+- **Read only** lets the agent read projects and threads and see
   the available providers and models. It cannot change anything.
 - **Supervised** through **Full access** also let it start, message and stop
   threads in every project. A thread it starts or steers cannot run with more

@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { CliError } from "effect/cli";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -799,18 +800,34 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("restart leaves a service that serves another T3 home alone", () =>
-    Effect.gen(function* () {
-      const { service, fs, commands, makeService } = yield* makeHarness();
-      yield* service.install();
-      commands.length = 0;
-      const path = yield* Path.Path;
-      const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
+  it.effect(
+    "restart and install leave a service that serves another T3 home alone, not a link to this one",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, commands, makeService } = yield* makeHarness();
+        const plan = yield* service.install();
+        const unit = yield* fs.readFileString(plan.unitPath);
+        const path = yield* Path.Path;
+        const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
 
-      const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
-      expect(yield* other.restart).toBe("skipped");
-      expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
-    }),
+        const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
+        commands.length = 0;
+        expect(yield* other.restart).toBe("skipped");
+        const refused = yield* other.install().pipe(Effect.flip);
+        expect(refused._tag).toBe("BootServiceOtherBaseDirError");
+        // The CLI prints a user message without a stack trace.
+        expect(CliError.getUserMessage(refused)).toBe(refused.message);
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+        expect(commands).toEqual([]);
+        expect((yield* other.status).otherBaseDir).toBe(baseDir);
+
+        // OminaX's home rename leaves the old home linking to the new one.
+        const linkedHome = path.join(otherHome, "linked");
+        yield* fs.symlink(baseDir, linkedHome);
+        const linked = yield* makeService(undefined, "1.2.3", linkedHome);
+        expect((yield* linked.status).otherBaseDir).toBeUndefined();
+        expect(yield* linked.restart).toBe("restarted");
+      }),
   );
 
   it.effect("hands the whole install to systemd without changing the running service", () =>

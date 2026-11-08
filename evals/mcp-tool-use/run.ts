@@ -100,6 +100,8 @@ import {
 import {
   argvForm,
   gradeSecret,
+  scriptsBefore,
+  UNKNOWN_SCRIPT,
   scriptSources,
   SecretExpect,
   secretDiagnostics,
@@ -1675,6 +1677,16 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     if (found.length === 0) return toolResult(call.id, "No matching deferred tools found");
     return loadTools(tools, call.id, found);
   }
+  // T3 refuses a page call without exactly one source before any mocked result.
+  const sources = [input.html, input.path].filter(
+    (source) => source !== undefined && source !== null,
+  );
+  if (isPageTool(name) && (sources.length !== 1 || typeof sources[0] !== "string")) {
+    return failed("Pass exactly one of html or path.");
+  }
+  if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
+    return failed(`${input.path} is not a readable HTML document. Pass an absolute path.`);
+  }
   const mock = testCase.setup.mocks?.[name];
   // T3 answers device calls from the world. A mock that is a T3 device error fails inside T3.
   const failure = deviceFailure(mock);
@@ -1815,15 +1827,50 @@ export const pastedText = ({ prompt, setup }: Pick<McpToolUseCase, "prompt" | "s
     prompt,
   ].join("\n");
 
+const isPageTool = (tool: string) => tool === "html_preview" || tool === "html_render";
+
+/** `page` is the HTML a page tool shows: its inline `html`, or the file the agent wrote at `path`. */
+const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, string>) => {
+  if (!isPageTool(tool) || !isRecord(input)) return input;
+  const path = valueText(input.path);
+  // A patch may name the file relative to the agent's working directory. When written files that
+  // could be this one differ, the page is unknown, so page checks fail rather than grade a stale copy.
+  const written = [...files].filter(
+    ([file]) =>
+      file === path ||
+      (!file.startsWith("/") && path.endsWith(`/${file.replace(/^(?:\.\/)+/, "")}`)),
+  );
+  const pages = new Set(written.map(([, page]) => page));
+  const page =
+    typeof input.html === "string"
+      ? input.html
+      : pages.size === 1 && !pages.has(UNKNOWN_SCRIPT)
+        ? written[0]![1]
+        : undefined;
+  // The grader derives `page`; a call cannot supply its own.
+  return { ...input, page };
+};
+
 /** `pasted` is the thread's user text (`pastedText`), for request_secret's `value`. */
 export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") => {
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
-  const calls = run.calls.map((call) => ({ ...call, input: withOptionsObject(call.input) }));
+  const written = scriptsBefore(run.calls, true);
+  // A refused page call showed nothing, so it neither previews nor renders, and no file stands in
+  // for its page. Inline HTML it sent still counts against callsMustNot.
+  const attempted = run.calls.map((call, index) => ({
+    ...call,
+    input: withPage(
+      call.tool,
+      withOptionsObject(call.input),
+      call.failed ? new Map() : written[index]!,
+    ),
+  }));
+  const calls = attempted.filter((call) => !(call.failed && isPageTool(call.tool)));
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
-  const found = ({ tool, args = {} }: McpToolUseCall) =>
-    calls.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
+  const found = ({ tool, args = {} }: McpToolUseCall, among = calls) =>
+    among.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
   if (expect.distinctCalls !== undefined) {
@@ -1837,8 +1884,22 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
         ),
     );
   }
-  for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
-  for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
+  for (const call of expect.callsMustNot ?? [])
+    add(`callsMustNot ${label(call)}`, !found(call, attempted));
+  // A page check must not pass because the grader never saw the file a path call shows.
+  const pageTools = [...(expect.calls ?? []), ...(expect.callsMustNot ?? [])].flatMap((call) =>
+    call.args?.page === undefined ? [] : call.tool.split("|"),
+  );
+  for (const call of calls)
+    if (
+      pageTools.includes(call.tool) &&
+      isRecord(call.input) &&
+      call.input.path !== undefined &&
+      call.input.page === undefined
+    )
+      add(`page known ${call.tool} ${valueText(call.input.path)}`, false);
+  for (const tool of expect.notCalls ?? [])
+    add(`notCalls ${tool}`, !attempted.some((call) => call.tool === tool));
   if (expect.order !== undefined) {
     const firsts = expect.order.map((tool) => calls.findIndex((call) => call.tool === tool));
     const inOrder = firsts.every((at, i) => at > (firsts[i - 1] ?? -1));
@@ -1899,7 +1960,15 @@ const SETTLED =
   /^(?:(?:notCalls|callsMustNot|shellMustNot|maxCalls|textMustNot) |secret\.(?:chatAsk|askTools|values|fileUse|noCardDemand|afterDecline) )/;
 /** True once the sample has failed for good, so the rest of it cannot change the result. */
 export const failedEarly = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") =>
-  gradeSample(expect, run, pasted).some((check) => !check.pass && SETTLED.test(check.check));
+  gradeSample(
+    expect,
+    // A page call T3 has not answered yet may still be refused, so it is graded once it settles.
+    {
+      ...run,
+      calls: run.calls.filter((call) => !isPageTool(call.tool) || call.failed !== undefined),
+    },
+    pasted,
+  ).some((check) => !check.pass && SETTLED.test(check.check));
 
 const requestBody = (
   { base, tools }: Sample,

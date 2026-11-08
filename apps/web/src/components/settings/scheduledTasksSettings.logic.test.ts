@@ -6,8 +6,10 @@ import {
   ProviderInstanceId,
   ScheduledTaskId,
   type ScheduledTask,
+  ThreadId,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 import type {
   SidebarProjectGroupMember,
@@ -20,8 +22,10 @@ import {
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
+  scheduledTaskDestinationThreads,
   scheduleFromDraft,
   taskToDraft,
+  unbindDraftFromThread,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -167,6 +171,44 @@ describe("editing scheduled task branch settings", () => {
     const draft = taskToDraft(legacyTask);
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
+  });
+});
+
+describe("scheduled task destination", () => {
+  it("unbinding leaves the shared checkout for a new worktree from the remote", () => {
+    const rootBound = taskToDraft({
+      ...legacyTask,
+      threadId: ThreadId.make("thread:bound"),
+      workspaceStrategy: { type: "root" },
+    });
+    expect(unbindDraftFromThread(rootBound)).toMatchObject({
+      threadId: "",
+      workspaceMode: "worktree",
+      startFromOrigin: true,
+    });
+  });
+
+  it("never offers a lesson side chat as the task's thread", () => {
+    const shell = (id: string, extra: object = {}) =>
+      ({
+        id: ThreadId.make(id),
+        environmentId: laptopId,
+        projectId: ProjectId.make("project"),
+        archivedAt: null,
+        lineage: { relationshipToParent: "fork" },
+        title: id,
+        updatedAt: "2026-11-08T00:00:00.000Z",
+        ...extra,
+      }) as EnvironmentThreadShell;
+    const threads = [shell("lesson"), shell("side-chat", { sideChat: {} })];
+    expect(
+      scheduledTaskDestinationThreads(threads, {
+        environmentId: laptopId,
+        projectId: "project",
+        currentThreadId: null,
+        query: "",
+      }).map((thread) => thread.id),
+    ).toEqual(["lesson"]);
   });
 });
 
