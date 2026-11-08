@@ -19,7 +19,8 @@ import * as Electron from "electron";
 const BUILT_IN_FILES: Readonly<Record<string, string>> = {
   default: "black-macos-1024.png",
   light: "munim-icon-light-1024.png",
-  dark: "munim-icon-dark-1024.png",
+  // The T3 tile is already a white mark on black, which is what "Dark" means.
+  dark: "black-macos-1024.png",
 };
 
 function iconSearchRoots(): readonly string[] {
