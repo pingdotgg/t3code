@@ -1,8 +1,13 @@
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { otherThreadDeviceSessions } from "@t3tools/client-runtime/state/device";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type {
   DevicePlatform,
   DeviceServiceState,
+  DeviceSession,
   DeviceSummary,
+  EnvironmentId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
@@ -29,8 +34,10 @@ import {
   NO_DEVICE_PROBE_ATOM,
   useDeviceState,
 } from "~/state/device";
+import { useThreadShell } from "~/state/entities";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { ThreadContextChip } from "../ThreadContextChip";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import {
   DeviceSetup,
@@ -95,6 +102,7 @@ export function DevicePanel(props: {
   const activeHost = activeDevice
     ? state.hosts.find((host) => host.id === activeDevice.hostId)
     : undefined;
+  const holders = activeSession ? otherThreadDeviceSessions(state.sessions, activeSession) : [];
 
   const grouped = groupDevices(state);
 
@@ -174,6 +182,16 @@ export function DevicePanel(props: {
     });
   };
 
+  const takeOver = (holder: DeviceSession) => {
+    const settleOperation = startOperation(null);
+    return close({
+      environmentId,
+      input: { threadId: holder.threadId, hostId: holder.hostId, deviceId: holder.deviceId },
+    }).then((result) =>
+      settleOperation(result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null),
+    );
+  };
+
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
@@ -242,6 +260,14 @@ export function DevicePanel(props: {
               minute.
             </div>
           ) : null}
+          {holders.map((holder) => (
+            <DeviceHolderNotice
+              key={holder.threadId}
+              environmentId={environmentId}
+              holder={holder}
+              onTakeOver={() => takeOver(holder)}
+            />
+          ))}
           {operationError ? (
             <DeviceNotice onDismiss={() => setOperation(null)}>{operationError}</DeviceNotice>
           ) : null}
@@ -383,6 +409,46 @@ export function DevicePanel(props: {
         </div>
       </div>
     </PreviewPanelShell>
+  );
+}
+
+function DeviceHolderNotice(props: {
+  readonly environmentId: EnvironmentId;
+  readonly holder: DeviceSession;
+  readonly onTakeOver: () => Promise<unknown>;
+}) {
+  const shell = useThreadShell(scopeThreadRef(props.environmentId, props.holder.threadId));
+  const running = threadRuntimeIsActive(shell?.runtime);
+  const [takingOver, setTakingOver] = useState(false);
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2 text-xs text-muted-foreground"
+    >
+      <span className="min-w-0 flex-1 basis-56">
+        Busy in{" "}
+        <ThreadContextChip
+          record={{
+            environmentId: props.environmentId,
+            threadId: props.holder.threadId,
+            title: "another thread",
+          }}
+        />
+        {running ? ", which is running." : ", which isn't running."}
+      </span>
+      {running ? null : (
+        <Button
+          size="xs"
+          disabled={takingOver}
+          onClick={() => {
+            setTakingOver(true);
+            void props.onTakeOver().finally(() => setTakingOver(false));
+          }}
+        >
+          {takingOver ? "Taking over…" : "Take over"}
+        </Button>
+      )}
+    </div>
   );
 }
 
