@@ -598,8 +598,9 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       // Node 22 warns like this when NODE_USE_ENV_PROXY routes through HTTP_PROXY.
       const profile = yield* prepareAntigravityProfile({
         profileDirectory: path.join(temporaryDirectory, "profile"),
+        userHome: path.join(temporaryDirectory, "home"),
         baseEnv: {
-          ...process.env,
+          PATH: path.dirname(process.execPath),
           NODE_OPTIONS:
             "--import=data:text/javascript,process.emitWarning('EnvHttpProxyAgent%20is%20experimental','ExperimentalWarning')",
         },
