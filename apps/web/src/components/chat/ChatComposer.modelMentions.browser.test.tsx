@@ -14,7 +14,10 @@ import { useComposerSelection } from "./useComposerSelection";
 
 vi.mock("../../state/primaryEnvironment", async () => {
   const { Atom } = await import("effect/reactivity");
-  return { primaryEnvironmentIdAtom: Atom.make(null) };
+  return {
+    primaryEnvironmentIdAtom: Atom.make(null),
+    themeEnvironmentIdAtom: Atom.make(null),
+  };
 });
 
 // Model chips resolve against the environment's server config.
