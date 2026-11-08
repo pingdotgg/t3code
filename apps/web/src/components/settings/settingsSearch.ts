@@ -964,6 +964,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow simulator emulator ios android drive tools sessions"],
   },
   {
+    id: "agent-computer-access",
+    title: "Agents can control this desktop",
+    to: "/settings/devices",
+    targetId: "computer",
+    searchTerms: [
+      "computer use desktop kde plasma wayland linux screenshot click type keyboard mouse",
+    ],
+  },
+  {
     id: "device-hub",
     title: "Use devices",
     to: "/settings/devices",

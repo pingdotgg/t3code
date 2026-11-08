@@ -59,6 +59,7 @@ export * from "./review.ts";
 export * from "./mcpApps.ts";
 export * from "./browserImport.ts";
 export * from "./browserProfile.ts";
+export * from "./computer.ts";
 export * from "./device.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";

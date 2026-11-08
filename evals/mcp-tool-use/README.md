@@ -110,6 +110,10 @@ Commands built at run time, external script files and full shell/interpreter sem
 
 This API replay measures routing and recovery decisions. Screenshots return product text and metadata without rendered image blocks, and Codex code cells have no `image` helper, so a cell that calls it fails with `image is not defined`. The shell remains simulated, children are not executed, and `priorTurns` is synthetic context rather than native resume or compaction. It does not test launcher execution, binding, pruning, actual device state, transport failures or resource cleanup, and it models agent-device's session check rather than running it. DEL-02 checks managed recording start/stop and the final filename; it does not inspect video bytes, required flow, transforms, codec or size. Screenshots and final text do not establish delivered artifacts or honesty. Keep local real-harness results separate; their scores and costs are not API-replay results. Offline validation costs $0. Record fresh per-model baseline and candidate costs before using device-case scores as release evidence.
 
+## Computer use cases
+
+`cases/computer-use.ndjson` covers desktop control on KDE Plasma: routing a native-app request to `computer_screenshot` instead of the preview browser or shell input tools (`COMP-ROUTE-01`), stopping and asking after a declined consent dialog (`COMP-CONSENT-01`), explaining the setting when access is off (`COMP-OFF-01`), and leaving the tools alone for ordinary code work (`COMP-NODESK-01`). A mock that is a `ComputerUse*` error from `@t3tools/contracts` fails inside T3 with that error's message, as McpHttpServer reports it. Replay returns screenshot metadata without the image, so these cases grade routing and recovery, not where the agent clicks.
+
 ## Threads vs tasks cases
 
 `cases/threads-vs-tasks.ndjson` covers explicit thread requests, delegated and background work, lifecycle operations, child permissions, and ordinary code requests using words like "thread" and "task". The native-subagent case is Claude-only. All scenarios use authored Acme data.

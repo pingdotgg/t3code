@@ -1617,10 +1617,46 @@ export function BrowserSettingsPanel() {
   );
 }
 
+function AgentComputerAccessSetting() {
+  const { connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const supported = connectedEnvironments.some(
+    (environment) => environment.serverConfig?.environment.capabilities.computerUse === true,
+  );
+
+  return (
+    <SettingsRow
+      {...searchableSetting("agent-computer-access")}
+      serverScoped
+      settingKeys={["enableAgentComputerAccess"]}
+      description={
+        supported
+          ? "New agent sessions can ask to see and control this environment's desktop. KDE asks you to allow it, and you can end it from the system tray."
+          : "Needs the environment to run in a KDE Plasma Wayland session. Not available over SSH, as a service, or on other desktops."
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["enableAgentComputerAccess"]}
+          aria-label="Agent computer access"
+          checked={settings.enableAgentComputerAccess}
+          disabled={!supported && !settings.enableAgentComputerAccess}
+          onCheckedChange={(enabled) =>
+            updateSettings({ enableAgentComputerAccess: Boolean(enabled) })
+          }
+        />
+      }
+    />
+  );
+}
+
 export function DevicesSettingsPanel() {
   return (
     <SettingsPageContainer>
       <DeviceIntegrationSettings />
+      <SettingsSection id="computer" title="Desktop">
+        <AgentComputerAccessSetting />
+      </SettingsSection>
     </SettingsPageContainer>
   );
 }

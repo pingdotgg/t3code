@@ -51,6 +51,7 @@ import { buildCodexAdditionalContext } from "../../apps/server/src/provider/Code
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
+import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -435,6 +436,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PullRequestsToolkit,
   PreviewToolkit,
   DeviceToolkit,
+  ComputerToolkit,
   HtmlToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
@@ -451,6 +453,7 @@ const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
   description: Tool.getDescription(tool) ?? "",
   input_schema: advertisedJsonSchema(tool),
 }));
+const decodeComputerError = Schema.decodeUnknownOption(Contracts.ComputerUseError);
 const enabledWhen = (predicate: () => boolean) =>
   new Set(
     t3SourceTools
@@ -1589,6 +1592,11 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (sample.devices && isT3Name(call.name) && isDeviceTool(name) && fromWorld) {
     const result = yield* sample.devices.call(name, input, failure);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
+  }
+  // T3 reports a desktop-control error as its message, as McpHttpServer does.
+  const computerFailure = decodeComputerError(mock);
+  if (isT3Name(call.name) && Option.isSome(computerFailure)) {
+    return failed(computerFailure.value.message);
   }
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {

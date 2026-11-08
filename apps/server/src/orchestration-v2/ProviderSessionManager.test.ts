@@ -757,6 +757,7 @@ function runBrowserAccessScenario(input: {
   readonly enableAgentBrowserAccess: boolean;
   readonly projectOverride: boolean;
   readonly deviceOverride?: boolean;
+  readonly enableAgentComputerAccess?: boolean;
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
@@ -811,6 +812,7 @@ function runBrowserAccessScenario(input: {
           projectServiceLayer: layerProjectService,
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
+            enableAgentComputerAccess: input.enableAgentComputerAccess ?? false,
             projectSettingsOverrides: {
               [projectId]: {
                 enableAgentBrowserAccess: input.projectOverride,
@@ -4401,6 +4403,27 @@ it.effect(
       });
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
+);
+
+it.effect("ProviderSessionManagerV2 grants computer control only from the server setting", () =>
+  Effect.gen(function* () {
+    const off = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: false,
+      projectOverride: false,
+      deviceOverride: true,
+    });
+    assert.isFalse(off?.capabilities?.has("computer"));
+    // A project override hides project-scoped tools when its project is gone; the desktop is not one.
+    const on = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: false,
+      projectOverride: false,
+      deviceOverride: true,
+      enableAgentComputerAccess: true,
+      projectExists: false,
+    });
+    assert.isTrue(on?.capabilities?.has("computer"));
+    assert.isFalse(on?.capabilities?.has("device"));
+  }),
 );
 
 // Device instructions reach delegated children only because their own sessions hold `device`.

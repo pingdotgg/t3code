@@ -904,6 +904,9 @@ importers:
       character-entities:
         specifier: 2.0.2
         version: 2.0.2
+      dbus-next:
+        specifier: 0.10.2
+        version: 0.10.2(patch_hash=cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4)
       diff:
         specifier: 8.0.3
         version: 8.0.3

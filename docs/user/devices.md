@@ -89,6 +89,25 @@ To keep agents away from simulators, turn off **Agents can use devices** in
 **Settings → Devices**. This hides the device tools from agents
 started from then on; your own Device panel is unaffected.
 
+## Desktop control (KDE Plasma)
+
+Agents can also see and control the native desktop of the machine running the
+T3 server, outside the preview browser. This works only when that server runs
+inside a KDE Plasma Wayland session, such as the desktop app or `npx t3`
+started from a Plasma terminal. Servers started over SSH, as a system service,
+or on other desktops, macOS, or Windows show it as unavailable.
+
+Turn on **Agents can control this desktop** in **Settings → Devices**. It
+applies to agent sessions started afterwards. The first time an agent takes a
+screenshot, KDE asks you to allow remote control; choose which screens to share
+and approve. Until the T3 server restarts, later sessions reuse that grant
+without asking again. Only one thread controls the desktop at a time.
+
+Control ends when the agent finishes, after ten idle minutes, or when you
+choose **End** on the screen-sharing indicator in the system tray. Turning the
+setting off ends control, and KDE asks again next time. Screenshots need Spectacle, and
+remote control needs `xdg-desktop-portal-kde`; both ship with Plasma.
+
 ## Remote connections
 
 The device stream goes through the environment server, so it works over the
