@@ -941,7 +941,9 @@ effectIt.effect("labels a terminal's servers on macOS by their process titles", 
             const listed = input.args.includes("-p")
               ? (input.args[input.args.indexOf("-p") + 1] ?? "").split(",").map(Number)
               : servers.map(({ pid }) => pid);
-            const environment = input.args.includes("-E") ? " PATH=/usr/bin HOME=/Users/dev" : "";
+            const environment = input.args.includes("-E")
+              ? " PATH=/usr/bin T3CODE_THREAD_ID=agent-thread HOME=/Users/dev"
+              : "";
             return Effect.succeed(
               processOutput(
                 listed
@@ -981,6 +983,13 @@ effectIt.effect.each([
     ps: (() =>
       Effect.succeed(
         processOutput("1234 /Applications/Foo Bar.app/Contents/MacOS/Foo Bar HOME=/Users/dev\n"),
+      )) satisfies ProcessRunner.ProcessRunner["Service"]["run"],
+  },
+  {
+    source: "the environment ps prints after an empty title",
+    ps: (() =>
+      Effect.succeed(
+        processOutput("1234 DEMO_SECRET=synthetic HOME=/Users/dev\n"),
       )) satisfies ProcessRunner.ProcessRunner["Service"]["run"],
   },
   { source: "a failed ps", ps: processProbeFailure },

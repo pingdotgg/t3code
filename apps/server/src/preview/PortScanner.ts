@@ -376,8 +376,9 @@ const parseProcEnvironThread = (raw: string): ThreadId | null => {
 
 /**
  * Reads macOS `ps -E -o pid=,command=`, which appends each process's launch environment to its
- * argv with spaces, so an argument that spells the assignment out also matches. An argv[0] without
- * a `/` is a title the process set; a path names its executable, as lsof does, and may hold spaces.
+ * argv with spaces, so an argument that spells the assignment out also matches. argv[0] labels the
+ * process unless it is a path, which names the executable as lsof does and may hold spaces, or an
+ * assignment, which `ps` prints first when an empty title cleared argv.
  */
 const parsePsLaunches = (raw: string): ReadonlyMap<number, ListenerLaunch> => {
   const launches = new Map<number, ListenerLaunch>();
@@ -388,7 +389,7 @@ const parsePsLaunches = (raw: string): ReadonlyMap<number, ListenerLaunch> => {
     const argv0 = match[2]!.split(" ", 1)[0] ?? "";
     launches.set(Number(match[1]), {
       threadId: value ? ThreadId.make(value) : null,
-      title: argv0.length > 0 && !argv0.includes("/") ? argv0 : null,
+      title: argv0.length > 0 && !argv0.includes("/") && !argv0.includes("=") ? argv0 : null,
     });
   }
   return launches;
@@ -547,7 +548,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       return { owners: terminalOwners, launches: new Map<number, ListenerLaunch>() };
     }
     // Runs only once a listener snapshot exists, so a failed read leaves the scan pending.
-    if (agentsPossible) agentScanPending = false;
+    agentScanPending = false;
     const launches = yield* readLaunches(
       readsTitles ? pids : pids.filter((pid) => !terminalOwners.has(pid)),
     );
