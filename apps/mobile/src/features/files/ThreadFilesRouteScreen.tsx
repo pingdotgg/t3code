@@ -869,6 +869,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
                 kind: "pdf",
                 uri: previewUri,
                 name: basename(relativePath),
+                ...(environmentId !== null && assetPreview.resource !== null
+                  ? {
+                      actionsSource: {
+                        name: basename(relativePath),
+                        mimeType: "application/pdf",
+                        environmentId,
+                        resource: assetPreview.resource,
+                      },
+                    }
+                  : {}),
               }),
           } as const)
         : null,
