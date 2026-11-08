@@ -63,6 +63,15 @@ export function createLayoutLauncherContent(
 export interface LayoutTab {
   id: string;
   content: LayoutTabContent;
+  /**
+   * A lineage child opened beside the chat of the thread it came from: provisional until kept,
+   * and the next child opened in its pane replaces it.
+   */
+  ghostOf?: ScopedThreadRef;
+}
+
+function keepLayoutTabObject({ ghostOf: _ghostOf, ...tab }: LayoutTab): LayoutTab {
+  return tab;
 }
 
 export interface LayoutPane {
@@ -1202,7 +1211,7 @@ export function replaceLayoutTabContent(
           (isLayoutPageContent(tab.content) &&
             isLayoutPageContent(content) &&
             tab.content.href !== content.href))
-          ? { ...tab, content }
+          ? { ...keepLayoutTabObject(tab), content }
           : tab,
       ),
     };
@@ -1230,6 +1239,48 @@ export function showLayoutContent(state: LayoutState, content: LayoutTabContent)
 }
 
 /**
+ * Open a lineage child as the ghost tab right after its parent's chat tab, replacing the pane's
+ * ghost if it has one; a ghost's own child takes its place. A tab already showing the child is
+ * focused; with no parent tab, null.
+ */
+export function openLayoutGhostChat(
+  state: LayoutState,
+  parentRef: ScopedThreadRef,
+  target: ThreadRouteTarget,
+): LayoutState | null {
+  const content: LayoutTabContent = { kind: "chat", target };
+  const existing = findLayoutTabByContent(state, content);
+  if (existing) return focusLayoutTab(state, existing.tab.id);
+  const parent = findLayoutChatForThread(state, parentRef);
+  if (!parent) return null;
+  const ghostOf = parent.tab.ghostOf ?? parentRef;
+  const previous = parent.pane.tabs.find((tab) => tab.ghostOf !== undefined);
+  const ghost: LayoutTab = { id: previous?.id ?? createLayoutId("tab"), content, ghostOf };
+  const anchor = findLayoutChatForThread(state, ghostOf);
+  const tabs = parent.pane.tabs.filter((tab) => tab !== previous);
+  const anchorIndex = anchor?.pane.id === parent.pane.id ? tabs.indexOf(anchor.tab) : -1;
+  tabs.splice(anchorIndex === -1 ? tabs.length : anchorIndex + 1, 0, ghost);
+  const placed = mapPanes(state, (pane) =>
+    pane.id === parent.pane.id ? { ...pane, tabs, activeTabId: ghost.id } : pane,
+  );
+  return focusLayoutPane(placed, parent.pane.id);
+}
+
+/** Make a ghost tab an ordinary one. */
+export function keepLayoutTab(state: LayoutState, tabId: string): LayoutState {
+  const location = findLayoutTab(state, (tab) => tab.id === tabId);
+  if (location?.tab.ghostOf === undefined) return state;
+  return mapPanes(state, (pane) =>
+    pane.id === location.pane.id
+      ? {
+          ...pane,
+          tabs: pane.tabs.map((tab) => (tab.id === tabId ? keepLayoutTabObject(tab) : tab)),
+        }
+      : pane,
+  );
+}
+
+/**
  * Close a tab; its pane activates the neighboring tab, and empty panes
  * collapse. The window's last tab gives way to a launcher in its place, so
  * the window always keeps one pane; that lone launcher does not close.
@@ -1251,12 +1302,17 @@ export function closeLayoutTab(state: LayoutState, tabId: string): LayoutState {
       pane.id === location.pane.id ? { ...pane, tabs: [launcher], activeTabId: launcher.id } : pane,
     );
   }
+  // A ghost hands its place back to the chat it was opened from.
+  const ghostOf = location.tab.ghostOf;
+  const anchor = ghostOf ? findLayoutChatForThread(state, ghostOf) : null;
   const closed = mapPanes(state, (pane) => {
     if (pane.id !== location.pane.id) return pane;
     const tabs = pane.tabs.filter((tab) => tab.id !== tabId);
     const activeTabId =
       pane.activeTabId === tabId
-        ? (tabs[Math.min(location.tabIndex, tabs.length - 1)]?.id ?? null)
+        ? anchor?.pane.id === pane.id
+          ? anchor.tab.id
+          : (tabs[Math.min(location.tabIndex, tabs.length - 1)]?.id ?? null)
         : pane.activeTabId;
     return { ...pane, tabs, activeTabId };
   });
@@ -1322,7 +1378,7 @@ export function moveLayoutTab(
     const reordered = mapPanes(state, (pane) => {
       if (pane.id !== location.pane.id) return pane;
       const tabs = pane.tabs.filter((tab) => tab.id !== tabId);
-      tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, location.tab);
+      tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, keepLayoutTabObject(location.tab));
       return { ...pane, tabs, activeTabId: tabId };
     });
     return focusLayoutPane(reordered, location.pane.id);
@@ -1349,7 +1405,7 @@ export function moveLayoutTab(
         : pane.activeTabId;
     return { ...pane, tabs, activeTabId };
   });
-  const tab = location.tab;
+  const tab = keepLayoutTabObject(location.tab);
   if (destination.kind === "pane") {
     return normalizeLayout(
       insertTabIntoPane(detached, destination.paneId, tab, destination.index ?? "end"),
@@ -1743,7 +1799,10 @@ export function decodePersistedLayoutState(value: unknown): LayoutState {
         ...column,
         panes: column.panes.map((pane) => ({
           ...pane,
-          tabs: pane.tabs.map((tab) => ({ ...tab, content: migrateLegacyTabContent(tab.content) })),
+          tabs: pane.tabs.map((tab) => {
+            const decoded = { ...tab, content: migrateLegacyTabContent(tab.content) };
+            return isThreadRef(tab.ghostOf) ? decoded : keepLayoutTabObject(decoded);
+          }),
         })),
       })),
     })),
