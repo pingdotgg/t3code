@@ -50,21 +50,26 @@ const TITLE_BAR_BUTTON = 44;
 /** Custom title that long-presses open a menu without UIKit's title-menu chevron. */
 function AppBarTitleMenu(props: {
   readonly title: string;
+  readonly subtitle?: string;
   readonly titleMenu: AppBarMenu;
   readonly tintColor: string;
+  readonly mutedColor: string;
   readonly leadingButtons: number;
   readonly trailingButtons: number;
 }): ReactElement {
   const { width: windowWidth } = useWindowDimensions();
   const columnWidth = useNativeColumnLayoutMetrics()?.width;
   const screenWidth = columnWidth ?? windowWidth;
-  // Leading and trailing already sit on opposite sides; subtracting both keeps a
-  // long-press target even when one side is heavy (doubling the heavier side can hit 0).
-  const leadingWidth = TITLE_BAR_MARGIN / 2 + props.leadingButtons * TITLE_BAR_BUTTON;
-  const trailingWidth = TITLE_BAR_MARGIN / 2 + props.trailingButtons * TITLE_BAR_BUTTON;
-  const width = Math.max(TITLE_BAR_BUTTON, screenWidth - leadingWidth - trailingWidth);
+  // Custom title views are centered in the full bar. Reserve the heavier side on both
+  // sides so the view cannot sit under leading/trailing chrome (incl. glass clusters).
+  const leadingWidth = TITLE_BAR_MARGIN + props.leadingButtons * TITLE_BAR_BUTTON;
+  const trailingWidth = TITLE_BAR_MARGIN + props.trailingButtons * TITLE_BAR_BUTTON;
+  const width = Math.max(
+    TITLE_BAR_BUTTON,
+    screenWidth - 2 * Math.max(leadingWidth, trailingWidth) - TITLE_BAR_BUTTON,
+  );
   return (
-    <View style={{ width, overflow: "hidden" }}>
+    <View style={{ width, maxWidth: width, overflow: "hidden" }}>
       <Menu
         shouldOpenOnLongPress
         title={props.titleMenu.status ?? props.titleMenu.title}
@@ -93,6 +98,20 @@ function AppBarTitleMenu(props: {
           >
             {props.title}
           </Text>
+          {props.subtitle ? (
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              style={{
+                color: props.mutedColor,
+                fontSize: 12,
+                fontWeight: "500",
+                width,
+              }}
+            >
+              {props.subtitle}
+            </Text>
+          ) : null}
         </Pressable>
       </Menu>
     </View>
@@ -182,15 +201,19 @@ export function AppBar(props: AppBarProps) {
                 headerTitle: () => (
                   <AppBarTitleMenu
                     title={props.title}
+                    subtitle={props.subtitle || undefined}
                     titleMenu={titleMenu}
                     tintColor={String(colors["--color-header-foreground"])}
+                    mutedColor={String(colors["--color-foreground-muted"])}
                     leadingButtons={titleLeadingButtons}
                     trailingButtons={titleTrailingButtons}
                   />
                 ),
+                // Keep the subtitle inside the width-capped title view; the native subtitle
+                // ignores that cap and runs under trailing glass buttons.
+                unstable_headerSubtitle: undefined,
               }
-            : { headerTitle: undefined }),
-          unstable_headerSubtitle: props.subtitle || undefined,
+            : { headerTitle: undefined, unstable_headerSubtitle: props.subtitle || undefined }),
           ...(props.matchSearchSurface
             ? { contentStyle: { backgroundColor: themeVariables["--color-sheet-solid"] } }
             : undefined),
