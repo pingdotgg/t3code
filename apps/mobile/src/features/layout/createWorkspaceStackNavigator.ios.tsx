@@ -557,10 +557,11 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const tabsInSidebarColumn = props.nativeColumns && !workspacePage && deviceType === "pad";
   // Keep the floating dock on the root card so a back swipe reveals it under the leaving screen
   // instead of mounting an overlay mid-gesture or after the transition settles. Column layouts put
-  // the same footer on the sidebar screen instead.
+  // the same footer on the sidebar screen instead. Medium Usage is a page (no columns), so it still
+  // needs this dock; medium Chats/PRs use the sidebar toolbar.
   const cardStackDock =
     !tabsInSidebarColumn &&
-    (deviceType === "pad" || compactTabs || (layout.variant === "medium" && !workspacePage));
+    (deviceType === "pad" || compactTabs || (layout.variant === "medium" && workspacePage));
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
     navigation: props.descriptors[visibleRoute.key]!.navigation,
