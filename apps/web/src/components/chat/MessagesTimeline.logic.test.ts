@@ -1075,7 +1075,14 @@ describe("deriveMessagesTimelineRows", () => {
       expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
     ).toBeDefined();
 
-    // Teaching right before a lesson card stays visible beside it.
+    // Teaching before a lesson card stays visible beside it, even with a visual between.
+    const diagram = {
+      kind: "html-render" as const,
+      id: "diagram-entry",
+      createdAt: "2026-01-01T00:00:06Z",
+      runId: RunId.make("turn-1"),
+      htmlRender: { attachmentId: "diagram", title: "Diagram", height: 200 },
+    };
     const card = {
       kind: "quiz-card" as const,
       id: "card-entry",
@@ -1084,7 +1091,7 @@ describe("deriveMessagesTimelineRows", () => {
       quizCard: { question: "Explain it." },
     };
     const withCard = deriveMessagesTimelineRows({
-      timelineEntries: [...timelineEntries.slice(0, 2), card, ...timelineEntries.slice(2)],
+      timelineEntries: [...timelineEntries.slice(0, 2), diagram, card, ...timelineEntries.slice(2)],
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
@@ -1094,6 +1101,7 @@ describe("deriveMessagesTimelineRows", () => {
       "user-entry",
       "turn-fold:turn-1",
       "assistant-first-entry",
+      "diagram-entry",
       "card-entry",
       "assistant-final-entry",
     ]);

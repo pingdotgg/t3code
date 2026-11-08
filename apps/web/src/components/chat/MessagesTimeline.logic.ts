@@ -1117,14 +1117,16 @@ function deriveTurnFolds(input: {
     }
   }
 
-  // The text that sets up a card is what the card tests, so it stays beside it.
-  const cardLeadIds = new Set(
-    input.timelineEntries.flatMap((entry, index) =>
-      entry.kind === "message" && input.timelineEntries[index + 1]?.kind === "quiz-card"
-        ? [entry.id]
-        : [],
-    ),
-  );
+  // The text that sets up a card is what the card tests, so it stays beside it, visuals between.
+  const cardLeadIds = new Set<string>();
+  let lead: string | null = null;
+  for (const entry of input.timelineEntries) {
+    if (entry.kind === "message") lead = entry.message.role === "assistant" ? entry.id : null;
+    else if (entry.kind === "quiz-card" && lead !== null) {
+      cardLeadIds.add(lead);
+      lead = null;
+    }
+  }
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [runId, group] of groupsByRunId) {
     if (

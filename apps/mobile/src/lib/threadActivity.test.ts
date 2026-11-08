@@ -916,7 +916,7 @@ describe("buildThreadFeed", () => {
       label: "Worked for 2s",
     });
 
-    // Teaching right before a lesson card stays visible beside it.
+    // Teaching before a lesson card stays visible beside it, even with work between.
     const card: OrchestrationV2TurnItem = {
       ...base("item-card", "2026-06-20T00:00:02.700Z", 2),
       type: "dynamic_tool",
@@ -930,8 +930,9 @@ describe("buildThreadFeed", () => {
       projected(opening, 1),
       projected(command(), 2),
       projected(middle, 3),
-      projected(card, 4),
-      projected(assistantMessage(), 5),
+      projected({ ...command(), id: TurnItemId.make("item-visual") }, 4),
+      projected(card, 5),
+      projected(assistantMessage(), 6),
     ]);
     expect(
       deriveThreadFeedPresentation(withCard, latestRun, new Set()).map((entry) => entry.id),
