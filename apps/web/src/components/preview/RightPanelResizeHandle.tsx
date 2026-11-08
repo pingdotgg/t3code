@@ -19,7 +19,7 @@ export function RightPanelResizeHandle({ handlers, className, label, ...separato
       aria-orientation="vertical"
       {...separatorProps}
       className={cn(
-        "group absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize select-none",
+        "group absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize touch-none select-none pointer-coarse:-left-2 pointer-coarse:w-4",
         className,
       )}
       {...handlers}
