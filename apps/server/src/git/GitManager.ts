@@ -1907,6 +1907,7 @@ export const make = Effect.gen(function* () {
 
     const provider = yield* sourceControlProvider(cwd);
     const probe = headBranchProbe(provider, headContext.headSelectors, "all");
+    let pageWasFull = false;
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
@@ -1914,6 +1915,7 @@ export const make = Effect.gen(function* () {
         state: "all",
         limit: probe.limit,
       });
+      pageWasFull ||= pullRequests.length >= probe.limit;
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
         if (!matchesBranchHeadContext(pr, headContext)) {
@@ -1928,6 +1930,11 @@ export const make = Effect.gen(function* () {
     const latestOpenPr = parsed.find((pr) => pr.state === "open");
     if (latestOpenPr) {
       return latestOpenPr;
+    }
+    // Forks reusing the head name can fill the page before the branch's own open PR.
+    if (pageWasFull) {
+      const openPr = yield* findOpenPr(cwd, headContext);
+      if (openPr) return openPr;
     }
     return parsed[0] ?? null;
   });
