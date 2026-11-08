@@ -3332,6 +3332,13 @@ export const OrchestrationV2Command = Schema.Union([
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
+  // Withdraws a merge-back the target has not sent yet; threadId is the target.
+  Schema.Struct({
+    type: Schema.Literal("thread.merge_back.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    transferId: ContextTransferId,
+  }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
     ...OrchestrationV2CreationFields,

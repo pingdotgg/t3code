@@ -87,6 +87,8 @@ export type ThreadGitMenuProps = {
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
+  /** This thread's merge-back is waiting for the source's next message; the item cancels it. */
+  readonly mergedBack?: boolean;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
 };
@@ -342,9 +344,11 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
         ? [
             {
               id: "git-merge-back",
-              title: "Merge back to source",
+              title: props.mergedBack ? "Cancel merge back" : "Merge back to source",
               icon: PullRequestGlyph.merged,
-              subtitle: "Bring this thread's latest turn into its source",
+              subtitle: props.mergedBack
+                ? "Goes with the source's next message"
+                : "Bring this thread's latest turn into its source",
               onPress: props.onMergeBack,
             },
           ]

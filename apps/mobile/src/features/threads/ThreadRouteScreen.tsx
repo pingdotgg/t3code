@@ -91,6 +91,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
+import { usePendingMergeBack } from "./ThreadPendingMergeBackBar";
 import { threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
@@ -425,19 +426,31 @@ function ThreadRouteContent(
   const selectDetail = useSelectWorkspaceDetail();
   const openPullRequest = useOpenPullRequest();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, "merge thread back");
+  const cancelMergeBack = useAtomCommand(threadEnvironment.cancelMergeBack, "cancel merge back");
   const mergeBackTargetThreadId = resolveMergeBackTargetThreadId(selectedThreadDetail);
   const mergeBackRun =
     selectedThreadDetail === null ? null : resolveLatestMergeBackRun(selectedThreadDetail);
+  // The target owns merge-back transfers and streams their changes.
+  const pendingMergeBack = usePendingMergeBack(
+    selectedThread && mergeBackTargetThreadId !== null
+      ? scopeThreadRef(selectedThread.environmentId, mergeBackTargetThreadId)
+      : null,
+  );
+  const mergedBack =
+    pendingMergeBack?.sourceThreadId === selectedThread?.id ? pendingMergeBack : null;
   const mergeBackBusyRef = useRef(false);
   const handleMergeBack = async () => {
-    if (
-      mergeBackBusyRef.current ||
-      !selectedThread ||
-      mergeBackTargetThreadId === null ||
-      mergeBackRun === null
-    ) {
+    if (mergeBackBusyRef.current || !selectedThread || mergeBackTargetThreadId === null) return;
+    if (mergedBack !== null) {
+      mergeBackBusyRef.current = true;
+      await cancelMergeBack({
+        environmentId: selectedThread.environmentId,
+        input: { threadId: mergeBackTargetThreadId, transferId: mergedBack.id },
+      });
+      mergeBackBusyRef.current = false;
       return;
     }
+    if (mergeBackRun === null) return;
     mergeBackBusyRef.current = true;
     const result = await mergeBack({
       environmentId: selectedThread.environmentId,
@@ -783,9 +796,11 @@ function ThreadRouteContent(
     onOpenFilesInspector: selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
     onOpenGitInspector: handleOpenGitInspector,
     onMergeBack:
-      mergeBackTargetThreadId !== null && mergeBackRun !== null
+      mergedBack !== null ||
+      (mergeBackTargetThreadId !== null && mergeBackRun !== null && pendingMergeBack === null)
         ? () => void handleMergeBack()
         : undefined,
+    mergedBack: mergedBack !== null,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,

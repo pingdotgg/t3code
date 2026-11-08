@@ -4,6 +4,7 @@ import {
   CheckpointRef,
   CheckpointScopeId,
   CommandId,
+  type ContextTransferId,
   EventId,
   MessageId,
   NodeId,
@@ -1307,6 +1308,41 @@ it.effect("merge-back rejects a second fork's context until the first is consume
       [
         [first.threadId, "superseded"],
         [first.threadId, "pending"],
+      ],
+    );
+
+    const [replaced, pending] = parent.contextTransfers.filter(
+      (transfer) => transfer.type === "merge_back",
+    );
+    const cancel = (commandId: string, threadId: ThreadId, transferId: ContextTransferId) =>
+      orchestrator.dispatch({
+        type: "thread.merge_back.cancel",
+        commandId: CommandId.make(commandId),
+        threadId,
+        transferId,
+      });
+    const stale = yield* cancel("merge-back-guard-cancel-stale", parentId, replaced!.id).pipe(
+      Effect.flip,
+    );
+    assert.include(String(stale.cause), "no longer pending");
+    const elsewhere = yield* cancel(
+      "merge-back-guard-cancel-elsewhere",
+      first.threadId,
+      pending!.id,
+    ).pipe(Effect.flip);
+    assert.include(String(elsewhere.cause), "has no merge-back");
+    yield* cancel("merge-back-guard-cancel", parentId, pending!.id);
+    // Cancelling frees the parent for another fork's context.
+    yield* mergeBack("merge-back-guard-second-after-cancel", second);
+
+    assert.deepEqual(
+      (yield* orchestrator.getThreadProjection(parentId)).contextTransfers
+        .filter((transfer) => transfer.type === "merge_back")
+        .map((transfer) => [transfer.sourceThreadId, transfer.status]),
+      [
+        [first.threadId, "superseded"],
+        [first.threadId, "superseded"],
+        [second.threadId, "pending"],
       ],
     );
   }).pipe(Effect.provide(forkCases[0]!.layer)),

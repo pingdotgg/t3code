@@ -607,6 +607,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.background-work.settle":
     case "thread.interrupt.unresponsive":
     case "thread.stop":
+    case "thread.merge_back.cancel":
     case "provider.switch":
       return command.threadId;
     case "delegated_task.request":
@@ -4867,6 +4868,53 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: transfer,
     });
   });
+
+  // Runs under the target's lock, so it serializes with the next message consuming the transfer.
+  const dispatchThreadMergeBackCancel = Effect.fn("orchestrationV2.dispatch.threadMergeBackCancel")(
+    function* (
+      command: Extract<OrchestrationV2Command, { readonly type: "thread.merge_back.cancel" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const { contextTransfers } = yield* projectionStore
+        .getThreadRecords(command.threadId, ["contextTransfers"])
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const transfer = contextTransfers.find(
+        (candidate) =>
+          candidate.id === command.transferId &&
+          candidate.type === "merge_back" &&
+          candidate.targetThreadId === command.threadId,
+      );
+      if (transfer === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has no merge-back ${command.transferId}.`,
+        });
+      }
+      if (transfer.status !== "pending") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Merge-back ${transfer.id} is no longer pending.`,
+        });
+      }
+      const now = yield* DateTime.now;
+      // Older clients only know these statuses; any non-pending one is never consumed.
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "context-transfer.updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: { ...transfer, status: "superseded", error: "Cancelled.", updatedAt: now },
+      });
+    },
+  );
 
   const dispatchSteerIntoRun = Effect.fn("Orchestrator.dispatchSteerIntoRun")(function* (input: {
     readonly command: Extract<
@@ -13718,6 +13766,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
+        break;
+      case "thread.merge_back.cancel":
+        yield* dispatchThreadMergeBackCancel(command, events);
         break;
       case "delegated_task.request":
         yield* dispatchDelegatedTaskRequest(command, events, effects);

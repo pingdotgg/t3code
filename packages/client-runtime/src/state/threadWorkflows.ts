@@ -68,6 +68,20 @@ export function resolveLatestMergeBackRun(projection: Projection): Run | null {
   return hasNewerActiveRun ? null : latestProviderFinishedRun;
 }
 
+/** The merge-back the target thread will send with its next message, if any. */
+export function resolvePendingMergeBack(
+  target: Pick<Projection, "thread" | "contextTransfers"> | null | undefined,
+): Projection["contextTransfers"][number] | null {
+  return (
+    target?.contextTransfers.findLast(
+      (transfer) =>
+        transfer.type === "merge_back" &&
+        transfer.status === "pending" &&
+        transfer.targetThreadId === target.thread.id,
+    ) ?? null
+  );
+}
+
 function resolveThreadProviderSession(projection: Projection): ProviderSession | null {
   const activeRun = resolveActiveThreadRun(projection);
   const providerThreadId = activeRun?.providerThreadId ?? projection.thread.activeProviderThreadId;

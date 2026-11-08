@@ -27,6 +27,7 @@ import {
 import {
   canDetachThreadProviderSession,
   resolveLatestMergeBackRun,
+  resolvePendingMergeBack,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   isOrchestrationV2WorkActive,
@@ -63,6 +64,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
   useQuietThreadShell,
+  useQuietThreadProjection,
   useThreadProjection,
   useThreadRelationshipShells,
   useHiddenThreadKeys,
@@ -426,8 +428,19 @@ export function ThreadRelationshipsPanel(props: {
       ? scopeThreadRef(props.environmentId, parentShell.id)
       : null;
   const parentProjection = useThreadProjection(parentRef)?.projection;
+  const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
+  // The merge target owns merge-back transfers and streams their changes.
+  const pendingMergeBack = resolvePendingMergeBack(
+    useQuietThreadProjection(
+      mergeTargetThreadId === null
+        ? null
+        : scopeThreadRef(props.environmentId, mergeTargetThreadId),
+    )?.projection,
+  );
+  const mergedBack = pendingMergeBack?.sourceThreadId === props.threadId ? pendingMergeBack : null;
   const navigate = useNavigate();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
+  const cancelMergeBack = useAtomCommand(threadEnvironment.cancelMergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
   const stopWorkflowCommand = useAtomCommand(orchestrationEnvironment.stopWorkflow);
@@ -492,7 +505,6 @@ export function ThreadRelationshipsPanel(props: {
     (row.edge.kind !== "subagent" || isParentThreadRelationship(row.edge, props.threadId));
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
-  const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = orderWebThreadLineageRows({
     graph,
     rows: immediateThreadRelationships(graph, props.threadId),
@@ -511,7 +523,9 @@ export function ThreadRelationshipsPanel(props: {
         ? row
         : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
     });
-  const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
+  const canMerge =
+    mergedBack !== null ||
+    (mergeTargetThreadId !== null && latestMergeBackRun !== null && pendingMergeBack === null);
   const unlistedThreadIds = relationshipRows
     .filter(
       ({ threadId, edge }) =>
@@ -608,11 +622,27 @@ export function ThreadRelationshipsPanel(props: {
   };
 
   const merge = async () => {
-    if (!latestMergeBackRun || mergeTargetThreadId === null || busyAction !== null) return;
+    if (mergeTargetThreadId === null || busyAction !== null) return;
     if (mergeErrorToastId.current !== null) {
       toastManager.close(mergeErrorToastId.current);
       mergeErrorToastId.current = null;
     }
+    if (mergedBack !== null) {
+      setBusyAction("merge");
+      const cancelled = await cancelMergeBack({
+        environmentId: props.environmentId,
+        input: { threadId: mergeTargetThreadId, transferId: mergedBack.id },
+      });
+      setBusyAction(null);
+      if (cancelled._tag === "Failure") {
+        mergeErrorToastId.current = toastManager.add({
+          type: "error",
+          title: "Could not cancel the merge back",
+        });
+      }
+      return;
+    }
+    if (!latestMergeBackRun) return;
     setBusyAction("merge");
     const result = await mergeBack({
       environmentId: props.environmentId,
@@ -876,6 +906,8 @@ export function ThreadRelationshipsPanel(props: {
                     size="sm"
                     variant="ghost"
                     part="secondary"
+                    tone={mergedBack === null ? "default" : "primary"}
+                    aria-pressed={mergedBack !== null}
                     aria-label={
                       parentTitle
                         ? `Merge back to ${parentTitle}`
@@ -893,11 +925,15 @@ export function ThreadRelationshipsPanel(props: {
                 }
               />
               <TooltipPopup side="left">
-                {latestMergeBackRun === null
-                  ? "Complete a run in this fork before merging it back"
-                  : parentTitle
-                    ? `Merge this conversation back into ${parentTitle}`
-                    : "Merge this conversation back into its source"}
+                {mergedBack !== null
+                  ? `Goes with ${parentTitle ?? "the source conversation"}'s next message. Click to cancel.`
+                  : pendingMergeBack !== null
+                    ? `${parentTitle ?? "The source conversation"} already has context from another side chat or fork`
+                    : latestMergeBackRun === null
+                      ? "Complete a run in this fork before merging it back"
+                      : parentTitle
+                        ? `Merge this conversation back into ${parentTitle}`
+                        : "Merge this conversation back into its source"}
               </TooltipPopup>
             </Tooltip>
             <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">

@@ -310,7 +310,9 @@ reply. Change them for an individual side chat in its composer. Later changes to
 parent do not change existing side chats.
 
 To use what you learned, choose **Bring back**. The thread gets the side chat with
-your next message there. Bring back is available while the thread is idle.
+your next message there. Bring back is available while the thread is idle. Until you
+send that message, Bring back stays pressed and the thread shows what it will receive.
+Choose **Bring back** again, or **Cancel** in the thread, to undo it.
 
 Closing a side chat you never sent a message in deletes it. To delete one you used,
 choose **Delete** at the top of the side chat. Deleting a thread also deletes its
