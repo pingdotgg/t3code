@@ -236,6 +236,38 @@ again on its next connect.
 For Antigravity's Google callback on a remote host, see
 [remote sign-in](./providers-antigravity.md#sign-in-from-a-remote-device).
 
+## Cloud sandbox workspaces
+
+Run agents in a cloud sandbox from [boat.dev](https://boat.dev) instead of your own machine.
+
+To set it up, open **Settings → Environments → Add environment** and pick a provider under
+**Or use a cloud sandbox**. Paste your boat.dev API key, then choose:
+
+- the machine size and auto-stop window every sandbox starts with
+- an optional monthly budget
+- how many sandboxes can run at once
+- an optional template snapshot to start from
+
+The API key stays on the server you set up. Nothing is provisioned during setup. Agents create
+a sandbox when they need one: `t3_delegate_task` starts a fresh sandbox for each task, and from
+inside a managed sandbox `t3_worktree_handoff` forks it, including uncommitted files.
+
+If an agent's provider isn't available in a sandbox, use a template snapshot that has its CLI
+installed and signed in.
+
+Once a profile exists, **Settings → Environments** has a **Cloud sandboxes** section. Use it to
+change the limits, remove the profile, and stop, resume, open, or delete sandboxes. Removing a
+profile requires deleting its sandboxes first. On mobile the same controls are on each
+environment's settings page.
+
+Sandboxes stop on their own after the auto-stop window, unless agent work is active. T3 Code
+never starts a stopped sandbox by itself: you or an agent resumes it. Once the budget is reached,
+new sandboxes are refused. The budget counts running and stopped sandboxes, plus the minimum
+window the new one would run. A stopped sandbox's disk is deleted once its source thread is
+deleted, or at any time from the Cloud sandboxes section.
+
+Running processes are not copied to a sandbox. Filesystem worktrees remain the default.
+
 ## Browser on a remote environment
 
 Browser tabs belong to the environment, so you and your agents see the same
