@@ -350,9 +350,10 @@ export function dropLayoutDrag(): boolean {
   const current = dragState;
   setDragState(null);
   if (!current?.target) return false;
+  const before = useLayoutStore.getState().layout;
   notePaneDrop(true);
   const committed = commitLayoutDrop(current.source, current.target);
-  if (!committed) notePaneDrop(false);
+  if (!committed || useLayoutStore.getState().layout === before) notePaneDrop(false);
   return committed;
 }
 

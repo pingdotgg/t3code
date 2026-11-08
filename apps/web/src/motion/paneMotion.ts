@@ -498,7 +498,9 @@ export function usePaneMotion(
     const paneWas = new Map<string, PaneBox>();
     for (const box of previousBoxes.values()) paneWas.set(box.paneId, box);
     const wasOf = (tabId: string, box: PaneBox) => {
-      const was = drop ? paneWas.get(box.paneId) : (previousBoxes.get(tabId) ?? paneWas.get(box.paneId));
+      const was = drop
+        ? paneWas.get(box.paneId)
+        : (previousBoxes.get(tabId) ?? paneWas.get(box.paneId));
       const inherited = was && was.element !== box.element ? slides.get(was.element) : undefined;
       if (!was || !inherited) return was;
       const owed = inherited.run.value();
