@@ -6844,7 +6844,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeAssistantTextFrame({
             uuid: mainUuid,
             text: "Delegating.",
-            model: "claude-haiku-4-5-20251001",
+            model: "claude-opus-4-5-20251101",
           }),
           makeAssistantErrorFrame({
             uuid: "00000000-0000-4000-8000-000000000642",
@@ -6857,7 +6857,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         const providerTurn = lastProviderTurn(harness.events);
         assert.equal(providerTurn.nativeTurnRef?.nativeId, mainUuid);
-        assert.equal(providerTurn.model, "claude-haiku-4-5");
+        assert.equal(providerTurn.model, "claude-opus-4-5");
         const rolledBack = yield* harness.runtime.rollbackThread({
           providerThread: harness.providerThread,
           target: {
