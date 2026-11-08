@@ -8,7 +8,9 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Lesson,
   type OrchestrationV2Run,
+  type OrchestrationV2SideChat,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -918,7 +920,54 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
     }),
   );
 
-  it.effect("completes a side chat run with a missing checkpoint and never touches git", () =>
+  it.effect.each([
+    {
+      name: "upstream side chat",
+      lineage: {
+        parentThreadId: threadId,
+        relationshipToParent: "fork",
+        rootThreadId: threadId,
+        sideChat: true,
+      } as const,
+    },
+    {
+      name: "lesson",
+      lesson: {
+        topic: "event sourcing",
+        depth: "working",
+        purpose: "outcome",
+      } satisfies OrchestrationV2Lesson,
+      lineage: {
+        parentThreadId: threadId,
+        relationshipToParent: "fork",
+        rootThreadId: threadId,
+      } as const,
+    },
+    {
+      name: "T3 Learn side chat",
+      sideChat: {
+        lessonThreadId: threadId,
+        anchor: {
+          threadId,
+          messageId: MessageId.make("message:checkpoint-capture-side-chat-anchor"),
+          start: 0,
+          end: 5,
+          prefix: "",
+          suffix: "",
+        },
+        excerpt: "hello",
+        excerptContext: "hello",
+        label: "Question",
+        opening: { status: "ready", text: null, requestId: "request:checkpoint-capture" },
+        done: null,
+      } satisfies OrchestrationV2SideChat,
+      lineage: {
+        parentThreadId: threadId,
+        relationshipToParent: "fork",
+        rootThreadId: threadId,
+      } as const,
+    },
+  ])("completes a $name run with a missing checkpoint and never touches git", (testCase) =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -940,7 +989,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             creationSource: "web",
             id: sideChatThreadId,
             projectId,
-            title: "Side chat",
+            title: testCase.name,
             providerInstanceId,
             modelSelection,
             runtimeMode: "approval-required",
@@ -948,12 +997,9 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             branch: null,
             worktreePath: "/repo",
             activeProviderThreadId: null,
-            lineage: {
-              parentThreadId: threadId,
-              relationshipToParent: "fork",
-              rootThreadId: threadId,
-              sideChat: true,
-            },
+            lineage: testCase.lineage,
+            ...(testCase.lesson === undefined ? {} : { lesson: testCase.lesson }),
+            ...(testCase.sideChat === undefined ? {} : { sideChat: testCase.sideChat }),
             forkedFrom: null,
             createdAt: now,
             updatedAt: now,

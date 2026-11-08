@@ -1,6 +1,7 @@
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  isAnySideChatThread,
   isOrchestrationV2WorkActive,
   CommandId,
   type EventId,
@@ -929,9 +930,9 @@ export const layer: Layer.Layer<
                   .responseStreamingMode,
             ),
           );
-          // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
+          // Side chats and lessons share a checkout others edit; a snapshot would capture their edits.
           yield* (
-            input.appThread.lineage.sideChat === true
+            isAnySideChatThread(input.appThread) || input.appThread.lesson !== undefined
               ? Effect.void
               : checkpointService.captureBaseline({
                   scope: input.checkpointScope,

@@ -1114,7 +1114,14 @@ it.effect(
     }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
-it.effect("starts the provider when checkpoint baseline capture fails", () =>
+it.effect.each([
+  { name: "a thread whose baseline capture fails", lesson: undefined, baselineCalls: 1 },
+  {
+    name: "a lesson, which never snapshots the shared checkout",
+    lesson: { topic: "event sourcing", depth: "working", purpose: "outcome" } as const,
+    baselineCalls: 0,
+  },
+])("starts the provider for $name", ({ lesson, baselineCalls }) =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("thread:run-execution-baseline-failure");
     const runId = RunId.make("run:run-execution-baseline-failure");
@@ -1129,6 +1136,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
       id: CheckpointScopeId.make("checkpoint-scope:run-execution-baseline-failure"),
     } as OrchestrationV2CheckpointScope;
     const providerStarts = yield* Ref.make(0);
+    const baselineAttempts = yield* Ref.make(0);
     const writes = yield* Ref.make<
       ReadonlyArray<{
         events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -1142,12 +1150,16 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
           PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({
             captureBaseline: () =>
-              Effect.fail(
-                new CheckpointService.CheckpointBaselineCaptureError({
-                  scopeId: checkpointScope.id,
-                  ordinalWithinScope: 0,
-                  cause: new Error("VCS process timed out"),
-                }),
+              Ref.update(baselineAttempts, (count) => count + 1).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new CheckpointService.CheckpointBaselineCaptureError({
+                      scopeId: checkpointScope.id,
+                      ordinalWithinScope: 0,
+                      cause: new Error("VCS process timed out"),
+                    }),
+                  ),
+                ),
               ),
           }),
           layerTurnItemPositionsTest,
@@ -1171,7 +1183,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
         commandId: CommandId.make("command:run-execution-baseline-failure"),
-        appThread: rootAppThread(threadId),
+        appThread: { ...rootAppThread(threadId), ...(lesson === undefined ? {} : { lesson }) },
         providerSessionId,
         session: {
           events: Stream.never,
@@ -1218,6 +1230,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
     }).pipe(Effect.provide(layerTest));
 
     assert.equal(yield* Ref.get(providerStarts), 1);
+    assert.equal(yield* Ref.get(baselineAttempts), baselineCalls);
 
     const events = (yield* Ref.get(writes)).flatMap((write) => [...write.events]);
     const failedEvent = events.find(
