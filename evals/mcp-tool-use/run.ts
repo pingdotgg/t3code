@@ -50,6 +50,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { quizCardProblem, readQuestionCard, readQuizCard } from "@t3tools/shared/quizCard";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
@@ -1687,6 +1688,15 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     );
   }
   if (isT3Name(call.name)) {
+    // T3 refuses a card it cannot show.
+    if (name === "quiz_card") {
+      const card = readQuizCard(input);
+      const problem = card === undefined ? "Invalid quiz card." : quizCardProblem(card);
+      if (problem !== undefined) return failed(problem);
+    }
+    if (name === "question_card" && readQuestionCard(input) === undefined) {
+      return failed("Invalid question card.");
+    }
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
@@ -1886,8 +1896,8 @@ const requestBody = (
   max_tokens: 16_000,
   thinking: { type: "adaptive", display: "summarized" },
   output_config: { effort },
-  // Like Claude Code, cache the shared system prompt so every sample reuses it. The pool's proxy
-  // places its own breakpoints, and the API allows four in all.
+  // Like Claude Code, cache the shared system prompt so every sample reuses it. A CLIProxyAPI
+  // server places its own breakpoints, and the API allows four in all.
   ...(proxied ? {} : { cache_control: { type: "ephemeral" } }),
   system: base.system.map((block, i) =>
     i === base.system.length - 1 && !proxied
@@ -2362,7 +2372,7 @@ const Flags = Schema.Struct({
     ...PROXY_SHELL_MODELS,
   ]),
   "user-instructions": Schema.Literals(["keep", "drop"]),
-  proxy: Schema.Literals(["vibeproxy", "pool"]),
+  proxy: Schema.optional(Schema.Literals(["vibeproxy", "pool"])),
   "dry-run": Schema.Boolean,
   "stop-on-regression": Schema.Boolean,
   "regression-budget": Schema.optional(PositiveIntOrZero),
@@ -2404,7 +2414,8 @@ const main = Effect.gen(function* () {
       // T3's text must work for every user, so the captured CLAUDE.md is dropped by default.
       "user-instructions": { ...string, default: "drop" },
       // The CLIProxyAPI server for GPT models, and for Claude when ANTHROPIC_API_KEY is unset.
-      proxy: { ...string, default: "vibeproxy" },
+      // Unset: `pool` without a key, else `vibeproxy`.
+      proxy: string,
       "dry-run": { type: "boolean", default: false },
       "stop-on-regression": { type: "boolean", default: false },
       "regression-budget": string,
@@ -2553,7 +2564,7 @@ const main = Effect.gen(function* () {
     apiKey,
     model: flags.model,
     ...(codex || !apiKey || !isPricedModel(flags["shell-model"])
-      ? { proxy: proxyConfig(flags.proxy) }
+      ? { proxy: proxyConfig(flags.proxy ?? (apiKey ? "vibeproxy" : "pool")) }
       : {}),
     effort,
     maxSteps: flags["max-steps"] ?? (codex ? 10 : 6),
