@@ -1146,7 +1146,7 @@ export function ThreadRelationshipsPanel(props: {
                     group.rows.length + previousRemoteSubagents.length > 0,
                 )
                 .map((group) => (
-                  <div key={`${scopedThreadKey(ref)}:${group.id}`} className="mt-1.5">
+                  <div key={`${scopedThreadKey(ref)}:${group.id}`} className="not-first:mt-1.5">
                     <ThreadLineageGroup
                       {...group}
                       extraRows={previousRemoteSubagents.map((agent) => ({
