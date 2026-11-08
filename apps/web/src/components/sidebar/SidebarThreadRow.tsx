@@ -279,10 +279,12 @@ function SidebarThreadTooltip({
         footer={
           showPullRequests ? (
             <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
-              <ThreadPullRequestsMiniList
-                pullRequests={thread.pullRequests}
-                onOpenPullRequest={onOpenPullRequest}
-              />
+              <div className="-mx-1 max-h-[calc(var(--available-height)-0.5rem-2px)] overflow-y-auto overscroll-contain">
+                <ThreadPullRequestsMiniList
+                  pullRequests={thread.pullRequests}
+                  onOpenPullRequest={onOpenPullRequest}
+                />
+              </div>
             </div>
           ) : null
         }
@@ -1685,7 +1687,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const openPrLink = useOpenPrLink();
   const handlePrClick = (event: ReactMouseEvent<HTMLElement>, url: string) => {
-    openPrLink(event, url, threadRef);
+    if (openPrLink(event, url, threadRef)) props.onSelect();
   };
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const onFileDropThreads = props.onFileDropThreads;
