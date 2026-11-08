@@ -81,10 +81,12 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         ];
 
         expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toEqual({
+          CLAUDE_CODE_ARTIFACT: "0",
           CLAUDE_CODE_ENTRYPOINT: "t3-code",
           KEEP: "1",
         });
         expect(yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).toEqual({
+          CLAUDE_CODE_ARTIFACT: "0",
           CLAUDE_CODE_ENTRYPOINT: "instance",
           CLAUDE_EFFORT: "low",
           KEEP: "1",

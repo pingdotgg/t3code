@@ -72,6 +72,8 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
   hostEnvironment: NodeJS.ProcessEnv,
 ) {
   const baseEnvironment: NodeJS.ProcessEnv = {
+    // Claude Code turns its artifact tools off by default only for SDK entrypoints, not t3-code.
+    CLAUDE_CODE_ARTIFACT: "0",
     ...hostEnvironment,
     CLAUDE_CODE_ENTRYPOINT: "t3-code",
   };
