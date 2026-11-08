@@ -66,6 +66,10 @@ function useChatBackgroundImage(): Blob | null {
   );
 }
 
+export function useHasChatBackground(): boolean {
+  return useChatBackgroundImage() !== null;
+}
+
 export async function setChatBackgroundImage(file: Blob) {
   if (!file.type.startsWith("image/")) throw new Error("Choose an image file.");
   if (file.size > CHAT_BACKGROUND_MAX_BYTES) throw new Error("Choose an image under 25 MB.");

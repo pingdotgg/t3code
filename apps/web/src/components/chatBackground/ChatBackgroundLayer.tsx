@@ -28,7 +28,6 @@ export function ChatBackgroundLayer({
   return (
     <div
       aria-hidden
-      data-chat-background-active={empty ? "empty" : "thread"}
       className="pointer-events-none absolute inset-0 -z-10 bg-cover bg-center bg-no-repeat"
       style={{
         backgroundImage: `url(${JSON.stringify(url)})`,

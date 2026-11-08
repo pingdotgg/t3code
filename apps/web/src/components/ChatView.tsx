@@ -265,6 +265,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { DraftDashboard } from "./chat/DraftDashboard";
 import { ChatBackgroundLayer } from "./chatBackground/ChatBackgroundLayer";
+import { useHasChatBackground } from "./chatBackground/chatBackgroundStore";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
   BranchRestoreConfirmHost,
@@ -582,6 +583,7 @@ export default function ChatView(props: ChatViewProps) {
   })() as AssistantCitationRequest | null;
   const citationHistory = useCitedHistory(citationRequest);
   const { resolvedTheme } = useTheme();
+  const hasChatBackground = useHasChatBackground();
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
   );
@@ -3317,12 +3319,21 @@ export default function ChatView(props: ChatViewProps) {
     addFolders: addDroppedFoldersToComposer,
   });
 
+  const showChatBackground =
+    !embedded && (settings.chatBackgroundScope !== "empty" || isDraftHeroState);
   const content = (
     <div
       ref={setWorkspaceLayoutElement}
+      data-chat-background={
+        showChatBackground && hasChatBackground
+          ? isDraftHeroState
+            ? "empty"
+            : "thread"
+          : undefined
+      }
       className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
-      {embedded || (settings.chatBackgroundScope === "empty" && !isDraftHeroState) ? null : (
+      {!showChatBackground ? null : (
         <ChatBackgroundLayer
           effect={settings.chatBackgroundEffect}
           light={resolvedTheme === "light"}

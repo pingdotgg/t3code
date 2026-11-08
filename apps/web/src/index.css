@@ -2575,13 +2575,13 @@ code {
 }
 
 /* Over the artwork the composer turns to monocode's thin glass. */
-:where(:has(> [data-chat-background-active])) [data-chat-composer-stack] {
+[data-chat-background] [data-chat-composer-stack] {
   --glass-opacity: 70%;
   --glass-blur: 40px;
 }
 
 /* The theme's solid toolbar would hide the artwork behind the breadcrumb. */
-html[data-theme-id] :has(> [data-chat-background-active]) [data-chat-header] {
+html[data-theme-id] [data-chat-background] [data-chat-header] {
   background-color: transparent;
 }
 
@@ -2589,8 +2589,7 @@ html[data-theme-id] :has(> [data-chat-background-active]) [data-chat-header] {
  * Text over the artwork needs 4.5:1 (WCAG 1.4.3). Threads get a soft vignette behind the
  * messages and the header a fading band; both paint above the artwork (-z-10) and below text.
  */
-:where(:has(> [data-chat-background-active="thread"]))
-  [data-workspace-area="conversation"]::before {
+[data-chat-background="thread"] [data-workspace-area="conversation"]::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -2603,7 +2602,7 @@ html[data-theme-id] :has(> [data-chat-background-active]) [data-chat-header] {
   );
 }
 
-:where(:has(> [data-chat-background-active="thread"])) [data-chat-header]::before {
+[data-chat-background="thread"] [data-chat-header]::before {
   content: "";
   position: absolute;
   inset: 0 0 -1.5rem;

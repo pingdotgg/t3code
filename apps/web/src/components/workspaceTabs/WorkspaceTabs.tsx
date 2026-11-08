@@ -1,14 +1,37 @@
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { MessageSquareIcon, PlusIcon, SquarePenIcon, XIcon } from "lucide-react";
+import type { ProviderInstanceId } from "@t3tools/contracts";
+import {
+  MessageSquareIcon,
+  NotebookTextIcon,
+  PlusIcon,
+  SettingsIcon,
+  SquarePenIcon,
+  SquareTerminalIcon,
+  XIcon,
+} from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";
 
 import { isElectron } from "../../env";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
-import { startNewThreadFromContext } from "../../lib/chatThreadActions";
+import { usePrimarySettings } from "../../hooks/useSettings";
+import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { resolveAppModelSelectionForInstance } from "../../modelSelection";
+import { runChatCommand } from "../chat/chatCommandBus";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
 import { cn } from "../../lib/utils";
 import { openCommandPalette } from "../../commandPaletteBus";
 import { useThreadShell } from "../../state/entities";
@@ -106,18 +129,40 @@ export function WorkspaceTabs() {
     closeTab(key);
   };
 
-  // A project keeps one draft, so from a draft "+" asks which project to start in.
-  const startNewThread = () =>
-    routeTarget?.kind === "draft"
-      ? openCommandPalette({ open: "new-thread-in" })
-      : void startNewThreadFromContext({
-          activeDraftThread: newThreadContext.activeDraftThread,
-          activeThread: newThreadContext.activeThread ?? undefined,
-          defaultProjectRef: newThreadContext.defaultProjectRef,
-          handleNewThread: newThreadContext.handleNewThread,
-        }).then((started) => {
-          if (!started) openCommandPalette({ open: "new-thread-in" });
-        });
+  const settings = usePrimarySettings();
+  const providers = useAtomValue(primaryServerProvidersAtom).filter(
+    (provider) => provider.enabled && provider.models.length > 0,
+  );
+
+  // A project keeps one draft, so from a draft without a provider pick "+" asks which project to start in.
+  const startNewThread = async (pick?: { instanceId: ProviderInstanceId; model: string }) => {
+    const projectRef = resolveThreadActionProjectRef({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread: newThreadContext.handleNewThread,
+    });
+    if (!projectRef || (routeTarget?.kind === "draft" && !pick)) {
+      openCommandPalette({ open: "new-thread-in" });
+      return;
+    }
+    const started = await newThreadContext.handleNewThread(projectRef);
+    if (!started || !pick) return;
+    const model = resolveAppModelSelectionForInstance(
+      pick.instanceId,
+      settings,
+      providers,
+      pick.model,
+    );
+    if (!model) return;
+    useComposerDraftStore
+      .getState()
+      .setModelSelection(
+        started.draftId,
+        { instanceId: pick.instanceId, model },
+        { explicit: true },
+      );
+  };
 
   return (
     <nav
@@ -147,14 +192,66 @@ export function WorkspaceTabs() {
           <span className="truncate">New thread</span>
         </div>
       ) : null}
-      <button
-        type="button"
-        aria-label="New tab"
-        onClick={startNewThread}
-        className="ml-0.5 grid size-7.5 shrink-0 place-items-center rounded-md bg-foreground/4 text-muted-foreground opacity-65 outline-hidden [-webkit-app-region:no-drag] hover:bg-foreground/7 hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-      >
-        <PlusIcon className="size-4" />
-      </button>
+      <Menu>
+        <MenuTrigger
+          render={
+            <button
+              type="button"
+              aria-label="New tab"
+              className="ml-0.5 grid size-7.5 shrink-0 place-items-center rounded-md bg-foreground/4 text-muted-foreground opacity-65 outline-hidden [-webkit-app-region:no-drag] hover:bg-foreground/7 hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:opacity-100"
+            />
+          }
+        >
+          <PlusIcon className="size-4" />
+        </MenuTrigger>
+        <MenuPopup align="start" sideOffset={6} className="min-w-60">
+          <MenuItem onClick={() => void startNewThread()}>
+            <SquarePenIcon />
+            New thread
+          </MenuItem>
+          <MenuItem disabled={!routeTarget} onClick={() => runChatCommand("terminal.new")}>
+            <SquareTerminalIcon />
+            New terminal
+          </MenuItem>
+          <MenuItem onClick={() => void navigate({ to: "/notes" })}>
+            <NotebookTextIcon />
+            Notes
+          </MenuItem>
+          {providers.length > 0 ? <MenuSeparator /> : null}
+          {providers.map((provider) => (
+            <MenuSub key={provider.instanceId}>
+              <MenuSubTrigger>
+                <ProviderInstanceIcon
+                  driverKind={provider.driver}
+                  displayName={provider.displayName ?? provider.driver}
+                  accentColor={provider.accentColor}
+                  size="compact"
+                />
+                <span className="truncate">{provider.displayName ?? provider.driver}</span>
+              </MenuSubTrigger>
+              <MenuSubPopup className="max-w-72">
+                {provider.models
+                  .filter((model) => !model.isLegacy)
+                  .map((model) => (
+                    <MenuItem
+                      key={model.slug}
+                      onClick={() =>
+                        void startNewThread({ instanceId: provider.instanceId, model: model.slug })
+                      }
+                    >
+                      <span className="truncate">{model.name}</span>
+                    </MenuItem>
+                  ))}
+              </MenuSubPopup>
+            </MenuSub>
+          ))}
+          <MenuSeparator />
+          <MenuItem onClick={() => void navigate({ to: "/settings/providers" })}>
+            <SettingsIcon />
+            Agent settings…
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
     </nav>
   );
 }
