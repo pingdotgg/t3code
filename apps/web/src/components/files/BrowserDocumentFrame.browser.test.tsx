@@ -1,11 +1,11 @@
-import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
+import { injectHtmlRenderBootstrap, type HtmlRenderSelection } from "@t3tools/shared/htmlRender";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
 
-import { HtmlRenderDocument } from "./BrowserDocumentFrame";
+import { HTML_RENDER_SELECTION_EVENT, HtmlRenderDocument } from "./BrowserDocumentFrame";
 
 const sizeChanged = (height: number) => ({
   jsonrpc: "2.0",
@@ -56,6 +56,104 @@ describe("HtmlRenderDocument", () => {
     await expect.element(viewer.getByAltText("Green")).toBeVisible();
     await expect.element(viewer.getByRole("button", { name: "Next media" })).toBeVisible();
     await expect.element(viewer.getByRole("button", { name: "Previous media" })).toBeVisible();
+  });
+
+  it("reports the page's text selection to the host only while the frame has focus", async () => {
+    const html = injectHtmlRenderBootstrap(`<!doctype html><p id="quote">Quoted words</p>
+      <div id="ticker" style="height: 20px; overflow: auto"><div style="height: 60px">News</div></div>
+      <script>
+      var quote = document.getElementById("quote");
+      var ticker = document.getElementById("ticker");
+      ticker.addEventListener("scroll", function() { parent.postMessage("ticker-scrolled", "*"); });
+      window.addEventListener("message", function(event) {
+        if (event.source !== window.parent || typeof event.data !== "string") return;
+        if (event.data === "scroll-ticker") {
+          ticker.scrollTop += 10;
+          return;
+        }
+        // Registered after the bootstrap's listener, so the host sees its report first.
+        document.addEventListener("selectionchange", function() {
+          parent.postMessage("selection-settled", "*");
+        }, { once: true });
+        if (event.data === "select") getSelection().selectAllChildren(quote);
+        if (event.data === "collapse") getSelection().removeAllRanges();
+      });
+    </script>`);
+    const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    const selections: Array<HtmlRenderSelection | null> = [];
+    const listeners = new AbortController();
+    using _listeners = { [Symbol.dispose]: () => listeners.abort() };
+    document.addEventListener(
+      HTML_RENDER_SELECTION_EVENT,
+      (event) => selections.push((event as CustomEvent<HtmlRenderSelection | null>).detail),
+      { signal: listeners.signal },
+    );
+    const onContentHeight = vi.fn();
+    await using screen = await render(
+      <>
+        <button type="button">Outside</button>
+        <HtmlRenderDocument src={src} title="Quote" onContentHeight={onContentHeight} />
+      </>,
+    );
+    await vi.waitFor(() => expect(onContentHeight).toHaveBeenCalled());
+    const frame = screen.getByTitle("Quote").element() as HTMLIFrameElement;
+    const post = (command: "select" | "collapse" | "scroll-ticker") => {
+      const settled = new Promise<void>((resolve) =>
+        window.addEventListener(
+          "message",
+          (event) => {
+            if (
+              event.source === frame.contentWindow &&
+              event.data === (command === "scroll-ticker" ? "ticker-scrolled" : "selection-settled")
+            ) {
+              resolve();
+            }
+          },
+          { signal: listeners.signal },
+        ),
+      );
+      frame.contentWindow?.postMessage(command, "*");
+      return settled;
+    };
+    const reported = {
+      text: "Quoted words",
+      rect: expect.objectContaining({ left: expect.any(Number), bottom: expect.any(Number) }),
+      bounds: expect.objectContaining({ left: expect.any(Number), bottom: expect.any(Number) }),
+    };
+
+    await post("select");
+    expect(selections).toEqual([]);
+    // A press inside an existing selection would drag that text instead of selecting anew.
+    await post("collapse");
+
+    // The page reports a drag only once the button is released.
+    const quote = page.frameLocator(screen.getByTitle("Quote")).getByText("Quoted words");
+    await userEvent.dragAndDrop(quote, quote, {
+      sourcePosition: { x: 0, y: 5 },
+      targetPosition: { x: 250, y: 5 },
+    });
+    await vi.waitFor(() => expect(selections.at(-1)).toEqual(reported));
+    for (const box of [selections.at(-1)!.rect, selections.at(-1)!.bounds]) {
+      expect(box.left).toBeGreaterThanOrEqual(0);
+      expect(box.top).toBeGreaterThanOrEqual(0);
+      expect(box.right).toBeGreaterThan(box.left);
+      expect(box.bottom).toBeGreaterThan(box.top);
+      expect(box.right).toBeLessThanOrEqual(frame.clientWidth);
+      expect(box.bottom).toBeLessThanOrEqual(frame.clientHeight);
+    }
+
+    // Scrolling content that holds none of the selection keeps it.
+    await post("scroll-ticker");
+    expect(selections.at(-1)).toEqual(reported);
+
+    await post("collapse");
+    expect(selections.at(-1)).toBeNull();
+
+    await post("select");
+    expect(selections.at(-1)).toEqual(reported);
+    screen.getByRole("button", { name: "Outside" }).element().focus();
+    await vi.waitFor(() => expect(selections.at(-1)).toBeNull());
   });
 });
 
