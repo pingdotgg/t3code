@@ -454,7 +454,7 @@ function DeviceDiscoveryWarning(props: {
   return (
     <div
       role="status"
-      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-3 py-1 text-xs text-muted-foreground"
+      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-3 py-1 text-meta text-muted-foreground"
     >
       <span className="flex min-w-0 flex-1 basis-56 items-start gap-2">
         <CircleAlert className="mt-px size-3.5 shrink-0 text-warning-foreground" />
@@ -487,7 +487,7 @@ function DeviceDiscoveryWarning(props: {
             Details
           </PopoverTrigger>
           <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
-            <p className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
+            <p className="whitespace-pre-wrap break-words font-mono text-meta text-muted-foreground">
               {props.detail}
             </p>
           </PopoverPopup>

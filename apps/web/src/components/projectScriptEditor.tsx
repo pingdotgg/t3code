@@ -534,7 +534,7 @@ function ProjectScriptEditorForm({
               />
             </label>
             <label
-              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
+              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-body dark:border-transparent dark:bg-white/[0.035] ${
                 previewUrl.trim().length === 0 ? "opacity-60" : ""
               }`}
             >

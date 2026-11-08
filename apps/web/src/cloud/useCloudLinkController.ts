@@ -85,7 +85,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
                 children: "Copy trace ID",
                 onClick: () => void navigator.clipboard?.writeText(traceId),
               },
-              actionVariant: "outline",
+              actionVariant: "secondary",
             }
           : {}),
         data: { hideCopyButton: true },
