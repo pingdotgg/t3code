@@ -1,6 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+// This scanner needs a tiny fire-and-forget trigger of a sibling systemd unit,
+// which Effect/process does not model for plugins; a direct exec keeps it simple.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
+
+import { UsageReadError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -91,11 +97,48 @@ export const mistralVibeUsageFormat: TranscriptUsageFormat<unknown> = {
   parseProjected: (projected) => parseRecord(projected),
 };
 
+/**
+ * Trigger a fresh export and wait for it, so a Usage refresh always reads
+ * current data instead of whatever the last timer run produced. `--wait`
+ * blocks until the oneshot unit's ExecStart completes. Best-effort: a
+ * missing or hung exporter never blocks a scan for more than a few seconds.
+ */
+const triggerExport = Effect.fn("mistralVibeUsage.triggerExport")(function* () {
+  yield* Effect.tryPromise<void, UsageReadError>({
+    try: () =>
+      new Promise<void>((resolve, reject) =>
+        NodeChildProcess.execFile(
+          "systemctl",
+          ["--user", "start", "--wait", "mistral-vibe-usage-export.service"],
+          (error) =>
+            error
+              ? reject(
+                  new UsageReadError({
+                    reason: "scanFailed",
+                    detail: "Mistral Vibe usage exporter could not start",
+                    cause: error,
+                  }),
+                )
+              : resolve(),
+        ),
+      ),
+    catch: (cause) =>
+      new UsageReadError({
+        reason: "scanFailed",
+        detail: "Mistral Vibe usage exporter could not start",
+        cause,
+      }),
+  });
+});
+
 export const mistralVibeUsageReader: ProviderUsageReader<AcpRegistrySettings, Path.Path> = {
   kind: "transcripts",
   provider: "mistral-vibe",
   format: mistralVibeUsageFormat,
   directories: Effect.fn("mistralVibeUsageReader.directories")(function* ({ environment }) {
+    // Refresh-triggered export; a failed or missing exporter is fine (the
+    // scan just reads the last exported files) and must not fail the scan.
+    yield* Effect.ignoreCause(triggerExport());
     const path = yield* Path.Path;
     const home = yield* HostProcess.HomeDirectory;
     const configured = environment["MISTRAL_VIBE_USAGE_DIR"]?.trim();
