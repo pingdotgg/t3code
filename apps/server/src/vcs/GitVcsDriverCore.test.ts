@@ -4943,6 +4943,82 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.each([false, true] as const)(
+      "makes worktree submodule checkout non-interactive (progress: %s)",
+      (progress) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const tempDir = yield* makeTmpDir("git-vcs-driver-ssh-env-");
+          const sshLogPath = pathService.join(tempDir, "ssh-env.txt");
+          const sshWrapperPath = yield* pathService.fromFileUrl(
+            new URL("./testing/GitVcsDriverCore.fixture.sh", import.meta.url),
+          );
+
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(
+            cwd,
+            ".gitmodules",
+            '[submodule "private"]\n\tpath = private\n\turl = ssh://example.invalid/private.git\n',
+          );
+          yield* git(cwd, ["add", "."]);
+          const gitlink = yield* git(cwd, ["rev-parse", "HEAD"]);
+          yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${gitlink},private`]);
+          yield* git(cwd, ["commit", "-m", "add private submodule"]);
+
+          const worktreePath = pathService.join(
+            yield* makeTmpDir("git-worktrees-"),
+            "private-submodule-worktree",
+          );
+          const finished = yield* Ref.make<ReadonlyArray<{ ok: boolean; detail: string | null }>>(
+            [],
+          );
+
+          yield* Effect.gen(function* () {
+            const created = yield* (yield* GitVcsDriver.GitVcsDriver).createWorktree(
+              {
+                cwd,
+                path: worktreePath,
+                refName: initialBranch,
+                newRefName: "feature/private-submodules",
+              },
+              {
+                progress: {
+                  onSubmodulesFinished: (result) =>
+                    Ref.update(finished, (items) => [...items, result]),
+                  ...(progress ? { onSubmoduleLine: () => Effect.void } : {}),
+                },
+              },
+            );
+
+            assert.equal(created.worktree.path, worktreePath);
+            assert.deepEqual((yield* fileSystem.readFileString(sshLogPath)).trim().split(/\r?\n/), [
+              "GCM_INTERACTIVE=never",
+              "GIT_ASKPASS=",
+              "GIT_TERMINAL_PROMPT=0",
+              "SSH_ASKPASS=",
+              "SSH_ASKPASS_REQUIRE=never",
+            ]);
+          }).pipe(
+            Effect.provideService(HostProcess.Environment, {
+              ...(yield* HostProcess.Environment),
+              GIT_SSH: sshWrapperPath,
+              GCM_INTERACTIVE: "always",
+              GIT_ASKPASS: "git-askpass",
+              GIT_TERMINAL_PROMPT: "1",
+              SSH_ASKPASS: "ssh-askpass",
+              SSH_ASKPASS_REQUIRE: "force",
+              T3_TEST_SSH_ASKPASS_LOG: sshLogPath,
+            }),
+          );
+
+          const results = yield* Ref.get(finished);
+          assert.lengthOf(results, 1);
+          assert.isFalse(results[0]!.ok);
+        }),
+    );
+
     it.effect("creates worktrees under the configured worktrees directory", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
