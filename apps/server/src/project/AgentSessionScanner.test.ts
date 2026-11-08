@@ -1411,6 +1411,12 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             cwd: otherDir,
             message: "Started in another folder",
           },
+          {
+            id: "019a5f00-0000-7000-8000-00000000000d",
+            rolloutId: "019a5f00-0000-7000-8000-0000000000d1",
+            cwd: scratchDir,
+            message: "Rewound with no project",
+          },
         ];
         const rolloutPaths: Array<string> = [];
         for (const [index, chat] of chats.entries()) {
@@ -1420,7 +1426,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             "2026",
             "11",
             "08",
-            `rollout-2026-11-08T08-0${index}-00-${chat.id}.jsonl`,
+            `rollout-2026-11-08T08-0${index}-00-${"rolloutId" in chat ? `${chat.id}_${chat.rolloutId}` : chat.id}.jsonl`,
           );
           rolloutPaths.push(filePath);
           yield* writeTranscript({
@@ -1487,6 +1493,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           workspaceRoot: projectDir,
         }).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
         expect(threads.map((thread) => thread.title).toSorted()).toEqual([
+          "Rewound with no project",
           "Started in the project",
           "Started with no project",
         ]);
@@ -1499,7 +1506,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             .map(({ path, threadCount }) => ({ path, threadCount }))
             .toSorted((left, right) => left.path.localeCompare(right.path)),
         ).toEqual([
-          { path: projectDir, threadCount: 2 },
+          { path: projectDir, threadCount: 3 },
           { path: otherDir, threadCount: 1 },
         ]);
       }),
