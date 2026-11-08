@@ -1279,6 +1279,12 @@ function ProviderInstanceRow({
       }
     : undefined;
   const codexSetupMode = driver === "codex" ? readCodexSetupMode(instance.config) : null;
+  const codexIsolated =
+    driver === "codex" &&
+    instance.config !== null &&
+    typeof instance.config === "object" &&
+    "isolateRuntime" in instance.config &&
+    instance.config.isolateRuntime === true;
   const recommendedVersion = liveProvider?.compatibilityAdvisory?.recommendedVersion;
   const canInstallRecommended =
     !readOnly &&
@@ -1310,6 +1316,19 @@ function ProviderInstanceRow({
             environmentId={environmentId}
             instanceId={instanceId}
             provider={liveProvider}
+            isolated={codexIsolated}
+            readOnly={readOnly}
+            onIsolationChange={(isolateRuntime) =>
+              actions.enableInstance(instanceId, {
+                ...instance,
+                config: {
+                  ...(typeof instance.config === "object" && instance.config !== null
+                    ? instance.config
+                    : {}),
+                  isolateRuntime,
+                },
+              })
+            }
           />
         ) : undefined
       }
@@ -1327,12 +1346,13 @@ function ProviderInstanceRow({
             readOnly={readOnly}
             onEnable={() => actions.enableInstance(instanceId, { ...instance, enabled: true })}
           />
-        ) : mode === "editor" && codexSetupMode === "managed" ? (
+        ) : mode === "editor" && (codexIsolated || codexSetupMode === "managed") ? (
           <CodexSetupSection
             environmentId={environmentId}
             instanceId={instanceId}
             provider={liveProvider}
-            mode={codexSetupMode}
+            mode={codexSetupMode ?? "existing"}
+            isolated={codexIsolated}
             enabled={resolveProviderInstanceEnabled(instance)}
             readOnly={readOnly}
             onModeChange={(setupMode) =>

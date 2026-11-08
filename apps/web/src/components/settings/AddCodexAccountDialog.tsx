@@ -17,6 +17,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { CodexIsolationSetting } from "./CodexInstallationSection";
+import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 import { MultipleAccountsNote } from "./MultipleAccountsNote";
 import { SettingsRow } from "./settingsLayout";
@@ -44,6 +46,11 @@ export function AddCodexAccountDialog({
   const displayName = `ChatGPT - ${name.trim()}`;
   const [instanceId, setInstanceId] = useState<ProviderInstanceId | null>(null);
   const [pending, setPending] = useState(false);
+  const [isolateRuntime, setIsolateRuntime] = useState(false);
+  const isolationDenial = managedInstanceLocks(
+    useManagedPolicy(environmentId),
+    CODEX_DRIVER_KIND,
+  )?.configKeys.has("isolateRuntime");
   const provider = providers?.find((candidate) => candidate.instanceId === instanceId);
   // Closes itself once the new account connects; the owner unmounts it after
   // the close animation.
@@ -64,7 +71,11 @@ export function AddCodexAccountDialog({
               driver: CODEX_DRIVER_KIND,
               displayName,
               enabled: true,
-              config: { enabled: true, setupMode: "managed" },
+              config: {
+                enabled: true,
+                setupMode: "managed",
+                ...(isolateRuntime && !isolationDenial ? { isolateRuntime: true } : {}),
+              },
             },
           },
         },
@@ -126,6 +137,12 @@ export function AddCodexAccountDialog({
                 }
               />
               <MultipleAccountsNote environmentId={environmentId} driver={CODEX_DRIVER_KIND} />
+              <CodexIsolationSetting
+                environmentId={environmentId}
+                isolated={isolateRuntime}
+                readOnly={pending}
+                onChange={setIsolateRuntime}
+              />
             </form>
           )}
         </WizardPanel>

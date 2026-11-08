@@ -37,7 +37,8 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   readonly environment: NodeJS.ProcessEnv;
   readonly config: CodexSettings;
 }) {
-  const installation = yield* CodexInstallation.CodexInstallation;
+  const installer = yield* CodexInstallation.CodexInstallation;
+  const installation = options.config.isolateRuntime ? yield* installer.managed : installer;
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -103,20 +104,28 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
           }),
       ),
     );
-    yield* fs.makeDirectory(homePath, { recursive: true }).pipe(
-      Effect.mapError(
-        () =>
-          new ProviderSetupError({
-            instanceId: options.instanceId,
-            operation: "runtime",
-            detail: "Could not prepare the managed Codex runtime.",
-          }),
-      ),
-    );
+    yield* fs
+      .makeDirectory(homePath, {
+        recursive: true,
+        ...(options.config.isolateRuntime ? { mode: 0o700 } : {}),
+      })
+      .pipe(
+        Effect.mapError(
+          () =>
+            new ProviderSetupError({
+              instanceId: options.instanceId,
+              operation: "runtime",
+              detail: "Could not prepare the managed Codex runtime.",
+            }),
+        ),
+      );
     // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
     const environment: NodeJS.ProcessEnv = {
       ...options.environment,
       CODEX_HOME: homePath,
+      ...(options.config.isolateRuntime
+        ? { CODEX_SQLITE_HOME: path.join(homePath, "sqlite") }
+        : {}),
     };
     delete environment.ACCESS_TOKEN;
     delete environment.T3CODE_CODEX_LAUNCH_ARGS;

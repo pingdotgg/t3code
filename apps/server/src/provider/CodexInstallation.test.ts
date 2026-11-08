@@ -133,7 +133,9 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     downloads: () => downloads,
   };
 });
-const terminalState = (installation: CodexInstallation.CodexInstallation["Service"]) =>
+const terminalState = (
+  installation: Pick<CodexInstallation.CodexInstallation["Service"], "changes">,
+) =>
   installation.changes.pipe(
     Stream.filter((state) => ["succeeded", "failed", "cancelled"].includes(state.phase)),
     Stream.runHead,
@@ -169,6 +171,35 @@ it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
       expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
       expect((yield* h.installation.state).source).toBe("local");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+it.effect("an isolated installation never reuses a supported system Codex", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ local: { version: asset.version } });
+    const managed = yield* h.installation.managed;
+    expect((yield* managed.state).installedVersion).toBeNull();
+    yield* Effect.flip(managed.acquire().pipe(Effect.scoped));
+    yield* managed.start;
+    yield* terminalState(managed);
+    yield* Effect.gen(function* () {
+      const executable = yield* managed.acquire();
+      expect(executable).toMatchObject({
+        source: "managed",
+        executablePath: `${h.installation.managedDirectory}/${asset.version}/bin/codex`,
+      });
+      const blocked = yield* Effect.flip(h.installation.remove());
+      expect(blocked.detail).toContain("Stop Codex sessions");
+    }).pipe(Effect.scoped);
+    expect((yield* h.installation.state).executablePath).toBe(h.localBinaryPath);
+    yield* h.installation.start;
+    expect((yield* managed.state).executablePath).toBe(
+      `${h.installation.managedDirectory}/${asset.version}/bin/codex`,
+    );
+    expect(h.downloads()).toBe(1);
+    expect((yield* h.installation.resolve()).executablePath).toBe(h.localBinaryPath);
+    yield* h.installation.remove();
+    expect((yield* managed.state).installedVersion).toBeNull();
+    expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 it.effect.each([
   { version: "0.128.9" },
