@@ -43,35 +43,33 @@ it.each([
   },
   { platform: "linux", hostArch: "x64", arch: 1, resources: "resources", executable: "fixture" },
   { platform: "linux", hostArch: "arm64", arch: 3, resources: "resources", executable: "fixture" },
-])(
-  "prepares $platform cache on $hostArch with target $arch",
-  async ({ platform, hostArch, arch, ...layout }) => {
-    const { spawnSync } = await import("node:child_process");
-    const root = NodeFS.realpathSync(
-      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-hook-cache-")),
+])("prepares $platform/$hostArch cache", async ({ platform, hostArch, arch, ...layout }) => {
+  const { spawnSync } = await import("node:child_process");
+  const root = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-hook-cache-")),
+  );
+  try {
+    const resources = NodePath.join(root, layout.resources);
+    const archive = NodePath.join(resources, "app.asar");
+    const dist = NodePath.join(archive, "apps/server/dist");
+    const helper = NodePath.join(archive, "apps/desktop/dist-electron/serverCompileCache.cjs");
+    NodeFS.mkdirSync(dist, { recursive: true });
+    NodeFS.mkdirSync(NodePath.dirname(helper), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(dist, "binCli-fixture.mjs"), "export const answer = 42;");
+    NodeFS.writeFileSync(NodePath.join(dist, "server-fixture.mjs"), "export const answer = 43;");
+    NodeFS.writeFileSync(
+      helper,
+      `module.exports = require(${JSON.stringify(NodeURL.fileURLToPath(new URL("./server-compile-cache.ts", import.meta.url)))});`,
     );
-    try {
-      const resources = NodePath.join(root, layout.resources);
-      const archive = NodePath.join(resources, "app.asar");
-      const dist = NodePath.join(archive, "apps/server/dist");
-      const helper = NodePath.join(archive, "apps/desktop/dist-electron/serverCompileCache.cjs");
-      NodeFS.mkdirSync(dist, { recursive: true });
-      NodeFS.mkdirSync(NodePath.dirname(helper), { recursive: true });
-      NodeFS.writeFileSync(NodePath.join(dist, "binCli-fixture.mjs"), "export const answer = 42;");
-      NodeFS.writeFileSync(NodePath.join(dist, "server-fixture.mjs"), "export const answer = 43;");
-      NodeFS.writeFileSync(
-        helper,
-        `module.exports = require(${JSON.stringify(NodeURL.fileURLToPath(new URL("./server-compile-cache.ts", import.meta.url)))});`,
-      );
-      const hook = NodeURL.fileURLToPath(
-        new URL("../prepare-server-compile-cache.cjs", import.meta.url),
-      );
-      // Node stands in for the packaged engine.
-      const result = spawnSync(
-        process.execPath,
-        [
-          "-e",
-          `
+    const hook = NodeURL.fileURLToPath(
+      new URL("../prepare-server-compile-cache.cjs", import.meta.url),
+    );
+    // Node stands in for the packaged engine.
+    const result = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
       const childProcess = require("node:child_process");
       const spawn = childProcess.spawnSync;
       childProcess.spawnSync = (executable, args, options) => {
@@ -85,36 +83,35 @@ it.each([
         packager: { appInfo: { productFilename: "Fixture" }, executableName: "fixture" }
       }).catch(error => { console.error(error); process.exitCode = 1; });
     `,
-        ],
-        { encoding: "utf8" },
-      );
-      expect(result.status, result.stderr).toBe(0);
-      const manifest = JSON.parse(
-        NodeFS.readFileSync(NodePath.join(resources, "server-compile-cache/manifest.json"), "utf8"),
-      );
-      expect(
-        manifest.entries.sort((a: { module: string }, b: { module: string }) =>
-          a.module.localeCompare(b.module),
-        ),
-      ).toEqual([
-        {
-          module: "app.asar/apps/server/dist/binCli-fixture.mjs",
-          file: expect.stringMatching(/^[a-f0-9]{8}$/),
-        },
-        {
-          module: "app.asar/apps/server/dist/server-fixture.mjs",
-          file: expect.stringMatching(/^[a-f0-9]{8}$/),
-        },
-      ]);
-      expect(
-        NodeFS.statSync(NodePath.join(resources, "server-compile-cache", manifest.entries[0].file))
-          .size,
-      ).toBeGreaterThan(0);
-    } finally {
-      NodeFS.rmSync(root, { recursive: true, force: true });
-    }
-  },
-);
+      ],
+      { encoding: "utf8" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const manifest = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(resources, "server-compile-cache/manifest.json"), "utf8"),
+    );
+    expect(
+      manifest.entries.sort((a: { module: string }, b: { module: string }) =>
+        a.module.localeCompare(b.module),
+      ),
+    ).toEqual([
+      {
+        module: "app.asar/apps/server/dist/binCli-fixture.mjs",
+        file: expect.stringMatching(/^[a-f0-9]{8}$/),
+      },
+      {
+        module: "app.asar/apps/server/dist/server-fixture.mjs",
+        file: expect.stringMatching(/^[a-f0-9]{8}$/),
+      },
+    ]);
+    expect(
+      NodeFS.statSync(NodePath.join(resources, "server-compile-cache", manifest.entries[0].file))
+        .size,
+    ).toBeGreaterThan(0);
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 it("rejects ambiguous bundled server entries before importing them", async () => {
   const { spawnSync } = await import("node:child_process");

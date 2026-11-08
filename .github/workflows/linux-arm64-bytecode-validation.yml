@@ -24,7 +24,8 @@ jobs:
       - uses: ./.github/actions/setup-ci-deps
         with:
           install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
-      - run: vp test run scripts/lib/server-compile-cache.test.ts
+      - run: vp test run --config ../vite.config.ts lib/server-compile-cache.test.ts
+        working-directory: scripts
       - run: vp run build:desktop:bundle
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
