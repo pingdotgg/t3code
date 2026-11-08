@@ -3534,6 +3534,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
           },
           events,
+          "cohort",
         );
       }
     }
@@ -10054,6 +10055,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchQueuedRunCancel = Effect.fn("Orchestrator.dispatchQueuedRunCancel")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.cancel" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    // Settling disposes a cancelled wake's whole cohort, so a sibling's late result cannot unsettle it.
+    disposes: "wake" | "cohort" = "wake",
   ) {
     const projection = yield* loadProjectionForCommand(
       command,
@@ -10081,7 +10084,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         disposition: "disposed",
         now,
         cancelQueuedDelivery: false,
-        interruptedWakeTaskIds: queuedMessage.delegatedCompletion.taskIds,
+        ...(disposes === "wake"
+          ? { interruptedWakeTaskIds: queuedMessage.delegatedCompletion.taskIds }
+          : {}),
       });
     }
     yield* emitQueuedRunCancellation({ command, events, projection, run: queuedRun, now });
