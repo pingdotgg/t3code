@@ -115,6 +115,7 @@ function createResizeDrag<T extends HTMLElement>() {
   const finishThumbDrag = () => {
     const active = thumbDrag;
     if (!active) return;
+    window.removeEventListener("blur", finishThumbDrag);
     // Release can synchronously dispatch lostpointercapture.
     thumbDrag = null;
     try {
@@ -145,6 +146,8 @@ function createResizeDrag<T extends HTMLElement>() {
         clientY: event.clientY,
       }),
     );
+    // Releasing outside the window can skip pointerup.
+    window.addEventListener("blur", finishThumbDrag);
     thumbDrag = {
       thumb,
       target: event.currentTarget,

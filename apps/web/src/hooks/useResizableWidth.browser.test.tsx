@@ -84,6 +84,14 @@ describe("useResizableWidth", () => {
     // The chat timeline reads a press on its scroll node as the user taking over the scroll.
     expect(scrollerPresses).toEqual([scroller]);
 
+    // Releasing outside the window can skip pointerup; leaving the window ends the drag instead.
+    const onMovedThumb = { ...onThumb, clientY: top + 24 };
+    await act(() => {
+      handle.dispatchEvent(new PointerEvent("pointerdown", onMovedThumb));
+      window.dispatchEvent(new Event("blur"));
+      handle.dispatchEvent(new PointerEvent("pointermove", { ...onMovedThumb, clientY: top + 34 }));
+    });
+    expect(scroller.scrollTop).toBe(200);
 
     await act(() => handle.dispatchEvent(new PointerEvent("pointerdown", belowThumb)));
     expect(document.body.style.cursor).toBe("col-resize");
