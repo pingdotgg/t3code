@@ -1,8 +1,10 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
+  CommandId,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationDispatchCommandError,
+  OrchestrationV2ThreadLaunchError,
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -59,6 +61,20 @@ function acceptAttachmentUploads(): Disposable {
   };
 }
 
+/** Holds every call to `method` until `release`, then ends it with `end`, until disposed. */
+function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: Input[] = [];
+  const answer = answerRpc(method, (input: Input) => {
+    calls.push(input);
+    return Effect.promise(() => held).pipe(Effect.andThen(end));
+  });
+  return { calls, release, [Symbol.dispose]: () => answer[Symbol.dispose]() };
+}
+
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
   const [actual, { fakeDriver }, Layer] = await Promise.all([
@@ -113,6 +129,7 @@ it.each([
     banner: "Provider is unavailable.",
     toast: "Message not sent",
     failedText: "first message that will fail",
+    nextDraft: "next draft",
   },
   // A dropped connection interrupts the request and shows no thread error.
   {
@@ -121,6 +138,7 @@ it.each([
     banner: null,
     toast: "Send not confirmed",
     failedText: "first message that will fail",
+    nextDraft: "next draft",
   },
   // An image alone leaves no text to copy, but the failure still needs a toast.
   {
@@ -129,28 +147,38 @@ it.each([
     banner: null,
     toast: "Send not confirmed",
     failedText: "",
+    nextDraft: "next draft",
+  },
+  // With nothing typed meanwhile, the failed message goes back into the composer.
+  {
+    failure: "interrupted, restored",
+    end: Effect.interrupt,
+    banner: null,
+    toast: "Send not confirmed",
+    failedText: "first message that will fail",
+    nextDraft: null,
+  },
+  {
+    failure: "interrupted image, restored",
+    end: Effect.interrupt,
+    banner: null,
+    toast: "Send not confirmed",
+    failedText: "",
+    nextDraft: null,
   },
 ])(
-  "a failed send ($failure) drops its message from the timeline and keeps the draft typed meanwhile",
-  async ({ failure, end, banner, toast, failedText }) => {
+  "a failed send ($failure) drops its message from the timeline and loses no draft",
+  async ({ failure, end, banner, toast, failedText, nextDraft }) => {
     // Drafts persist per thread, so each case gets its own.
-    const thread = threadWithHistory(`thread-${failure.replace(" ", "-")}-send`, 1);
+    const thread = threadWithHistory(`thread-${failure.replace(/\W+/g, "-")}-send`, 1);
     using _environment = installFakeEnvironment([thread]);
     __setClientSettingsForTests({
       ...DEFAULT_CLIENT_SETTINGS,
       onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
     });
-    let failDispatch = () => {};
-    const dispatchHeld = new Promise<void>((resolve) => {
-      failDispatch = resolve;
-    });
-    const dispatched: string[] = [];
-    using _dispatch = answerRpc(
+    using dispatch = holdRpc<{ readonly messageId: string }>(
       ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-      (command: { readonly messageId: string }) => {
-        dispatched.push(command.messageId);
-        return Effect.promise(() => dispatchHeld).pipe(Effect.andThen(end));
-      },
+      end,
     );
     const router = getRouter(
       createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
@@ -185,9 +213,11 @@ it.each([
     }
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
-    await userEvent.keyboard("next draft");
-    await expect.element(editor).toHaveTextContent("next draft");
-    failDispatch();
+    if (nextDraft) {
+      await userEvent.keyboard(nextDraft);
+      await expect.element(editor).toHaveTextContent(nextDraft);
+    }
+    dispatch.release();
 
     await vi.waitFor(() => expect(sentMessages()).toEqual(onlyHistory));
     await expect.element(page.getByText(toast)).toBeVisible();
@@ -195,7 +225,7 @@ it.each([
       await expect.element(page.getByText(banner)).toBeVisible();
     } else {
       // The server can still take an interrupted send. Its copy then shows, and nothing resends.
-      const messageId = dispatched[0]!;
+      const messageId = dispatch.calls[0]!.messageId;
       const late = runningRun(thread.id, "late-run", 2, messageId);
       await emitThreadEvent(thread.id, { type: "run.created", payload: late });
       await emitThreadEvent(thread.id, {
@@ -207,11 +237,16 @@ it.each([
       );
       expect(page.getByText("Message not sent").query()).toBeNull();
     }
-    expect(dispatched).toHaveLength(1);
-    await expect.element(editor).toHaveTextContent("next draft");
+    expect(dispatch.calls).toHaveLength(1);
+    // A new draft stays; otherwise the failed message is back in the composer.
+    await expect.element(editor).toHaveTextContent(nextDraft ?? failedText);
+    if (!nextDraft && !failedText) {
+      await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
+    }
     // By text, since each timeline row has an icon button labelled the same.
     const copyAction = page.getByText("Copy message", { exact: true });
-    if (!failedText) {
+    // Only text that is no longer in the composer needs copying.
+    if (!nextDraft || !failedText) {
       expect(copyAction.query()).toBeNull();
       return;
     }
@@ -219,3 +254,58 @@ it.each([
     expect(write).toHaveBeenCalledWith(failedText);
   },
 );
+
+it("a new thread rejected after you leave its draft offers the failed text from its toast", async () => {
+  const other = threadWithHistory("thread-left-for", 1);
+  using _environment = installFakeEnvironment([other]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-rejected-start");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-rejected-start"),
+    });
+  // A new thread starts with a launch, not a dispatch.
+  using launch = holdRpc(
+    ORCHESTRATION_V2_WS_METHODS.launchThread,
+    Effect.fail(
+      new OrchestrationV2ThreadLaunchError({
+        commandId: CommandId.make("command-rejected-start"),
+        projectId: PROJECT_ID,
+        message: "Provider is unavailable.",
+      }),
+    ),
+  );
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+  const editor = page.getByTestId("composer-editor");
+  await expect.element(editor).toBeVisible();
+  // The send needs the project, which arrives with the shell snapshot.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+
+  await userEvent.click(editor);
+  await userEvent.keyboard("first message that will fail{Enter}");
+  await vi.waitFor(() => expect(launch.calls).toHaveLength(1));
+  await userEvent.keyboard("later draft");
+  await expect.element(editor).toHaveTextContent("later draft");
+  await router.navigate({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: ENVIRONMENT_ID, threadId: other.id },
+  });
+  await expect.element(page.getByText(`${other.id}: question 0`)).toBeVisible();
+  launch.release();
+
+  await expect.element(page.getByText("Could not start thread")).toBeVisible();
+  await page.getByText("Copy message", { exact: true }).click();
+  expect(write).toHaveBeenCalledWith("first message that will fail");
+  await page.getByText("Open draft", { exact: true }).click();
+  await expect.element(editor).toHaveTextContent("later draft");
+});

@@ -1542,17 +1542,18 @@ export function useComposerSend(input: ComposerSendInput) {
           failureToastShown = true;
         }
       }
-      // Keeping the new draft drops the failed message, so say so even with no text to copy.
-      if (!restoresDraft && !failureToastShown) {
+      // An interrupted request may still have reached the server, so warn even when its text
+      // went back. Keeping a new draft drops a rejected message, so say so even with no text.
+      if (interrupted || (!restoresDraft && !failureToastShown)) {
         toastManager.add(
           stackedThreadToast({
-            // An interrupted request may still have reached the server.
             ...(interrupted
               ? {
                   type: "warning",
                   title: "Send not confirmed",
-                  description:
-                    "Check the conversation before sending again. Your new draft was kept.",
+                  description: restoresDraft
+                    ? "Check the conversation before sending again."
+                    : "Check the conversation before sending again. Your new draft was kept.",
                 }
               : {
                   type: "error",
