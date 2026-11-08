@@ -77,5 +77,12 @@ describe("applyServerConfigProjection settingsUpdated", () => {
       payload: { settings: decode() },
     } as ServerConfigStreamEvent);
     expect(Option.getOrThrow(next).config).toBe(Option.getOrThrow(current).config);
+    const moved = applyServerConfigProjection(next, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: { settings: decode(), newProjectsRoot: "/work/projects" },
+    } as unknown as ServerConfigStreamEvent);
+    expect(Option.getOrThrow(moved).config.newProjectsRoot).toBe("/work/projects");
+    expect(Option.getOrThrow(moved).config.settings).toBe(settings);
   });
 });
