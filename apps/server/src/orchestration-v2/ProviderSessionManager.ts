@@ -2435,7 +2435,19 @@ export const layerWithOptions = (
                     .filter((thread) => thread.providerSessionId === input.providerSessionId)
                     .map((thread) => [thread.id, thread] as const),
                 );
-                detachedProviderThreads = [...providerThreads.values()];
+                // The detached event already removed this session's binding, so the
+                // projection no longer returns it; the live runtime still knows its driver.
+                const driver = currentEntry.runtime.driver;
+                // A switch to another account rebinds this thread's native threads to the new
+                // session in the same commit, but this process still holds their writer locks.
+                const reboundProviderThreads = projection.value.providerThreads.filter(
+                  (thread) =>
+                    !providerThreads.has(thread.id) &&
+                    thread.driver === driver &&
+                    thread.nativeThreadRef !== null &&
+                    (thread.appThreadId ?? input.threadId) === input.threadId,
+                );
+                detachedProviderThreads = [...providerThreads.values(), ...reboundProviderThreads];
                 const activeTurns = projection.value.providerTurns.filter(
                   (turn) => turn.status === "running" && providerThreads.has(turn.providerThreadId),
                 );

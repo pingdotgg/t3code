@@ -86,6 +86,7 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -1392,7 +1393,50 @@ export interface CodexAppServerClientFactoryShape {
     ProviderAdapter.ProviderAdapterOpenSessionError,
     Scope.Scope
   >;
+  /** Shared by every Codex instance, since accounts share one sessions directory. */
+  readonly threadReleases?: CodexThreadReleases;
 }
+
+// Codex keeps an unsubscribed thread's writer lock until its idle sweep closes it,
+// about a minute later, so another account resuming it right away is refused.
+const CODEX_THREAD_RELEASE_TIMEOUT = Duration.seconds(90);
+
+export interface CodexThreadReleases {
+  readonly begin: (nativeThreadId: string) => Effect.Effect<void>;
+  readonly finish: (nativeThreadId: string) => Effect.Effect<void>;
+  /** Waits for a release this server started; false when there is none or it timed out. */
+  readonly awaitRelease: (nativeThreadId: string) => Effect.Effect<boolean>;
+}
+
+export const makeCodexThreadReleases = Effect.sync((): CodexThreadReleases => {
+  // Finished releases stay until a resume consumes them; the close can beat the refused resume.
+  const releases = new Map<string, Deferred.Deferred<void>>();
+  return {
+    begin: (nativeThreadId) =>
+      Effect.sync(() => {
+        const current = releases.get(nativeThreadId);
+        if (current === undefined || Deferred.isDoneUnsafe(current)) {
+          releases.set(nativeThreadId, Deferred.makeUnsafe());
+        }
+      }),
+    finish: (nativeThreadId) =>
+      Effect.suspend(() => {
+        const release = releases.get(nativeThreadId);
+        return release === undefined ? Effect.void : Deferred.succeed(release, undefined);
+      }),
+    awaitRelease: (nativeThreadId) =>
+      Effect.suspend(() => {
+        const release = releases.get(nativeThreadId);
+        return release === undefined
+          ? Effect.succeed(false)
+          : Deferred.await(release).pipe(
+              Effect.timeoutOption(CODEX_THREAD_RELEASE_TIMEOUT),
+              Effect.map(Option.isSome),
+              Effect.ensuring(Effect.sync(() => releases.delete(nativeThreadId))),
+            );
+      }),
+  };
+});
 
 export class CodexAppServerClientFactory extends Context.Service<
   CodexAppServerClientFactory,
@@ -1631,6 +1675,7 @@ export const layerAppServerClientFactory: Layer.Layer<
     );
 
     return CodexAppServerClientFactory.of({
+      threadReleases: yield* makeCodexThreadReleases,
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
         const scope = yield* Scope.Scope;
         const environment = {
@@ -1817,6 +1862,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment,
         });
+        const { threadReleases } = clientFactory;
+        const releasingThreadIds = new Set<string>();
+        const finishThreadRelease = (nativeThreadId: string) =>
+          Effect.suspend(() => {
+            releasingThreadIds.delete(nativeThreadId);
+            return threadReleases?.finish(nativeThreadId) ?? Effect.void;
+          });
+        // The app-server drops every writer lock when it exits.
+        yield* Effect.addFinalizer(() =>
+          Effect.forEach([...releasingThreadIds], finishThreadRelease, { discard: true }),
+        );
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -4918,6 +4974,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // their command items, while the shared provider session stays alive.
         yield* client.handleServerNotification("thread/closed", (payload) =>
           Effect.gen(function* () {
+            yield* finishThreadRelease(payload.threadId);
             const completedAt = yield* DateTime.now;
             for (const context of (yield* Ref.get(settledTurns)).values()) {
               if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
@@ -6869,6 +6926,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       .pipe(Effect.andThen(resume))
                   : Effect.fail(cause),
             }),
+            // Another account's app-server here may still hold the lock it is releasing.
+            Effect.catchIf(isCodexActiveWriterError, (cause) =>
+              (clientFactory.threadReleases?.awaitRelease(threadId) ?? Effect.succeed(false)).pipe(
+                Effect.flatMap((released) => (released ? resume : Effect.fail(cause))),
+              ),
+            ),
           );
         });
 
@@ -7431,7 +7494,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (unloadInput) {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
               sessionApprovals.delete(nativeThreadId);
-              yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              releasingThreadIds.add(nativeThreadId);
+              yield* threadReleases?.begin(nativeThreadId) ?? Effect.void;
+              const { status } = yield* client
+                .request("thread/unsubscribe", { threadId: nativeThreadId })
+                .pipe(Effect.onError(() => finishThreadRelease(nativeThreadId)));
+              // Only the last subscriber's unsubscribe schedules a close.
+              if (status !== "unsubscribed") yield* finishThreadRelease(nativeThreadId);
             },
             (effect, unloadInput) =>
               effect.pipe(
