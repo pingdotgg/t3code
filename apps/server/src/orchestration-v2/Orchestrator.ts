@@ -5875,7 +5875,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
         ? null
         : parsedGoalCommand;
-    let goalStopRunId: RunId | undefined;
+    let queuedRunStop: { readonly runId: RunId; readonly reason: string } | undefined;
     if (goalCommand !== null) {
       yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
       // A goal command never joins a running turn. One that starts or ends goal
@@ -5902,7 +5902,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
           !(yield* stopReachedRun(command, command.threadId, target.id))
         ) {
-          goalStopRunId = target.id;
+          queuedRunStop = { runId: target.id, reason: "Stopped to apply /goal" };
         }
         dispatchMode = { type: "queue_after_active" };
       }
@@ -5961,6 +5961,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         generation: delivery.generation,
         taskIds: delivery.taskIds,
       };
+    }
+    // A provider that can stop a turn but not restart it with new input runs a
+    // restart as the next turn: first in the queue, with the running turn stopped.
+    if (dispatchMode.type === "restart_active" && !isNativeMaintenanceCommand(command)) {
+      const targetRunId = dispatchMode.targetRunId;
+      const target = projection.runs.find((run) => run.id === targetRunId);
+      const providerSessionId = projection.providerThreads.find(
+        (candidate) => candidate.id === target?.providerThreadId,
+      )?.providerSessionId;
+      const turns = projection.providerSessions.find((session) => session.id === providerSessionId)
+        ?.capabilities.turns;
+      const targetMessage = projection.messages.find(
+        (message) => message.id === target?.userMessageId,
+      );
+      if (
+        target?.status === "running" &&
+        turns !== undefined &&
+        turns.supportsInterrupt &&
+        turns.supportsQueuedMessages &&
+        !turns.supportsSteeringByInterruptRestart &&
+        (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
+        !(yield* stopReachedRun(command, command.threadId, target.id))
+      ) {
+        queuedRunStop = { runId: target.id, reason: "Stopped to send a new message" };
+        dispatchMode = { type: "queue_after_active" };
+      }
     }
     // Route durable mailbox deliveries and delegated task questions under the
     // thread lock, using the live session's capabilities. A question queued
@@ -6262,7 +6288,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? { queueHeld: true }
           : {}),
         queuePosition:
-          goalStopRunId !== undefined
+          queuedRunStop !== undefined
             ? 1
             : Math.max(
                 0,
@@ -6420,15 +6446,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         });
       }
-      if (goalStopRunId !== undefined) {
+      if (queuedRunStop !== undefined) {
         return yield* stopRunForQueuedCommand({
           command,
           events,
           effects,
           projection: yield* getProjectionWithPendingEvents(command.threadId, events),
           queuedRunId: runId,
-          targetRunId: goalStopRunId,
-          reason: "Stopped to apply /goal",
+          targetRunId: queuedRunStop.runId,
+          reason: queuedRunStop.reason,
           now,
         });
       }

@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -27,6 +28,10 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -1604,6 +1609,41 @@ it.effect("restarts by stopping the running turn when the provider cannot interr
           stopRequested: true,
         });
       }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("reports a restart that stops the running turn as restarted", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { layer, startFirstTurn } = yield* goalHarness("restart-send-delivery");
+      yield* Effect.gen(function* () {
+        const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+        const threadId = yield* startFirstTurn;
+        const sent = yield* threadManagement.sendToThread({
+          projectId: ProjectId.make("project:restart-send-delivery"),
+          commandId: CommandId.make("restart"),
+          threadId,
+          messageId: MessageId.make("message:restart"),
+          text: "do this instead",
+          attachments: [],
+          mode: "restart",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+
+        assert.equal(sent.delivery, "restarted");
+      }).pipe(
+        Effect.provide(
+          ThreadManagementService.layer.pipe(
+            Layer.provideMerge(layer),
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
+          ),
+        ),
+      );
     }),
   ),
 );

@@ -867,7 +867,7 @@ const make = Effect.gen(function* () {
     });
     const projection = yield* getProjectThreadRecords(input, ["runs", "messages", "turnItems"], {
       messageIds: [input.messageId],
-      turnItemTypes: ["user_message"],
+      turnItemTypes: ["user_message", "run_interrupt_request"],
     });
     const message = projection.messages.find((candidate) => candidate.id === input.messageId);
     const run =
@@ -891,8 +891,17 @@ const make = Effect.gen(function* () {
         messageId: input.messageId,
       });
     }
-    const delivery: ThreadManagementSendResult["delivery"] =
-      turnItem === null || turnItem.inputIntent === "queued_turn"
+    // A provider without interrupt-and-restart stops the turn and runs the
+    // restart as the next turn.
+    const restartedAsNextTurn =
+      mode === "restart" &&
+      (run.status !== "queued" || run.queuePosition === 1) &&
+      projection.turnItems.some(
+        (item) => item.type === "run_interrupt_request" && item.runId === steerableRun?.id,
+      );
+    const delivery: ThreadManagementSendResult["delivery"] = restartedAsNextTurn
+      ? "restarted"
+      : turnItem === null || turnItem.inputIntent === "queued_turn"
         ? "queued"
         : turnItem.inputIntent === "turn_start"
           ? "started"
