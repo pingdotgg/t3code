@@ -273,8 +273,9 @@ options.
 Native macOS, Windows and Linux desktop artifact builds generate server bytecode with the packaged
 Electron executable, after ASAR creation and before signing. Generation imports the CLI and server
 module declarations without launching server services; worker-only modules compile normally.
-AppImage backends use temporary links for each mount and remove them on normal exit; AppImage
-main-process caching stays disabled. macOS x64 builds on ARM64 hosts run the packaged x64 Electron
+AppImage backends use temporary links for each mount and remove them on normal exit. Later launches
+reclaim abandoned cache directories whose links point to gone mounts; AppImage main-process caching
+stays disabled. macOS x64 builds on ARM64 hosts run the packaged x64 Electron
 under Rosetta to generate the cache. Other cross-platform and cross-architecture builds skip
 generation explicitly. CLI, SEA and WSL runtimes keep their existing behavior.
 

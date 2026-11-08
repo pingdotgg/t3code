@@ -80,7 +80,11 @@ it.each([
     const manifest = JSON.parse(
       NodeFS.readFileSync(NodePath.join(resources, "server-compile-cache/manifest.json"), "utf8"),
     );
-    expect(manifest.entries).toEqual([
+    expect(
+      manifest.entries.sort((a: { module: string }, b: { module: string }) =>
+        a.module.localeCompare(b.module),
+      ),
+    ).toEqual([
       {
         module: "app.asar/apps/server/dist/binCli-fixture.mjs",
         file: expect.stringMatching(/^[a-f0-9]{8}$/),
@@ -94,6 +98,107 @@ it.each([
       NodeFS.statSync(NodePath.join(resources, "server-compile-cache", manifest.entries[0].file))
         .size,
     ).toBeGreaterThan(0);
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("rejects ambiguous bundled server entries before importing them", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cache-ambiguous-"));
+  try {
+    const dist = NodePath.join(root, "app.asar/apps/server/dist");
+    NodeFS.mkdirSync(dist, { recursive: true });
+    for (const file of ["binCli-fixture.mjs", "server-fixture.mjs", "server-unrelated.mjs"]) {
+      NodeFS.writeFileSync(NodePath.join(dist, file), "throw Error('Unexpected import');");
+    }
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import {generatePreparedServerCache} from ${JSON.stringify(new URL("./server-compile-cache.ts", import.meta.url).href)}; await generatePreparedServerCache(${JSON.stringify(root)});`,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_COMPILE_CACHE: undefined,
+          NODE_DISABLE_COMPILE_CACHE: undefined,
+        },
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Ambiguous bundled server entry");
+    expect(NodeFS.existsSync(NodePath.join(root, "server-compile-cache/manifest.json"))).toBe(
+      false,
+    );
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("reclaims only AppImage cache directories linked to gone mounts", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cache-reclaim-")),
+  );
+  try {
+    const resources = NodePath.join(root, ".mount_live/resources");
+    const prepared = NodePath.join(resources, "server-compile-cache");
+    const cacheRoot = NodePath.join(root, "cache");
+    const server = NodePath.join(cacheRoot, "server");
+    NodeFS.mkdirSync(prepared, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(prepared, "manifest.json"), "{}");
+    NodeFS.writeFileSync(NodePath.join(prepared, "12345678"), "live bytes");
+    const gone = NodePath.join(root, ".mount_gone/resources/server-compile-cache/12345678");
+    for (const [name, targets] of [
+      ["appimage-stale", [gone]],
+      ["appimage-live", [NodePath.join(prepared, "12345678")]],
+      ["appimage-live-damaged", [NodePath.join(prepared, "87654321")]],
+      ["appimage-mixed", [gone, NodePath.join(prepared, "12345678")]],
+      ["appimage-unrelated", [NodePath.join(root, "unrelated-missing")]],
+      ["other-cache", [gone]],
+      ["appimage-initializing", []],
+    ] as const) {
+      const active = NodePath.join(server, name, "v24-engine-uid");
+      NodeFS.mkdirSync(active, { recursive: true });
+      targets.forEach((target, index) =>
+        NodeFS.symlinkSync(target, NodePath.join(active, index === 0 ? "12345678" : "87654321")),
+      );
+      NodeFS.writeFileSync(NodePath.join(active, "abcdef01"), "runtime replacement");
+    }
+    NodeFS.symlinkSync(
+      NodePath.join(server, "other-cache"),
+      NodePath.join(server, "appimage-directory-link"),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `process.env.APPIMAGE = "fixture"; import {enablePreparedServerCache} from ${JSON.stringify(new URL("./server-compile-cache.ts", import.meta.url).href)}; if (!enablePreparedServerCache(${JSON.stringify(NodePath.join(resources, "app.asar/apps/server/dist/binCli-fixture.mjs"))}, ${JSON.stringify(cacheRoot)})) throw Error("cache disabled");`,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_COMPILE_CACHE: undefined,
+          NODE_DISABLE_COMPILE_CACHE: undefined,
+        },
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(NodeFS.readdirSync(server).sort()).toEqual([
+      "appimage-directory-link",
+      "appimage-initializing",
+      "appimage-live",
+      "appimage-live-damaged",
+      "appimage-mixed",
+      "appimage-unrelated",
+      "other-cache",
+    ]);
+    expect(NodeFS.readFileSync(NodePath.join(prepared, "12345678"), "utf8")).toBe("live bytes");
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
