@@ -986,6 +986,40 @@ describe("buildThreadListV2ListItems", () => {
     ]);
   });
 
+  it("hides all-caught-up when a pinned thread still needs a response", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("pinned-approval"),
+          title: "pinned-approval",
+          pinnedAt: NOW,
+          hasPendingApprovals: true,
+        }),
+        makeThread({
+          id: ThreadId.make("settled"),
+          title: "settled",
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    expect(layout.activeCount).toBe(0);
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [],
+      activeCount: layout.activeCount,
+      settledCount: layout.settledCount,
+      settledShelfExpanded: true,
+      settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
+    });
+    expect(
+      items.map((item) => (item.type === "v2-thread" ? item.item.thread.id : item.type)),
+    ).toEqual(["pinned-approval", "v2-settled-shelf", "settled"]);
+  });
+
   it("places queued tasks above active rows and a collapsed snoozed shelf", () => {
     const snoozedLayout = buildThreadListV2Items({
       threads: [

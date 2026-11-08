@@ -601,12 +601,20 @@ export function buildThreadListV2ListItems(input: {
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
   const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
-  const result: ThreadListV2ListItem[] = [...pendingItems, ...threadItems.slice(0, activeEnd)];
+  const attentionItems = threadItems.slice(0, activeEnd);
+  const result: ThreadListV2ListItem[] = [...pendingItems, ...attentionItems];
   const shelfDisabled = input.shelfPreferencesLoading === true;
+  // Pinned rows are outside activeCount; an approval/input/request pin still needs a response.
+  const actionablePinned = input.items.slice(0, activeEnd).some((item) => {
+    if (!item.pinned) return false;
+    const status = resolveThreadListV2Status(item.thread);
+    return status === "approval" || status === "input" || status === "request";
+  });
   // Inbox zero: attention queue is clear, but Working/Snoozed/Settled still exist.
   if (
     activeCount === 0 &&
     pendingItems.length === 0 &&
+    !actionablePinned &&
     workingCount + snoozedCount + settledCount > 0
   ) {
     result.push({ type: "v2-caught-up", key: "v2-caught-up" });
