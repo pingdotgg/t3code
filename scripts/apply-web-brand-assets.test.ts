@@ -40,11 +40,29 @@ it.layer(NodeServices.layer)("apply-web-brand-assets", (it) => {
         prefix: "apply-web-brand-assets-",
       });
       const wordmark = path.join(targetDirectory, "boot-wordmark.png");
+      const index = path.join(targetDirectory, "index.html");
       yield* fs.writeFileString(wordmark, "png");
+      yield* fs.writeFileString(
+        index,
+        [
+          '<div id="boot-shell-card">',
+          '  <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="" />',
+          "  <img",
+          '    id="boot-shell-wordmark"',
+          '    src="/boot-wordmark.png"',
+          "    onload=\"document.documentElement.classList.add('boot-has-wordmark')\"",
+          '    onerror="this.remove()"',
+          "  />",
+          "</div>",
+        ].join("\n"),
+      );
 
       yield* applyWebBrandAssets("production", targetDirectory);
 
       assert.isFalse(yield* fs.exists(wordmark));
+      const html = yield* fs.readFileString(index);
+      assert.notInclude(html, "boot-wordmark.png");
+      assert.include(html, 'id="boot-shell-logo"');
     }),
   );
 

@@ -22,6 +22,11 @@ const WEB_ASSET_BRANDS = [
   "munim",
 ] as const satisfies ReadonlyArray<WebAssetBrand>;
 
+/** Removes the boot shell's `<img id="boot-shell-wordmark" …/>` element. */
+export function removeBootWordmarkImage(html: string): string {
+  return html.replace(/[ \t]*<img\s[^>]*id="boot-shell-wordmark"[^>]*\/?>\r?\n?/, "");
+}
+
 export const applyWebBrandAssets = Effect.fn("applyWebBrandAssets")(function* (
   brand: WebAssetBrand,
   targetDirectory: string,
@@ -39,10 +44,19 @@ export const applyWebBrandAssets = Effect.fn("applyWebBrandAssets")(function* (
 
   if (brand !== "munim") {
     // apps/web/public carries MT Code's boot wordmark, and the boot shell shows
-    // any wordmark it finds, so other brands must drop the copied file.
+    // any wordmark it finds, so other brands drop both the copied file and the
+    // <img> that loads it (the desktop build rejects references to missing files).
     const wordmarkPath = path.resolve(repoRoot, targetDirectory, "boot-wordmark.png");
     if (yield* fs.exists(wordmarkPath)) {
       yield* fs.remove(wordmarkPath);
+    }
+    const builtIndexPath = path.resolve(repoRoot, targetDirectory, "index.html");
+    if (yield* fs.exists(builtIndexPath)) {
+      const html = yield* fs.readFileString(builtIndexPath);
+      const stripped = removeBootWordmarkImage(html);
+      if (stripped !== html) {
+        yield* fs.writeFileString(builtIndexPath, stripped);
+      }
     }
     return;
   }
