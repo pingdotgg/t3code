@@ -114,6 +114,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           optionsVersion={{
             commitMessage: dialogCommitMessage,
             filePaths: selectedFiles.map((file) => file.path),
+            allSelected,
             busy,
             canWriteSourceControl,
             canChangeThreadBranch,
