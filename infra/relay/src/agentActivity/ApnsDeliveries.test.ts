@@ -1024,6 +1024,66 @@ describe("ApnsDeliveries", () => {
     },
   );
 
+  it.effect("fails with the persistence error when every claim release attempt fails", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    let executeCount = 0;
+    const payload = makeApnsDeliveryJobPayload({
+      kind: "push_notification",
+      userId: target.user_id,
+      deviceId: target.device_id,
+      token: "apns-device-token",
+      aggregate: null,
+      notification: {
+        title: "Thread",
+        body: "Completed: Project",
+        environmentId: "env",
+        threadId: "thread",
+        deepLink: "/",
+      },
+      createdAt: "1970-01-01T00:00:00.000Z",
+      expiresAt: "1970-01-01T00:10:00.000Z",
+      jobId: "job-push-release-exhausted",
+    });
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload,
+    });
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        executeCount += 1;
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({ reason: "ServiceUnavailable" }, { status: 503 }),
+        );
+      });
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const fiber = yield* deliveries.processSignedJob(signed).pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      const failure = yield* Fiber.join(fiber);
+
+      expect(failure).toMatchObject({
+        _tag: "DeliveryAttemptRecordPersistenceError",
+        operation: "release-source-job",
+        sourceJobId: "job-push-release-exhausted",
+      });
+      expect(executeCount).toBe(1);
+      expect(attempts).toMatchObject([{ sourceJobId: "job-push-release-exhausted" }]);
+      expect(attempts[0]).not.toHaveProperty("apnsStatus");
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          releaseFailures: 4,
+          currentTargets: [{ ...target, push_token: "apns-device-token" }],
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
   it.effect("fails a signed Live Activity job for redelivery when APNs is unreachable", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const markedDeliveries: Array<
