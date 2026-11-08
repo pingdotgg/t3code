@@ -22,6 +22,7 @@ import {
   prepareModelPreferencesPatch,
 } from "./useSettings";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import { removeLocalStorageItem } from "./useLocalStorage";
 
 beforeEach(() => {
   persistenceMocks.getClientSettings.mockReset().mockResolvedValue(null);
@@ -67,6 +68,24 @@ describe("client settings hydration", () => {
       hiddenModels: ["saved-hidden", "new"],
       modelOrder: ["saved-order"],
     });
+  });
+
+  it("switches a saved Steer to Queue once per device, then keeps a later Steer", async () => {
+    removeLocalStorageItem("ominax:follow-ups-queue-switched");
+    const savedSteer = { ...savedSettings, followUpBehavior: "steer" as const };
+    persistenceMocks.getClientSettings.mockResolvedValue(savedSteer);
+    await ensureClientSettingsHydrated();
+    await persistClientSettingsUpdate((current) => current);
+    expect(getClientSettings().followUpBehavior).toBe("queue");
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledWith({
+      ...savedSteer,
+      followUpBehavior: "queue",
+    });
+
+    __resetClientSettingsPersistenceForTests();
+    await ensureClientSettingsHydrated();
+    await persistClientSettingsUpdate((current) => current);
+    expect(getClientSettings().followUpBehavior).toBe("steer");
   });
 
   // regression: #16816 a failed read could overwrite synced model favorites with defaults
