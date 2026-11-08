@@ -217,7 +217,8 @@ export function NativeStackScreenOptions(props: {
     if (!setOptions || !normalizedOptions) {
       return;
     }
-    const signature = optionsSignature([stableOptions, props.optionsVersion]);
+    // A new writer may target another header, so it gets the options even when they are unchanged.
+    const signature = `${identitySignature(setOptions)}:${optionsSignature([stableOptions, props.optionsVersion])}`;
     if (lastAppliedOptionsSignatureRef.current === signature) {
       return;
     }
