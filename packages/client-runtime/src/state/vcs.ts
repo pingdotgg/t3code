@@ -294,6 +294,10 @@ export function createVcsEnvironmentAtoms<R, E>(
       label: "environment-data:vcs:read-refs",
       tag: WS_METHODS.vcsListRefs,
     }),
+    readHistory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:read-history",
+      tag: WS_METHODS.vcsHistory,
+    }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       idleTtlMs: VCS_STATUS_IDLE_TTL_MS,

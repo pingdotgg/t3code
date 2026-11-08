@@ -13,6 +13,24 @@ import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
+const workflowLayer = GitWorkflowService.layer.pipe(
+  Layer.provide(
+    Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+      resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+      detect: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+    }),
+  ),
+  Layer.provide(Layer.mock(GitManager.GitManager)({})),
+  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-workflow-" }).pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  ),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
+
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowService", (it) => {
   it.effect("finds a name among the refs of every namespace", () =>
     Effect.gen(function* () {
@@ -34,26 +52,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowServi
         (refName) => workflow.hasRefNamed({ cwd, refName }),
       );
       assert.deepEqual(found, [true, true, true, true, false, false]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        GitWorkflowService.layer.pipe(
-          Layer.provide(
-            Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-              resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
-            }),
-          ),
-          Layer.provide(Layer.mock(GitManager.GitManager)({})),
-          Layer.provideMerge(GitVcsDriver.layer),
-          Layer.provideMerge(VcsProcess.layer),
-          Layer.provideMerge(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-ref-named-" }).pipe(
-              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-            ),
-          ),
-          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-        ),
-      ),
-    ),
+    }).pipe(Effect.scoped, Effect.provide(workflowLayer)),
+  );
+
+  it.effect("pages history newest first and reports where the next page starts", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-history-" });
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const commit = (message: string) => [
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=Tess",
+        "commit",
+        "--allow-empty",
+        "-m",
+        message,
+      ];
+      for (const args of [
+        ["init", "-b", "main"],
+        commit("one"),
+        commit("two"),
+        ["tag", "v2"],
+        commit("three"),
+      ]) {
+        yield* driver.execute({ operation: "test.setupRepo", cwd, args });
+      }
+
+      const first = yield* workflow.history({ cwd, limit: 2 });
+      assert.deepEqual(
+        first.commits.map((entry) => [entry.subject, entry.head, entry.refs, entry.author]),
+        [
+          ["three", true, [{ name: "main", kind: "local" }], "Tess"],
+          ["two", false, [{ name: "v2", kind: "tag" }], "Tess"],
+        ],
+      );
+      assert.strictEqual(first.commits[0]!.parents[0], first.commits[1]!.sha);
+      assert.strictEqual(first.nextCursor, 2);
+
+      const second = yield* workflow.history({ cwd, cursor: 2, limit: 2 });
+      assert.deepEqual(
+        second.commits.map((entry) => [entry.subject, entry.parents]),
+        [["one", []]],
+      );
+      assert.strictEqual(second.nextCursor, null);
+    }).pipe(Effect.scoped, Effect.provide(workflowLayer)),
   );
 });

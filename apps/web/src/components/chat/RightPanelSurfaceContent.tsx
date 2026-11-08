@@ -19,6 +19,7 @@ import {
   PersistentThreadTerminalPanel,
   type PersistentThreadTerminalPanelProps,
 } from "../PersistentThreadTerminals";
+import { GitHistoryPanel } from "../history/GitHistoryPanel";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
@@ -169,6 +170,14 @@ export function RightPanelSurfaceContent(props: {
     }
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "history":
+      return props.files.workspaceRoot ? (
+        <GitHistoryPanel
+          key={`${props.environmentId}:${props.files.workspaceRoot}`}
+          threadRef={threadRef}
+          cwd={props.files.workspaceRoot}
+        />
+      ) : null;
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

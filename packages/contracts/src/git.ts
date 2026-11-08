@@ -148,6 +148,41 @@ export const VcsListRefsInput = Schema.Struct({
 });
 export type VcsListRefsInput = typeof VcsListRefsInput.Type;
 
+const VCS_HISTORY_MAX_LIMIT = 500;
+export const VcsHistoryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  /** Commits to skip, in `git log --topo-order` order. */
+  cursor: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(VCS_HISTORY_MAX_LIMIT))),
+});
+export type VcsHistoryInput = typeof VcsHistoryInput.Type;
+
+export const VcsHistoryRef = Schema.Struct({
+  name: Schema.String,
+  kind: Schema.Literals(["local", "remote", "tag"]),
+});
+export type VcsHistoryRef = typeof VcsHistoryRef.Type;
+
+export const VcsHistoryCommit = Schema.Struct({
+  sha: Schema.String,
+  shortSha: Schema.String,
+  parents: Schema.Array(Schema.String),
+  author: Schema.String,
+  /** Unix seconds. */
+  timestamp: Schema.Number,
+  subject: Schema.String,
+  refs: Schema.Array(VcsHistoryRef),
+  head: Schema.Boolean,
+});
+export type VcsHistoryCommit = typeof VcsHistoryCommit.Type;
+
+export const VcsHistoryResult = Schema.Struct({
+  isRepo: Schema.Boolean,
+  commits: Schema.Array(VcsHistoryCommit),
+  nextCursor: NonNegativeInt.pipe(Schema.NullOr),
+});
+export type VcsHistoryResult = typeof VcsHistoryResult.Type;
+
 export const VcsCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,
