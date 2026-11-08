@@ -27,7 +27,7 @@ const handlers = {
           message: problem ?? "Invalid quiz card.",
         });
       }
-      return { quizCard: { ...card, reply: input.reply }, message: QUIZ_CARD_SHOWN };
+      return { quizCard: { ...card, reply: input.reply.trim() }, message: QUIZ_CARD_SHOWN };
     }),
   ),
   question_card: McpToolAccess.readsAsCaller((input) =>
@@ -40,7 +40,7 @@ const handlers = {
             "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both; keep reply under 2000 characters and the whole card under about 7 KB.",
         });
       }
-      return { questionCard: { ...card, reply: input.reply }, message: QUESTION_CARD_SHOWN };
+      return { questionCard: { ...card, reply: input.reply.trim() }, message: QUESTION_CARD_SHOWN };
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof QuizToolkit.tools>;

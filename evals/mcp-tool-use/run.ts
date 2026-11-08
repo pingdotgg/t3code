@@ -2167,7 +2167,9 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     const texts = response.content.flatMap((block, index) =>
       isText(block)
         ? [block.text]
-        : isThinking(block) && isThinking(response.content[index - 1])
+        : isThinking(block) &&
+            isThinking(response.content[index - 1]) &&
+            isToolUse(response.content[index + 1])
           ? [block.thinking]
           : [],
     );

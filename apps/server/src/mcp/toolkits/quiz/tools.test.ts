@@ -1,7 +1,8 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { QuestionCardInput, QuizCardInput } from "./tools.ts";
+import { advertisedJsonSchema } from "../../advertisedJsonSchema.ts";
+import { QuestionCardInput, QuizCardInput, QuizToolkit } from "./tools.ts";
 
 const decodeQuizCard = Schema.decodeUnknownSync(QuizCardInput);
 const decodeQuestionCard = Schema.decodeUnknownSync(QuestionCardInput);
@@ -61,4 +62,14 @@ describe("QuizCardInput", () => {
       question: "Why?",
     });
   });
+});
+
+it("tells the model what a card's reply holds", () => {
+  for (const tool of Object.values(QuizToolkit.tools)) {
+    const schema = advertisedJsonSchema(tool) as { properties: { reply: object } };
+    expect(schema.properties.reply, tool.name).toMatchObject({
+      maxLength: 2000,
+      description: expect.stringContaining("the teaching this card tests"),
+    });
+  }
 });

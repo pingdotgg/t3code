@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure, TrimmedNonEmptyString } from "@t3tools/contracts";
+import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import {
   T3_LEARN_QUESTION_RULES,
   T3_LEARN_QUIZ_RULES_FULL,
@@ -10,7 +10,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 // First, so the model writes the reply before the question.
-const reply = TrimmedNonEmptyString.check(Schema.isMaxLength(2000)).annotate({
+const reply = Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(2000)).annotate({
   description:
     "Your words to the learner, shown as your message text just above the card; they never see your thinking. After an answer: your verdict, then the teaching this card tests, with the facts it needs (rules, numbers, definitions) written out here, never just a pointer to a table or text above. For an opening check: one sentence of framing.",
 });
