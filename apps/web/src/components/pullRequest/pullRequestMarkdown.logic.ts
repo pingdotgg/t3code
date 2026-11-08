@@ -110,12 +110,17 @@ export function pullRequestAttachments(body: string) {
       caption: caption || `${media === "image" ? "Image" : "Video"} ${attachments.length + 1}`,
     });
   };
-  for (const segment of splitPullRequestBody(body)) {
-    if (segment.kind === "attachment") {
-      if (segment.media !== "unknown") add(segment.url, segment.media, "");
-      continue;
+  const collect = (segments: ReturnType<typeof splitPullRequestBody>) => {
+    for (const segment of segments) {
+      if (segment.kind === "attachment") {
+        if (segment.media !== "unknown") add(segment.url, segment.media, "");
+      } else if (segment.kind === "table") {
+        for (const cell of segment.rows.flat()) collect(cell.segments);
+      } else {
+        for (const url of chatMarkdownImageSources(segment.text)) add(url, "image", "");
+      }
     }
-    for (const url of chatMarkdownImageSources(segment.text)) add(url, "image", "");
-  }
+  };
+  collect(splitPullRequestBody(body));
   return attachments;
 }
