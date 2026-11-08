@@ -7388,17 +7388,15 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }),
   );
 
-  it.effect.each(["reset", "no-reset", "snoozed"] as const)(
-    "preserves early recovery with global auto-resume off: %s",
-    (variant) =>
+  it.effect.each([true, false])(
+    "preserves early recovery with global auto-resume off when retry reports reset: %s",
+    (retryReportsReset) =>
       Effect.gen(function* () {
-        const retryReportsReset = variant === "reset";
-        const snoozed = variant === "snoozed";
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const events = yield* EventSink.EventSinkV2;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const threadId = ThreadId.make(`recovery:early-reset:${variant}`);
-        const projectId = ProjectId.make(`recovery:project:early-reset:${variant}`);
+        const threadId = ThreadId.make(`recovery:early-reset:${retryReportsReset}`);
+        const projectId = ProjectId.make(`recovery:project:early-reset:${retryReportsReset}`);
         const now = yield* DateTime.now;
         yield* seedProject({
           projectId,
@@ -7409,7 +7407,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "thread.create",
-          commandId: CommandId.make(`recovery:create:early-reset:${variant}`),
+          commandId: CommandId.make(`recovery:create:early-reset:${retryReportsReset}`),
           threadId,
           projectId,
           title: "Limited thread",
@@ -7423,9 +7421,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make(`recovery:message:early-reset:${variant}`),
+          commandId: CommandId.make(`recovery:message:early-reset:${retryReportsReset}`),
           threadId,
-          messageId: MessageId.make(`recovery:message:early-reset:${variant}`),
+          messageId: MessageId.make(`recovery:message:early-reset:${retryReportsReset}`),
           text: "Work on this.",
           attachments: [],
           dispatchMode: { type: "defer_start" },
@@ -7437,19 +7435,19 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make(`recovery:run:early-reset:${variant}`),
+              id: EventId.make(`recovery:run:early-reset:${retryReportsReset}`),
               type: "run.updated",
               threadId,
               occurredAt: now,
               payload: { ...run, status: "failed", completedAt: now },
             },
             {
-              id: EventId.make(`recovery:error:early-reset:${variant}`),
+              id: EventId.make(`recovery:error:early-reset:${retryReportsReset}`),
               type: "turn-item.updated",
               threadId,
               occurredAt: now,
               payload: {
-                id: TurnItemId.make(`recovery:error:early-reset:${variant}`),
+                id: TurnItemId.make(`recovery:error:early-reset:${retryReportsReset}`),
                 type: "error",
                 threadId,
                 runId: run.id,
@@ -7478,7 +7476,13 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
           (thread) => thread.id === threadId,
         )!;
-        const arm = limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now), snoozed);
+        // The case without a retry reset also arms with a snooze until the reset.
+        const arm = limitRecoveryCommand(
+          shell,
+          true,
+          DateTime.toEpochMillis(now),
+          !retryReportsReset,
+        );
         assert(arm?.type === "thread.metadata.update" && arm.limitRecovery != null);
         yield* orchestrator.autoArmLimitRecovery({
           commandId: arm.commandId,
@@ -7545,11 +7549,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* sweep(reading(checkedNow, 100));
         yield* sweep(reading(checkedNow, 0), alternateInstanceId);
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
-        if (snoozed) {
+        if (!retryReportsReset) {
           // A sidebar snooze holds the thread even when it ends at the reset.
           yield* orchestrator.dispatch({
             type: "thread.snooze",
-            commandId: CommandId.make(`recovery:user-snooze:early-reset:${variant}`),
+            commandId: CommandId.make("recovery:user-snooze:early-reset"),
             threadId,
             snoozedUntil: resetAt,
           });
@@ -7557,7 +7561,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
           yield* orchestrator.dispatch({
             type: "thread.metadata.update",
-            commandId: CommandId.make(`recovery:resnooze:early-reset:${variant}`),
+            commandId: CommandId.make("recovery:resnooze:early-reset"),
             threadId,
             limitRecovery: { runId: run.id, resetAt, snooze: true },
           });
@@ -7572,7 +7576,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert(staleResume?.type === "message.dispatch");
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make(`recovery:cancel:early-reset:${variant}`),
+          commandId: CommandId.make(`recovery:cancel:early-reset:${retryReportsReset}`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: false },
         });
@@ -7581,7 +7585,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make(`recovery:rearm:early-reset:${variant}`),
+          commandId: CommandId.make(`recovery:rearm:early-reset:${retryReportsReset}`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: true },
         });
@@ -7595,7 +7599,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const nodeId = run.rootNodeId;
         assert(nodeId !== null);
         const request = {
-          id: RuntimeRequestId.make(`recovery:pending-race:${variant}`),
+          id: RuntimeRequestId.make(`recovery:pending-race:${retryReportsReset}`),
           nodeId,
           providerTurnId: null,
           nativeRequestRef: null,
@@ -7608,7 +7612,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make(`recovery:pending-race:${variant}`),
+              id: EventId.make(`recovery:pending-race:${retryReportsReset}`),
               type: "runtime-request.updated",
               threadId,
               nodeId,
@@ -7622,7 +7626,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make(`recovery:pending-race:resolved:${variant}`),
+              id: EventId.make(`recovery:pending-race:resolved:${retryReportsReset}`),
               type: "runtime-request.updated",
               threadId,
               nodeId,
@@ -7646,19 +7650,19 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make(`recovery:run:early-reset:again:${variant}`),
+              id: EventId.make(`recovery:run:early-reset:again:${retryReportsReset}`),
               type: "run.updated",
               threadId,
               occurredAt: checkedNow,
               payload: { ...earlyRun, status: "failed", completedAt: checkedNow },
             },
             {
-              id: EventId.make(`recovery:error:early-reset:again:${variant}`),
+              id: EventId.make(`recovery:error:early-reset:again:${retryReportsReset}`),
               type: "turn-item.updated",
               threadId,
               occurredAt: checkedNow,
               payload: {
-                id: TurnItemId.make(`recovery:error:early-reset:again:${variant}`),
+                id: TurnItemId.make(`recovery:error:early-reset:again:${retryReportsReset}`),
                 type: "error",
                 threadId,
                 runId: earlyRun.id,

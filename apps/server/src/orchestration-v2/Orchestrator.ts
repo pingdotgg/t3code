@@ -811,19 +811,22 @@ function limitRecoveryWaitsForReset(
   return previous?.runId === runId && previous.waitForReset === true;
 }
 
-// A snooze until the recovery's reset ends when the thread resumes early; one the user set stays.
-export function snoozeHoldsLimitRecovery(
-  thread: {
-    readonly snoozedUntil?: DateTime.Utc | null | undefined;
-    readonly limitRecovery?: OrchestrationV2LimitRecovery | null | undefined;
-  },
-  nowMs: number,
-): boolean {
-  if (thread.snoozedUntil == null) return false;
-  const untilMs = DateTime.toEpochMillis(thread.snoozedUntil);
+type LimitRecoverySnooze = Pick<OrchestrationV2AppThread, "snoozedUntil" | "limitRecovery">;
+
+function limitRecoveryOwnsSnooze(thread: LimitRecoverySnooze): boolean {
   return (
-    untilMs > nowMs &&
-    !(thread.limitRecovery?.snooze === true && untilMs === Date.parse(thread.limitRecovery.resetAt))
+    thread.limitRecovery?.snooze === true &&
+    thread.snoozedUntil != null &&
+    DateTime.toEpochMillis(thread.snoozedUntil) === Date.parse(thread.limitRecovery.resetAt)
+  );
+}
+
+// The recovery's own snooze ends when the thread resumes early; one the user set stays.
+export function snoozeHoldsLimitRecovery(thread: LimitRecoverySnooze, nowMs: number): boolean {
+  return (
+    thread.snoozedUntil != null &&
+    DateTime.toEpochMillis(thread.snoozedUntil) > nowMs &&
+    !limitRecoveryOwnsSnooze(thread)
   );
 }
 
@@ -3558,11 +3561,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
                 }
-              : command.limitRecovery !== undefined &&
-                  thread.limitRecovery?.snooze &&
-                  thread.snoozedUntil != null &&
-                  DateTime.toEpochMillis(thread.snoozedUntil) ===
-                    Date.parse(thread.limitRecovery.resetAt)
+              : command.limitRecovery !== undefined && limitRecoveryOwnsSnooze(thread)
                 ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
