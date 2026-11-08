@@ -1,6 +1,7 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import {
+  type CardPurpose,
   cardReplyProblem,
   quizCardProblem,
   readQuestionCard,
@@ -25,7 +26,9 @@ export const shownTutorText = (
   const lastUser = messages.findLastIndex((message) => message.role === "user");
   return messages
     .slice(lastUser + 1)
-    .filter((message) => message.role === "assistant" && !message.id.includes(":thinking:"))
+    .filter(
+      (message) => message.role === "assistant" && !/(?::|%3A)thinking(?::|%3A)/iu.test(message.id),
+    )
     .reduce((total, message) => total + message.text.length, 0);
 };
 
@@ -33,6 +36,18 @@ const readShownTutorText = readThread(undefined, ["messages"]).pipe(
   Effect.map(({ projection }) => shownTutorText(projection.messages)),
   Effect.orElseSucceed(() => undefined),
 );
+
+const refuseThinReply = Effect.fn("quiz.refuseThinReply")(function* (
+  reply: string,
+  purpose: CardPurpose | undefined,
+) {
+  const shownBefore = yield* readShownTutorText;
+  const problem =
+    shownBefore === undefined ? undefined : cardReplyProblem({ reply, purpose, shownBefore });
+  if (problem !== undefined) {
+    return yield* new OrchestratorMcpFailure({ code: "invalid_request", message: problem });
+  }
+});
 
 const handlers = {
   quiz_card: McpToolAccess.readsAsCaller((input) =>
@@ -48,27 +63,9 @@ const handlers = {
           message: problem ?? "Invalid quiz card.",
         });
       }
-      const shownBefore = yield* readShownTutorText;
-      const replyProblem =
-        shownBefore === undefined
-          ? undefined
-          : cardReplyProblem({
-              reply: input.reply,
-              ...(card.purpose === undefined ? {} : { purpose: card.purpose }),
-              shownBefore,
-            });
-      if (replyProblem !== undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: replyProblem,
-        });
-      }
+      yield* refuseThinReply(input.reply, card.purpose);
       return {
-        quizCard: {
-          ...card,
-          ...(card.purpose === undefined ? {} : { purpose: card.purpose }),
-          reply: input.reply.trim(),
-        },
+        quizCard: { ...card, reply: input.reply.trim() },
         message: QUIZ_CARD_SHOWN,
       };
     }),
@@ -83,27 +80,9 @@ const handlers = {
             "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both; keep reply under 2000 characters and the whole card under about 7 KB.",
         });
       }
-      const shownBefore = yield* readShownTutorText;
-      const replyProblem =
-        shownBefore === undefined
-          ? undefined
-          : cardReplyProblem({
-              reply: input.reply,
-              ...(card.purpose === undefined ? {} : { purpose: card.purpose }),
-              shownBefore,
-            });
-      if (replyProblem !== undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: replyProblem,
-        });
-      }
+      yield* refuseThinReply(input.reply, card.purpose);
       return {
-        questionCard: {
-          ...card,
-          ...(card.purpose === undefined ? {} : { purpose: card.purpose }),
-          reply: input.reply.trim(),
-        },
+        questionCard: { ...card, reply: input.reply.trim() },
         message: QUESTION_CARD_SHOWN,
       };
     }),

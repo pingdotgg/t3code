@@ -6,7 +6,7 @@ export type CardPurpose = "opening-check" | "explain-back";
 
 export function cardReplyProblem(input: {
   readonly reply: string;
-  readonly purpose?: CardPurpose;
+  readonly purpose?: CardPurpose | undefined;
   readonly shownBefore: number;
 }): string | undefined {
   if (

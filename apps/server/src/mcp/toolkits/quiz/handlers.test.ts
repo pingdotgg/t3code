@@ -6,7 +6,7 @@ import { shownTutorText } from "./handlers.ts";
 describe("quiz card reply visibility", () => {
   it("does not count promoted thinking summaries, but counts real text", () => {
     const thinking = {
-      id: "message:provider:claude:native:thinking:0",
+      id: "message:provider:claudeAgent:native-item:msg_011CgpYTQZCUAf5iyjZ9S6jP%3Athinking%3A1",
       role: "assistant",
       text: "x".repeat(300),
     };
