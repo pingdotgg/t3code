@@ -12,6 +12,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FiberHandle from "effect/FiberHandle";
@@ -261,21 +262,16 @@ const make = Effect.gen(function* () {
   });
 
   // Revoking needs no lock: state changes are atomic, and running calls race `session.closed`.
-  /** Ends control, or only `session`'s, and returns once the portal session is closed. */
-  const closeActive = (options: {
-    readonly forget: boolean;
-    readonly session?: RemoteDesktopSession;
-  }) =>
+  /**
+   * When `which` accepts the state, ends any control and applies `forget` even if none is active.
+   * Returns whether a session ended, once it is closed.
+   */
+  const closeActive = (forget: boolean, which: (current: ControlState) => boolean) =>
     Ref.modify(state, (current) =>
-      current.active !== null &&
-      (options.session === undefined || current.active.session === options.session)
+      which(current)
         ? [
             current.active,
-            {
-              ...current,
-              active: null,
-              restoreToken: options.forget ? null : current.restoreToken,
-            },
+            { ...current, active: null, restoreToken: forget ? null : current.restoreToken },
           ]
         : [null, current],
     ).pipe(
@@ -284,8 +280,12 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** Only `session`'s control, so cleanup for an old session never touches a newer one's grant. */
+  const closeSession = (session: RemoteDesktopSession, forget: boolean) =>
+    closeActive(forget, (current) => current.active?.session === session);
+
   const closeIfActive = (session: RemoteDesktopSession) =>
-    closeActive({ forget: false, session }).pipe(Effect.asVoid);
+    closeSession(session, false).pipe(Effect.asVoid);
 
   /**
    * Takes a dialog still waiting for the user out of state, so it can never start control, and
@@ -398,7 +398,11 @@ const make = Effect.gen(function* () {
       return null;
     }
     if (Exit.isFailure(exit) && failed) return yield* Effect.failCause(exit.cause);
-    if (active !== null) yield* Effect.forkIn(watchClosed(active.session), scope);
+    if (active !== null) {
+      // Idles out from here, so control still ends if the waiting call is interrupted.
+      yield* touch(active.session);
+      yield* Effect.forkIn(watchClosed(active.session), scope);
+    }
     return active;
   });
 
@@ -412,17 +416,28 @@ const make = Effect.gen(function* () {
     if (reason !== null) return yield* new ComputerUseUnavailableError({ reason });
     // Checked again after the lookup above, so a setting turned off meanwhile shows no dialog.
     yield* requireEnabled;
-    // A fiber of its own, so turning the setting off or `stop` can close the dialog. It starts
-    // after this fiber registers it, so it always finds its ticket.
+    // A fiber of its own, so turning the setting off or `stop` can close the dialog. It waits
+    // for its ticket to be in state, and nothing interrupts the registration, so it finds it.
     const ticket = {};
-    const fiber = yield* Effect.forkIn(openControl(threadId, ticket, current.restoreToken), scope, {
-      uninterruptible: true,
-    });
-    yield* Ref.update(state, (value) => ({
-      ...value,
-      opening: { owner: threadId, ticket, fiber },
-      endedFor: null,
-    }));
+    const registered = yield* Deferred.make<void>();
+    const fiber = yield* Effect.uninterruptible(
+      Effect.forkIn(
+        Deferred.await(registered).pipe(
+          Effect.andThen(openControl(threadId, ticket, current.restoreToken)),
+        ),
+        scope,
+        { uninterruptible: true },
+      ).pipe(
+        Effect.tap((fiber) =>
+          Ref.update(state, (value) => ({
+            ...value,
+            opening: { owner: threadId, ticket, fiber },
+            endedFor: null,
+          })),
+        ),
+        Effect.tap(Deferred.succeed(registered, undefined)),
+      ),
+    );
     const exit = yield* Fiber.await(fiber).pipe(
       // The agent stopped waiting, so close the dialog as `stop` would.
       Effect.onInterrupt(() => cancelOpening((opening) => opening.ticket === ticket, false)),
@@ -439,7 +454,7 @@ const make = Effect.gen(function* () {
 
   /** A setting check that also ends `session`'s control, so a revoked grant never lingers. */
   const requireEnabledFor = (session: RemoteDesktopSession) =>
-    requireEnabled.pipe(Effect.tapError(() => closeActive({ forget: true, session })));
+    requireEnabled.pipe(Effect.tapError(() => closeSession(session, true)));
 
   /** Why control ended under a running call, told the way the thread's next call would hear it. */
   const controlEnded = (active: ActiveControl) =>
@@ -565,25 +580,16 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // Never takes the lock, which a dialog or capture can hold for a long time.
   const stop: ComputerUse["Service"]["stop"] = Effect.fn("ComputerUse.stop")(function* (input) {
-    // A pending screenshot holds the lock until its dialog is gone, so never wait behind one.
     if (yield* cancelOpening((opening) => opening.owner === input.threadId, input.forget)) {
       return { stopped: true };
     }
-    const owner = yield* Ref.get(state).pipe(
-      Effect.map((current) => current.opening?.owner ?? current.active?.owner ?? null),
-    );
-    if (owner !== null && owner !== input.threadId) return { stopped: false };
-    return yield* lock.withPermit(
-      Effect.gen(function* () {
-        const current = yield* Ref.get(state);
-        if (current.active !== null && current.active.owner !== input.threadId) {
-          return { stopped: false };
-        }
-        const stopped = yield* closeActive({ forget: input.forget });
-        return { stopped };
-      }),
-    );
+    const stopped = yield* closeActive(input.forget, (current) => {
+      const owner = current.active?.owner ?? current.opening?.owner;
+      return owner === undefined || owner === input.threadId;
+    });
+    return { stopped };
   });
 
   // Turning the setting off ends control now and forgets the grant.
@@ -591,11 +597,11 @@ const make = Effect.gen(function* () {
   yield* changes.pipe(
     Stream.filter((value) => !value.enableAgentComputerAccess),
     Stream.runForEach(() =>
-      cancelOpening(() => true, true).pipe(Effect.andThen(closeActive({ forget: true }))),
+      cancelOpening(() => true, true).pipe(Effect.andThen(closeActive(true, () => true))),
     ),
     Effect.forkIn(scope),
   );
-  yield* Effect.addFinalizer(() => closeActive({ forget: true }));
+  yield* Effect.addFinalizer(() => closeActive(true, () => true));
 
   return ComputerUse.of({ screenshot, act, stop });
 });

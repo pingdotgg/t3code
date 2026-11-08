@@ -398,6 +398,66 @@ describe("ComputerUse", () => {
     }),
   );
 
+  it.effect.each(["stopping again with forget", "the setting turns off"] as const)(
+    "forgets a grant kept by an earlier stop when %s while idle",
+    (revocation) =>
+      Effect.gen(function* () {
+        const test = yield* harness({});
+        yield* Effect.gen(function* () {
+          const computer = yield* ComputerUse;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* computer.screenshot({ threadId: threadA });
+          expect(yield* computer.stop({ threadId: threadA, forget: false })).toEqual({
+            stopped: true,
+          });
+          if (revocation === "the setting turns off") {
+            yield* settings.updateSettings({ enableAgentComputerAccess: false });
+            yield* settings.updateSettings({ enableAgentComputerAccess: true });
+          } else {
+            expect(yield* computer.stop({ threadId: threadA, forget: true })).toEqual({
+              stopped: false,
+            });
+          }
+          yield* computer.screenshot({ threadId: threadA });
+          expect(test.opens).toEqual([null, null]);
+        }).pipe(Effect.provide(test.services));
+      }),
+  );
+
+  it.effect.each([false, true])(
+    "stopping during a capture ends control without waiting for it (forget: %s)",
+    (forget) =>
+      Effect.gen(function* () {
+        const test = yield* harness({ holdCapture: true });
+        yield* Effect.gen(function* () {
+          const computer = yield* ComputerUse;
+          const pending = yield* Effect.forkChild(
+            Effect.exit(computer.screenshot({ threadId: threadA })),
+          );
+          yield* test.captureStarted;
+          expect(yield* computer.stop({ threadId: threadB, forget: true })).toEqual({
+            stopped: false,
+          });
+          expect(test.events).toEqual([]);
+          // The capture is still held, so returning at all shows `stop` did not wait for it.
+          expect(yield* computer.stop({ threadId: threadA, forget })).toEqual({ stopped: true });
+          expect(yield* test.takeClose).toBe(1);
+          expect(failureOf(yield* Fiber.join(pending))).toMatchObject({
+            reason: "Desktop control ended before this call finished.",
+          });
+          expect(test.events).toEqual(["capture interrupted"]);
+          yield* test.releaseCapture;
+          yield* computer.screenshot({ threadId: threadB });
+          // Thread B's earlier stop left the grant alone; thread A's kept or dropped it as asked.
+          expect(test.opens).toEqual([null, forget ? null : "token-1"]);
+          expect(yield* computer.stop({ threadId: threadB, forget: false })).toEqual({
+            stopped: true,
+          });
+          expect(yield* test.takeClose).toBe(2);
+        }).pipe(Effect.provide(test.services));
+      }),
+  );
+
   it.effect.each(["the setting turns off", "the user ends it"] as const)(
     "returns no screenshot when %s during the capture",
     (revocation) =>
