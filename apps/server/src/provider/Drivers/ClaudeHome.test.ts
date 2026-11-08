@@ -100,4 +100,24 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         ).toBe("custom");
       }),
   );
+
+  it.effect("turns Claude artifacts off unless the host or instance environment sets them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      const instance = [{ name: "CLAUDE_CODE_ARTIFACT", value: "1", sensitive: false }];
+
+      expect(
+        (yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {})).CLAUDE_CODE_ARTIFACT,
+      ).toBe("0");
+      expect(
+        (yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {
+          CLAUDE_CODE_ARTIFACT: "1",
+        })).CLAUDE_CODE_ARTIFACT,
+      ).toBe("1");
+      expect(
+        (yield* mergeClaudeProcessEnvironment({ homePath }, instance, {})).CLAUDE_CODE_ARTIFACT,
+      ).toBe("1");
+    }),
+  );
 });
