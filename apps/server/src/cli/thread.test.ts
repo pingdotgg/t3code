@@ -339,6 +339,23 @@ it.effect.each(SERVERS)(
     }),
 );
 
+it.effect("show stops when a server's previousPosition does not move back", () =>
+  Effect.gen(function* () {
+    const page = {
+      thread: { itemCount: 10 },
+      items: [{ position: 5, itemId: "item-5", type: "assistant_message" }],
+      nextPosition: 5,
+      hasMore: false,
+      previousPosition: 5,
+    };
+    const { tools, calls } = scriptedTools({ t3_thread_read: [page, page] });
+
+    yield* readLatestMessages(tools, threadId, 10);
+
+    assert.lengthOf(calls, 2);
+  }),
+);
+
 it.effect("a server's rejected arguments are a tool failure, so show can fall back", () =>
   Effect.gen(function* () {
     const failWith = (code: number | undefined) =>

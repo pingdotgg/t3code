@@ -411,7 +411,7 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
   afterPosition: Schema.optional(NonNegativeInt),
   beforePosition: Schema.optional(NonNegativeInt).annotate({
-    description: "Read the `limit` items just before this position; `itemCount` reads the latest.",
+    description: "The `limit` items before it. `itemCount` reads the newest.",
   }),
   limit: Schema.optional(clampedPositiveInt(100)).annotate({
     description: "Max items, 1 to 100.",
