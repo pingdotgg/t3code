@@ -59,7 +59,7 @@ export function resolveVoiceComposerPresentation(
         trailingAction: "confirm",
         showsSend: false,
         statusKind: "active",
-        statusLabel: "Transcribing",
+        statusLabel: state.phase === "post-processing" ? "Cleaning up transcript" : "Transcribing",
         confirmationEnabled: false,
       };
   }

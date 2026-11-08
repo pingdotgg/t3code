@@ -514,6 +514,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
         : current,
     );
   const voiceInput = useVoiceInputController({
+    environmentId: editor?.environmentId ?? null,
     ownerKey,
     label: editor?.draft.title.trim() || title,
     subscribeToDraftChanges: (onChange) =>

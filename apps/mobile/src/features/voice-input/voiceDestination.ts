@@ -32,6 +32,22 @@ import { connectionAtomRuntime } from "../../connection/runtime";
 import { uuidv4 } from "../../lib/uuid";
 import { createEnvironmentTranscriber } from "./environmentTranscriber";
 import { readVoiceGrant, writeVoiceGrant, type VoiceGrant } from "./voiceGrantStorage";
+import { readVoiceCleanupGrant, writeVoiceCleanupGrant } from "./voiceCleanupStorage";
+
+const storedCleanupGrant = Atom.make(Effect.promise(readVoiceCleanupGrant)).pipe(Atom.keepAlive);
+const cleanupChoice = Atom.make<string | null | undefined>(undefined).pipe(Atom.keepAlive);
+export const voiceCleanupGrantAtom = Atom.make((get) => {
+  const chosen = get(cleanupChoice);
+  if (chosen !== undefined) return chosen;
+  return AsyncResult.getOrElse(get(storedCleanupGrant), () => null);
+});
+
+export function chooseTranscriptCleanup(enabled: boolean) {
+  appAtomRegistry.set(cleanupChoice, null);
+  const grant = enabled ? uuidv4() : null;
+  writeVoiceCleanupGrant(grant);
+  appAtomRegistry.set(cleanupChoice, grant);
+}
 
 const storedGrant = Atom.make(Effect.promise(readVoiceGrant)).pipe(Atom.keepAlive);
 const choice = Atom.make<VoiceGrant | null | undefined>(undefined).pipe(Atom.keepAlive);

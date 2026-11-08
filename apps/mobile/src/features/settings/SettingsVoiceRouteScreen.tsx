@@ -24,6 +24,8 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import {
   chooseVoiceDestination,
+  chooseTranscriptCleanup,
+  voiceCleanupGrantAtom,
   voiceConnectionAtom,
   voiceGrantAtom,
   voiceSpeechStatusAtom,
@@ -37,6 +39,7 @@ import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActi
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import {
   deviceMicrophoneOrder,
   localVoiceTranscriberAtom,
@@ -169,6 +172,7 @@ function EnvironmentChoice({
 export function SettingsVoiceRouteScreen() {
   const transcriber = useAtomValue(localVoiceTranscriberAtom);
   const grant = useAtomValue(voiceGrantAtom);
+  const cleanupGrant = useAtomValue(voiceCleanupGrantAtom);
   const { environments, isReady } = useEnvironments();
   const grantEnvironment = grant
     ? environments.find(
@@ -258,6 +262,34 @@ export function SettingsVoiceRouteScreen() {
               onPress={() => {}}
             />
           ) : null}
+        </SettingsSection>
+        <SettingsSection title="Cleanup">
+          <SettingsSwitchRow
+            label="Clean up transcripts"
+            subtitle="Sends the transcript and up to 1,024 characters around the cursor to the cleanup model on the draft’s environment. Text only, off by default. Does not apply to This device or cloud dictation."
+            value={cleanupGrant !== null}
+            onValueChange={(enabled) => {
+              const save = () => {
+                try {
+                  chooseTranscriptCleanup(enabled);
+                } catch {
+                  Dialog.alert(
+                    "Could not save transcript cleanup choice",
+                    "Cleanup is off for this session. Save again before closing the app, or your previous choice may return when it restarts.",
+                  );
+                }
+              };
+              if (enabled)
+                Dialog.confirm({
+                  title: "Clean up transcripts?",
+                  message:
+                    "Your transcript and nearby draft text will be sent to the cleanup model on the draft’s environment. Depending on the model, this may use an external service. Audio is not sent for cleanup. You can turn this off at any time.",
+                  confirmText: "Enable cleanup",
+                  onConfirm: save,
+                });
+              else save();
+            }}
+          />
         </SettingsSection>
         {hasEnvironmentVoiceCapture &&
           environments

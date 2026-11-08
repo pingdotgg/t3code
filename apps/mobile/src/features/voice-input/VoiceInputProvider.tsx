@@ -18,14 +18,24 @@ import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
+  postProcessEnvironmentTranscript,
   voiceInputBlocksSubmission,
+  type VoiceDraftSnapshot,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
 import { createVoiceRecordingPermission } from "./voiceRecordingPermission";
-import { voiceRouteAtom } from "./voiceDestination";
+import {
+  runSpeech,
+  voiceCleanupGrantAtom,
+  voiceConnectionAtom,
+  voiceGrantAtom,
+  voiceRouteAtom,
+} from "./voiceDestination";
+import * as Dialog from "../../components/ui/Dialog";
+import type { VoiceGrant } from "./voiceGrantStorage";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
   acquireAudioSession,
@@ -55,6 +65,18 @@ function keepScreenAwake(tag: string): () => void {
 export const deviceMicrophoneOrder = (saved?: ReadonlyArray<MicrophoneEntry>) =>
   microphoneOrder(saved, Platform.OS === "android" ? "android" : "ios");
 
+function cleanupContext({ text, selection }: VoiceDraftSnapshot) {
+  const limit = 1_024;
+  const start = Math.max(0, Math.min(selection.start, text.length));
+  const end = Math.max(start, Math.min(selection.end, text.length));
+  const before = text.slice(Math.max(0, start - limit), start);
+  const selected = text.slice(start, Math.min(end, start + limit));
+  return {
+    text: before + selected + text.slice(end, end + limit),
+    selection: { start: before.length, end: before.length + selected.length },
+  };
+}
+
 /** "checking" until the first availability probe settles; re-probed on foreground. */
 export const localVoiceTranscriberAtom = makePermissionStatusAtom<
   VoiceTranscriber | null | "checking"
@@ -80,11 +102,17 @@ const voiceInputAtom = Atom.make((get) => {
   // Mounted so the recorder can read and remember microphones synchronously.
   get.mount(mobilePreferencesAtom);
   get.mount(updateMobilePreferencesAtom);
+  get.mount(voiceCleanupGrantAtom);
   const audioLevels = makeMutable<ReadonlyArray<number>>(
     Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0),
   );
   let keepAwakeSequence = 0;
   let audioToken: ReturnType<typeof acquireAudioSession> | null = null;
+  let recordingCleanup: {
+    readonly grant: VoiceGrant;
+    readonly cleanupGrant: string;
+    readonly ownerKey: string;
+  } | null = null;
   const permission = createVoiceRecordingPermission(() => {
     void session.controller.appMovedToBackground();
   });
@@ -121,11 +149,56 @@ const voiceInputAtom = Atom.make((get) => {
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
     getTranscriber: () => {
+      const grant = registry.get(voiceGrantAtom);
+      const cleanupGrant = registry.get(voiceCleanupGrantAtom);
+      const ownerKey = session.ownerKey;
+      recordingCleanup =
+        grant?.destination.kind === "environment" &&
+        grant.destination.environmentId === session.environmentId &&
+        cleanupGrant &&
+        ownerKey
+          ? { grant, cleanupGrant, ownerKey }
+          : null;
       const route = registry.get(voiceRouteAtom);
       if (route) return route.transcriber;
       const transcriber = registry.get(localVoiceTranscriberAtom);
       return transcriber === "checking" ? null : transcriber;
     },
+    postProcess: (transcript, { draft, signal }) => {
+      const preferences = recordingCleanup;
+      const canCleanUp = () =>
+        preferences !== null &&
+        registry.get(voiceGrantAtom) === preferences.grant &&
+        registry.get(voiceCleanupGrantAtom) === preferences.cleanupGrant &&
+        preferences.grant.destination.kind === "environment" &&
+        preferences.grant.destination.environmentId === session.environmentId &&
+        session.ownerKey === preferences.ownerKey &&
+        draft.ownerKey === preferences.ownerKey;
+      if (!preferences || !canCleanUp()) return null;
+      const connectionAtom = voiceConnectionAtom(preferences.grant.destination.environmentId);
+      const prepared = registry.get(connectionAtom);
+      if (!prepared)
+        return Promise.reject(
+          new Error("The draft's environment is unavailable for transcript cleanup."),
+        );
+      const canSend = () => canCleanUp() && registry.get(connectionAtom) === prepared;
+      return runSpeech(
+        postProcessEnvironmentTranscript(
+          prepared,
+          transcript,
+          cleanupContext(draft),
+          {
+            speechCustomWords: [],
+            speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
+          },
+          canSend,
+        ),
+        signal,
+        canSend,
+      ).then((result) => (canSend() ? result.text : transcript));
+    },
+    onPostProcessingError: () =>
+      Dialog.alert("Transcript cleanup failed", "The original transcript was added."),
     requestPermission: permission.requestPermission,
     configureRecording: async () => {
       const token = acquireAudioSession("recording");

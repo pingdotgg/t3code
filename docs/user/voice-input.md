@@ -125,6 +125,10 @@ Cleanup uses the environment's text generation model unless you pick a
 It can be a text generator instead of a coding agent; see
 [text generation models](./text-generation.md).
 
+On mobile, enable cleanup separately in **Settings → Voice → Cleanup**. It runs
+only when **Transcribe on** selects the draft's own environment; device-local
+and cloud dictation skip it. Mobile uses the built-in cleanup instructions.
+
 If cleanup misses the way you correct yourself, set a **Correction cue**: the
 word or phrase you say to flag a correction, such as "scratch that". Cleanup
 applies the correction only where the context shows one and drops the cue, and

@@ -6,12 +6,14 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useGlobalVoiceInput } from "./VoiceInputProvider";
 import { createVoiceInputTarget } from "./voiceInputSession";
 
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 
 export function useVoiceInputController(input: {
+  readonly environmentId: EnvironmentId | null;
   readonly ownerKey: string | null;
   readonly label: string;
   readonly readDraftMessage: () => string | null;
@@ -48,6 +50,7 @@ export function useVoiceInputController(input: {
     const captured = latestInput.current;
     if (!captured.ownerKey || captured.disabled) return;
     void session.start({
+      environmentId: captured.environmentId,
       ...createVoiceInputTarget(
         captured.ownerKey,
         captured.readDraftMessage,

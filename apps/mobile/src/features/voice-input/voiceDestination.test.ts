@@ -1,14 +1,20 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
   chooseVoiceDestination,
+  chooseTranscriptCleanup,
   pendingCloudVoiceChoice,
   voiceGrantAtom,
   voiceRouteAtom,
+  voiceCleanupGrantAtom,
 } from "./voiceDestination";
 import { readVoiceGrant } from "./voiceGrantStorage";
+import { readVoiceCleanupGrant } from "./voiceCleanupStorage";
+import { useGlobalVoiceInput, localVoiceTranscriberAtom } from "./VoiceInputProvider";
+import { resolveVoiceComposerPresentation } from "./voiceInputPresentation";
+import type { VoiceInputTarget } from "./voiceInputSession";
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn<() => Promise<string | null>>(async () => null),
@@ -17,7 +23,57 @@ const mocks = vi.hoisted(() => ({
   markerWrite: vi.fn<(id: string) => void>(),
   probe: vi.fn(),
   fetch: vi.fn<typeof fetch>(),
+  alert: vi.fn(),
 }));
+// Drive the production provider atom without mounting a native React tree.
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (atom: Atom.Atom<unknown>) => appAtomRegistry.get(atom),
+}));
+vi.mock("react", () => ({
+  useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
+}));
+vi.mock("react-native", () => ({
+  Platform: { OS: "android" },
+  AppState: { currentState: "active", addEventListener: () => ({ remove() {} }) },
+}));
+vi.mock("react-native-reanimated", () => ({
+  makeMutable: (value: unknown) => ({ value, set() {} }),
+}));
+vi.mock("expo-keep-awake", () => ({
+  activateKeepAwakeAsync: async () => {},
+  deactivateKeepAwake: () => {},
+}));
+vi.mock("expo-audio", () => ({
+  RecordingPresets: { HIGH_QUALITY: { ios: {}, android: {} } },
+  requestRecordingPermissionsAsync: async () => ({ granted: true, canAskAgain: true }),
+  setAudioModeAsync: async () => {},
+  setIsAudioActiveAsync: async () => {},
+  AudioModule: {
+    AudioRecorder: class {
+      uri = "file:///voice.m4a";
+      async prepareToRecordAsync() {}
+      record() {}
+      async stop() {}
+      getStatus() {
+        return { isRecording: false };
+      }
+      addListener() {
+        return { remove() {} };
+      }
+      getAvailableInputs() {
+        return [];
+      }
+      release() {}
+    },
+  },
+}));
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: Atom.make(AsyncResult.success({})),
+  updateMobilePreferencesAtom: Atom.make({}),
+}));
+vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
+vi.mock("../showcase/nativeShowcaseScene", () => ({ getNativeShowcaseScene: () => null }));
+vi.mock("../../native/voiceTranscription", () => ({ getLocalVoiceTranscriber: async () => null }));
 vi.mock("expo", () => ({
   requireOptionalNativeModule: () => ({ decodeRecording: async () => new Uint8Array([0, 0]) }),
 }));
@@ -27,6 +83,7 @@ vi.mock("expo-file-system", () => ({
   File: class {
     textSync = mocks.markerRead;
     writeSync = mocks.markerWrite;
+    delete() {}
     write(id: string) {
       return Promise.resolve().then(() => mocks.markerWrite(id));
     }
@@ -79,52 +136,63 @@ vi.mock("../../state/session", async () => {
   };
 });
 
-it.each(["secure store", "marker"])(
-  "revokes across restarts when writing the %s fails",
-  async (failedStore) => {
-    let saved: string | null = null;
-    let marker = "";
-    mocks.read.mockImplementation(async () => saved);
-    mocks.write.mockImplementation((_key: string, value: string) => {
-      saved = value;
+it.each([
+  ["audio", "secure store"],
+  ["audio", "marker"],
+  ["cleanup", "secure store"],
+  ["cleanup", "marker"],
+])("revokes %s consent across restarts when writing the %s fails", async (kind, failedStore) => {
+  let saved: string | null = null;
+  let marker = "";
+  mocks.read.mockImplementation(async () => saved);
+  mocks.write.mockImplementation((_key: string, value: string) => {
+    saved = value;
+  });
+  mocks.markerRead.mockImplementation(() => marker);
+  mocks.markerWrite.mockImplementation((id) => {
+    marker = id;
+  });
+  const host = EnvironmentId.make("my-server");
+  const choose = (enabled: boolean) =>
+    kind === "audio"
+      ? chooseVoiceDestination(enabled ? host : null)
+      : chooseTranscriptCleanup(enabled);
+  const read = () => (kind === "audio" ? readVoiceGrant() : readVoiceCleanupGrant());
+  const current = () =>
+    kind === "audio"
+      ? appAtomRegistry.get(voiceGrantAtom)
+      : appAtomRegistry.get(voiceCleanupGrantAtom);
+  try {
+    choose(true);
+    expect(marker).toBe(kind === "audio" ? appAtomRegistry.get(voiceGrantAtom)?.id : current());
+    expect(await read()).not.toBeNull();
+    mocks.markerRead.mockReturnValueOnce("");
+    expect(await read()).toBeNull();
+    const old = { saved, marker };
+    const failedWrite = failedStore === "secure store" ? mocks.write : mocks.markerWrite;
+    failedWrite.mockImplementationOnce(() => {
+      throw new Error("storage unavailable");
     });
-    mocks.markerRead.mockImplementation(() => marker);
-    mocks.markerWrite.mockImplementation((id) => {
-      marker = id;
+    choose(false);
+    expect(failedStore === "secure store" ? saved : marker).toBe(
+      failedStore === "secure store" ? old.saved : old.marker,
+    );
+    expect(await read()).toBeNull();
+    choose(true);
+    failedWrite.mockImplementationOnce(() => {
+      throw new Error("storage unavailable");
     });
-    const host = EnvironmentId.make("my-server");
-    try {
-      chooseVoiceDestination(host);
-      expect(marker).toBe(appAtomRegistry.get(voiceGrantAtom)?.id);
-      expect((await readVoiceGrant())?.destination.environmentId).toBe(host);
-      mocks.markerRead.mockReturnValueOnce("");
-      expect(await readVoiceGrant()).toBeNull();
-      const old = { saved, marker };
-      const failedWrite = failedStore === "secure store" ? mocks.write : mocks.markerWrite;
-      failedWrite.mockImplementationOnce(() => {
-        throw new Error("storage unavailable");
-      });
-      chooseVoiceDestination(null);
-      expect(failedStore === "secure store" ? saved : marker).toBe(
-        failedStore === "secure store" ? old.saved : old.marker,
-      );
-      expect(await readVoiceGrant()).toBeNull();
-      chooseVoiceDestination(host);
-      failedWrite.mockImplementationOnce(() => {
-        throw new Error("storage unavailable");
-      });
-      expect(() => chooseVoiceDestination(EnvironmentId.make("other-host"))).toThrow();
-      expect(appAtomRegistry.get(voiceGrantAtom)).toBeNull();
-      expect(await readVoiceGrant()).toBeNull();
-    } finally {
-      mocks.read.mockReset();
-      mocks.write.mockReset();
-      mocks.markerRead.mockReset();
-      mocks.markerWrite.mockReset();
-      appAtomRegistry.reset();
-    }
-  },
-);
+    expect(() => choose(true)).toThrow();
+    expect(current()).toBeNull();
+    expect(await read()).toBeNull();
+  } finally {
+    mocks.read.mockReset();
+    mocks.write.mockReset();
+    mocks.markerRead.mockReset();
+    mocks.markerWrite.mockReset();
+    appAtomRegistry.reset();
+  }
+});
 
 it("keeps local as the default and never reuses consent for an offline or reselected host", async () => {
   const unmount = appAtomRegistry.mount(voiceRouteAtom);
@@ -255,5 +323,146 @@ it("a late cloud key save cannot override a newer destination choice", () => {
     expect(grant?.destination).toEqual({ kind: "cloud", environmentId: host, provider: "xai" });
   } finally {
     appAtomRegistry.reset();
+  }
+});
+
+it.each([
+  "off",
+  "enabled",
+  "failure",
+  "different environment",
+  "different owner",
+  "local",
+  "cloud",
+  "revoked",
+  "re-enabled",
+  "enabled after start",
+  "bounded context",
+  "revoked during cleanup",
+  "cancelled during cleanup",
+] as const)("dictation through the mobile provider with cleanup %s", async (scenario) => {
+  mocks.fetch.mockReset();
+  mocks.alert.mockClear();
+  const host = EnvironmentId.make("my-server");
+  const raw = "um ship twenty four widgets sorry forty two widgets";
+  const cleaned = "Ship 42 widgets.";
+  const bounded = scenario === "bounded context";
+  const context = bounded
+    ? `${"a".repeat(2047)} ${"r".repeat(2048)} ${"z".repeat(2047)}`
+    : "before replace after";
+  const selection = bounded ? { start: 2048, end: 4096 } : { start: 7, end: 14 };
+  const commit = vi.fn();
+  const cleanup = Promise.withResolvers<Response>();
+  const cleanupEntered = Promise.withResolvers<void>();
+  const requests: { transcript: string; draft: unknown; options: unknown }[] = [];
+  mocks.fetch.mockImplementation(async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/voice/status")
+      return Response.json({
+        supported: true,
+        state: "ready",
+        modelId: "fixture",
+        model: "Fixture",
+        size: 1,
+        supportsStreaming: false,
+        supportsTranslation: false,
+        acceleration: "cpu",
+        modelUnloadTimeout: "never",
+        gpuDevices: [],
+      });
+    if (path === "/api/voice/cloud/keys") return Response.json({ openai: true, xai: true });
+    if (path.endsWith("/transcribe")) return Response.json({ text: raw });
+    requests.push(JSON.parse(String(init?.body)));
+    cleanupEntered.resolve();
+    return cleanup.promise;
+  });
+  chooseTranscriptCleanup(scenario !== "off" && scenario !== "enabled after start");
+  chooseVoiceDestination(
+    scenario === "local" ? null : host,
+    scenario === "cloud" ? "openai" : undefined,
+  );
+  const { session } = useGlobalVoiceInput();
+  appAtomRegistry.set(localVoiceTranscriberAtom, {
+    prepare: async () => ({ locale: "en-US", transcribe: async () => raw }),
+  });
+  const target: VoiceInputTarget = {
+    ownerKey: "draft-owner",
+    environmentId: scenario === "different environment" ? EnvironmentId.make("other-server") : host,
+    readDraft: () => ({
+      ownerKey: scenario === "different owner" ? "another-owner" : "draft-owner",
+      text: context,
+      selection,
+      revision: 0,
+    }),
+    commitDraft: commit,
+    subscribe: () => () => {},
+  };
+  try {
+    await session.start(target);
+    expect(session.controller.currentState.phase).toBe("recording");
+    if (scenario === "revoked" || scenario === "re-enabled") chooseTranscriptCleanup(false);
+    if (scenario === "re-enabled" || scenario === "enabled after start")
+      chooseTranscriptCleanup(true);
+    const stopping = session.controller.stop();
+    const runsCleanup =
+      scenario === "enabled" ||
+      scenario === "failure" ||
+      bounded ||
+      scenario === "revoked during cleanup" ||
+      scenario === "cancelled during cleanup";
+    if (runsCleanup) {
+      await Promise.race([cleanupEntered.promise, stopping]);
+      expect(session.getSnapshot().state.phase).toBe("post-processing");
+      expect(resolveVoiceComposerPresentation(session.getSnapshot().state, 0).statusLabel).toBe(
+        "Cleaning up transcript",
+      );
+      expect(commit).not.toHaveBeenCalled();
+      if (scenario === "revoked during cleanup") chooseTranscriptCleanup(false);
+      if (scenario === "cancelled during cleanup") session.cancel(target.ownerKey);
+      if (scenario === "failure") cleanup.reject(new Error("provider unavailable"));
+      else cleanup.resolve(Response.json({ text: cleaned }));
+    }
+    await stopping;
+    const inserted = scenario === "enabled" || bounded ? cleaned : raw;
+    if (scenario === "cancelled during cleanup") expect(commit).not.toHaveBeenCalled();
+    else
+      expect(commit).toHaveBeenCalledExactlyOnceWith(
+        `${context.slice(0, selection.start)}${inserted}${context.slice(selection.end)}`,
+        {
+          start: selection.start + inserted.length,
+          end: selection.start + inserted.length,
+        },
+      );
+    expect(requests).toEqual(
+      runsCleanup
+        ? [
+            {
+              transcript: raw,
+              draft: bounded
+                ? {
+                    text: `${"a".repeat(1023)} ${"r".repeat(1024)} ${"z".repeat(1023)}`,
+                    selection: { start: 1024, end: 2048 },
+                  }
+                : { text: context, selection },
+              options: {
+                speechCustomWords: [],
+                speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
+              },
+            },
+          ]
+        : [],
+    );
+    if (runsCleanup) {
+      const [url, init] = mocks.fetch.mock.lastCall!;
+      expect(String(url)).toBe("https://my-server.test/api/voice/post-process");
+      expect(init?.redirect).toBe("error");
+    }
+    expect(mocks.alert).toHaveBeenCalledTimes(scenario === "failure" ? 1 : 0);
+    expect(session.controller.currentState.phase).toBe("idle");
+  } finally {
+    session.dispose();
+    appAtomRegistry.reset();
+    mocks.fetch.mockReset();
+    mocks.alert.mockClear();
   }
 });
