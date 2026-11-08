@@ -9,6 +9,7 @@ import FileBrowserPanel from "./FileBrowserPanel";
 
 const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
+  { path: "src/index.ts", kind: "file" },
   { path: "README.md", kind: "file" },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
@@ -136,5 +137,11 @@ describe("FileBrowserPanel", () => {
 
     row.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, composed: true }));
     expect(row.hasAttribute("title")).toBe(false);
+
+    findTreeRow("src/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/index.ts")).not.toBeNull());
+    const nestedRow = findTreeRow("src/index.ts")!;
+    nestedRow.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, composed: true }));
+    expect(nestedRow.title).toBe("src/index.ts");
   });
 });

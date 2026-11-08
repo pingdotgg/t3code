@@ -8,10 +8,13 @@ function findTreeRow(event: PointerEvent<HTMLElement>): HTMLElement | null {
   return null;
 }
 
-export function showFullPathOnPointerOver(event: PointerEvent<HTMLElement>): void {
+export function showFullPathOnPointerOver(
+  event: PointerEvent<HTMLElement>,
+  toDisplayPath: (modelPath: string) => string = (modelPath) => modelPath,
+): void {
   const row = findTreeRow(event);
   const path = row?.getAttribute("data-item-path");
-  if (row && path) row.title = path.replace(/\/$/, "");
+  if (row && path) row.title = toDisplayPath(path.replace(/\/$/, ""));
 }
 
 // Rows are recycled while scrolling, so a stale title would name the wrong path.

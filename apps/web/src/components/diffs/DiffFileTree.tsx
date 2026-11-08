@@ -244,7 +244,7 @@ export function DiffFileTree({
           if (clickedSelectedRow) onSelectFile(presented.selectionPath(path));
         }}
         className="min-h-0 flex-1 overflow-hidden"
-        onPointerOver={showFullPathOnPointerOver}
+        onPointerOver={(event) => showFullPathOnPointerOver(event, presented.selectionPath)}
         onPointerOut={clearFullPathOnPointerOut}
         style={pierreTreeStyle(resolvedTheme)}
       />
