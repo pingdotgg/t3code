@@ -434,6 +434,34 @@ describe("MessagesTimeline messages", () => {
     await expectHeadingInView("Last turn", "Turn 118:");
   });
 
+  it("disables the minimap's next turn button at the bottom of the thread", async () => {
+    setup();
+    const props = baseProps();
+    const entries = Array.from({ length: 16 }, (_, index) => [
+      message(`Question ${index}`, {}, `user-${index}`),
+      message(`Answer ${index}`, { role: "assistant" }, `assistant-${index}`),
+    ]).flat();
+    await using screen = await renderTimeline(entries, props);
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const strips = () => [
+      ...screen.container.querySelectorAll<HTMLElement>("[data-minimap-strip]"),
+    ];
+    // Several final turns share the last screen, so the current turn is not the last one.
+    await vi.waitFor(() => {
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+      expect(strips()[0]?.dataset.inView).toBe("false");
+      expect(
+        strips()
+          .slice(-2)
+          .map((strip) => strip.dataset.inView),
+      ).toEqual(["true", "true"]);
+      expect(screen.button("Previous turn")).not.toBeDisabled();
+    });
+
+    expect(screen.button("Next turn")).toBeDisabled();
+  });
+
   it("keeps rows in item order after a reload or thread switch, before any timer runs", async () => {
     setup();
     // NVDA's browse mode keeps the first DOM order it reads, so a timer that sorts rows later is too late.
