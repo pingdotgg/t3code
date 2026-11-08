@@ -42,26 +42,30 @@ export const layer: Layer.Layer<never, never, HostPowerMonitor.HostPowerMonitor>
         const current = yield* monitor.snapshot;
         if (current.source === "electron-main" && !current.stale) return;
 
-        const battery = readHostBattery(platform);
+        const battery = yield* Effect.promise(() => readHostBattery(platform));
+        // A slow probe must not overwrite a fresher Electron feed that arrived mid-await.
+        const latest = yield* monitor.snapshot;
+        if (latest.source === "electron-main" && !latest.stale) return;
+
         const updatedAt = yield* DateTime.now;
         if (battery.percent === null && battery.onBattery === null) {
           // Drop obsolete headless readings so BackgroundPolicy does not stay paused.
-          if (current.source === source && !current.stale) {
-            yield* monitor.report({ ...current, stale: true, updatedAt });
+          if (latest.source === source && !latest.stale) {
+            yield* monitor.report({ ...latest, stale: true, updatedAt });
           }
           return;
         }
 
         yield* monitor.report({
           source,
-          idle: current.source === source ? current.idle : "unknown",
-          idleSeconds: current.source === source ? current.idleSeconds : null,
-          locked: current.source === source ? current.locked : "unknown",
-          suspended: current.source === source ? current.suspended : false,
+          idle: latest.source === source ? latest.idle : "unknown",
+          idleSeconds: latest.source === source ? latest.idleSeconds : null,
+          locked: latest.source === source ? latest.locked : "unknown",
+          suspended: latest.source === source ? latest.suspended : false,
           onBattery: battery.onBattery === null ? "unknown" : booleanState(battery.onBattery),
           ...(battery.percent === null ? {} : { batteryPercent: battery.percent }),
-          lowPowerMode: current.source === source ? current.lowPowerMode : "unknown",
-          thermalState: current.source === source ? current.thermalState : "unknown",
+          lowPowerMode: latest.source === source ? latest.lowPowerMode : "unknown",
+          thermalState: latest.source === source ? latest.thermalState : "unknown",
           stale: false,
           updatedAt,
         });
