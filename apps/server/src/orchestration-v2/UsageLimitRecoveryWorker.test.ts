@@ -1,5 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
-import { RunId, ThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2DomainEvent,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -90,6 +95,7 @@ const failedThread = (failedAgoMs: number, resetAgoMs: number) => {
     lastErrorClass: "usage_limit",
     usageLimitResetAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - resetAgoMs)),
     latestRunId: RunId.make("run:limited"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
     latestRunCompletedAt: failedAt,
     updatedAt: failedAt,
     archivedAt: null,
