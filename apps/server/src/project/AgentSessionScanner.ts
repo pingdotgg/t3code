@@ -1283,19 +1283,12 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed((): ReadonlyMap<string, ReadonlyArray<string>> => new Map()));
   });
 
-  // A chat inside its project, such as in a subdirectory, keeps its own cwd.
-  const projectCwd = (cwd: string, projectRoots: ReadonlyArray<string> | undefined) => {
-    if (projectRoots === undefined) return cwd;
-    const resolved = normalizeForWorktreeMatch(
-      path.resolve(expandHomePath(cwd.trim(), homeDir)),
-      foldWorktreeCase,
-    );
-    return projectRoots.some((root) =>
-      resolved.startsWith(normalizeForWorktreeMatch(path.resolve(root), foldWorktreeCase)),
-    )
-      ? cwd
-      : projectRoots[0]!;
-  };
+  // Only chats left in an excluded folder, such as Codex's scratch folder, take their project's root.
+  const projectCwd = (cwd: string, projectRoots: ReadonlyArray<string> | undefined) =>
+    projectRoots !== undefined &&
+    isExcludedProjectPath(path.resolve(expandHomePath(cwd.trim(), homeDir)))
+      ? projectRoots[0]!
+      : cwd;
 
   const discoverCodexTranscripts = Effect.fn("AgentSessionScanner.discoverCodexTranscripts")(
     function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {

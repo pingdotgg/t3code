@@ -1389,8 +1389,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const homeDir = yield* makeTempDir("t3code-home-");
         const projectDir = path.join(homeDir, "code", "my-project");
         const scratchDir = path.join(homeDir, "Documents", "Codex", "2026-11-08", "new-chat");
+        const otherDir = path.join(homeDir, "code", "other-project");
         yield* fileSystem.makeDirectory(projectDir, { recursive: true });
         yield* fileSystem.makeDirectory(scratchDir, { recursive: true });
+        yield* fileSystem.makeDirectory(otherDir, { recursive: true });
 
         const projectId = "019a5f00-0000-7000-8000-000000000001";
         const chats = [
@@ -1403,6 +1405,11 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             id: "019a5f00-0000-7000-8000-00000000000b",
             cwd: projectDir,
             message: "Started in the project",
+          },
+          {
+            id: "019a5f00-0000-7000-8000-00000000000c",
+            cwd: otherDir,
+            message: "Started in another folder",
           },
         ];
         const rolloutPaths: Array<string> = [];
@@ -1487,8 +1494,13 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
           Effect.provideService(HostProcess.HomeDirectory, homeDir),
         );
-        expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+        expect(
+          result.candidates
+            .map(({ path, threadCount }) => ({ path, threadCount }))
+            .toSorted((left, right) => left.path.localeCompare(right.path)),
+        ).toEqual([
           { path: projectDir, threadCount: 2 },
+          { path: otherDir, threadCount: 1 },
         ]);
       }),
     );
